@@ -20,7 +20,7 @@ class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     }
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor {
-        LOG.warn("MARKFLOW_UI createEditor: ${file.path}")
+        LOG.info("MARKFLOW_UI createEditor: ${file.path}")
         return MarkFlowEditor(project, file)
     }
 
