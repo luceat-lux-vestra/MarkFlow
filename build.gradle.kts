@@ -2,6 +2,8 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
+import org.apache.tools.ant.taskdefs.condition.Os
+
 plugins {
     id("java") // Java support
     alias(libs.plugins.kotlin) // Kotlin support
@@ -127,6 +129,71 @@ kover {
     }
 }
 
+// Frontend build pipeline (webview)
+val isCi = providers.environmentVariable("CI").orNull == "true"
+
+val npmInstallWebview by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Installs webview dependencies"
+    workingDir = file("webview")
+
+    inputs.files(
+        file("webview/package.json"),
+        file("webview/package-lock.json")
+    )
+    outputs.dir(file("webview/node_modules"))
+
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        commandLine(
+            "cmd",
+            "/c",
+            if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+        )
+    } else {
+        commandLine(
+            "sh",
+            "-c",
+            if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+        )
+    }
+}
+
+val buildWebview by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds the Vite frontend webview"
+    workingDir = file("webview")
+    dependsOn(npmInstallWebview)
+
+    inputs.files(
+        fileTree("webview/src"),
+        file("webview/index.html"),
+        file("webview/vite.config.ts"),
+        file("webview/tsconfig.json"),
+        file("webview/tsconfig.node.json"),
+        file("webview/package.json"),
+        file("webview/package-lock.json")
+    )
+    outputs.dir(file("src/main/resources/webview"))
+
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        commandLine("cmd", "/c", "npm run build")
+    } else {
+        commandLine("sh", "-c", "npm run build")
+    }
+}
+
+tasks.named("processResources") {
+    dependsOn(buildWebview)
+}
+
+tasks.named("runIde") {
+    dependsOn(buildWebview)
+}
+
+tasks.named("buildPlugin") {
+    dependsOn(buildWebview)
+}
+
 tasks {
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
@@ -156,4 +223,8 @@ intellijPlatformTesting {
             }
         }
     }
+}
+
+tasks.named("runIdeForUiTests") {
+    dependsOn(buildWebview)
 }

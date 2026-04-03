@@ -9,7 +9,6 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.luceatluxvestra.markflow.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.luceatluxvestra.markflow.startup.MyProjectActivity" />
+        <fileEditorProvider implementation="com.algorist.markflow.MarkFlowEditorProvider" order="first"/>
     </extensions>
 </idea-plugin>

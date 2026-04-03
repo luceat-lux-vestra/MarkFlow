@@ -1,0 +1,456 @@
+package com.algorist.markflow
+
+import com.google.gson.JsonParser
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditor
+import com.intellij.openapi.fileEditor.FileEditorState
+import com.intellij.openapi.fileEditor.FileEditorStateLevel
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.UserDataHolderBase
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
+import com.intellij.ui.jcef.JBCefJSQuery
+import org.cef.CefSettings
+import org.cef.browser.CefBrowser
+import org.cef.browser.CefFrame
+import org.cef.handler.CefDisplayHandlerAdapter
+import org.cef.handler.CefLoadHandler
+import org.cef.handler.CefLoadHandlerAdapter
+import org.cef.network.CefRequest
+import java.beans.PropertyChangeListener
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.URLConnection
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.util.jar.JarFile
+import javax.swing.JComponent
+import com.sun.net.httpserver.HttpServer
+
+class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
+
+    private val browser = JBCefBrowser()
+    private val document: Document? = FileDocumentManager.getInstance().getDocument(file)
+    private val jsQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
+    private val debugQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
+
+    // 🚩 무한루프 방지 플래그 (웹에서 수정한 내용을 반영 중일 때 true)
+    private var isUpdatingFromWeb = false
+
+    // Editor state snapshot fields (Option C: scroll + cursor/selection + versioned state object)
+    private var webViewLoaded = false
+    private var pendingState: MarkFlowEditorState? = null
+    private var lastKnownScrollTop = 0
+    private var lastKnownCursorOffset = -1
+    private var lastKnownSelectionStart = -1
+    private var lastKnownSelectionEnd = -1
+
+    init {
+        LOG.warn("MARKFLOW_UI editor init: ${file.path}")
+
+        // 1. [Web -> IntelliJ] 웹 에디터의 변경사항을 IntelliJ 파일에 적용
+        jsQuery.addHandler { request: String ->
+            try {
+                val normalizedRequest = request.trim()
+                if (normalizedRequest.isEmpty() || normalizedRequest == "undefined" || normalizedRequest == "null") {
+                    return@addHandler JBCefJSQuery.Response("Ignored")
+                }
+
+                val parsed = JsonParser.parseString(normalizedRequest)
+                if (!parsed.isJsonObject) {
+                    LOG.debug("Ignored non-object JS bridge payload for ${file.path}: $normalizedRequest")
+                    return@addHandler JBCefJSQuery.Response("Ignored")
+                }
+
+                val json = parsed.asJsonObject
+                val action = json["action"]?.takeIf { it.isJsonPrimitive }?.asString
+                if (action != "update") {
+                    return@addHandler JBCefJSQuery.Response("Ignored")
+                }
+
+                val newContent = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
+
+                // Keep optional UI state from web payload when available.
+                lastKnownScrollTop = json["scrollTop"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                    ?.asInt ?: lastKnownScrollTop
+                lastKnownCursorOffset = json["cursorOffset"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                    ?.asInt ?: lastKnownCursorOffset
+                lastKnownSelectionStart = json["selectionStart"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                    ?.asInt ?: lastKnownSelectionStart
+                lastKnownSelectionEnd = json["selectionEnd"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                    ?.asInt ?: lastKnownSelectionEnd
+
+                ApplicationManager.getApplication().invokeLater {
+                    WriteCommandAction.runWriteCommandAction(project) {
+                        if (document != null && document.text != newContent) {
+                            isUpdatingFromWeb = true
+                            try {
+                                document.setText(newContent)
+                            } finally {
+                                isUpdatingFromWeb = false
+                            }
+                         }
+                     }
+                 }
+                 JBCefJSQuery.Response("Success")
+             } catch (ex: Exception) {
+                 LOG.warn("Failed to parse JS bridge request for ${file.path}: ${ex.message}", ex)
+                 JBCefJSQuery.Response(null, 500, "Error parsing request")
+             }
+        }
+
+        // 2. [IntelliJ -> Web] 외부(Git, 타 에디터)에서 파일이 변경되었을 때 웹 에디터 리렌더링
+        document?.addDocumentListener(object : DocumentListener {
+            override fun documentChanged(event: DocumentEvent) {
+                // 웹에서 쏜 데이터로 인해 변경된 것이 아닐 때만 웹으로 다시 쏨
+                if (!isUpdatingFromWeb) {
+                    val newText = event.document.text
+                    // JS 문자열 이스케이프 (중요: 줄바꿈, 따옴표 처리)
+                    val escapedText = newText.replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "")
+
+                    val script = "if (window.updateFromIntelliJ) { window.updateFromIntelliJ(\"$escapedText\"); }"
+                    browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+                }
+            }
+        }, this) // FileEditor(this)가 Dispose 될 때 리스너 자동 해제
+
+        debugQuery.addHandler { request: String ->
+            val normalized = request.trim()
+            if (normalized.isNotEmpty()) {
+                LOG.warn("MARKFLOW_UI JS bridge: $normalized")
+            }
+            JBCefJSQuery.Response("OK")
+        }
+
+        browser.jbCefClient.addDisplayHandler(object : CefDisplayHandlerAdapter() {
+            override fun onConsoleMessage(
+                cefBrowser: CefBrowser?,
+                level: CefSettings.LogSeverity?,
+                message: String?,
+                source: String?,
+                line: Int
+            ): Boolean {
+                val safeMessage = message?.trim().orEmpty()
+                if (safeMessage.isNotEmpty()) {
+                    val safeSource = source ?: "<unknown>"
+                    LOG.warn("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
+                }
+                return false
+            }
+        }, browser.cefBrowser)
+
+        // 3. JCEF 로드 완료 시 JS 브릿지 주입 및 초기 마크다운 설정
+        browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
+            override fun onLoadStart(cefBrowser: CefBrowser?, frame: CefFrame?, transitionType: CefRequest.TransitionType?) {
+                LOG.warn("MARKFLOW_UI JCEF onLoadStart: url=${cefBrowser?.url ?: browser.cefBrowser.url}")
+            }
+
+            override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
+                if (frame != null && !frame.isMain) return
+                LOG.warn("MARKFLOW_UI JCEF onLoadEnd: url=${cefBrowser?.url ?: browser.cefBrowser.url}, status=$httpStatusCode")
+                val currentText = document?.text?.replace("\\", "\\\\")
+                    ?.replace("\"", "\\\"")
+                    ?.replace("\n", "\\n")
+                    ?.replace("\r", "") ?: ""
+
+                val injectJs = """
+                    window.intelliJ_initialMarkdown = "$currentText";
+                    ${jsQuery.inject("window.cefQuery")}
+                    ${debugQuery.inject("window.markflowLog")}
+                    (function() {
+                        if (window.__markflowGlobalErrorBridgeInstalled) {
+                            return;
+                        }
+                        window.__markflowGlobalErrorBridgeInstalled = true;
+                        window.addEventListener('error', function(event) {
+                            if (typeof window.markflowLog === 'function') {
+                                window.markflowLog('window:error:' + (event.message || 'unknown'));
+                            }
+                        });
+                        window.addEventListener('unhandledrejection', function(event) {
+                            var reason = event && event.reason ? String(event.reason) : 'unknown';
+                            if (typeof window.markflowLog === 'function') {
+                                window.markflowLog('window:unhandledrejection:' + reason);
+                            }
+                        });
+                        if (typeof window.markflowLog === 'function') {
+                            window.markflowLog('bridge:injected');
+                        }
+                        (function syncInitialMarkdown(attempt) {
+                            if (typeof window.updateFromIntelliJ === 'function') {
+                                window.updateFromIntelliJ("$currentText");
+                                if (typeof window.markflowLog === 'function') {
+                                    window.markflowLog('bridge:initialMarkdown:applied');
+                                }
+                                return;
+                            }
+                            if (attempt < 20) {
+                                setTimeout(function() {
+                                    syncInitialMarkdown(attempt + 1);
+                                }, 50);
+                                return;
+                            }
+                            if (typeof window.markflowLog === 'function') {
+                                window.markflowLog('bridge:initialMarkdown:timeout');
+                            }
+                        })(0);
+                    })();
+                """.trimIndent()
+
+                cefBrowser?.executeJavaScript(injectJs, browser.cefBrowser.url, 0)
+                webViewLoaded = true
+                LOG.warn("MARKFLOW_UI webViewLoaded=true for ${file.path}")
+                applyPendingState()
+            }
+
+            override fun onLoadError(
+                cefBrowser: CefBrowser?,
+                frame: CefFrame?,
+                errorCode: CefLoadHandler.ErrorCode?,
+                errorText: String?,
+                failedUrl: String?
+            ) {
+                LOG.error("MARKFLOW_UI JCEF onLoadError: url=$failedUrl code=$errorCode text=$errorText")
+            }
+        }, browser.cefBrowser)
+
+        // 4. HTML 파일 로드 (실제 배포 시에는 플러그인 리소스의 절대 경로를 계산해서 넣어야 합니다)
+        // ex) browser.loadURL(MakFlowEditor::class.java.getResource("/webview/index.html")?.toExternalForm() ?: "")
+        // browser.loadURL("http://localhost:5173") // 개발 중에는 Vite Dev Server URL 사용 권장
+
+        val webviewIndexUrl = loadWebviewIndexUrl()
+        if (webviewIndexUrl != null) {
+            LOG.info("Loading MarkFlow webview from extracted file URL: $webviewIndexUrl")
+            browser.loadURL(webviewIndexUrl)
+        } else {
+            LOG.error("Could not resolve a loadable MarkFlow webview index.html")
+            browser.loadHTML("<html><body><h1>MarkFlow UI Resource Not Found</h1></body></html>")
+        }
+    }
+
+    private fun loadWebviewIndexUrl(): String? {
+        return try {
+            LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: start for ${file.path}")
+            val extractedRoot = extractWebviewRoot() ?: return null
+            val port = ensureWebviewHttpServer(extractedRoot) ?: return null
+            val indexUrl = "http://127.0.0.1:$port/index.html"
+            LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: resolved=$indexUrl")
+            indexUrl
+        } catch (ex: Exception) {
+            LOG.error("MARKFLOW_UI loadWebviewIndexUrl failed: ${ex.message}", ex)
+            null
+        }
+    }
+
+    private fun ensureWebviewHttpServer(root: Path): Int? {
+        webviewServerPort?.let { return it }
+
+        synchronized(MarkFlowEditor::class.java) {
+            webviewServerPort?.let { return it }
+
+            return try {
+                val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+                server.createContext("/") { exchange ->
+                    val requestPath = exchange.requestURI?.path.orEmpty()
+                    if (requestPath.isEmpty()) {
+                        exchange.sendResponseHeaders(404, -1)
+                        exchange.close()
+                        return@createContext
+                    }
+
+                    val normalized = if (requestPath == "/") "index.html" else requestPath.removePrefix("/")
+                    val target = root.resolve(normalized).normalize()
+                    if (!target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
+                        exchange.sendResponseHeaders(404, -1)
+                        exchange.close()
+                        return@createContext
+                    }
+
+                    try {
+                        val bytes = Files.readAllBytes(target)
+                        val contentType = Files.probeContentType(target)
+                            ?: URLConnection.guessContentTypeFromName(target.fileName.toString())
+                            ?: "application/octet-stream"
+                        exchange.responseHeaders.set("Content-Type", contentType)
+                        exchange.responseHeaders.set("Cache-Control", "no-cache")
+                        exchange.sendResponseHeaders(200, bytes.size.toLong())
+                        exchange.responseBody.use { output -> output.write(bytes) }
+                    } catch (ioe: IOException) {
+                        LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
+                        exchange.sendResponseHeaders(500, -1)
+                        exchange.close()
+                    }
+                }
+                server.executor = null
+                server.start()
+                webviewHttpServer = server
+                webviewServerPort = server.address.port
+                LOG.warn("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
+                server.address.port
+            } catch (ex: Exception) {
+                LOG.error("MARKFLOW_UI failed to start webview HTTP server: ${ex.message}", ex)
+                null
+            }
+        }
+    }
+
+    private fun extractWebviewRoot(): Path? {
+        extractedWebviewRoot?.let { return it }
+
+        synchronized(this) {
+            extractedWebviewRoot?.let { return it }
+
+            val pluginDescriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID)) ?: return null
+            LOG.warn("MARKFLOW_UI extractWebviewRoot: pluginPath=${pluginDescriptor.pluginPath}")
+            val pluginLibDir = pluginDescriptor.pluginPath.resolve("lib").toFile()
+            val pluginJar = pluginLibDir.listFiles()
+                ?.firstOrNull { it.isFile && it.name.endsWith(".jar") && it.name.startsWith("MarkFlow") }
+                ?: return null
+
+            LOG.warn("MARKFLOW_UI extractWebviewRoot: jar=${pluginJar.absolutePath}")
+
+            val tempRoot = Files.createTempDirectory("markflow-webview-")
+            JarFile(pluginJar).use { jar ->
+                val entries = jar.entries()
+                var copied = 0
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
+
+                    val target = tempRoot.resolve(entry.name.removePrefix("webview/"))
+                    target.parent?.let(Files::createDirectories)
+                    jar.getInputStream(entry).use { input ->
+                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+                        copied++
+                    }
+                }
+                LOG.warn("MARKFLOW_UI extractWebviewRoot: extracted=$copied to $tempRoot")
+            }
+
+            extractedWebviewRoot = tempRoot
+            return tempRoot
+        }
+    }
+
+    override fun getComponent(): JComponent = browser.component
+    override fun getPreferredFocusedComponent(): JComponent = browser.component
+    override fun getName(): String = "MakFlow Editor"
+    override fun getFile(): VirtualFile = file
+    override fun isModified(): Boolean = false
+    override fun isValid(): Boolean = true
+
+    override fun getState(level: FileEditorStateLevel): FileEditorState {
+        val viewTop = browser.component.visibleRect.y.coerceAtLeast(0)
+        val scrollTop = maxOf(lastKnownScrollTop, viewTop)
+        return MarkFlowEditorState(
+            version = MarkFlowEditorState.CURRENT_VERSION,
+            scrollTop = scrollTop,
+            cursorOffset = lastKnownCursorOffset,
+            selectionStart = lastKnownSelectionStart,
+            selectionEnd = lastKnownSelectionEnd
+        )
+    }
+
+    override fun setState(state: FileEditorState) {
+        val incoming = state as? MarkFlowEditorState ?: return
+        if (incoming.version != MarkFlowEditorState.CURRENT_VERSION) {
+            LOG.warn(
+                "State version mismatch for ${file.path}. expected=${MarkFlowEditorState.CURRENT_VERSION}, actual=${incoming.version}"
+            )
+        }
+        pendingState = incoming
+        applyPendingState()
+    }
+
+    private fun applyPendingState() {
+        val state = pendingState ?: return
+        if (!webViewLoaded) {
+            return
+        }
+
+        val safeScrollTop = state.scrollTop.coerceAtLeast(0)
+        val safeCursorOffset = state.cursorOffset.coerceAtLeast(-1)
+        val safeSelectionStart = state.selectionStart.coerceAtLeast(-1)
+        val safeSelectionEnd = state.selectionEnd.coerceAtLeast(-1)
+
+        val script = """
+            (function() {
+              var state = {
+                version: ${state.version},
+                scrollTop: $safeScrollTop,
+                cursorOffset: $safeCursorOffset,
+                selectionStart: $safeSelectionStart,
+                selectionEnd: $safeSelectionEnd
+              };
+              if (typeof window.applyEditorStateFromIntelliJ === 'function') {
+                window.applyEditorStateFromIntelliJ(state);
+              } else {
+                window.scrollTo(0, state.scrollTop || 0);
+              }
+            })();
+        """.trimIndent()
+
+        browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+        pendingState = null
+    }
+
+    override fun addPropertyChangeListener(listener: PropertyChangeListener) {
+        // State change events are not emitted yet; editor is currently pull-based.
+    }
+
+    override fun removePropertyChangeListener(listener: PropertyChangeListener) {
+        // State change events are not emitted yet; editor is currently pull-based.
+    }
+
+    override fun dispose() {
+        debugQuery.dispose()
+        jsQuery.dispose()
+        browser.dispose()
+    }
+
+    private data class MarkFlowEditorState(
+        val version: Int = CURRENT_VERSION,
+        val scrollTop: Int = 0,
+        val cursorOffset: Int = -1,
+        val selectionStart: Int = -1,
+        val selectionEnd: Int = -1
+    ) : FileEditorState {
+        override fun canBeMergedWith(otherState: FileEditorState, level: FileEditorStateLevel): Boolean {
+            if (otherState !is MarkFlowEditorState) return false
+            if (otherState.version != version) return false
+
+            return when (level) {
+                FileEditorStateLevel.NAVIGATION -> true
+                else -> otherState == this
+            }
+        }
+
+        companion object {
+            const val CURRENT_VERSION = 1
+        }
+    }
+
+    private companion object {
+        private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
+        private const val PLUGIN_ID = "com.github.luceatluxvestra.markflow"
+        @Volatile
+        private var extractedWebviewRoot: Path? = null
+        @Volatile
+        private var webviewHttpServer: HttpServer? = null
+        @Volatile
+        private var webviewServerPort: Int? = null
+    }
+}
