@@ -171,7 +171,7 @@ async function initEditor() {
     markFlowStage("mermaid:initialized");
 
     // 2. 초기 마크다운 데이터 로드 (Kotlin에서 주입해 준 전역 변수)
-    const initialText = window.intelliJ_initialMarkdown || "# Welcome to MakFlow Editor!";
+    const initialText = window.intelliJ_initialMarkdown || "# Welcome to MarkFlow Editor!";
     markFlowStage("initialText:ready", initialText.slice(0, 48));
 
     // 3. Crepe 에디터 인스턴스 생성

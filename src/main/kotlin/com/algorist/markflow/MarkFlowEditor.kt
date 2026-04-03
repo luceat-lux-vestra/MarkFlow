@@ -54,6 +54,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownCursorOffset = -1
     private var lastKnownSelectionStart = -1
     private var lastKnownSelectionEnd = -1
+    private var sharedResourcesAcquired = false
+    private var disposed = false
 
     init {
         LOG.warn("MARKFLOW_UI editor init: ${file.path}")
@@ -244,8 +246,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private fun loadWebviewIndexUrl(): String? {
         return try {
             LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: start for ${file.path}")
-            val extractedRoot = extractWebviewRoot() ?: return null
-            val port = ensureWebviewHttpServer(extractedRoot) ?: return null
+            val port = acquireSharedWebviewPort() ?: return null
             val indexUrl = "http://127.0.0.1:$port/index.html"
             LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: resolved=$indexUrl")
             indexUrl
@@ -255,99 +256,165 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
     }
 
-    private fun ensureWebviewHttpServer(root: Path): Int? {
+    private fun acquireSharedWebviewPort(): Int? {
+        return synchronized(sharedLifecycleLock) {
+            val extractedRoot = ensureExtractedWebviewRootLocked() ?: return null
+            val port = ensureWebviewHttpServerLocked(extractedRoot) ?: return null
+            sharedWebviewRefCount++
+            sharedResourcesAcquired = true
+            LOG.warn("MARKFLOW_UI shared webview acquired refs=$sharedWebviewRefCount port=$port")
+            port
+        }
+    }
+
+    private fun ensureWebviewHttpServerLocked(root: Path): Int? {
         webviewServerPort?.let { return it }
 
-        synchronized(MarkFlowEditor::class.java) {
-            webviewServerPort?.let { return it }
-
-            return try {
-                val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-                server.createContext("/") { exchange ->
-                    val requestPath = exchange.requestURI?.path.orEmpty()
-                    if (requestPath.isEmpty()) {
-                        exchange.sendResponseHeaders(404, -1)
-                        exchange.close()
-                        return@createContext
-                    }
-
-                    val normalized = if (requestPath == "/") "index.html" else requestPath.removePrefix("/")
-                    val target = root.resolve(normalized).normalize()
-                    if (!target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
-                        exchange.sendResponseHeaders(404, -1)
-                        exchange.close()
-                        return@createContext
-                    }
-
-                    try {
-                        val bytes = Files.readAllBytes(target)
-                        val contentType = Files.probeContentType(target)
-                            ?: URLConnection.guessContentTypeFromName(target.fileName.toString())
-                            ?: "application/octet-stream"
-                        exchange.responseHeaders.set("Content-Type", contentType)
-                        exchange.responseHeaders.set("Cache-Control", "no-cache")
-                        exchange.sendResponseHeaders(200, bytes.size.toLong())
-                        exchange.responseBody.use { output -> output.write(bytes) }
-                    } catch (ioe: IOException) {
-                        LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
-                        exchange.sendResponseHeaders(500, -1)
-                        exchange.close()
-                    }
+        return try {
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { exchange ->
+                val requestPath = exchange.requestURI?.path.orEmpty()
+                if (requestPath.isEmpty()) {
+                    exchange.sendResponseHeaders(404, -1)
+                    exchange.close()
+                    return@createContext
                 }
-                server.executor = null
-                server.start()
-                webviewHttpServer = server
-                webviewServerPort = server.address.port
-                LOG.warn("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
-                server.address.port
+
+                val normalized = if (requestPath == "/") "index.html" else requestPath.removePrefix("/")
+                val target = root.resolve(normalized).normalize()
+                if (!target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
+                    exchange.sendResponseHeaders(404, -1)
+                    exchange.close()
+                    return@createContext
+                }
+
+                try {
+                    val bytes = Files.readAllBytes(target)
+                    val contentType = Files.probeContentType(target)
+                        ?: URLConnection.guessContentTypeFromName(target.fileName.toString())
+                        ?: "application/octet-stream"
+                    exchange.responseHeaders.set("Content-Type", contentType)
+                    exchange.responseHeaders.set("Cache-Control", "no-cache")
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    exchange.responseBody.use { output -> output.write(bytes) }
+                } catch (ioe: IOException) {
+                    LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
+                    exchange.sendResponseHeaders(500, -1)
+                    exchange.close()
+                }
+            }
+            server.executor = null
+            server.start()
+            webviewHttpServer = server
+            webviewServerPort = server.address.port
+            LOG.warn("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
+            server.address.port
+        } catch (ex: Exception) {
+            LOG.error("MARKFLOW_UI failed to start webview HTTP server: ${ex.message}", ex)
+            null
+        }
+    }
+
+    private fun ensureExtractedWebviewRootLocked(): Path? {
+        extractedWebviewRoot?.let { return it }
+
+        val pluginDescriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID)) ?: return null
+        LOG.warn("MARKFLOW_UI extractWebviewRoot: pluginPath=${pluginDescriptor.pluginPath}")
+        val pluginLibDir = pluginDescriptor.pluginPath.resolve("lib").toFile()
+        val pluginJar = pluginLibDir.listFiles()
+            ?.firstOrNull { it.isFile && it.name.endsWith(".jar") && it.name.startsWith("MarkFlow") }
+            ?: return null
+
+        LOG.warn("MARKFLOW_UI extractWebviewRoot: jar=${pluginJar.absolutePath}")
+
+        val tempRoot = Files.createTempDirectory("markflow-webview-")
+        JarFile(pluginJar).use { jar ->
+            val entries = jar.entries()
+            var copied = 0
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
+
+                val target = tempRoot.resolve(entry.name.removePrefix("webview/"))
+                target.parent?.let(Files::createDirectories)
+                jar.getInputStream(entry).use { input ->
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+                    copied++
+                }
+            }
+            LOG.warn("MARKFLOW_UI extractWebviewRoot: extracted=$copied to $tempRoot")
+        }
+
+        extractedWebviewRoot = tempRoot
+        return tempRoot
+    }
+
+    private fun releaseSharedWebviewResources() {
+        if (!sharedResourcesAcquired) {
+            LOG.warn("MARKFLOW_UI release skipped (not acquired): ${file.path}")
+            return
+        }
+
+        synchronized(sharedLifecycleLock) {
+            decrementSharedRefCountLocked()
+
+            LOG.warn("MARKFLOW_UI shared webview released refs=$sharedWebviewRefCount")
+            if (sharedWebviewRefCount > 0) {
+                sharedResourcesAcquired = false
+                return
+            }
+
+            LOG.warn("MARKFLOW_UI shared webview reached zero refs; cleaning global resources")
+
+            stopWebviewServerLocked()
+
+            webviewHttpServer = null
+            webviewServerPort = null
+
+            cleanupExtractedWebviewRootLocked()
+
+            extractedWebviewRoot = null
+            sharedResourcesAcquired = false
+        }
+    }
+
+    private fun decrementSharedRefCountLocked() {
+        if (sharedWebviewRefCount > 0) {
+            sharedWebviewRefCount--
+            return
+        }
+        LOG.warn("MARKFLOW_UI shared refcount underflow guard hit for ${file.path}")
+    }
+
+    private fun stopWebviewServerLocked() {
+        webviewHttpServer?.let { server ->
+            try {
+                server.stop(0)
+                LOG.warn("MARKFLOW_UI webview server stopped")
             } catch (ex: Exception) {
-                LOG.error("MARKFLOW_UI failed to start webview HTTP server: ${ex.message}", ex)
-                null
+                LOG.warn("MARKFLOW_UI failed to stop webview HTTP server: ${ex.message}", ex)
             }
         }
     }
 
-    private fun extractWebviewRoot(): Path? {
-        extractedWebviewRoot?.let { return it }
-
-        synchronized(this) {
-            extractedWebviewRoot?.let { return it }
-
-            val pluginDescriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID)) ?: return null
-            LOG.warn("MARKFLOW_UI extractWebviewRoot: pluginPath=${pluginDescriptor.pluginPath}")
-            val pluginLibDir = pluginDescriptor.pluginPath.resolve("lib").toFile()
-            val pluginJar = pluginLibDir.listFiles()
-                ?.firstOrNull { it.isFile && it.name.endsWith(".jar") && it.name.startsWith("MarkFlow") }
-                ?: return null
-
-            LOG.warn("MARKFLOW_UI extractWebviewRoot: jar=${pluginJar.absolutePath}")
-
-            val tempRoot = Files.createTempDirectory("markflow-webview-")
-            JarFile(pluginJar).use { jar ->
-                val entries = jar.entries()
-                var copied = 0
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
-
-                    val target = tempRoot.resolve(entry.name.removePrefix("webview/"))
-                    target.parent?.let(Files::createDirectories)
-                    jar.getInputStream(entry).use { input ->
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-                        copied++
-                    }
+    private fun cleanupExtractedWebviewRootLocked() {
+        extractedWebviewRoot?.let { root ->
+            try {
+                val deleted = root.toFile().deleteRecursively()
+                if (!deleted && Files.exists(root)) {
+                    LOG.warn("MARKFLOW_UI failed to cleanup extracted webview root: $root")
+                } else {
+                    LOG.warn("MARKFLOW_UI cleaned extracted webview root: $root")
                 }
-                LOG.warn("MARKFLOW_UI extractWebviewRoot: extracted=$copied to $tempRoot")
+            } catch (ex: Exception) {
+                LOG.warn("MARKFLOW_UI failed to cleanup extracted webview root $root: ${ex.message}", ex)
             }
-
-            extractedWebviewRoot = tempRoot
-            return tempRoot
         }
     }
 
     override fun getComponent(): JComponent = browser.component
     override fun getPreferredFocusedComponent(): JComponent = browser.component
-    override fun getName(): String = "MakFlow Editor"
+    override fun getName(): String = "MarkFlow Editor"
     override fun getFile(): VirtualFile = file
     override fun isModified(): Boolean = false
     override fun isValid(): Boolean = true
@@ -416,9 +483,18 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     }
 
     override fun dispose() {
-        debugQuery.dispose()
-        jsQuery.dispose()
-        browser.dispose()
+        if (disposed) return
+        disposed = true
+        LOG.warn("MARKFLOW_UI dispose start: ${file.path}")
+
+        try {
+            debugQuery.dispose()
+            jsQuery.dispose()
+            browser.dispose()
+        } finally {
+            releaseSharedWebviewResources()
+            LOG.warn("MARKFLOW_UI dispose end: ${file.path}")
+        }
     }
 
     private data class MarkFlowEditorState(
@@ -452,5 +528,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         private var webviewHttpServer: HttpServer? = null
         @Volatile
         private var webviewServerPort: Int? = null
+        @Volatile
+        private var sharedWebviewRefCount: Int = 0
+        private val sharedLifecycleLock = Any()
     }
 }
