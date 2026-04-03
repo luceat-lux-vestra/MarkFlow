@@ -1,18 +1,19 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.gradle.language.jvm.tasks.ProcessResources
 
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 plugins {
-    id("java") // Java support
-    alias(libs.plugins.kotlin) // Kotlin support
-    alias(libs.plugins.intelliJPlatform) // IntelliJ Platform Gradle Plugin
-    alias(libs.plugins.changelog) // Gradle Changelog Plugin
-    alias(libs.plugins.qodana) // Gradle Qodana Plugin
-    alias(libs.plugins.kover) // Gradle Kover Plugin
+    id("java") // Java support.
+    alias(libs.plugins.kotlin) // Kotlin support.
+    alias(libs.plugins.intelliJPlatform) // IntelliJ Platform plugin support.
+    alias(libs.plugins.changelog) // Changelog automation.
+    alias(libs.plugins.qodana) // Qodana static analysis.
+    alias(libs.plugins.kover) // Code coverage reporting.
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -26,45 +27,45 @@ kotlin {
     jvmToolchain(21)
 }
 
-// Configure project's dependencies
+// Declare repositories used to resolve project dependencies.
 repositories {
     mavenCentral()
 
-    // IntelliJ Platform Gradle Plugin Repositories Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-repositories-extension.html
+    // Add IntelliJ Platform repositories.
     intellijPlatform {
         defaultRepositories()
     }
 }
 
-// Dependencies are managed with Gradle version catalog - read more: https://docs.gradle.org/current/userguide/version_catalogs.html
+// Configure dependency coordinates.
 dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.opentest4j)
 
-    // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
+    // Configure IntelliJ platform and plugin dependencies.
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
 
-        // Plugin Dependencies. Uses `platformBundledPlugins` property from the gradle.properties file for bundled IntelliJ Platform plugins.
+        // Bundled IntelliJ plugins from `gradle.properties`.
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map { it.split(',') })
 
-        // Plugin Dependencies. Uses `platformPlugins` property from the gradle.properties file for plugin from JetBrains Marketplace.
+        // Marketplace plugins from `gradle.properties`.
         plugins(providers.gradleProperty("platformPlugins").map { it.split(',') })
 
-        // Module Dependencies. Uses `platformBundledModules` property from the gradle.properties file for bundled IntelliJ Platform modules.
+        // Bundled IntelliJ modules from `gradle.properties`.
         bundledModules(providers.gradleProperty("platformBundledModules").map { it.split(',') })
 
         testFramework(TestFrameworkType.Platform)
     }
 }
 
-// Configure IntelliJ Platform Gradle Plugin - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html
+// Configure IntelliJ Platform plugin metadata and publishing settings.
 intellijPlatform {
     pluginConfiguration {
         name = providers.gradleProperty("pluginName")
         version = providers.provider { resolvedPluginVersion }
 
-        // Extract the <!-- Plugin description --> section from README.md and provide for the plugin's manifest
+        // Load plugin description from README markers.
         description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.map {
             val start = "<!-- Plugin description -->"
             val end = "<!-- Plugin description end -->"
@@ -77,8 +78,8 @@ intellijPlatform {
             }
         }
 
-        val changelog = project.changelog // local variable for configuration cache compatibility
-        // Get the latest available change notes from the changelog file
+        val changelog = project.changelog // Keep a local reference for configuration cache compatibility.
+        // Render release notes from the versioned changelog entry or Unreleased fallback.
         changeNotes = providers.provider { resolvedPluginVersion }.map { pluginVersion ->
             with(changelog) {
                 renderItem(
@@ -103,7 +104,7 @@ intellijPlatform {
 
     publishing {
         token = providers.environmentVariable("PUBLISH_TOKEN")
-        // Timestamp versions don't encode release channels; use explicit -PreleaseChannel when needed.
+        // Timestamp versions do not encode channels; override with -PreleaseChannel when needed.
         channels = providers.gradleProperty("releaseChannel").map { listOf(it) }.orElse(listOf("default"))
     }
 
@@ -114,14 +115,14 @@ intellijPlatform {
     }
 }
 
-// Configure Gradle Changelog Plugin - read more: https://github.com/JetBrains/gradle-changelog-plugin
+// Configure changelog generation.
 changelog {
     groups.empty()
     repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
     versionPrefix = ""
 }
 
-// Configure Gradle Kover Plugin - read more: https://kotlin.github.io/kotlinx-kover/gradle-plugin/#configuration-details
+// Configure Kover coverage reporting.
 kover {
     reports {
         total {
@@ -132,13 +133,16 @@ kover {
     }
 }
 
-// Frontend build pipeline (webview)
+// Build pipeline for the webview frontend.
 val isCi = providers.environmentVariable("CI").orNull == "true"
+val webviewDir = file("webview")
+val webviewOutputDir = file("build/webview")
+val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
     description = "Installs webview dependencies"
-    workingDir = file("webview")
+    workingDir = webviewDir
 
     inputs.files(
         file("webview/package.json"),
@@ -150,13 +154,13 @@ val npmInstallWebview by tasks.registering(Exec::class) {
         commandLine(
             "cmd",
             "/c",
-            if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+            npmInstallCommand
         )
     } else {
         commandLine(
             "sh",
             "-c",
-            if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+            npmInstallCommand
         )
     }
 }
@@ -164,7 +168,7 @@ val npmInstallWebview by tasks.registering(Exec::class) {
 val buildWebview by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds the Vite frontend webview"
-    workingDir = file("webview")
+    workingDir = webviewDir
     dependsOn(npmInstallWebview)
 
     inputs.files(
@@ -176,7 +180,7 @@ val buildWebview by tasks.registering(Exec::class) {
         file("webview/package.json"),
         file("webview/package-lock.json")
     )
-    outputs.dir(file("src/main/resources/webview"))
+    outputs.dir(webviewOutputDir)
 
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         commandLine("cmd", "/c", "npm run build")
@@ -185,8 +189,11 @@ val buildWebview by tasks.registering(Exec::class) {
     }
 }
 
-tasks.named("processResources") {
+tasks.named<ProcessResources>("processResources") {
     dependsOn(buildWebview)
+    from(webviewOutputDir) {
+        into("webview")
+    }
 }
 
 tasks.named("runIde") {

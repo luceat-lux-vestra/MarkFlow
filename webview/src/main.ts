@@ -1,19 +1,26 @@
 import {Crepe} from "@milkdown/crepe";
 import {editorViewCtx, parserCtx} from "@milkdown/core";
+import {Slice} from "@milkdown/prose/model";
 import {TextSelection} from "@milkdown/prose/state";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
+import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
 
-// 🚩 무한루프 방지 플래그 (IntelliJ -> JS 주입 중일 때 true)
+// Shared editor state.
+// Prevent feedback loops while applying external IntelliJ updates.
 let isUpdatingFromIntelliJ = false;
 let isCrepeReady = false;
 let pendingMarkdownFromIntelliJ: string | null = null;
 let pendingEditorStateFromIntelliJ: EditorUiState | null = null;
+let removeMarkdownPasteHandler: (() => void) | null = null;
+const EXTERNAL_UPDATE_GUARD_MS = 50;
+const BOOT_READY_TIMEOUT_MS = 5000;
 
-// Mermaid 다이어그램 고유 ID 생성기
+// Generate unique ids for Mermaid preview rendering.
 const uid = () => Math.random().toString(36).substring(7);
 
+// Diagnostics.
 const emitToIntelliJLog = (message: string) => {
     const logger = window.markflowLog;
     if (typeof logger !== "function") return;
@@ -66,12 +73,19 @@ type EditorUiState = {
     selectionEnd: number;
 };
 
+// Editor state helpers.
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const getScrollElement = () => {
     const app = document.getElementById("app");
     return app ?? document.scrollingElement ?? document.documentElement;
 };
+
+function clearExternalUpdateGuardLater() {
+    setTimeout(() => {
+        isUpdatingFromIntelliJ = false;
+    }, EXTERNAL_UPDATE_GUARD_MS);
+}
 
 function captureEditorUiState(crepe: Crepe): EditorUiState {
     let cursorOffset = -1;
@@ -135,6 +149,94 @@ function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string) {
     });
 }
 
+// Markdown clipboard handling.
+function normalizeClipboardMarkdown(text: string) {
+    return text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+}
+
+function hasMarkdownTableStructure(lines: string[]) {
+    const tableLikeLines = lines.filter((line) => /^\s*\|.*\|\s*$/.test(line));
+    if (tableLikeLines.length < 2) return false;
+
+    return lines.some((line) => /^\s*\|?\s*[:\-]{3,}(?:\s*\|\s*[:\-]{3,})+\s*\|?\s*$/.test(line));
+}
+
+function looksLikeMarkdownClipboard(text: string) {
+    const normalized = normalizeClipboardMarkdown(text);
+    const lines = normalized.split("\n");
+
+    if (/^#{1,6}\s+\S/m.test(normalized)) return true;
+    if (/^\s*```/m.test(normalized)) return true;
+    if (/^\s*\$\$/m.test(normalized)) return true;
+    if (/^\s*>\s+\S/m.test(normalized)) return true;
+    if (/^\s*[-*+]\s+\S/m.test(normalized)) return true;
+    if (/^\s*\d+\.\s+\S/m.test(normalized)) return true;
+    if (/^\s*[-*_]{3,}\s*$/m.test(normalized)) return true;
+    if (/!\[[^\]]*]\([^)]+\)/m.test(normalized)) return true;
+    if (/\[[^\]]+]\([^)]+\)/m.test(normalized)) return true;
+    return hasMarkdownTableStructure(lines);
+}
+
+function getMarkdownClipboardText(event: ClipboardEvent) {
+    const clipboardData = event.clipboardData;
+    if (!clipboardData) return null;
+
+    const markdownText = clipboardData.getData("text/markdown");
+    if (markdownText.trim()) return normalizeClipboardMarkdown(markdownText);
+
+    const plainText = clipboardData.getData("text/plain");
+    if (!plainText.trim()) return null;
+
+    const normalizedPlainText = normalizeClipboardMarkdown(plainText);
+    return looksLikeMarkdownClipboard(normalizedPlainText) ? normalizedPlainText : null;
+}
+
+function replaceSelectionWithMarkdown(crepe: Crepe, markdownText: string) {
+    crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const parser = ctx.get(parserCtx);
+
+        try {
+            const doc = parser(markdownText);
+            if (!doc) {
+                view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
+                return;
+            }
+
+            view.dispatch(view.state.tr.replaceSelection(new Slice(doc.content, 0, 0)).scrollIntoView());
+        } catch (error) {
+            console.warn("MARKFLOW_UI markdown paste fallback to plain text", error);
+            view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
+        }
+    });
+}
+
+function installMarkdownPasteHandler(crepe: Crepe) {
+    removeMarkdownPasteHandler?.();
+    removeMarkdownPasteHandler = null;
+
+    crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+
+        const handler = (event: ClipboardEvent) => {
+            const markdownText = getMarkdownClipboardText(event);
+            if (!markdownText) return;
+
+            const selection = view.state.selection;
+            if (selection.$from.parent.type.spec.code || selection.$to.parent.type.spec.code) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            replaceSelectionWithMarkdown(crepe, markdownText);
+        };
+
+        view.dom.addEventListener("paste", handler, true);
+        removeMarkdownPasteHandler = () => view.dom.removeEventListener("paste", handler, true);
+    });
+}
+
 function flushPendingIntelliJState(crepe: Crepe) {
     if (!isCrepeReady) return;
 
@@ -146,9 +248,7 @@ function flushPendingIntelliJState(crepe: Crepe) {
         try {
             replaceEditorMarkdown(crepe, pendingMarkdown);
         } finally {
-            setTimeout(() => {
-                isUpdatingFromIntelliJ = false;
-            }, 50);
+            clearExternalUpdateGuardLater();
         }
     }
 
@@ -160,113 +260,12 @@ function flushPendingIntelliJState(crepe: Crepe) {
     }
 }
 
-async function initEditor() {
-    markFlowStage("init:start");
-    if (!window.cefQuery) {
-        markFlowStage("bridge:missing");
-    }
-
-    // 1. Mermaid 초기화
-    mermaid.initialize({startOnLoad: false, theme: "default"});
-    markFlowStage("mermaid:initialized");
-
-    // 2. 초기 마크다운 데이터 로드 (Kotlin에서 주입해 준 전역 변수)
-    const initialText = window.intelliJ_initialMarkdown || "# Welcome to MarkFlow Editor!";
-    markFlowStage("initialText:ready", initialText.slice(0, 48));
-
-    // 3. Crepe 에디터 인스턴스 생성
-    const crepe = new Crepe({
-        root: document.getElementById("app"),
-        defaultValue: initialText,
-        featureConfigs: {
-            // Mermaid 다이어그램 실시간 렌더링 훅
-            [Crepe.Feature.CodeMirror]: {
-                renderPreview: (language, content, applyPreview) => {
-                    if (language === "mermaid" && content.trim()) {
-                        markFlowStage("mermaid:renderPreview", content.slice(0, 32));
-                        const svgId = `mermaid-svg-${uid()}`;
-                        mermaid.render(svgId, content)
-                            .then((output) => {
-                                applyPreview(output.svg);
-                            })
-                            .catch(() => {
-                                applyPreview("<div class=\"mermaid-error\">Mermaid Syntax Error</div>");
-                            });
-                    }
-                }
-            }
-        }
-    });
-    markFlowStage("crepe:constructed");
-
-    window.updateFromIntelliJ = (newMarkdown: string) => {
-        markFlowStage("bridge:updateFromIntelliJ", newMarkdown.slice(0, 32));
-        if (!isCrepeReady) {
-            pendingMarkdownFromIntelliJ = newMarkdown;
-            return;
-        }
-
-        isUpdatingFromIntelliJ = true;
-        try {
-            replaceEditorMarkdown(crepe, newMarkdown);
-        } finally {
-            setTimeout(() => {
-                isUpdatingFromIntelliJ = false;
-            }, 50);
-        }
-    };
-
-    window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {
-        markFlowStage("bridge:applyEditorState", `${state.scrollTop},${state.cursorOffset}`);
-        if (!isCrepeReady) {
-            pendingEditorStateFromIntelliJ = state;
-            return;
-        }
-
-        applyEditorUiState(crepe, state);
-    };
-
-    // 4. [Web -> IntelliJ] 에디터 내용 변경 감지 (타이핑 시)
-    crepe.on((listener) => {
-        listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
-            // 🔒 IntelliJ에서 외부 주입 중일 때는 다시 쏘지 않음 (무한루프 방지)
-            if (isUpdatingFromIntelliJ) return;
-
-            if (markdown !== prevMarkdown) {
-                sendToIntelliJ(markdown, captureEditorUiState(crepe));
-            }
-        });
-    });
-
-    markFlowStage("crepe:create:start");
-    let createPromise: Promise<unknown>;
-    try {
-        createPromise = crepe.create();
-    } catch (error) {
-        console.error("MARKFLOW_UI crepe:create failed", error);
-        showBootError("crepe:create", String(error));
-        return;
-    }
-    createPromise
-        .then(() => {
-            isCrepeReady = true;
-            markFlowStage("crepe:create:done");
-            flushPendingIntelliJState(crepe);
-        })
-        .catch((error) => {
-            console.error("MARKFLOW_UI crepe:create failed", error);
-            showBootError("crepe:create", String(error));
-        });
-
-    setTimeout(() => {
-        if (!isCrepeReady) {
-            markFlowStage("crepe:create:pending", "still waiting for editor readiness");
-        }
-    }, 5000);
-
-    markFlowStage("init:done");
+function logCrepeCreateFailure(error: unknown) {
+    console.error("MARKFLOW_UI crepe:create failed", error);
+    showBootError("crepe:create", String(error));
 }
 
+// JCEF bridge payload serialization.
 function sanitizeUiState(uiState: EditorUiState): EditorUiState {
     return {
         version: Number.isFinite(uiState.version) ? uiState.version : 1,
@@ -277,7 +276,7 @@ function sanitizeUiState(uiState: EditorUiState): EditorUiState {
     };
 }
 
-// JCEF 브릿지를 통해 Kotlin으로 JSON 전송
+// Send JSON payloads to Kotlin via the JCEF bridge.
 function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
     if (!window.cefQuery) {
         return;
@@ -308,5 +307,111 @@ function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
         }
     });
 }
+
+async function initEditor() {
+    markFlowStage("init:start");
+    if (!window.cefQuery) {
+        markFlowStage("bridge:missing");
+    }
+
+    // 1) Initialize Mermaid.
+    mermaid.initialize({startOnLoad: false, theme: "default"});
+    markFlowStage("mermaid:initialized");
+
+    // 2) Load initial markdown injected by Kotlin.
+    const initialText = window.intelliJ_initialMarkdown || "# Welcome to MarkFlow Editor!";
+    markFlowStage("initialText:ready", initialText.slice(0, 48));
+
+    // 3) Create the Crepe editor instance.
+    const crepe = new Crepe({
+        root: document.getElementById("app"),
+        defaultValue: initialText,
+        featureConfigs: {
+            // Hook for live Mermaid preview rendering.
+            [Crepe.Feature.CodeMirror]: {
+                renderPreview: (language, content, applyPreview) => {
+                    if (language === "mermaid" && content.trim()) {
+                        markFlowStage("mermaid:renderPreview", content.slice(0, 32));
+                        const svgId = `mermaid-svg-${uid()}`;
+                        mermaid.render(svgId, content)
+                            .then((output) => {
+                                applyPreview(output.svg);
+                            })
+                            .catch(() => {
+                                applyPreview("<div class=\"mermaid-error\">Mermaid Syntax Error</div>");
+                            });
+                    }
+                }
+            },
+            [Crepe.Feature.Latex]: {}
+        }
+    });
+    markFlowStage("crepe:constructed");
+
+    window.updateFromIntelliJ = (newMarkdown: string) => {
+        markFlowStage("bridge:updateFromIntelliJ", newMarkdown.slice(0, 32));
+        if (!isCrepeReady) {
+            pendingMarkdownFromIntelliJ = newMarkdown;
+            return;
+        }
+
+        isUpdatingFromIntelliJ = true;
+        try {
+            replaceEditorMarkdown(crepe, newMarkdown);
+        } finally {
+            clearExternalUpdateGuardLater();
+        }
+    };
+
+    window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {
+        markFlowStage("bridge:applyEditorState", `${state.scrollTop},${state.cursorOffset}`);
+        if (!isCrepeReady) {
+            pendingEditorStateFromIntelliJ = state;
+            return;
+        }
+
+        applyEditorUiState(crepe, state);
+    };
+
+    // 4) Propagate editor changes from webview to IntelliJ.
+    crepe.on((listener) => {
+        listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
+            // Skip bridge callbacks while external updates are being applied.
+            if (isUpdatingFromIntelliJ) return;
+
+            if (markdown !== prevMarkdown) {
+                sendToIntelliJ(markdown, captureEditorUiState(crepe));
+            }
+        });
+    });
+
+    markFlowStage("crepe:create:start");
+    let createPromise: Promise<unknown>;
+    try {
+        createPromise = crepe.create();
+    } catch (error) {
+        logCrepeCreateFailure(error);
+        return;
+    }
+    createPromise
+        .then(() => {
+            isCrepeReady = true;
+            markFlowStage("crepe:create:done");
+            installMarkdownPasteHandler(crepe);
+            flushPendingIntelliJState(crepe);
+        })
+        .catch((error) => {
+            logCrepeCreateFailure(error);
+        });
+
+    setTimeout(() => {
+        if (!isCrepeReady) {
+            markFlowStage("crepe:create:pending", "still waiting for editor readiness");
+        }
+    }, BOOT_READY_TIMEOUT_MS);
+
+    markFlowStage("init:done");
+}
+
 
 initEditor();
