@@ -55,7 +55,8 @@ data class MarkFlowSettingsState(
     var backgroundPreviewPolicy: String = BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE.name,
     var mermaidErrorDisplay: String = MermaidErrorDisplay.INLINE_ERROR_BOX.name,
     var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
-    var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name
+    var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
+    var previewOnlyByDefault: Boolean = true
 )
 
 data class MarkFlowRuntimeSettings(
@@ -68,6 +69,7 @@ data class MarkFlowRuntimeSettings(
     val mermaidErrorDisplay: String,
     val katexDisplayDensity: String,
     val diagramSecurityLevel: String,
+    val previewOnlyByDefault: Boolean,
     val manualRenderToolbarLabel: String,
     val manualRenderInlineLabel: String,
     val manualRenderShortcutHint: String,
@@ -94,20 +96,21 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     }
 
     fun updateFromUi(newState: MarkFlowSettingsState) {
-        val previousThemeSource = state.themeSource
-        val previousSecurityLevel = state.diagramSecurityLevel
+        val previousState = state.copy().also { normalize(it) }
         XmlSerializerUtil.copyBean(newState, state)
         normalize()
-        val nextRevision = settingsRevision.incrementAndGet()
-        val requiresWebviewReload =
-            previousThemeSource != state.themeSource || previousSecurityLevel != state.diagramSecurityLevel
+        val changed = previousState != state
+        val nextRevision = if (changed) settingsRevision.incrementAndGet() else settingsRevision.get()
         LOG.warn(
-            "MARKFLOW_SETTINGS updateFromUi themeSource=$previousThemeSource -> ${state.themeSource}, " +
-                "security=$previousSecurityLevel -> ${state.diagramSecurityLevel}, " +
+            "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +
+                "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +
+                "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +
                 "renderTrigger=${state.renderTriggerMode}, debounceMs=${state.renderDebounceMs}, " +
-                "revision=$nextRevision, requiresReload=$requiresWebviewReload"
+                "revision=$nextRevision"
         )
-        MarkFlowEditor.notifyRuntimeSettingsChanged(requiresWebviewReload)
+        if (changed) {
+            MarkFlowEditor.notifyRuntimeSettingsChanged(forceReload = false)
+        }
     }
 
     fun runtimeSettings(): MarkFlowRuntimeSettings {
@@ -128,6 +131,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             mermaidErrorDisplay = state.mermaidErrorDisplay,
             katexDisplayDensity = state.katexDisplayDensity,
             diagramSecurityLevel = state.diagramSecurityLevel,
+            previewOnlyByDefault = state.previewOnlyByDefault,
             manualRenderToolbarLabel = MyBundle.message("preview.manual.toolbarButton"),
             manualRenderInlineLabel = MyBundle.message("preview.manual.inlineButton"),
             manualRenderShortcutHint = MyBundle.message("preview.manual.shortcutHint"),
@@ -151,16 +155,16 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         return ideResolved
     }
 
-    private fun normalize() {
-        state.mermaidSizeMode = normalizeEnum(state.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
-        state.themeSource = normalizeEnum(state.themeSource, ThemeSource.LIGHT)
-        state.renderTriggerMode = normalizeEnum(state.renderTriggerMode, RenderTriggerMode.LIVE)
-        state.backgroundPreviewPolicy = normalizeEnum(state.backgroundPreviewPolicy, BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE)
-        state.mermaidErrorDisplay = normalizeEnum(state.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
-        state.katexDisplayDensity = normalizeEnum(state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
-        state.diagramSecurityLevel = normalizeEnum(state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
-        state.mermaidZoomPercent = state.mermaidZoomPercent.coerceIn(50, 200)
-        state.renderDebounceMs = state.renderDebounceMs.coerceIn(300, 800)
+    private fun normalize(target: MarkFlowSettingsState = state) {
+        target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
+        target.themeSource = normalizeEnum(target.themeSource, ThemeSource.LIGHT)
+        target.renderTriggerMode = normalizeEnum(target.renderTriggerMode, RenderTriggerMode.LIVE)
+        target.backgroundPreviewPolicy = normalizeEnum(target.backgroundPreviewPolicy, BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE)
+        target.mermaidErrorDisplay = normalizeEnum(target.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
+        target.katexDisplayDensity = normalizeEnum(target.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
+        target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
+        target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
+        target.renderDebounceMs = target.renderDebounceMs.coerceIn(300, 800)
     }
 
     private inline fun <reified T : Enum<T>> normalizeEnum(raw: String, fallback: T): String {

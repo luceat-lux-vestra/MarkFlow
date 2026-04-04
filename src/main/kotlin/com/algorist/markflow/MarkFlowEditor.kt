@@ -86,24 +86,42 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
                 val json = parsed.asJsonObject
                 val action = json["action"]?.takeIf { it.isJsonPrimitive }?.asString
-                if (action != "update") {
-                    return@addHandler JBCefJSQuery.Response("Ignored")
+                when (action) {
+                    "update" -> {
+                        val newContent = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
+
+                        // Keep optional UI state from web payload when available.
+                        lastKnownScrollTop = readJsonInt(json, "scrollTop", lastKnownScrollTop)
+                        lastKnownCursorOffset = readJsonInt(json, "cursorOffset", lastKnownCursorOffset)
+                        lastKnownSelectionStart = readJsonInt(json, "selectionStart", lastKnownSelectionStart)
+                        lastKnownSelectionEnd = readJsonInt(json, "selectionEnd", lastKnownSelectionEnd)
+
+                        scheduleWebToDocumentApply(newContent)
+                        JBCefJSQuery.Response("Success")
+                    }
+
+                    "recovery:request" -> {
+                        val reason = json["reason"]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                        val response = claimRecoveryLease(this, reason)
+                        JBCefJSQuery.Response(gson.toJson(response))
+                    }
+
+                    "recovery:complete" -> {
+                        val epoch = json["epoch"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                            ?.asInt ?: -1
+                        val response = completeRecoveryLease(this, epoch, success = true)
+                        JBCefJSQuery.Response(gson.toJson(response))
+                    }
+
+                    "recovery:failed" -> {
+                        val epoch = json["epoch"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                            ?.asInt ?: -1
+                        val response = completeRecoveryLease(this, epoch, success = false)
+                        JBCefJSQuery.Response(gson.toJson(response))
+                    }
+
+                    else -> JBCefJSQuery.Response("Ignored")
                 }
-
-                val newContent = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
-
-                // Keep optional UI state from web payload when available.
-                lastKnownScrollTop = json["scrollTop"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                    ?.asInt ?: lastKnownScrollTop
-                lastKnownCursorOffset = json["cursorOffset"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                    ?.asInt ?: lastKnownCursorOffset
-                lastKnownSelectionStart = json["selectionStart"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                    ?.asInt ?: lastKnownSelectionStart
-                lastKnownSelectionEnd = json["selectionEnd"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-                    ?.asInt ?: lastKnownSelectionEnd
-
-                scheduleWebToDocumentApply(newContent)
-                 JBCefJSQuery.Response("Success")
              } catch (ex: Exception) {
                  LOG.warn("Failed to parse JS bridge request for ${file.path}: ${ex.message}", ex)
                  JBCefJSQuery.Response(null, 500, "Error parsing request")
@@ -711,6 +729,25 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         applyRuntimeSettingsToWebview(forceReload)
     }
 
+    private fun resyncAfterRecovery(epoch: Int) {
+        if (disposed) {
+            return
+        }
+
+        val markdown = document?.text ?: ""
+        LOG.warn("MARKFLOW_DIAG recovery:resync file=${file.path} epoch=$epoch loaded=$webViewLoaded")
+        pushMarkdownToWebview(markdown)
+        applyPendingState()
+    }
+
+    private fun readJsonInt(json: com.google.gson.JsonObject, key: String, fallback: Int): Int {
+        val element = json[key]
+        if (element == null || !element.isJsonPrimitive || !element.asJsonPrimitive.isNumber) {
+            return fallback
+        }
+        return element.asInt
+    }
+
     private fun registerOpenEditor() {
         synchronized(openEditorsLock) {
             openEditors.add(this)
@@ -854,6 +891,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         private val sharedLifecycleLock = Any()
         private val openEditorsLock = Any()
         private val openEditors = mutableSetOf<MarkFlowEditor>()
+        private val recoveryLock = Any()
+        private val recoveryLeasesByFile = mutableMapOf<String, RecoveryLease>()
 
         fun notifyRuntimeSettingsChanged(forceReload: Boolean = false) {
             val snapshot = synchronized(openEditorsLock) { openEditors.toList() }
@@ -875,7 +914,104 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             app.invokeLater(applyAll)
         }
 
+        private fun claimRecoveryLease(editor: MarkFlowEditor, reason: String): RecoveryBridgeResponse {
+            synchronized(recoveryLock) {
+                val current = recoveryLeasesByFile[editor.file.path]
+                val currentLeader = current?.leader
+                val currentLeaderValid = currentLeader != null && !currentLeader.disposed
+
+                if (!currentLeaderValid || currentLeader === editor) {
+                    val nextEpoch = if (currentLeaderValid) current.epoch else (current?.epoch ?: 0) + 1
+                    val lease = RecoveryLease(epoch = nextEpoch, leader = editor)
+                    recoveryLeasesByFile[editor.file.path] = lease
+                    LOG.warn(
+                        "MARKFLOW_DIAG recovery:claim leader file=${editor.file.path} " +
+                            "epoch=$nextEpoch reason=$reason"
+                    )
+                    return RecoveryBridgeResponse(
+                        role = "leader",
+                        epoch = nextEpoch,
+                        filePath = editor.file.path,
+                        reason = reason
+                    )
+                }
+
+                LOG.warn(
+                    "MARKFLOW_DIAG recovery:claim follower file=${editor.file.path} " +
+                        "epoch=${current.epoch} leader=${currentLeader.file.path} reason=$reason"
+                )
+                return RecoveryBridgeResponse(
+                    role = "follower",
+                    epoch = current.epoch,
+                    filePath = editor.file.path,
+                    reason = reason
+                )
+            }
+        }
+
+        @Suppress("ReturnCount")
+        private fun completeRecoveryLease(
+            editor: MarkFlowEditor,
+            epoch: Int,
+            success: Boolean
+        ): RecoveryBridgeResponse {
+            val reason = if (success) "complete" else "failed"
+            var response = RecoveryBridgeResponse(
+                role = "ignored",
+                epoch = epoch,
+                filePath = editor.file.path,
+                reason = reason
+            )
+            var followers: List<MarkFlowEditor> = emptyList()
+
+            synchronized(recoveryLock) {
+                val current = recoveryLeasesByFile[editor.file.path]
+                if (current?.leader === editor && current.epoch == epoch) {
+                    recoveryLeasesByFile.remove(editor.file.path)
+                    followers = synchronized(openEditorsLock) {
+                        openEditors
+                            .asSequence()
+                            .filter { it.file.path == editor.file.path && it !== editor && !it.disposed }
+                            .toList()
+                    }
+                    LOG.warn(
+                        "MARKFLOW_DIAG recovery:release file=${editor.file.path} " +
+                            "epoch=$epoch success=$success followers=${followers.size}"
+                    )
+                    response = RecoveryBridgeResponse(
+                        role = reason,
+                        epoch = epoch,
+                        filePath = editor.file.path,
+                        reason = reason
+                    )
+                }
+            }
+
+            if (success && followers.isNotEmpty()) {
+                val app = ApplicationManager.getApplication()
+                app.invokeLater {
+                    followers.forEach { follower ->
+                        follower.resyncAfterRecovery(epoch)
+                    }
+                }
+            }
+
+            return response
+        }
+
         private val settingsPushSequence = AtomicInteger(0)
         private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
+
+        private data class RecoveryLease(
+            val epoch: Int,
+            val leader: MarkFlowEditor
+        )
+
+        private data class RecoveryBridgeResponse(
+            val role: String,
+            val epoch: Int,
+            val filePath: String,
+            val reason: String
+        )
     }
 }

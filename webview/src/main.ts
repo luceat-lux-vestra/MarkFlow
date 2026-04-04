@@ -26,14 +26,29 @@ const MANUAL_MERMAID_SHORTCUT_KEY = "r";
 const MERMAID_RENDER_TIMEOUT_MS = 8000;
 let mermaidRenderQueue: Promise<void> = Promise.resolve();
 let mermaidRenderRequestId = 0;
+let mermaidPreviewEpoch = 0;
 let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
 let pendingLayoutRecovery = false;
 let externalUpdateGuardToken = 0;
+let isRecreatingCrepe = false;
+let pendingCrepeRecreate = false;
+let hasAppliedRuntimeSettingsOnce = false;
+let lastAppliedPreviewOnlyByDefault = true;
+let recoveryRequestInFlight = false;
+let activeRecoveryEpoch: number | null = null;
+let activeRecoveryRole: RecoveryRole | null = null;
+let pendingPausedPreviewRefresh = false;
+let previewResumeRetryToken = 0;
+let crepeSessionSequence = 0;
+let activeCrepeSessionId = 0;
 const mermaidDebounceTimers = new WeakMap<(html: string) => void, number>();
+const allMermaidDebounceTimerIds = new Set<number>();
 const latestMermaidRequestByPreview = new WeakMap<(html: string) => void, number>();
 const manualPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
+const pausedMermaidRenderers = new Map<string, () => void>();
+const pausedPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
 
 const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
@@ -45,6 +60,7 @@ const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidErrorDisplay: "INLINE_ERROR_BOX",
     katexDisplayDensity: "COMFORTABLE",
     diagramSecurityLevel: "STRICT",
+    previewOnlyByDefault: true,
     manualRenderToolbarLabel: "Render Mermaid",
     manualRenderInlineLabel: "Render Mermaid Preview",
     manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Shift+R",
@@ -183,6 +199,47 @@ const renderAllManualMermaidPreviews = () => {
     renderers.forEach((render) => render());
 };
 
+const unregisterPausedMermaidPreview = (applyPreview: (html: string) => void) => {
+    const pausedId = pausedPreviewIdByRenderer.get(applyPreview);
+    if (!pausedId) return;
+    pausedMermaidRenderers.delete(pausedId);
+    pausedPreviewIdByRenderer.delete(applyPreview);
+};
+
+const registerPausedMermaidPreview = (applyPreview: (html: string) => void, render: () => void) => {
+    unregisterPausedMermaidPreview(applyPreview);
+    const pausedId = `paused-mermaid-${uid()}`;
+    pausedPreviewIdByRenderer.set(applyPreview, pausedId);
+    pausedMermaidRenderers.set(pausedId, () => {
+        pausedMermaidRenderers.delete(pausedId);
+        pausedPreviewIdByRenderer.delete(applyPreview);
+        render();
+    });
+};
+
+const renderAllPausedMermaidPreviews = () => {
+    const renderers = Array.from(pausedMermaidRenderers.values());
+    pausedMermaidRenderers.clear();
+    renderers.forEach((render) => render());
+    pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
+};
+
+const clearAllMermaidDebounceTimers = () => {
+    allMermaidDebounceTimerIds.forEach((timerId) => window.clearTimeout(timerId));
+    allMermaidDebounceTimerIds.clear();
+};
+
+const invalidateMermaidPreviewLifecycle = (reason: string) => {
+    mermaidPreviewEpoch += 1;
+    mermaidRenderRequestId += 1;
+    pendingPausedPreviewRefresh = false;
+    manualMermaidRenderers.clear();
+    pausedMermaidRenderers.clear();
+    clearAllMermaidDebounceTimers();
+    mermaidRenderQueue = Promise.resolve();
+    emitToIntelliJLog(`MARKFLOW_UI mermaid:lifecycleInvalidated reason=${reason} epoch=${mermaidPreviewEpoch}`);
+};
+
 const ensureManualPreviewToolbar = () => {
     const existing = document.getElementById("markflow-manual-refresh");
     if (runtimeSettings.renderTriggerMode !== "MANUAL_REFRESH") {
@@ -226,16 +283,11 @@ const rerenderPreviewsAfterSettingsChange = () => {
     );
     if (!activeCrepe || !isCrepeReady) return;
 
-    const currentMarkdown = activeCrepe.getMarkdown();
-    const toggleMarkdown = currentMarkdown.endsWith("\n")
-        ? currentMarkdown.slice(0, -1)
-        : `${currentMarkdown}\n`;
+    const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
+    const currentMarkdown = safeReadMarkdown(activeCrepe, fallbackMarkdown, "rerender");
 
     beginExternalUpdateGuard();
     try {
-        if (toggleMarkdown !== currentMarkdown) {
-            replaceEditorMarkdown(activeCrepe, toggleMarkdown, true);
-        }
         replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
     } finally {
         clearExternalUpdateGuardLater();
@@ -258,13 +310,15 @@ const rerenderPreviewsAfterSettingsChange = () => {
 const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) => {
     emitToIntelliJLog(`MARKFLOW_UI settings:raw ${JSON.stringify(raw ?? {})}`);
     runtimeSettings = resolveRuntimeSettings(raw);
+    const previewOnlyByDefaultChanged =
+        hasAppliedRuntimeSettingsOnce && lastAppliedPreviewOnlyByDefault !== runtimeSettings.previewOnlyByDefault;
     const nextRevision = Number.isFinite(runtimeSettings.settingsRevision)
         ? Number(runtimeSettings.settingsRevision)
         : -1;
     const nextTheme = resolveMermaidTheme();
 
     // Ignore duplicated pushes for the same applied revision/theme to prevent rerender storms.
-    if (nextRevision === lastAppliedSettingsRevision && nextTheme === lastAppliedMermaidTheme) {
+    if (!previewOnlyByDefaultChanged && nextRevision === lastAppliedSettingsRevision && nextTheme === lastAppliedMermaidTheme) {
         emitToIntelliJLog(
             `MARKFLOW_UI settings:skipDuplicate revision=${nextRevision} theme=${nextTheme}`
         );
@@ -277,6 +331,7 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     emitToIntelliJLog(
         `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${runtimeSettings.themeSource} security=${runtimeSettings.diagramSecurityLevel}`
     );
+    invalidateMermaidPreviewLifecycle(`settings:${nextRevision}`);
     logThemeDiagnostics(raw, nextTheme);
     reconfigureMermaid();
     lastAppliedMermaidTheme = nextTheme;
@@ -288,6 +343,20 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     }
     applyRuntimeUiSettings();
     ensureManualPreviewToolbar();
+    hasAppliedRuntimeSettingsOnce = true;
+    lastAppliedPreviewOnlyByDefault = runtimeSettings.previewOnlyByDefault;
+
+    if (previewOnlyByDefaultChanged) {
+        emitToIntelliJLog("MARKFLOW_UI settings:previewOnlyByDefault changed -> recreate crepe");
+        if (!isCrepeReady || !activeCrepe || isRecreatingCrepe) {
+            pendingCrepeRecreate = true;
+            emitToIntelliJLog("MARKFLOW_UI settings:previewOnlyByDefault recreate queued");
+            return;
+        }
+        void recreateCrepeInstance("settings:previewOnlyByDefault");
+        return;
+    }
+
     if (!isCrepeReady || !activeCrepe) {
         pendingSettingsRerenderRevision = lastAppliedSettingsRevision;
         console.info(`MARKFLOW_UI rerender:queued revision=${lastAppliedSettingsRevision}`);
@@ -317,6 +386,32 @@ const shouldPausePreviewRender = () => {
     return runtimeSettings.backgroundPreviewPolicy === "PAUSE_WHEN_TAB_INACTIVE" && !isEditorActive;
 };
 
+const requestPreviewResumeRefresh = (reason: string) => {
+    const resumeToken = ++previewResumeRetryToken;
+
+    const runResume = () => {
+        if (resumeToken !== previewResumeRetryToken) {
+            return;
+        }
+
+        if (!pendingPausedPreviewRefresh) {
+            recoverEditorLayout(reason);
+            return;
+        }
+
+        if (!isEditorActive || document.visibilityState === "hidden") {
+            window.setTimeout(runResume, 50);
+            return;
+        }
+
+        renderAllPausedMermaidPreviews();
+        pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
+        window.dispatchEvent(new Event("resize"));
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(runResume));
+};
+
 const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: string) => void) => {
     if (runtimeSettings.renderTriggerMode === "LIVE") {
         logMermaidTrace("trigger live");
@@ -330,14 +425,17 @@ const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: s
             const previousTimerId = mermaidDebounceTimers.get(applyPreviewKey);
             if (previousTimerId !== undefined) {
                 window.clearTimeout(previousTimerId);
+                allMermaidDebounceTimerIds.delete(previousTimerId);
             }
         }
         const timerId = window.setTimeout(() => {
+            allMermaidDebounceTimerIds.delete(timerId);
             if (applyPreviewKey) {
                 mermaidDebounceTimers.delete(applyPreviewKey);
             }
             renderNow();
         }, runtimeSettings.renderDebounceMs);
+        allMermaidDebounceTimerIds.add(timerId);
         if (applyPreviewKey) {
             mermaidDebounceTimers.set(applyPreviewKey, timerId);
         }
@@ -390,14 +488,83 @@ const showBootError = (stage: string, detail: string) => {
     `;
 };
 
+const clearRecoveryState = (reason: string) => {
+    if (activeRecoveryEpoch === null && activeRecoveryRole === null && !recoveryRequestInFlight) {
+        return;
+    }
+
+    emitToIntelliJLog(
+        `MARKFLOW_UI recovery:clear reason=${reason} epoch=${activeRecoveryEpoch ?? -1} role=${activeRecoveryRole ?? "none"}`
+    );
+    activeRecoveryEpoch = null;
+    activeRecoveryRole = null;
+    recoveryRequestInFlight = false;
+};
+
+const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, reason: string) => {
+    if (!window.cefQuery) {
+        clearRecoveryState(`notify:${status}:bridgeMissing`);
+        return;
+    }
+
+    const request = JSON.stringify({
+        action: `recovery:${status}`,
+        epoch,
+        reason
+    });
+
+    window.cefQuery({
+        request,
+        onSuccess: (response) => {
+            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"}`);
+            clearRecoveryState(`notify:${status}:ack`);
+        },
+        onFailure: (_errCode, errMsg) => {
+            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg}`);
+            clearRecoveryState(`notify:${status}:failed`);
+        }
+    });
+};
+
+const isEditorViewContextError = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("Context \"editorView\" not found");
+};
+
+const logEditorViewContextError = (reason: string, error: unknown) => {
+    emitToIntelliJLog(`MARKFLOW_UI ${reason} editorView context missing: ${String(error)}`);
+};
+
+
+const safeReadMarkdown = (crepe: Crepe, fallback: string, reason: string): string => {
+    try {
+        return crepe.getMarkdown();
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI markdown:read failed reason=${reason} error=${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError(`markdownRead:${reason}`, error);
+        }
+        return fallback;
+    }
+};
+
 window.addEventListener("error", (event) => {
-    markFlowStage("window:error", event.message || "unknown error");
-    showBootError("window:error", event.message || String(event.error ?? "unknown error"));
+    const detail = event.message || String(event.error ?? "unknown error");
+    markFlowStage("window:error", detail);
+    if (isEditorViewContextError(event.error ?? detail)) {
+        logEditorViewContextError("window:error", event.error ?? detail);
+        return;
+    }
+    showBootError("window:error", detail);
 });
 
 window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
     markFlowStage("window:unhandledrejection", reason);
+    if (isEditorViewContextError(event.reason ?? reason)) {
+        logEditorViewContextError("window:unhandledrejection", event.reason ?? reason);
+        return;
+    }
     showBootError("window:unhandledrejection", reason);
 });
 
@@ -409,6 +576,8 @@ type EditorUiState = {
     selectionEnd: number;
 };
 
+type RecoveryRole = "leader" | "follower";
+
 // Editor state helpers.
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -416,6 +585,7 @@ const getScrollElement = () => {
     const app = document.getElementById("app");
     return app ?? document.scrollingElement ?? document.documentElement;
 };
+
 
 const recoverEditorLayout = (reason: string) => {
     if (!activeCrepe || !isCrepeReady) {
@@ -457,13 +627,17 @@ function captureEditorUiState(crepe: Crepe): EditorUiState {
     let selectionStart = -1;
     let selectionEnd = -1;
 
-    crepe.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        const selection = view.state.selection;
-        cursorOffset = selection.head;
-        selectionStart = Math.min(selection.from, selection.to);
-        selectionEnd = Math.max(selection.from, selection.to);
-    });
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const selection = view.state.selection;
+            cursorOffset = selection.head;
+            selectionStart = Math.min(selection.from, selection.to);
+            selectionEnd = Math.max(selection.from, selection.to);
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI state:capture skipped ${String(error)}`);
+    }
 
     return {
         version: 1,
@@ -477,24 +651,31 @@ function captureEditorUiState(crepe: Crepe): EditorUiState {
 function applyEditorUiState(crepe: Crepe, state: Partial<EditorUiState>) {
     const scrollTop = Math.max(0, state.scrollTop ?? 0);
 
-    crepe.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        const docSize = view.state.doc.content.size;
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const docSize = view.state.doc.content.size;
 
-        const fallbackCursor = state.cursorOffset ?? -1;
-        const rawStart = state.selectionStart ?? fallbackCursor;
-        const rawEnd = state.selectionEnd ?? fallbackCursor;
+            const fallbackCursor = state.cursorOffset ?? -1;
+            const rawStart = state.selectionStart ?? fallbackCursor;
+            const rawEnd = state.selectionEnd ?? fallbackCursor;
 
-        if (rawStart == null || rawEnd == null || rawStart < 0 || rawEnd < 0) {
-            return;
+            if (rawStart == null || rawEnd == null || rawStart < 0 || rawEnd < 0) {
+                return;
+            }
+
+            const start = clamp(rawStart, 0, docSize);
+            const end = clamp(rawEnd, 0, docSize);
+            const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, start, end));
+            view.dispatch(tr);
+            view.focus();
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI state:apply skipped ${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError("state:apply", error);
         }
-
-        const start = clamp(rawStart, 0, docSize);
-        const end = clamp(rawEnd, 0, docSize);
-        const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, start, end));
-        view.dispatch(tr);
-        view.focus();
-    });
+    }
 
     requestAnimationFrame(() => {
         getScrollElement().scrollTop = scrollTop;
@@ -502,20 +683,27 @@ function applyEditorUiState(crepe: Crepe, state: Partial<EditorUiState>) {
 }
 
 function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string, skipHistory = false) {
-    crepe.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        const parser = ctx.get(parserCtx);
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const parser = ctx.get(parserCtx);
 
-        const doc = parser(newMarkdown);
-        if (!doc) return;
+            const doc = parser(newMarkdown);
+            if (!doc) return;
 
-        const state = view.state;
-        const tr = state.tr.replaceWith(0, state.doc.content.size, doc);
-        if (skipHistory) {
-            tr.setMeta("addToHistory", false);
+            const state = view.state;
+            const tr = state.tr.replaceWith(0, state.doc.content.size, doc);
+            if (skipHistory) {
+                tr.setMeta("addToHistory", false);
+            }
+            view.dispatch(tr);
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI markdown:replace skipped ${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError("markdown:replace", error);
         }
-        view.dispatch(tr);
-    });
+    }
 }
 
 // Markdown clipboard handling.
@@ -561,49 +749,63 @@ function getMarkdownClipboardText(event: ClipboardEvent) {
 }
 
 function replaceSelectionWithMarkdown(crepe: Crepe, markdownText: string) {
-    crepe.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        const parser = ctx.get(parserCtx);
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const parser = ctx.get(parserCtx);
 
-        try {
-            const doc = parser(markdownText);
-            if (!doc) {
+            try {
+                const doc = parser(markdownText);
+                if (!doc) {
+                    view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
+                    return;
+                }
+
+                view.dispatch(view.state.tr.replaceSelection(new Slice(doc.content, 0, 0)).scrollIntoView());
+            } catch (error) {
+                console.warn("MARKFLOW_UI markdown paste fallback to plain text", error);
                 view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
-                return;
             }
-
-            view.dispatch(view.state.tr.replaceSelection(new Slice(doc.content, 0, 0)).scrollIntoView());
-        } catch (error) {
-            console.warn("MARKFLOW_UI markdown paste fallback to plain text", error);
-            view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI paste:replace skipped ${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError("paste:replaceSelection", error);
         }
-    });
+    }
 }
 
 function installMarkdownPasteHandler(crepe: Crepe) {
     removeMarkdownPasteHandler?.();
     removeMarkdownPasteHandler = null;
 
-    crepe.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
 
-        const handler = (event: ClipboardEvent) => {
-            const markdownText = getMarkdownClipboardText(event);
-            if (!markdownText) return;
+            const handler = (event: ClipboardEvent) => {
+                const markdownText = getMarkdownClipboardText(event);
+                if (!markdownText) return;
 
-            const selection = view.state.selection;
-            if (selection.$from.parent.type.spec.code || selection.$to.parent.type.spec.code) {
-                return;
-            }
+                const selection = view.state.selection;
+                if (selection.$from.parent.type.spec.code || selection.$to.parent.type.spec.code) {
+                    return;
+                }
 
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            replaceSelectionWithMarkdown(crepe, markdownText);
-        };
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                replaceSelectionWithMarkdown(crepe, markdownText);
+            };
 
-        view.dom.addEventListener("paste", handler, true);
-        removeMarkdownPasteHandler = () => view.dom.removeEventListener("paste", handler, true);
-    });
+            view.dom.addEventListener("paste", handler, true);
+            removeMarkdownPasteHandler = () => view.dom.removeEventListener("paste", handler, true);
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI paste:install skipped ${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError("paste:install", error);
+        }
+    }
 }
 
 function flushPendingIntelliJState(crepe: Crepe) {
@@ -677,6 +879,240 @@ function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
     });
 }
 
+function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe {
+    return new Crepe({
+        root: document.getElementById("app"),
+        defaultValue: initialText,
+        featureConfigs: {
+            [Crepe.Feature.CodeMirror]: {
+                previewOnlyByDefault: runtimeSettings.previewOnlyByDefault,
+                renderPreview: (language, content, applyPreview) => {
+                    if (isMermaidLanguage(language) && content.trim()) {
+                        const renderEpoch = mermaidPreviewEpoch;
+                        const requestId = ++mermaidRenderRequestId;
+                        const isRenderContextActive = () => {
+                            return renderEpoch === mermaidPreviewEpoch && crepeSessionId === activeCrepeSessionId;
+                        };
+
+                        if (!isRenderContextActive()) {
+                            return;
+                        }
+
+                        latestMermaidRequestByPreview.set(applyPreview, requestId);
+                        const isLatestRequest = () => latestMermaidRequestByPreview.get(applyPreview) === requestId;
+                        markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
+                        logMermaidTrace(
+                            `renderPreview id=${requestId} theme=${lastAppliedMermaidTheme} len=${content.length}`
+                        );
+                        const renderNow = () => {
+                            const scheduledRevision = lastAppliedSettingsRevision;
+                            const scheduledTheme = lastAppliedMermaidTheme;
+                            const svgId = `mermaid-svg-${uid()}`;
+
+                            logMermaidTrace(
+                                `queued id=${requestId} revision=${scheduledRevision} theme=${scheduledTheme}`
+                            );
+
+                            enqueueMermaidRender(async () => {
+                                if (!isRenderContextActive()) {
+                                    logMermaidTrace(`staleContext id=${requestId} phase=beforeRender`);
+                                    return;
+                                }
+                                logMermaidTrace(`start id=${requestId} svg=${svgId}`);
+                                try {
+                                    const output = await withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
+                                    if (!isRenderContextActive()) {
+                                        logMermaidTrace(`staleContext id=${requestId} phase=afterRender`);
+                                        return;
+                                    }
+                                    if (!isLatestRequest()) {
+                                        logMermaidTrace(`superseded id=${requestId}`);
+                                        return;
+                                    }
+                                    if (scheduledTheme !== lastAppliedMermaidTheme) {
+                                        logMermaidTrace(
+                                            `stale id=${requestId} scheduledTheme=${scheduledTheme} currentTheme=${lastAppliedMermaidTheme}`
+                                        );
+                                        return;
+                                    }
+                                    if (scheduledRevision !== lastAppliedSettingsRevision) {
+                                        logMermaidTrace(
+                                            `revisionAdvanced id=${requestId} scheduled=${scheduledRevision} current=${lastAppliedSettingsRevision} applying=true`
+                                        );
+                                    }
+
+                                    logMermaidTrace(
+                                        `success id=${requestId} theme=${lastAppliedMermaidTheme}`
+                                    );
+                                    if (isRenderContextActive()) {
+                                        applyPreview(wrapMermaidSvg(output.svg));
+                                    }
+                                } catch (error) {
+                                    if (!isRenderContextActive()) {
+                                        logMermaidTrace(`staleContext id=${requestId} phase=error`);
+                                        return;
+                                    }
+                                    if (!isLatestRequest()) {
+                                        logMermaidTrace(`supersededError id=${requestId}`);
+                                        return;
+                                    }
+                                    const detail = error instanceof Error ? error.message : String(error);
+                                    logMermaidTrace(`failed id=${requestId} detail=${detail}`);
+                                    if (isRenderContextActive()) {
+                                        renderMermaidError(applyPreview, error);
+                                    }
+                                }
+                            });
+                        };
+
+                        if (shouldPausePreviewRender()) {
+                            logMermaidTrace(`paused id=${requestId} tabInactive`);
+                            registerPausedMermaidPreview(applyPreview, renderNow);
+                            pendingPausedPreviewRefresh = true;
+                            if (isRenderContextActive()) {
+                                applyPreview(`<div class="markflow-preview-paused">${runtimeSettings.previewPausedMessage}</div>`);
+                            }
+                            return;
+                        }
+
+                        unregisterPausedMermaidPreview(applyPreview);
+                        pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
+
+                        if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
+                            const previousManualId = manualPreviewIdByRenderer.get(applyPreview);
+                            if (previousManualId) {
+                                manualMermaidRenderers.delete(previousManualId);
+                            }
+                            const manualId = `manual-mermaid-${uid()}`;
+                            manualPreviewIdByRenderer.set(applyPreview, manualId);
+                            manualMermaidRenderers.set(manualId, () => {
+                                if (!isRenderContextActive()) {
+                                    manualMermaidRenderers.delete(manualId);
+                                    manualPreviewIdByRenderer.delete(applyPreview);
+                                    return;
+                                }
+                                manualMermaidRenderers.delete(manualId);
+                                manualPreviewIdByRenderer.delete(applyPreview);
+                                renderNow();
+                            });
+                            if (isRenderContextActive()) {
+                                applyPreview(`<div class="markflow-manual-preview"><button type="button" class="markflow-manual-preview-button" onclick="window.__markflowRenderMermaidPreview && window.__markflowRenderMermaidPreview('${manualId}')">${runtimeSettings.manualRenderInlineLabel}</button><div class="markflow-manual-shortcut-hint">${runtimeSettings.manualRenderShortcutHint}</div></div>`);
+                            }
+                            return;
+                        }
+
+                        scheduleMermaidRender(renderNow, applyPreview);
+                        return;
+                    }
+
+                    return null;
+                }
+            },
+            [Crepe.Feature.Latex]: {}
+        }
+    });
+}
+
+function attachCrepeBridge(crepe: Crepe) {
+    crepe.on((listener) => {
+        listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
+            if (!isCrepeReady || activeCrepe !== crepe) return;
+            if (isUpdatingFromIntelliJ) return;
+            if (markdown !== prevMarkdown) {
+                sendToIntelliJ(markdown, captureEditorUiState(crepe));
+            }
+        });
+    });
+}
+
+async function startCrepe(crepe: Crepe, layoutReason: string, restoreState?: EditorUiState) {
+    markFlowStage("crepe:create:start");
+    try {
+        await crepe.create();
+    } catch (error) {
+        logCrepeCreateFailure(error);
+        return;
+    }
+
+    isCrepeReady = true;
+    markFlowStage("crepe:create:done");
+    installMarkdownPasteHandler(crepe);
+    if (restoreState) {
+        applyEditorUiState(crepe, restoreState);
+    }
+    flushPendingIntelliJState(crepe);
+    recoverEditorLayout(layoutReason);
+
+    if (pendingSettingsRerenderRevision !== null) {
+        console.info(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
+        emitToIntelliJLog(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
+        pendingSettingsRerenderRevision = null;
+        rerenderPreviewsAfterSettingsChange();
+    }
+    if (pendingLayoutRecovery) {
+        pendingLayoutRecovery = false;
+        recoverEditorLayout("create:flushQueued");
+    }
+}
+
+async function recreateCrepeInstance(reason: string) {
+    if (isRecreatingCrepe) {
+        pendingCrepeRecreate = true;
+        return;
+    }
+
+    const current = activeCrepe;
+    if (!current || !isCrepeReady) {
+        pendingCrepeRecreate = true;
+        return;
+    }
+
+    isRecreatingCrepe = true;
+    pendingCrepeRecreate = false;
+
+    const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
+    const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);
+    const uiState = captureEditorUiState(current);
+
+    removeMarkdownPasteHandler?.();
+    removeMarkdownPasteHandler = null;
+
+    try {
+        (current as unknown as { destroy?: () => void }).destroy?.();
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI crepe:destroy failed ${String(error)}`);
+    }
+
+    const app = document.getElementById("app");
+    if (app) {
+        app.innerHTML = "";
+    }
+
+    isCrepeReady = false;
+    invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
+    const nextSessionId = ++crepeSessionSequence;
+    const next = createCrepeInstance(markdown, nextSessionId);
+    activeCrepeSessionId = nextSessionId;
+    activeCrepe = next;
+    attachCrepeBridge(next);
+
+    const recoveryEpochForRun = activeRecoveryEpoch;
+    const recoveryRoleForRun = activeRecoveryRole;
+    markFlowStage("crepe:recreate:start", reason);
+    await startCrepe(next, "recreate:done", uiState);
+    markFlowStage("crepe:recreate:done", reason);
+
+    if (recoveryRoleForRun === "leader" && recoveryEpochForRun !== null) {
+        const succeeded = isCrepeReady && activeCrepe === next;
+        notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochForRun, reason);
+    }
+
+    isRecreatingCrepe = false;
+    if (pendingCrepeRecreate) {
+        void recreateCrepeInstance("settings:queued");
+    }
+}
+
 async function initEditor() {
     markFlowStage("init:start");
     setTimeout(() => {
@@ -701,9 +1137,17 @@ async function initEditor() {
         isEditorActive = active;
         markFlowStage("bridge:editorActive", active ? "true" : "false");
         if (active) {
-            recoverEditorLayout("editorActive");
+            requestPreviewResumeRefresh("editorActive");
         }
     };
+
+    window.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !isEditorActive) {
+            return;
+        }
+        markFlowStage("bridge:visible", "true");
+        requestPreviewResumeRefresh("visibilitychange");
+    });
 
     window.addEventListener("keydown", (event: KeyboardEvent) => {
         const isShortcut = (event.metaKey || event.ctrlKey)
@@ -725,113 +1169,26 @@ async function initEditor() {
     markFlowStage("initialText:ready", initialText.slice(0, 48));
 
     // 3) Create the Crepe editor instance.
-    const crepe = new Crepe({
-        root: document.getElementById("app"),
-        defaultValue: initialText,
-        featureConfigs: {
-            // Hook for live Mermaid preview rendering.
-            [Crepe.Feature.CodeMirror]: {
-                // Use Milkdown's built-in preview toggle state (session-only) for preview-capable blocks.
-                previewOnlyByDefault: true,
-                renderPreview: (language, content, applyPreview) => {
-                    if (isMermaidLanguage(language) && content.trim()) {
-                        const requestId = ++mermaidRenderRequestId;
-                        latestMermaidRequestByPreview.set(applyPreview, requestId);
-                        const isLatestRequest = () => latestMermaidRequestByPreview.get(applyPreview) === requestId;
-                        markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
-                        logMermaidTrace(
-                            `renderPreview id=${requestId} theme=${lastAppliedMermaidTheme} len=${content.length}`
-                        );
-                        if (shouldPausePreviewRender()) {
-                            logMermaidTrace(`paused id=${requestId} tabInactive`);
-                            applyPreview(`<div class="markflow-preview-paused">${runtimeSettings.previewPausedMessage}</div>`);
-                            return;
-                        }
-
-                        const renderNow = () => {
-                            const scheduledRevision = lastAppliedSettingsRevision;
-                            const scheduledTheme = lastAppliedMermaidTheme;
-                            const svgId = `mermaid-svg-${uid()}`;
-
-                            logMermaidTrace(
-                                `queued id=${requestId} revision=${scheduledRevision} theme=${scheduledTheme}`
-                            );
-
-                            enqueueMermaidRender(async () => {
-                                logMermaidTrace(`start id=${requestId} svg=${svgId}`);
-                                try {
-                                    const output = await withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
-                                    if (!isLatestRequest()) {
-                                        logMermaidTrace(`superseded id=${requestId}`);
-                                        return;
-                                    }
-                                    if (scheduledTheme !== lastAppliedMermaidTheme) {
-                                        logMermaidTrace(
-                                            `stale id=${requestId} scheduledTheme=${scheduledTheme} currentTheme=${lastAppliedMermaidTheme}`
-                                        );
-                                        return;
-                                    }
-                                    if (scheduledRevision !== lastAppliedSettingsRevision) {
-                                        logMermaidTrace(
-                                            `revisionAdvanced id=${requestId} scheduled=${scheduledRevision} current=${lastAppliedSettingsRevision} applying=true`
-                                        );
-                                    }
-
-                                    logMermaidTrace(
-                                        `success id=${requestId} theme=${lastAppliedMermaidTheme}`
-                                    );
-                                    applyPreview(wrapMermaidSvg(output.svg));
-                                } catch (error) {
-                                    if (!isLatestRequest()) {
-                                        logMermaidTrace(`supersededError id=${requestId}`);
-                                        return;
-                                    }
-                                    const detail = error instanceof Error ? error.message : String(error);
-                                    logMermaidTrace(`failed id=${requestId} detail=${detail}`);
-                                    renderMermaidError(applyPreview, error);
-                                }
-                            });
-                        };
-
-                        if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
-                            const previousManualId = manualPreviewIdByRenderer.get(applyPreview);
-                            if (previousManualId) {
-                                manualMermaidRenderers.delete(previousManualId);
-                            }
-                            const manualId = `manual-mermaid-${uid()}`;
-                            manualPreviewIdByRenderer.set(applyPreview, manualId);
-                            manualMermaidRenderers.set(manualId, () => {
-                                manualMermaidRenderers.delete(manualId);
-                                manualPreviewIdByRenderer.delete(applyPreview);
-                                renderNow();
-                            });
-                            applyPreview(`<div class="markflow-manual-preview"><button type="button" class="markflow-manual-preview-button" onclick="window.__markflowRenderMermaidPreview && window.__markflowRenderMermaidPreview('${manualId}')">${runtimeSettings.manualRenderInlineLabel}</button><div class="markflow-manual-shortcut-hint">${runtimeSettings.manualRenderShortcutHint}</div></div>`);
-                            return;
-                        }
-
-                        scheduleMermaidRender(renderNow, applyPreview);
-                        return;
-                    }
-
-                    return null;
-                }
-            },
-            [Crepe.Feature.Latex]: {}
-        }
-    });
+    const crepeSessionId = ++crepeSessionSequence;
+    const crepe = createCrepeInstance(initialText, crepeSessionId);
+    activeCrepeSessionId = crepeSessionId;
     activeCrepe = crepe;
+    attachCrepeBridge(crepe);
     markFlowStage("crepe:constructed");
 
     window.updateFromIntelliJ = (newMarkdown: string) => {
         markFlowStage("bridge:updateFromIntelliJ", newMarkdown.slice(0, 32));
-        if (!isCrepeReady) {
+        if (!isCrepeReady || !activeCrepe) {
             pendingMarkdownFromIntelliJ = newMarkdown;
             return;
         }
 
         beginExternalUpdateGuard();
         try {
-            replaceEditorMarkdown(crepe, newMarkdown);
+            replaceEditorMarkdown(activeCrepe, newMarkdown);
+            if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
+                clearRecoveryState("follower:markdownApplied");
+            }
         } finally {
             clearExternalUpdateGuardLater();
         }
@@ -839,55 +1196,21 @@ async function initEditor() {
 
     window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {
         markFlowStage("bridge:applyEditorState", `${state.scrollTop},${state.cursorOffset}`);
-        if (!isCrepeReady) {
+        if (!isCrepeReady || !activeCrepe) {
             pendingEditorStateFromIntelliJ = state;
             return;
         }
 
-        applyEditorUiState(crepe, state);
+        applyEditorUiState(activeCrepe, state);
+        if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
+            clearRecoveryState("follower:stateApplied");
+        }
     };
+    await startCrepe(crepe, "create:done");
 
-    // 4) Propagate editor changes from webview to IntelliJ.
-    crepe.on((listener) => {
-        listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
-            // Skip bridge callbacks while external updates are being applied.
-            if (isUpdatingFromIntelliJ) return;
-
-            if (markdown !== prevMarkdown) {
-                sendToIntelliJ(markdown, captureEditorUiState(crepe));
-            }
-        });
-    });
-
-    markFlowStage("crepe:create:start");
-    let createPromise: Promise<unknown>;
-    try {
-        createPromise = crepe.create();
-    } catch (error) {
-        logCrepeCreateFailure(error);
-        return;
+    if (pendingCrepeRecreate) {
+        void recreateCrepeInstance("settings:queuedAfterCreate");
     }
-    createPromise
-        .then(() => {
-            isCrepeReady = true;
-            markFlowStage("crepe:create:done");
-            installMarkdownPasteHandler(crepe);
-            flushPendingIntelliJState(crepe);
-            recoverEditorLayout("create:done");
-            if (pendingSettingsRerenderRevision !== null) {
-                console.info(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
-                emitToIntelliJLog(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
-                pendingSettingsRerenderRevision = null;
-                rerenderPreviewsAfterSettingsChange();
-            }
-            if (pendingLayoutRecovery) {
-                pendingLayoutRecovery = false;
-                recoverEditorLayout("create:flushQueued");
-            }
-        })
-        .catch((error) => {
-            logCrepeCreateFailure(error);
-        });
 
     setTimeout(() => {
         if (!isCrepeReady) {

@@ -7,6 +7,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Font
+import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -27,6 +28,7 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var mermaidErrorDisplayCombo: ComboBox<MermaidErrorDisplay>
     private lateinit var katexDensityCombo: ComboBox<KatexDisplayDensity>
     private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
+    private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
 
     override fun getDisplayName(): String = MyBundle.message("settings.markflow.displayName")
 
@@ -42,6 +44,7 @@ class MarkFlowSettingsConfigurable : Configurable {
         mermaidErrorDisplayCombo = enumCombo(MermaidErrorDisplay.entries.toTypedArray())
         katexDensityCombo = enumCombo(KatexDisplayDensity.entries.toTypedArray())
         diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())
+        previewOnlyByDefaultCheckBox = JCheckBox()
 
         val root = JPanel(GridBagLayout())
         root.border = JBUI.Borders.empty(PANEL_PADDING)
@@ -52,6 +55,7 @@ class MarkFlowSettingsConfigurable : Configurable {
         row = addRow(root, row, MyBundle.message("settings.markflow.renderTrigger"), renderTriggerCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderDebounceMs"), renderDebounceSpinner)
         row = addRow(root, row, MyBundle.message("settings.markflow.backgroundPreviewPolicy"), backgroundPolicyCombo)
+        row = addRow(root, row, MyBundle.message("settings.markflow.previewOnlyByDefault"), previewOnlyByDefaultCheckBox)
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
         row = addRow(root, row, MyBundle.message("settings.markflow.mermaid.sizeMode"), mermaidSizeModeCombo)
@@ -89,6 +93,7 @@ class MarkFlowSettingsConfigurable : Configurable {
             || state.mermaidErrorDisplay != selectedName(mermaidErrorDisplayCombo)
             || state.katexDisplayDensity != selectedName(katexDensityCombo)
             || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
+            || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected
     }
 
     override fun apply() {
@@ -101,7 +106,8 @@ class MarkFlowSettingsConfigurable : Configurable {
             backgroundPreviewPolicy = selectedName(backgroundPolicyCombo),
             mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),
             katexDisplayDensity = selectedName(katexDensityCombo),
-            diagramSecurityLevel = selectedName(diagramSecurityCombo)
+            diagramSecurityLevel = selectedName(diagramSecurityCombo),
+            previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected
         )
         LOG.warn(
             "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
@@ -126,6 +132,7 @@ class MarkFlowSettingsConfigurable : Configurable {
         setSelectedByName(mermaidErrorDisplayCombo, state.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
+        previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault
     }
 
     override fun disposeUIResources() {
