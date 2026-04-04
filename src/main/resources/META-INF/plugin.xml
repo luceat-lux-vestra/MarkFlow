@@ -9,7 +9,24 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.luceatluxvestra.markflow.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.luceatluxvestra.markflow.startup.MyProjectActivity" />
+        <applicationService serviceImplementation="com.algorist.markflow.MarkFlowSettingsService"/>
+        <applicationConfigurable
+                id="preferences.markflow"
+                parentId="tools"
+                key="settings.markflow.displayName"
+                instance="com.algorist.markflow.MarkFlowSettingsConfigurable"/>
+        <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
+        <fileEditorProvider implementation="com.algorist.markflow.MarkFlowEditorProvider" order="first"/>
     </extensions>
+
+    <actions>
+        <action id="MarkFlowForceRerenderAction"
+                class="com.algorist.markflow.MarkFlowForceRerenderAction"
+                >
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift R"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift R"/>
+            <add-to-group group-id="MainToolBar" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
