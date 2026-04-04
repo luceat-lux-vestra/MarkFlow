@@ -3,9 +3,9 @@
 ```mermaid
 block-beta
     columns 3
-    input[Markdown]
-    parser[Parser]
-    preview[Preview]
+    input["Markdown"]
+    parser["Parser"]
+    preview["Preview"]
 
     input --> parser
     parser --> preview

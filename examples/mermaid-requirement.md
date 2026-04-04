@@ -3,24 +3,27 @@
 ```mermaid
 requirementDiagram
     requirement req_render {
-        id: REQ-001
+        id: REQ001
         text: The editor shall render Mermaid diagrams
         risk: medium
         verifymethod: test
     }
 
-    requirement req_size_mode {
-        id: REQ-002
+    functionalRequirement req_size_mode {
+        id: REQ002
         text: The editor shall support multiple size modes
         risk: low
         verifymethod: analysis
     }
 
-    element markflow_preview {
-        type: component
+    functionalRequirement req_markflow_preview {
+        id: REQ003
+        text: MarkFlow preview component satisfies render and sizing requirements
+        risk: low
+        verifymethod: demonstration
     }
 
-    markflow_preview - satisfies -> req_render
-    markflow_preview - satisfies -> req_size_mode
+    req_markflow_preview - satisfies -> req_render
+    req_markflow_preview - satisfies -> req_size_mode
 ```
 
