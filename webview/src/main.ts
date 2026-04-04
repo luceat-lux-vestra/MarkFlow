@@ -18,10 +18,14 @@ let removeMarkdownPasteHandler: (() => void) | null = null;
 const EXTERNAL_UPDATE_GUARD_MS = 50;
 const BOOT_READY_TIMEOUT_MS = 5000;
 let isEditorActive = true;
-let mermaidDebounceTimer: number | null = null;
+// Keep debounce scheduling local per render request; a single global timer causes multi-block previews to cancel each other.
+// let mermaidDebounceTimer: number | null = null;
 const manualMermaidRenderers = new Map<string, () => void>();
 let activeCrepe: Crepe | null = null;
 const MANUAL_MERMAID_SHORTCUT_KEY = "r";
+const MERMAID_RENDER_TIMEOUT_MS = 8000;
+let mermaidRenderQueue: Promise<void> = Promise.resolve();
+let mermaidRenderRequestId = 0;
 let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
@@ -60,6 +64,8 @@ let runtimeSettings = resolveRuntimeSettings(window.intelliJ_markFlowSettings);
 const uid = () => Math.random().toString(36).substring(7);
 
 const normalizePreviewSnippet = (value: string, maxLength = 160) => value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+
+const isMermaidLanguage = (language: string) => language.trim().toLowerCase() === "mermaid";
 
 // Keep Mermaid preview rendering readable across SVG- and HTML-label based diagram families.
 const resolveMermaidTheme = (): "default" | "dark" => {
@@ -133,6 +139,12 @@ const emitToIntelliJLog = (message: string) => {
     } catch {
         // Ignore diagnostics bridge failures so editor boot is unaffected.
     }
+};
+
+const logMermaidTrace = (detail: string) => {
+    const line = `MARKFLOW_UI mermaid:${detail}`;
+    console.info(line);
+    emitToIntelliJLog(line);
 };
 
 const markFlowStage = (stage: string, detail = "") => {
@@ -209,10 +221,6 @@ const rerenderPreviewsAfterSettingsChange = () => {
         `MARKFLOW_UI rerender:start ready=${isCrepeReady} hasCrepe=${activeCrepe !== null} revision=${lastAppliedSettingsRevision}`
     );
     if (!activeCrepe || !isCrepeReady) return;
-    if (mermaidDebounceTimer !== null) {
-        window.clearTimeout(mermaidDebounceTimer);
-        mermaidDebounceTimer = null;
-    }
 
     const currentMarkdown = activeCrepe.getMarkdown();
     const toggleMarkdown = currentMarkdown.endsWith("\n")
@@ -250,6 +258,15 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
         ? Number(runtimeSettings.settingsRevision)
         : -1;
     const nextTheme = resolveMermaidTheme();
+
+    // Ignore duplicated pushes for the same applied revision/theme to prevent rerender storms.
+    if (nextRevision === lastAppliedSettingsRevision && nextTheme === lastAppliedMermaidTheme) {
+        emitToIntelliJLog(
+            `MARKFLOW_UI settings:skipDuplicate revision=${nextRevision} theme=${nextTheme}`
+        );
+        return;
+    }
+
     console.info(
         `MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${runtimeSettings.themeSource}`
     );
@@ -298,24 +315,50 @@ const shouldPausePreviewRender = () => {
 
 const scheduleMermaidRender = (renderNow: () => void) => {
     if (runtimeSettings.renderTriggerMode === "LIVE") {
-        emitToIntelliJLog("MARKFLOW_UI mermaid:trigger live");
+        logMermaidTrace("trigger live");
         renderNow();
         return;
     }
 
     if (runtimeSettings.renderTriggerMode === "DEBOUNCED") {
-        emitToIntelliJLog(`MARKFLOW_UI mermaid:trigger debounced ${runtimeSettings.renderDebounceMs}ms`);
-        if (mermaidDebounceTimer !== null) {
-            window.clearTimeout(mermaidDebounceTimer);
-        }
-        mermaidDebounceTimer = window.setTimeout(() => {
-            mermaidDebounceTimer = null;
+        logMermaidTrace(`trigger debounced ${runtimeSettings.renderDebounceMs}ms`);
+        window.setTimeout(() => {
             renderNow();
         }, runtimeSettings.renderDebounceMs);
         return;
     }
 
     renderNow();
+};
+
+const enqueueMermaidRender = (task: () => Promise<void>) => {
+    mermaidRenderQueue = mermaidRenderQueue
+        .catch(() => {
+            // Keep queue progressing even after a failed render.
+        })
+        .then(task)
+        .catch((error) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.warn(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
+            emitToIntelliJLog(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
+        });
+};
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+    let timeoutId: number | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+            reject(new Error(`Mermaid render timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+        }
+    }
 };
 
 const showBootError = (stage: string, detail: string) => {
@@ -663,12 +706,17 @@ async function initEditor() {
         featureConfigs: {
             // Hook for live Mermaid preview rendering.
             [Crepe.Feature.CodeMirror]: {
+                // Use Milkdown's built-in preview toggle state (session-only) for preview-capable blocks.
+                previewOnlyByDefault: true,
                 renderPreview: (language, content, applyPreview) => {
-                    if (language === "mermaid" && content.trim()) {
+                    if (isMermaidLanguage(language) && content.trim()) {
+                        const requestId = ++mermaidRenderRequestId;
                         markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
-                        emitToIntelliJLog(`MARKFLOW_UI mermaid:renderPreview theme=${lastAppliedMermaidTheme}`);
+                        logMermaidTrace(
+                            `renderPreview id=${requestId} theme=${lastAppliedMermaidTheme} len=${content.length}`
+                        );
                         if (shouldPausePreviewRender()) {
-                            emitToIntelliJLog("MARKFLOW_UI mermaid:paused tabInactive");
+                            logMermaidTrace(`paused id=${requestId} tabInactive`);
                             applyPreview(`<div class="markflow-preview-paused">${runtimeSettings.previewPausedMessage}</div>`);
                             return;
                         }
@@ -676,25 +724,38 @@ async function initEditor() {
                         const renderNow = () => {
                             const scheduledRevision = lastAppliedSettingsRevision;
                             const scheduledTheme = lastAppliedMermaidTheme;
-                            reconfigureMermaid();
                             const svgId = `mermaid-svg-${uid()}`;
-                            mermaid.render(svgId, content)
-                                .then((output) => {
-                                    if (
-                                        scheduledRevision !== lastAppliedSettingsRevision
-                                        || scheduledTheme !== lastAppliedMermaidTheme
-                                    ) {
-                                        emitToIntelliJLog(
-                                            `MARKFLOW_UI mermaid:renderDropped stale scheduled=${scheduledRevision}/${scheduledTheme} current=${lastAppliedSettingsRevision}/${lastAppliedMermaidTheme}`
+
+                            logMermaidTrace(
+                                `queued id=${requestId} revision=${scheduledRevision} theme=${scheduledTheme}`
+                            );
+
+                            enqueueMermaidRender(async () => {
+                                logMermaidTrace(`start id=${requestId} svg=${svgId}`);
+                                try {
+                                    const output = await withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
+                                    if (scheduledTheme !== lastAppliedMermaidTheme) {
+                                        logMermaidTrace(
+                                            `stale id=${requestId} scheduledTheme=${scheduledTheme} currentTheme=${lastAppliedMermaidTheme}`
                                         );
                                         return;
                                     }
-                                    emitToIntelliJLog(`MARKFLOW_UI mermaid:renderSuccess theme=${lastAppliedMermaidTheme}`);
+                                    if (scheduledRevision !== lastAppliedSettingsRevision) {
+                                        logMermaidTrace(
+                                            `revisionAdvanced id=${requestId} scheduled=${scheduledRevision} current=${lastAppliedSettingsRevision} applying=true`
+                                        );
+                                    }
+
+                                    logMermaidTrace(
+                                        `success id=${requestId} theme=${lastAppliedMermaidTheme}`
+                                    );
                                     applyPreview(wrapMermaidSvg(output.svg));
-                                })
-                                .catch((error) => {
+                                } catch (error) {
+                                    const detail = error instanceof Error ? error.message : String(error);
+                                    logMermaidTrace(`failed id=${requestId} detail=${detail}`);
                                     renderMermaidError(applyPreview, error);
-                                });
+                                }
+                            });
                         };
 
                         if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
@@ -708,7 +769,10 @@ async function initEditor() {
                         }
 
                         scheduleMermaidRender(renderNow);
+                        return;
                     }
+
+                    return null;
                 }
             },
             [Crepe.Feature.Latex]: {}
@@ -795,3 +859,4 @@ async function initEditor() {
 
 
 initEditor();
+
