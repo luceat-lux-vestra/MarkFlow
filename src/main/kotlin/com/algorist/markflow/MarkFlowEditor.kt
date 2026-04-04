@@ -168,7 +168,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
                 if (frame != null && !frame.isMain) return
                 LOG.debug("MARKFLOW_UI JCEF onLoadEnd: url=${cefBrowser?.url ?: browser.cefBrowser.url}, status=$httpStatusCode")
-                val currentText = document?.text ?: ""
+                val currentText = readInitialMarkdownText()
                 val currentTextLiteral = toJsStringLiteral(currentText)
                 val runtimeSettingsJson = buildRuntimeSettingsJson()
                 LOG.warn("MARKFLOW_DIAG bridge:inject runtimeSettings=${runtimeSettingsJson.take(240)}")
@@ -279,6 +279,18 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         } catch (ex: Exception) {
             LOG.warn("Failed to serialize runtime settings to JSON: ${ex.message}", ex)
             "{}"
+        }
+    }
+
+    private fun readInitialMarkdownText(): String {
+        document?.text?.let { return it }
+
+        return try {
+            val bytes = file.contentsToByteArray()
+            String(bytes, file.charset)
+        } catch (ex: Exception) {
+            LOG.warn("MARKFLOW_UI failed to read initial markdown from VFS for ${file.path}: ${ex.message}")
+            ""
         }
     }
 

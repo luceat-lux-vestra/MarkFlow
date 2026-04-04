@@ -696,7 +696,7 @@ async function initEditor() {
     };
 
     // 2) Load initial markdown injected by Kotlin.
-    const initialText = window.intelliJ_initialMarkdown || "# Welcome to MarkFlow Editor!";
+    const initialText = window.intelliJ_initialMarkdown ?? "";
     markFlowStage("initialText:ready", initialText.slice(0, 48));
 
     // 3) Create the Crepe editor instance.
