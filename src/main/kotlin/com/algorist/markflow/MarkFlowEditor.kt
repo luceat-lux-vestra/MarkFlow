@@ -327,11 +327,14 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
             val keymapManager = KeymapManager.getInstance()
             val activeKeymap = keymapManager.activeKeymap
-            val ctrlShiftR = KeyStroke.getKeyStroke("ctrl shift R")
-            val metaShiftR = KeyStroke.getKeyStroke("meta shift R")
+            val ctrlAltShiftR = KeyStroke.getKeyStroke("ctrl alt shift R")
+            val metaAltShiftR = KeyStroke.getKeyStroke("meta alt shift R")
             val candidates = buildList {
-                if (ctrlShiftR != null) add(ctrlShiftR)
-                if (SystemInfo.isMac && metaShiftR != null) add(metaShiftR)
+                if (SystemInfo.isMac) {
+                    if (metaAltShiftR != null) add(metaAltShiftR)
+                } else {
+                    if (ctrlAltShiftR != null) add(ctrlAltShiftR)
+                }
             }
 
             candidates.any { shortcut ->

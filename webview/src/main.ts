@@ -68,7 +68,7 @@ const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     shortcutConflictMessage: "This shortcut may conflict with other IDE shortcuts. You can disable it in MarkFlow settings if needed.",
     manualRenderToolbarLabel: "Render Mermaid",
     manualRenderInlineLabel: "Render Mermaid Preview",
-    manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Shift+R",
+    manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Alt+Shift+R",
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
     settingsRevision: 1
 };
@@ -1292,6 +1292,7 @@ async function initEditor() {
 
     window.addEventListener("keydown", (event: KeyboardEvent) => {
         const isShortcut = (event.metaKey || event.ctrlKey)
+            && event.altKey
             && event.shiftKey
             && event.key.toLowerCase() === MANUAL_MERMAID_SHORTCUT_KEY;
         if (!isShortcut) {

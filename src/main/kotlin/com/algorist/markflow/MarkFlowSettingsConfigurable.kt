@@ -55,7 +55,7 @@ class MarkFlowSettingsConfigurable : Configurable {
         row = addRow(root, row, MyBundle.message("settings.markflow.renderTrigger"), renderTriggerCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderDebounceMs"), renderDebounceSpinner)
         row = addRow(root, row, MyBundle.message("settings.markflow.previewOnlyByDefault"), previewOnlyByDefaultCheckBox)
-        row = addRow(root, row, "Force Re-render Shortcut (Cmd/Ctrl+Shift+R)", forceRerenderShortcutEnabledCheckBox)
+        row = addRow(root, row, "Force Re-render Shortcut (Cmd/Ctrl+Alt+Shift+R)", forceRerenderShortcutEnabledCheckBox)
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
         row = addRow(root, row, MyBundle.message("settings.markflow.mermaid.sizeMode"), mermaidSizeModeCombo)

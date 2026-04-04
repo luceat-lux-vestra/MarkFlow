@@ -23,8 +23,8 @@
         <action id="MarkFlowForceRerenderAction"
                 class="com.algorist.markflow.MarkFlowForceRerenderAction"
                 >
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift R"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift R"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift R"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift R"/>
             <add-to-group group-id="MainToolBar" anchor="last"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
