@@ -9,6 +9,12 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.algorist.markflow.MarkFlowSettingsService"/>
+        <applicationConfigurable
+                id="preferences.markflow"
+                parentId="tools"
+                displayName="MarkFlow"
+                instance="com.algorist.markflow.MarkFlowSettingsConfigurable"/>
         <fileEditorProvider implementation="com.algorist.markflow.MarkFlowEditorProvider" order="first"/>
     </extensions>
 </idea-plugin>

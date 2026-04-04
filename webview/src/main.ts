@@ -6,6 +6,7 @@ import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
+import "./style.css";
 
 // Shared editor state.
 // Prevent feedback loops while applying external IntelliJ updates.
@@ -16,129 +17,103 @@ let pendingEditorStateFromIntelliJ: EditorUiState | null = null;
 let removeMarkdownPasteHandler: (() => void) | null = null;
 const EXTERNAL_UPDATE_GUARD_MS = 50;
 const BOOT_READY_TIMEOUT_MS = 5000;
+let isEditorActive = true;
+let mermaidDebounceTimer: number | null = null;
+const manualMermaidRenderers = new Map<string, () => void>();
+let activeCrepe: Crepe | null = null;
+const MANUAL_MERMAID_SHORTCUT_KEY = "r";
+let lastAppliedMermaidTheme: "default" | "dark" = "default";
+let lastAppliedSettingsRevision = -1;
+let pendingSettingsRerenderRevision: number | null = null;
+
+const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
+    mermaidSizeMode: "FIT_TO_VIEWPORT",
+    mermaidZoomPercent: 100,
+    themeSource: "LIGHT",
+    renderTriggerMode: "LIVE",
+    renderDebounceMs: 500,
+    backgroundPreviewPolicy: "PAUSE_WHEN_TAB_INACTIVE",
+    mermaidErrorDisplay: "INLINE_ERROR_BOX",
+    katexDisplayDensity: "COMFORTABLE",
+    diagramSecurityLevel: "STRICT",
+    manualRenderToolbarLabel: "Render Mermaid",
+    manualRenderInlineLabel: "Render Mermaid Preview",
+    manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Shift+R",
+    previewPausedMessage: "Preview paused while tab is inactive.",
+    mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
+    settingsRevision: 1
+};
+
+const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
+    const merged = {...DEFAULT_RUNTIME_SETTINGS, ...(raw ?? {})};
+    return {
+        ...merged,
+        mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200),
+        renderDebounceMs: Math.min(Math.max(merged.renderDebounceMs, 300), 800)
+    };
+};
+
+let runtimeSettings = resolveRuntimeSettings(window.intelliJ_markFlowSettings);
 
 // Generate unique ids for Mermaid preview rendering.
 const uid = () => Math.random().toString(36).substring(7);
 
 const normalizePreviewSnippet = (value: string, maxLength = 160) => value.replace(/\s+/g, " ").trim().slice(0, maxLength);
 
-const FLOWCHART_FALLBACK_STYLE = `<style>
-  text, tspan, .nodeLabel, .edgeLabel, .label, .titleText {
-    color: CanvasText !important;
-    fill: CanvasText !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    stroke: none !important;
-  }
-</style>`;
-
-const isFlowchartSource = (source: string) => /^\s*flowchart\b/i.test(source);
-
-function injectFlowchartFallback(svg: string) {
-    if (!svg.includes("<svg")) return svg;
-
-    return svg.replace(/<svg\b([^>]*)>/i, (match) => `${match}${FLOWCHART_FALLBACK_STYLE}`);
-}
-
-function logFlowchartLiveDiagnostics(svgId: string) {
-    const svg = document.getElementById(svgId) as SVGSVGElement | null;
-    if (!svg) {
-        emitToIntelliJLog(`MARKFLOW_UI mermaid:liveDiagnostics missingSvg ${svgId}`);
-        return;
-    }
-
-    const firstNodeLabel = svg.querySelector(".nodeLabel") as Element | null;
-    const firstEdgeLabel = svg.querySelector(".edgeLabel") as Element | null;
-    const nodeStyles = firstNodeLabel ? getComputedStyle(firstNodeLabel) : null;
-    const edgeStyles = firstEdgeLabel ? getComputedStyle(firstEdgeLabel) : null;
-
-    const payload = {
-        svgId,
-        svgClass: svg.getAttribute("class") ?? "",
-        svgWidth: svg.getAttribute("width") ?? "",
-        svgHeight: svg.getAttribute("height") ?? "",
-        nodeLabelTag: firstNodeLabel?.tagName ?? "",
-        nodeLabelText: firstNodeLabel?.textContent?.trim().slice(0, 120) ?? "",
-        nodeLabelFill: nodeStyles?.fill ?? "",
-        nodeLabelColor: nodeStyles?.color ?? "",
-        nodeLabelOpacity: nodeStyles?.opacity ?? "",
-        nodeLabelVisibility: nodeStyles?.visibility ?? "",
-        edgeLabelTag: firstEdgeLabel?.tagName ?? "",
-        edgeLabelText: firstEdgeLabel?.textContent?.trim().slice(0, 120) ?? "",
-        edgeLabelFill: edgeStyles?.fill ?? "",
-        edgeLabelColor: edgeStyles?.color ?? "",
-        edgeLabelOpacity: edgeStyles?.opacity ?? "",
-        edgeLabelVisibility: edgeStyles?.visibility ?? ""
-    };
-
-    emitToIntelliJLog(`MARKFLOW_UI mermaid:liveDiagnostics ${JSON.stringify(payload)}`);
-}
-
-function logMermaidPreviewDiagnostics(svgId: string, language: string, source: string, svg: string) {
-    const parser = new DOMParser();
-    const parsed = parser.parseFromString(svg, "image/svg+xml");
-    const root = parsed.documentElement;
-    const isParserError = root.tagName.toLowerCase() === "parsererror";
-
-    const counts = {
-        text: root.querySelectorAll("text").length,
-        tspan: root.querySelectorAll("tspan").length,
-        foreignObject: root.getElementsByTagName("foreignObject").length,
-        nodeLabel: root.querySelectorAll(".nodeLabel").length,
-        edgeLabel: root.querySelectorAll(".edgeLabel").length,
-        label: root.querySelectorAll(".label").length,
-        titleText: root.querySelectorAll(".titleText").length
-    };
-
-    const firstNodeLabel = root.querySelector(".nodeLabel");
-    const firstEdgeLabel = root.querySelector(".edgeLabel");
-
-    const summary = {
-        svgId,
-        language,
-        isFlowchart: isFlowchartSource(source),
-        sourceLength: source.length,
-        svgLength: svg.length,
-        rootTag: root.tagName,
-        rootClass: root.getAttribute("class") ?? "",
-        isParserError,
-        counts,
-        firstText: root.querySelector("text")?.outerHTML?.slice(0, 200) ?? "",
-        firstForeignObject: root.getElementsByTagName("foreignObject")[0]?.outerHTML?.slice(0, 200) ?? "",
-        firstNodeLabel: firstNodeLabel?.outerHTML?.slice(0, 240) ?? "",
-        firstNodeLabelText: firstNodeLabel?.textContent?.trim().slice(0, 120) ?? "",
-        firstEdgeLabel: firstEdgeLabel?.outerHTML?.slice(0, 240) ?? "",
-        firstEdgeLabelText: firstEdgeLabel?.textContent?.trim().slice(0, 120) ?? "",
-        snippet: normalizePreviewSnippet(svg)
-    };
-
-    const serialized = JSON.stringify(summary);
-    console.info(`MARKFLOW_UI mermaid:diagnostics ${serialized}`);
-    emitToIntelliJLog(`MARKFLOW_UI mermaid:diagnostics ${serialized}`);
-}
-
 // Keep Mermaid preview rendering readable across SVG- and HTML-label based diagram families.
-const MERMAID_PREVIEW_CONFIG = {
+const resolveMermaidTheme = (): "default" | "dark" => {
+    if (runtimeSettings.themeSource === "LIGHT") return "default";
+    if (runtimeSettings.themeSource === "DARK") return "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+};
+
+const resolveDiagramSecurityLevel = (): "strict" | "loose" => {
+    return runtimeSettings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
+};
+
+lastAppliedMermaidTheme = resolveMermaidTheme();
+
+const createMermaidPreviewConfig = () => {
+    const theme = resolveMermaidTheme();
+    const themeVariables = theme === "dark"
+        ? {
+            primaryColor: "#1f2937",
+            primaryTextColor: "#f9fafb",
+            lineColor: "#f9fafb",
+            textColor: "#f9fafb",
+            background: "#111827"
+        }
+        : {
+            primaryColor: "#e5e7eb",
+            primaryTextColor: "#111827",
+            lineColor: "#111827",
+            textColor: "#111827",
+            background: "#ffffff"
+        };
+
+    return {
     startOnLoad: false,
-    theme: "default",
-    securityLevel: "strict",
+    theme,
+    themeVariables,
+    securityLevel: resolveDiagramSecurityLevel(),
     htmlLabels: false,
     flowchart: {
         htmlLabels: false,
-        useMaxWidth: true
+        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
     },
     class: {
         htmlLabels: false,
-        useMaxWidth: true
+        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
     },
     state: {
         htmlLabels: false,
-        useMaxWidth: true
+        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
     },
     mindmap: {
-        useMaxWidth: true
+        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
     }
-} as const;
+    };
+};
 
 // Diagnostics.
 const emitToIntelliJLog = (message: string) => {
@@ -159,6 +134,184 @@ const markFlowStage = (stage: string, detail = "") => {
     if (app) {
         app.setAttribute("data-markflow-stage", stage);
     }
+};
+
+const logThemeDiagnostics = (raw: MarkFlowRuntimeSettings | undefined, appliedTheme: "default" | "dark") => {
+    const payload = {
+        source: raw?.themeSource ?? "<undefined>",
+        resolvedSource: runtimeSettings.themeSource,
+        appliedTheme,
+        securityLevel: runtimeSettings.diagramSecurityLevel
+    };
+    emitToIntelliJLog(`MARKFLOW_UI theme:settings ${JSON.stringify(payload)}`);
+};
+
+const applyRuntimeUiSettings = () => {
+    const app = document.getElementById("app");
+    if (!app) return;
+    app.setAttribute("data-katex-density", runtimeSettings.katexDisplayDensity);
+};
+
+const renderAllManualMermaidPreviews = () => {
+    const renderers = Array.from(manualMermaidRenderers.values());
+    manualMermaidRenderers.clear();
+    renderers.forEach((render) => render());
+};
+
+const ensureManualPreviewToolbar = () => {
+    const existing = document.getElementById("markflow-manual-refresh");
+    if (runtimeSettings.renderTriggerMode !== "MANUAL_REFRESH") {
+        manualMermaidRenderers.clear();
+        existing?.remove();
+        return;
+    }
+
+    if (existing) {
+        const existingButton = existing.querySelector<HTMLButtonElement>(".markflow-manual-refresh-button");
+        if (existingButton) {
+            existingButton.textContent = runtimeSettings.manualRenderToolbarLabel;
+            existingButton.title = runtimeSettings.manualRenderShortcutHint;
+        }
+        return;
+    }
+
+    const toolbar = document.createElement("div");
+    toolbar.id = "markflow-manual-refresh";
+    toolbar.className = "markflow-manual-refresh-toolbar";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "markflow-manual-refresh-button";
+    button.textContent = runtimeSettings.manualRenderToolbarLabel;
+    button.title = runtimeSettings.manualRenderShortcutHint;
+    button.addEventListener("click", () => {
+        renderAllManualMermaidPreviews();
+    });
+
+    toolbar.append(button);
+    document.body.append(toolbar);
+};
+
+const rerenderPreviewsAfterSettingsChange = () => {
+    console.info(
+        `MARKFLOW_UI rerender:start ready=${isCrepeReady} hasCrepe=${activeCrepe !== null} revision=${lastAppliedSettingsRevision}`
+    );
+    emitToIntelliJLog(
+        `MARKFLOW_UI rerender:start ready=${isCrepeReady} hasCrepe=${activeCrepe !== null} revision=${lastAppliedSettingsRevision}`
+    );
+    if (!activeCrepe || !isCrepeReady) return;
+    if (mermaidDebounceTimer !== null) {
+        window.clearTimeout(mermaidDebounceTimer);
+        mermaidDebounceTimer = null;
+    }
+
+    const currentMarkdown = activeCrepe.getMarkdown();
+    const toggleMarkdown = currentMarkdown.endsWith("\n")
+        ? currentMarkdown.slice(0, -1)
+        : `${currentMarkdown}\n`;
+
+    isUpdatingFromIntelliJ = true;
+    try {
+        if (toggleMarkdown !== currentMarkdown) {
+            replaceEditorMarkdown(activeCrepe, toggleMarkdown, true);
+        }
+        replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
+    } finally {
+        clearExternalUpdateGuardLater();
+    }
+
+    // Some preview nodes cache rendered HTML; run a second invalidation pass on next frame.
+    requestAnimationFrame(() => {
+        if (!activeCrepe || !isCrepeReady) return;
+        isUpdatingFromIntelliJ = true;
+        try {
+            replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
+        } finally {
+            clearExternalUpdateGuardLater();
+            console.info(`MARKFLOW_UI rerender:done revision=${lastAppliedSettingsRevision}`);
+            emitToIntelliJLog(`MARKFLOW_UI rerender:done revision=${lastAppliedSettingsRevision}`);
+        }
+    });
+};
+
+const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) => {
+    emitToIntelliJLog(`MARKFLOW_UI settings:raw ${JSON.stringify(raw ?? {})}`);
+    runtimeSettings = resolveRuntimeSettings(raw);
+    const nextRevision = Number.isFinite(runtimeSettings.settingsRevision)
+        ? Number(runtimeSettings.settingsRevision)
+        : -1;
+    const nextTheme = resolveMermaidTheme();
+    console.info(
+        `MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${runtimeSettings.themeSource}`
+    );
+    emitToIntelliJLog(
+        `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${runtimeSettings.themeSource} security=${runtimeSettings.diagramSecurityLevel}`
+    );
+    logThemeDiagnostics(raw, nextTheme);
+    mermaid.mermaidAPI.reset();
+    const nextConfig = createMermaidPreviewConfig();
+    emitToIntelliJLog(
+        `MARKFLOW_UI mermaid:initialize theme=${nextConfig.theme} security=${nextConfig.securityLevel}`
+    );
+    mermaid.initialize(nextConfig);
+    lastAppliedMermaidTheme = nextTheme;
+    lastAppliedSettingsRevision = nextRevision;
+    const app = document.getElementById("app");
+    if (app) {
+        app.setAttribute("data-markflow-theme", runtimeSettings.themeSource);
+        app.setAttribute("data-markflow-settings-revision", String(lastAppliedSettingsRevision));
+    }
+    applyRuntimeUiSettings();
+    ensureManualPreviewToolbar();
+    if (!isCrepeReady || !activeCrepe) {
+        pendingSettingsRerenderRevision = lastAppliedSettingsRevision;
+        console.info(`MARKFLOW_UI rerender:queued revision=${lastAppliedSettingsRevision}`);
+        emitToIntelliJLog(`MARKFLOW_UI rerender:queued revision=${lastAppliedSettingsRevision}`);
+        return;
+    }
+    rerenderPreviewsAfterSettingsChange();
+};
+
+const wrapMermaidSvg = (svg: string) => {
+    const sizeClass = runtimeSettings.mermaidSizeMode === "ACTUAL_SIZE_SCROLL" ? "actual" : "fit";
+    const zoomScale = runtimeSettings.mermaidZoomPercent / 100;
+    return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}" style="--markflow-mermaid-zoom:${zoomScale}">${svg}</div>`;
+};
+
+const renderMermaidError = (applyPreview: (html: string) => void, error: unknown) => {
+    console.error("MARKFLOW_UI mermaid:renderError", error);
+    emitToIntelliJLog(`MARKFLOW_UI mermaid:renderError ${String(error)}`);
+    if (runtimeSettings.mermaidErrorDisplay === "INLINE_ERROR_BOX") {
+        applyPreview(`<div class="mermaid-error">${runtimeSettings.mermaidSyntaxErrorMessage}</div>`);
+        return;
+    }
+    applyPreview("");
+};
+
+const shouldPausePreviewRender = () => {
+    return runtimeSettings.backgroundPreviewPolicy === "PAUSE_WHEN_TAB_INACTIVE" && !isEditorActive;
+};
+
+const scheduleMermaidRender = (renderNow: () => void) => {
+    if (runtimeSettings.renderTriggerMode === "LIVE") {
+        emitToIntelliJLog("MARKFLOW_UI mermaid:trigger live");
+        renderNow();
+        return;
+    }
+
+    if (runtimeSettings.renderTriggerMode === "DEBOUNCED") {
+        emitToIntelliJLog(`MARKFLOW_UI mermaid:trigger debounced ${runtimeSettings.renderDebounceMs}ms`);
+        if (mermaidDebounceTimer !== null) {
+            window.clearTimeout(mermaidDebounceTimer);
+        }
+        mermaidDebounceTimer = window.setTimeout(() => {
+            mermaidDebounceTimer = null;
+            renderNow();
+        }, runtimeSettings.renderDebounceMs);
+        return;
+    }
+
+    renderNow();
 };
 
 const showBootError = (stage: string, detail: string) => {
@@ -256,7 +409,7 @@ function applyEditorUiState(crepe: Crepe, state: Partial<EditorUiState>) {
     });
 }
 
-function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string) {
+function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string, skipHistory = false) {
     crepe.editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const parser = ctx.get(parserCtx);
@@ -265,7 +418,11 @@ function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string) {
         if (!doc) return;
 
         const state = view.state;
-        view.dispatch(state.tr.replaceWith(0, state.doc.content.size, doc));
+        const tr = state.tr.replaceWith(0, state.doc.content.size, doc);
+        if (skipHistory) {
+            tr.setMeta("addToHistory", false);
+        }
+        view.dispatch(tr);
     });
 }
 
@@ -435,8 +592,34 @@ async function initEditor() {
     }
 
     // 1) Initialize Mermaid.
-    mermaid.initialize(MERMAID_PREVIEW_CONFIG);
+    applyRuntimeSettingsFromHost(window.intelliJ_markFlowSettings);
     markFlowStage("mermaid:initialized");
+
+    window.applyMarkFlowSettingsFromIntelliJ = (settings: MarkFlowRuntimeSettings) => {
+        emitToIntelliJLog(`MARKFLOW_UI bridge:settingsReceived ${JSON.stringify(settings)}`);
+        applyRuntimeSettingsFromHost(settings);
+        markFlowStage("bridge:settingsApplied");
+    };
+
+    window.setMarkFlowEditorActive = (active: boolean) => {
+        isEditorActive = active;
+        markFlowStage("bridge:editorActive", active ? "true" : "false");
+    };
+
+    window.addEventListener("keydown", (event: KeyboardEvent) => {
+        const isShortcut = (event.metaKey || event.ctrlKey)
+            && event.shiftKey
+            && event.key.toLowerCase() === MANUAL_MERMAID_SHORTCUT_KEY;
+        if (!isShortcut || runtimeSettings.renderTriggerMode !== "MANUAL_REFRESH") {
+            return;
+        }
+        event.preventDefault();
+        renderAllManualMermaidPreviews();
+    });
+
+    (window as { __markflowRenderMermaidPreview?: (manualId: string) => void }).__markflowRenderMermaidPreview = (manualId) => {
+        manualMermaidRenderers.get(manualId)?.();
+    };
 
     // 2) Load initial markdown injected by Kotlin.
     const initialText = window.intelliJ_initialMarkdown || "# Welcome to MarkFlow Editor!";
@@ -452,27 +635,56 @@ async function initEditor() {
                 renderPreview: (language, content, applyPreview) => {
                     if (language === "mermaid" && content.trim()) {
                         markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
-                        const svgId = `mermaid-svg-${uid()}`;
-                        mermaid.render(svgId, content)
-                            .then((output) => {
-                                const renderedSvg = injectFlowchartFallback(output.svg);
-                                logMermaidPreviewDiagnostics(svgId, language, content, renderedSvg);
-                                applyPreview(renderedSvg);
-                                if (isFlowchartSource(content)) {
-                                    requestAnimationFrame(() => logFlowchartLiveDiagnostics(svgId));
-                                }
-                            })
-                            .catch((error) => {
-                                console.error("MARKFLOW_UI mermaid:renderError", error);
-                                emitToIntelliJLog(`MARKFLOW_UI mermaid:renderError ${String(error)}`);
-                                applyPreview("<div class=\"mermaid-error\">Mermaid Syntax Error</div>");
+                        emitToIntelliJLog(`MARKFLOW_UI mermaid:renderPreview theme=${lastAppliedMermaidTheme}`);
+                        if (shouldPausePreviewRender()) {
+                            emitToIntelliJLog("MARKFLOW_UI mermaid:paused tabInactive");
+                            applyPreview(`<div class="markflow-preview-paused">${runtimeSettings.previewPausedMessage}</div>`);
+                            return;
+                        }
+
+                        const renderNow = () => {
+                            const scheduledRevision = lastAppliedSettingsRevision;
+                            const scheduledTheme = lastAppliedMermaidTheme;
+                            mermaid.mermaidAPI.reset();
+                            mermaid.initialize(createMermaidPreviewConfig());
+                            const svgId = `mermaid-svg-${uid()}`;
+                            mermaid.render(svgId, content)
+                                .then((output) => {
+                                    if (
+                                        scheduledRevision !== lastAppliedSettingsRevision
+                                        || scheduledTheme !== lastAppliedMermaidTheme
+                                    ) {
+                                        emitToIntelliJLog(
+                                            `MARKFLOW_UI mermaid:renderDropped stale scheduled=${scheduledRevision}/${scheduledTheme} current=${lastAppliedSettingsRevision}/${lastAppliedMermaidTheme}`
+                                        );
+                                        return;
+                                    }
+                                    emitToIntelliJLog(`MARKFLOW_UI mermaid:renderSuccess theme=${lastAppliedMermaidTheme}`);
+                                    applyPreview(wrapMermaidSvg(output.svg));
+                                })
+                                .catch((error) => {
+                                    renderMermaidError(applyPreview, error);
+                                });
+                        };
+
+                        if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
+                            const manualId = `manual-mermaid-${uid()}`;
+                            manualMermaidRenderers.set(manualId, () => {
+                                manualMermaidRenderers.delete(manualId);
+                                renderNow();
                             });
+                            applyPreview(`<div class="markflow-manual-preview"><button type="button" class="markflow-manual-preview-button" onclick="window.__markflowRenderMermaidPreview && window.__markflowRenderMermaidPreview('${manualId}')">${runtimeSettings.manualRenderInlineLabel}</button><div class="markflow-manual-shortcut-hint">${runtimeSettings.manualRenderShortcutHint}</div></div>`);
+                            return;
+                        }
+
+                        scheduleMermaidRender(renderNow);
                     }
                 }
             },
             [Crepe.Feature.Latex]: {}
         }
     });
+    activeCrepe = crepe;
     markFlowStage("crepe:constructed");
 
     window.updateFromIntelliJ = (newMarkdown: string) => {
@@ -526,6 +738,12 @@ async function initEditor() {
             markFlowStage("crepe:create:done");
             installMarkdownPasteHandler(crepe);
             flushPendingIntelliJState(crepe);
+            if (pendingSettingsRerenderRevision !== null) {
+                console.info(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
+                emitToIntelliJLog(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
+                pendingSettingsRerenderRevision = null;
+                rerenderPreviewsAfterSettingsChange();
+            }
         })
         .catch((error) => {
             logCrepeCreateFailure(error);

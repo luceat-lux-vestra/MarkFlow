@@ -1,4 +1,4 @@
-package com.github.luceatluxvestra.markflow
+package com.algorist.markflow
 
 import com.intellij.DynamicBundle
 import org.jetbrains.annotations.NonNls

@@ -295,7 +295,6 @@ code {
     border-right-color: var(--border);
   }
 }
-*/
 
 /*
 :root {
@@ -336,5 +335,81 @@ svg.flowchart,
   overflow: visible;
 }
 
+.markflow-mermaid-preview {
+  transform: scale(var(--markflow-mermaid-zoom, 1));
+  transform-origin: top left;
+  width: fit-content;
+}
 
+.markflow-mermaid-size-fit {
+  max-width: 100%;
+}
 
+.markflow-mermaid-size-fit svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markflow-mermaid-size-actual {
+  overflow: auto;
+}
+
+.markflow-preview-paused,
+.markflow-manual-preview {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 8px;
+  border: 1px dashed #9ca3af;
+  border-radius: 6px;
+}
+
+.markflow-manual-refresh-toolbar {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2000;
+}
+
+.markflow-manual-preview-button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  padding: 6px 12px;
+}
+
+.markflow-manual-refresh-button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  padding: 6px 12px;
+}
+
+.markflow-manual-shortcut-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+#app[data-katex-density="COMPACT"] .katex-display {
+  margin: 0.6em 0;
+  line-height: 1.2;
+}
+
+#app[data-katex-density="COMPACT"] .katex {
+  line-height: 1.1;
+}
+
+#app[data-katex-density="COMFORTABLE"] .katex-display {
+  margin: 1.1em 0;
+  line-height: 1.45;
+}
+
+#app[data-katex-density="COMFORTABLE"] .katex {
+  line-height: 1.3;
+}

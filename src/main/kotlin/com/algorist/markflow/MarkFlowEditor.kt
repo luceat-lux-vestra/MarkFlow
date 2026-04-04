@@ -1,5 +1,6 @@
 package com.algorist.markflow
 
+import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -32,6 +33,7 @@ import java.net.URLConnection
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarFile
 import javax.swing.JComponent
 import com.sun.net.httpserver.HttpServer
@@ -43,7 +45,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private val jsQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val debugQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
 
-    // 🚩 무한루프 방지 플래그 (웹에서 수정한 내용을 반영 중일 때 true)
+    // Prevent feedback loops while applying updates received from webview.
     private var isUpdatingFromWeb = false
 
     // Editor state snapshot fields (Option C: scroll + cursor/selection + versioned state object)
@@ -55,9 +57,13 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownSelectionEnd = -1
     private var sharedResourcesAcquired = false
     private var disposed = false
+    private var isEditorActive = true
+    private var pendingRuntimeSettingsPush = false
+    private var pendingRuntimeSettingsForceReload = false
 
     init {
         LOG.info("MARKFLOW_UI editor init: ${file.path}")
+        registerOpenEditor()
 
         // 1. [Web -> IntelliJ] 웹 에디터의 변경사항을 IntelliJ 파일에 적용
         jsQuery.addHandler { request: String ->
@@ -130,8 +136,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
         debugQuery.addHandler { request: String ->
             val normalized = request.trim()
-            if (normalized.isNotEmpty()) {
-                LOG.warn("MARKFLOW_UI JS bridge: $normalized")
+            if (normalized.isNotEmpty() && normalized != "undefined") {
+                LOG.warn("MARKFLOW_DIAG JS bridge: $normalized")
             }
             JBCefJSQuery.Response("OK")
         }
@@ -147,7 +153,11 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 val safeMessage = message?.trim().orEmpty()
                 if (safeMessage.isNotEmpty()) {
                     val safeSource = source ?: "<unknown>"
-                    LOG.warn("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
+                    if (safeMessage.contains("MARKFLOW_UI")) {
+                        LOG.warn("MARKFLOW_DIAG JS console[$level] $safeSource:$line $safeMessage")
+                    } else {
+                        LOG.debug("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
+                    }
                 }
                 return false
             }
@@ -166,9 +176,12 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                     ?.replace("\"", "\\\"")
                     ?.replace("\n", "\\n")
                     ?.replace("\r", "") ?: ""
+                val runtimeSettingsJson = buildRuntimeSettingsJson()
+                LOG.warn("MARKFLOW_DIAG bridge:inject runtimeSettings=${runtimeSettingsJson.take(240)}")
 
                 val injectJs = """
                     window.intelliJ_initialMarkdown = "$currentText";
+                    window.intelliJ_markFlowSettings = $runtimeSettingsJson;
                     ${jsQuery.inject("window.cefQuery")}
                     ${debugQuery.inject("window.markflowLog")}
                     (function() {
@@ -208,6 +221,27 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                                 window.markflowLog('bridge:initialMarkdown:timeout');
                             }
                         })(0);
+                        (function syncInitialSettings(attempt) {
+                            if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
+                                window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings || {});
+                                if (typeof window.markflowLog === 'function') {
+                                    window.markflowLog('bridge:initialSettings:applied');
+                                }
+                                return;
+                            }
+                            if (attempt < 20) {
+                                setTimeout(function() {
+                                    syncInitialSettings(attempt + 1);
+                                }, 50);
+                                return;
+                            }
+                            if (typeof window.markflowLog === 'function') {
+                                window.markflowLog('bridge:initialSettings:timeout');
+                            }
+                        })(0);
+                        if (typeof window.setMarkFlowEditorActive === 'function') {
+                          window.setMarkFlowEditorActive(${if (isEditorActive) "true" else "false"});
+                        }
                     })();
                 """.trimIndent()
 
@@ -215,6 +249,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 webViewLoaded = true
                 LOG.info("MARKFLOW_UI webViewLoaded=true for ${file.path}")
                 applyPendingState()
+                applyPendingRuntimeSettings()
             }
 
             override fun onLoadError(
@@ -243,12 +278,22 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
     }
 
+    private fun buildRuntimeSettingsJson(): String {
+        return try {
+            val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
+            Gson().toJson(settings)
+        } catch (ex: Exception) {
+            LOG.warn("Failed to serialize runtime settings to JSON: ${ex.message}", ex)
+            "{}"
+        }
+    }
+
     private fun loadWebviewIndexUrl(): String? {
         return try {
-            LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: start for ${file.path}")
+            LOG.debug("MARKFLOW_UI loadWebviewIndexUrl: start for ${file.path}")
             val port = acquireSharedWebviewPort() ?: return null
             val indexUrl = "http://127.0.0.1:$port/index.html"
-            LOG.warn("MARKFLOW_UI loadWebviewIndexUrl: resolved=$indexUrl")
+            LOG.debug("MARKFLOW_UI loadWebviewIndexUrl: resolved=$indexUrl")
             indexUrl
         } catch (ex: Exception) {
             LOG.error("MARKFLOW_UI loadWebviewIndexUrl failed: ${ex.message}", ex)
@@ -314,7 +359,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             server.start()
             webviewHttpServer = server
             webviewServerPort = server.address.port
-            LOG.warn("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
+            LOG.info("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
             server.address.port
         } catch (ex: Exception) {
             LOG.error("MARKFLOW_UI failed to start webview HTTP server: ${ex.message}", ex)
@@ -379,7 +424,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                     copied++
                 }
             }
-            LOG.warn("MARKFLOW_UI extractWebviewRoot: extracted=$copied to $tempRoot")
+            LOG.info("MARKFLOW_UI extractWebviewRoot: extracted=$copied to $tempRoot")
         }
 
         extractedWebviewRoot = tempRoot
@@ -429,7 +474,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         webviewHttpServer?.let { server ->
             try {
                 server.stop(0)
-                LOG.warn("MARKFLOW_UI webview server stopped")
+                LOG.info("MARKFLOW_UI webview server stopped")
             } catch (ex: Exception) {
                 LOG.warn("MARKFLOW_UI failed to stop webview HTTP server: ${ex.message}", ex)
             }
@@ -448,7 +493,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 if (!deleted && Files.exists(root)) {
                     LOG.warn("MARKFLOW_UI failed to cleanup extracted webview root: $root")
                 } else {
-                    LOG.warn("MARKFLOW_UI cleaned extracted webview root: $root")
+                    LOG.info("MARKFLOW_UI cleaned extracted webview root: $root")
                 }
             } catch (ex: Exception) {
                 LOG.warn("MARKFLOW_UI failed to cleanup extracted webview root $root: ${ex.message}", ex)
@@ -456,6 +501,116 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
 
         extractedWebviewRootIsTemp = false
+    }
+
+    private fun applyRuntimeSettingsToWebview(forceReload: Boolean) {
+        LOG.warn(
+            "MARKFLOW_DIAG settings:applyAttempt file=${file.path} loaded=$webViewLoaded disposed=$disposed forceReload=$forceReload"
+        )
+        if (disposed) {
+            LOG.warn("MARKFLOW_DIAG settings:skip disposed file=${file.path}")
+            return
+        }
+        if (!webViewLoaded) {
+            pendingRuntimeSettingsPush = true
+            if (forceReload) {
+                pendingRuntimeSettingsForceReload = true
+            }
+            LOG.warn(
+                "MARKFLOW_DIAG settings:queued file=${file.path} loaded=$webViewLoaded forceReload=$forceReload"
+            )
+
+            // If this editor is active but webview is not loaded yet, kick off load immediately.
+            if (isEditorActive) {
+                val currentUrl = browser.cefBrowser.url
+                if (currentUrl.isNullOrBlank() || currentUrl == "about:blank") {
+                    val bootstrapUrl = loadWebviewIndexUrl()
+                    if (bootstrapUrl != null) {
+                        LOG.warn("MARKFLOW_DIAG settings:bootstrapLoad file=${file.path} url=$bootstrapUrl")
+                        browser.loadURL(bootstrapUrl)
+                    }
+                } else {
+                    LOG.warn("MARKFLOW_DIAG settings:bootstrapReload file=${file.path} url=$currentUrl")
+                    browser.loadURL(currentUrl)
+                }
+            }
+            return
+        }
+
+        val pushId = settingsPushSequence.incrementAndGet()
+        val shouldReloadNow = forceReload && webViewLoaded && isEditorActive
+        if (forceReload && !shouldReloadNow) {
+            LOG.warn(
+                "MARKFLOW_DIAG settings:skipReload file=${file.path} loaded=$webViewLoaded active=$isEditorActive"
+            )
+        }
+
+        if (shouldReloadNow) {
+            LOG.warn("MARKFLOW_DIAG settings:forceReload id=$pushId file=${file.path}")
+            // Ensure a normal settings push runs after reload completes.
+            pendingRuntimeSettingsPush = true
+            pendingRuntimeSettingsForceReload = false
+            webViewLoaded = false
+            try {
+                browser.cefBrowser.reload()
+                LOG.warn("MARKFLOW_DIAG settings:forceReloadTriggered id=$pushId file=${file.path}")
+            } catch (ex: Exception) {
+                val bootstrapUrl = loadWebviewIndexUrl()
+                if (bootstrapUrl != null) {
+                    LOG.warn("MARKFLOW_DIAG settings:forceReloadFallback id=$pushId url=$bootstrapUrl")
+                    browser.loadURL(bootstrapUrl)
+                } else {
+                    LOG.warn("MARKFLOW_DIAG settings:forceReloadFallbackFailed id=$pushId")
+                }
+            }
+            return
+        }
+        val runtimeSettingsJson = buildRuntimeSettingsJson()
+        LOG.warn("MARKFLOW_DIAG settings:push id=$pushId file=${file.path} payload=$runtimeSettingsJson")
+        val script = """
+            (function syncRuntimeSettings(attempt) {
+                window.intelliJ_markFlowSettings = $runtimeSettingsJson;
+                if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
+                    window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings);
+                    if (typeof window.markflowLog === 'function') {
+                        window.markflowLog('bridge:runtimeSettings:applied:$pushId');
+                    }
+                    return;
+                }
+                if (attempt < 20) {
+                    setTimeout(function() {
+                        syncRuntimeSettings(attempt + 1);
+                    }, 50);
+                    return;
+                }
+                if (typeof window.markflowLog === 'function') {
+                    window.markflowLog('bridge:runtimeSettings:timeout:$pushId');
+                }
+            })(0);
+        """.trimIndent()
+        browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+    }
+
+    private fun applyPendingRuntimeSettings() {
+        if (!webViewLoaded || !pendingRuntimeSettingsPush) return
+
+        val forceReload = pendingRuntimeSettingsForceReload
+        pendingRuntimeSettingsPush = false
+        pendingRuntimeSettingsForceReload = false
+        LOG.warn("MARKFLOW_DIAG settings:flushPending file=${file.path} forceReload=$forceReload")
+        applyRuntimeSettingsToWebview(forceReload)
+    }
+
+    private fun registerOpenEditor() {
+        synchronized(openEditorsLock) {
+            openEditors.add(this)
+        }
+    }
+
+    private fun unregisterOpenEditor() {
+        synchronized(openEditorsLock) {
+            openEditors.remove(this)
+        }
     }
 
     override fun getComponent(): JComponent = browser.component
@@ -528,6 +683,26 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         // State change events are not emitted yet; editor is currently pull-based.
     }
 
+    override fun selectNotify() {
+        isEditorActive = true
+        if (!webViewLoaded) return
+        browser.cefBrowser.executeJavaScript(
+            "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive(true); }",
+            browser.cefBrowser.url,
+            0
+        )
+    }
+
+    override fun deselectNotify() {
+        isEditorActive = false
+        if (!webViewLoaded) return
+        browser.cefBrowser.executeJavaScript(
+            "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive(false); }",
+            browser.cefBrowser.url,
+            0
+        )
+    }
+
     override fun dispose() {
         if (disposed) return
         disposed = true
@@ -538,6 +713,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             jsQuery.dispose()
             browser.dispose()
         } finally {
+            unregisterOpenEditor()
             releaseSharedWebviewResources()
             LOG.info("MARKFLOW_UI dispose end: ${file.path}")
         }
@@ -565,7 +741,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
     }
 
-    private companion object {
+    companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
         private const val WEBVIEW_ENTRY_RESOURCE = "webview/index.html"
         @Volatile
@@ -579,6 +755,29 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         @Volatile
         private var sharedWebviewRefCount: Int = 0
         private val sharedLifecycleLock = Any()
+        private val openEditorsLock = Any()
+        private val openEditors = mutableSetOf<MarkFlowEditor>()
+
+        fun notifyRuntimeSettingsChanged(forceReload: Boolean = false) {
+            val snapshot = synchronized(openEditorsLock) { openEditors.toList() }
+            if (snapshot.isEmpty()) return
+            LOG.warn("MARKFLOW_DIAG settings:notify editors=${snapshot.size}, forceReload=$forceReload")
+
+            val app = ApplicationManager.getApplication()
+            val applyAll = {
+                snapshot.forEach { editor ->
+                    editor.applyRuntimeSettingsToWebview(forceReload)
+                }
+            }
+
+            if (app.isDispatchThread) {
+                applyAll()
+                return
+            }
+
+            app.invokeLater(applyAll)
+        }
+
+        private val settingsPushSequence = AtomicInteger(0)
     }
 }
-
