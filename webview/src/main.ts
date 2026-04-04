@@ -24,13 +24,17 @@ const manualMermaidRenderers = new Map<string, () => void>();
 let activeCrepe: Crepe | null = null;
 const MANUAL_MERMAID_SHORTCUT_KEY = "r";
 const MERMAID_RENDER_TIMEOUT_MS = 8000;
-let mermaidRenderQueue: Promise<void> = Promise.resolve();
+const MERMAID_RENDER_RETRY_DELAY_MS = 250;
+const MERMAID_RENDER_MAX_RETRIES = 1;
+const MERMAID_LOADING_WATCHDOG_MS = 12000;
+let mermaidRenderQueues = new WeakMap<(html: string) => void, Promise<void>>();
 let mermaidRenderRequestId = 0;
 let mermaidPreviewEpoch = 0;
 let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
 let pendingLayoutRecovery = false;
+let pendingHostForceRerender = false;
 let externalUpdateGuardToken = 0;
 let isRecreatingCrepe = false;
 let pendingCrepeRecreate = false;
@@ -39,16 +43,15 @@ let lastAppliedPreviewOnlyByDefault = true;
 let recoveryRequestInFlight = false;
 let activeRecoveryEpoch: number | null = null;
 let activeRecoveryRole: RecoveryRole | null = null;
-let pendingPausedPreviewRefresh = false;
 let previewResumeRetryToken = 0;
 let crepeSessionSequence = 0;
 let activeCrepeSessionId = 0;
 const mermaidDebounceTimers = new WeakMap<(html: string) => void, number>();
 const allMermaidDebounceTimerIds = new Set<number>();
-const latestMermaidRequestByPreview = new WeakMap<(html: string) => void, number>();
+const mermaidLoadingWatchdogTimers = new WeakMap<(html: string) => void, number>();
 const manualPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
-const pausedMermaidRenderers = new Map<string, () => void>();
-const pausedPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
+const mermaidPreviewRenderers = new Map<string, () => void>();
+let mermaidPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
 
 const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
@@ -56,15 +59,16 @@ const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     themeSource: "LIGHT",
     renderTriggerMode: "LIVE",
     renderDebounceMs: 500,
-    backgroundPreviewPolicy: "PAUSE_WHEN_TAB_INACTIVE",
     mermaidErrorDisplay: "INLINE_ERROR_BOX",
     katexDisplayDensity: "COMFORTABLE",
     diagramSecurityLevel: "STRICT",
     previewOnlyByDefault: true,
+    forceRerenderShortcutEnabled: true,
+    shortcutConflictDetected: false,
+    shortcutConflictMessage: "This shortcut may conflict with other IDE shortcuts. You can disable it in MarkFlow settings if needed.",
     manualRenderToolbarLabel: "Render Mermaid",
     manualRenderInlineLabel: "Render Mermaid Preview",
     manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Shift+R",
-    previewPausedMessage: "Preview paused while tab is inactive.",
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
     settingsRevision: 1
 };
@@ -199,44 +203,69 @@ const renderAllManualMermaidPreviews = () => {
     renderers.forEach((render) => render());
 };
 
-const unregisterPausedMermaidPreview = (applyPreview: (html: string) => void) => {
-    const pausedId = pausedPreviewIdByRenderer.get(applyPreview);
-    if (!pausedId) return;
-    pausedMermaidRenderers.delete(pausedId);
-    pausedPreviewIdByRenderer.delete(applyPreview);
-};
-
-const registerPausedMermaidPreview = (applyPreview: (html: string) => void, render: () => void) => {
-    unregisterPausedMermaidPreview(applyPreview);
-    const pausedId = `paused-mermaid-${uid()}`;
-    pausedPreviewIdByRenderer.set(applyPreview, pausedId);
-    pausedMermaidRenderers.set(pausedId, () => {
-        pausedMermaidRenderers.delete(pausedId);
-        pausedPreviewIdByRenderer.delete(applyPreview);
-        render();
+const registerMermaidPreviewRenderer = (applyPreview: (html: string) => void, renderNow: () => void) => {
+    const existingId = mermaidPreviewIdByRenderer.get(applyPreview);
+    const previewId = existingId ?? `mermaid-preview-${uid()}`;
+    mermaidPreviewIdByRenderer.set(applyPreview, previewId);
+    mermaidPreviewRenderers.set(previewId, () => {
+        if (!activeCrepe || !isCrepeReady) {
+            return;
+        }
+        renderNow();
     });
 };
 
-const renderAllPausedMermaidPreviews = () => {
-    const renderers = Array.from(pausedMermaidRenderers.values());
-    pausedMermaidRenderers.clear();
-    renderers.forEach((render) => render());
-    pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
+const renderAllRegisteredMermaidPreviews = () => {
+    Array.from(mermaidPreviewRenderers.values()).forEach((render) => render());
 };
+
+const renderAllMermaidAndLatexPreviews = () => {
+    emitToIntelliJLog("MARKFLOW_UI forceRerender:triggered");
+    renderAllManualMermaidPreviews();
+    renderAllRegisteredMermaidPreviews();
+    if (activeCrepe && isCrepeReady) {
+        requestAnimationFrame(() => {
+            if (!activeCrepe || !isCrepeReady) return;
+            window.dispatchEvent(new Event("resize"));
+            emitToIntelliJLog("MARKFLOW_UI forceRerender:done");
+        });
+        return;
+    }
+
+    pendingHostForceRerender = true;
+    emitToIntelliJLog("MARKFLOW_UI forceRerender:queued");
+};
+
+const triggerForceRerender = () => {
+    renderAllMermaidAndLatexPreviews();
+};
+
+window.addEventListener("markflowForceRerender", () => {
+    emitToIntelliJLog("MARKFLOW_UI action:forceRerender received");
+    triggerForceRerender();
+});
 
 const clearAllMermaidDebounceTimers = () => {
     allMermaidDebounceTimerIds.forEach((timerId) => window.clearTimeout(timerId));
     allMermaidDebounceTimerIds.clear();
 };
 
+const clearMermaidLoadingWatchdog = (applyPreview: (html: string) => void) => {
+    const timerId = mermaidLoadingWatchdogTimers.get(applyPreview);
+    if (timerId !== undefined) {
+        window.clearTimeout(timerId);
+        mermaidLoadingWatchdogTimers.delete(applyPreview);
+    }
+};
+
 const invalidateMermaidPreviewLifecycle = (reason: string) => {
     mermaidPreviewEpoch += 1;
     mermaidRenderRequestId += 1;
-    pendingPausedPreviewRefresh = false;
     manualMermaidRenderers.clear();
-    pausedMermaidRenderers.clear();
+    mermaidPreviewRenderers.clear();
+    mermaidPreviewIdByRenderer = new WeakMap();
     clearAllMermaidDebounceTimers();
-    mermaidRenderQueue = Promise.resolve();
+    mermaidRenderQueues = new WeakMap();
     emitToIntelliJLog(`MARKFLOW_UI mermaid:lifecycleInvalidated reason=${reason} epoch=${mermaidPreviewEpoch}`);
 };
 
@@ -272,6 +301,35 @@ const ensureManualPreviewToolbar = () => {
 
     toolbar.append(button);
     document.body.append(toolbar);
+};
+
+const ensureShortcutConflictNotice = () => {
+    const conflictNoticeId = "markflow-shortcut-conflict-notice";
+    const existing = document.getElementById(conflictNoticeId);
+
+    if (!runtimeSettings.forceRerenderShortcutEnabled || !runtimeSettings.shortcutConflictDetected) {
+        existing?.remove();
+        return;
+    }
+
+    if (existing) {
+        return;
+    }
+
+    const notice = document.createElement("div");
+    notice.id = conflictNoticeId;
+    notice.className = "markflow-shortcut-conflict-notice";
+    notice.innerHTML = `
+        <div class="markflow-notice-content">
+            <span class="markflow-notice-icon">⚠️</span>
+            <span class="markflow-notice-text">${runtimeSettings.shortcutConflictMessage}</span>
+        </div>
+    `;
+
+    const app = document.getElementById("app");
+    if (app) {
+        app.insertBefore(notice, app.firstChild);
+    }
 };
 
 const rerenderPreviewsAfterSettingsChange = () => {
@@ -331,7 +389,6 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     emitToIntelliJLog(
         `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${runtimeSettings.themeSource} security=${runtimeSettings.diagramSecurityLevel}`
     );
-    invalidateMermaidPreviewLifecycle(`settings:${nextRevision}`);
     logThemeDiagnostics(raw, nextTheme);
     reconfigureMermaid();
     lastAppliedMermaidTheme = nextTheme;
@@ -343,8 +400,11 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     }
     applyRuntimeUiSettings();
     ensureManualPreviewToolbar();
+    ensureShortcutConflictNotice();
     hasAppliedRuntimeSettingsOnce = true;
     lastAppliedPreviewOnlyByDefault = runtimeSettings.previewOnlyByDefault;
+
+    renderAllRegisteredMermaidPreviews();
 
     if (previewOnlyByDefaultChanged) {
         emitToIntelliJLog("MARKFLOW_UI settings:previewOnlyByDefault changed -> recreate crepe");
@@ -369,10 +429,11 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
 const wrapMermaidSvg = (svg: string) => {
     const sizeClass = runtimeSettings.mermaidSizeMode === "ACTUAL_SIZE_SCROLL" ? "actual" : "fit";
     const zoomScale = runtimeSettings.mermaidZoomPercent / 100;
-    return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}" style="--markflow-mermaid-zoom:${zoomScale}">${svg}</div>`;
+    return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}" style="transform: scale(${zoomScale}); transform-origin: top left; width: fit-content;">${svg}</div>`;
 };
 
 const renderMermaidError = (applyPreview: (html: string) => void, error: unknown) => {
+    clearMermaidLoadingWatchdog(applyPreview);
     console.error("MARKFLOW_UI mermaid:renderError", error);
     emitToIntelliJLog(`MARKFLOW_UI mermaid:renderError ${String(error)}`);
     if (runtimeSettings.mermaidErrorDisplay === "INLINE_ERROR_BOX") {
@@ -382,34 +443,17 @@ const renderMermaidError = (applyPreview: (html: string) => void, error: unknown
     applyPreview("");
 };
 
-const shouldPausePreviewRender = () => {
-    return runtimeSettings.backgroundPreviewPolicy === "PAUSE_WHEN_TAB_INACTIVE" && !isEditorActive;
-};
-
 const requestPreviewResumeRefresh = (reason: string) => {
-    const resumeToken = ++previewResumeRetryToken;
-
-    const runResume = () => {
-        if (resumeToken !== previewResumeRetryToken) {
+    const retryToken = ++previewResumeRetryToken;
+    requestAnimationFrame(() => {
+        if (retryToken !== previewResumeRetryToken) {
             return;
         }
-
-        if (!pendingPausedPreviewRefresh) {
-            recoverEditorLayout(reason);
-            return;
-        }
-
         if (!isEditorActive || document.visibilityState === "hidden") {
-            window.setTimeout(runResume, 50);
             return;
         }
-
-        renderAllPausedMermaidPreviews();
-        pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
-        window.dispatchEvent(new Event("resize"));
-    };
-
-    requestAnimationFrame(() => requestAnimationFrame(runResume));
+        recoverEditorLayout(reason);
+    });
 };
 
 const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: string) => void) => {
@@ -445,10 +489,11 @@ const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: s
     renderNow();
 };
 
-const enqueueMermaidRender = (task: () => Promise<void>) => {
-    mermaidRenderQueue = mermaidRenderQueue
+const enqueueMermaidRender = (applyPreview: (html: string) => void, task: () => Promise<void>) => {
+    const previousQueue = mermaidRenderQueues.get(applyPreview) ?? Promise.resolve();
+    const nextQueue = previousQueue
         .catch(() => {
-            // Keep queue progressing even after a failed render.
+            // Keep this preview's queue progressing even after a failed render.
         })
         .then(task)
         .catch((error) => {
@@ -456,6 +501,8 @@ const enqueueMermaidRender = (task: () => Promise<void>) => {
             console.warn(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
             emitToIntelliJLog(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
         });
+
+    mermaidRenderQueues.set(applyPreview, nextQueue);
 };
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
@@ -599,11 +646,8 @@ const recoverEditorLayout = (reason: string) => {
 
     requestAnimationFrame(() => {
         if (!activeCrepe || !isCrepeReady) return;
-        rerenderPreviewsAfterSettingsChange();
-        requestAnimationFrame(() => {
-            window.dispatchEvent(new Event("resize"));
-            emitToIntelliJLog(`MARKFLOW_UI layout:done reason=${reason}`);
-        });
+        window.dispatchEvent(new Event("resize"));
+        emitToIntelliJLog(`MARKFLOW_UI layout:done reason=${reason}`);
     });
 };
 
@@ -898,23 +942,38 @@ function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe
                             return;
                         }
 
-                        latestMermaidRequestByPreview.set(applyPreview, requestId);
-                        const isLatestRequest = () => latestMermaidRequestByPreview.get(applyPreview) === requestId;
+                        const settlePreview = (html: string) => {
+                            clearMermaidLoadingWatchdog(applyPreview);
+                            if (isRenderContextActive()) {
+                                applyPreview(html);
+                            }
+                        };
                         markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
                         logMermaidTrace(
                             `renderPreview id=${requestId} theme=${lastAppliedMermaidTheme} len=${content.length}`
                         );
-                        const renderNow = () => {
+                        const renderNow = (attempt = 0) => {
                             const scheduledRevision = lastAppliedSettingsRevision;
                             const scheduledTheme = lastAppliedMermaidTheme;
                             const svgId = `mermaid-svg-${uid()}`;
 
+                            clearMermaidLoadingWatchdog(applyPreview);
+                            const watchdogId = window.setTimeout(() => {
+                                if (!isRenderContextActive()) {
+                                    return;
+                                }
+                                logMermaidTrace(`watchdog id=${requestId} fallback=error`);
+                                renderMermaidError(applyPreview, new Error("Mermaid preview watchdog timeout"));
+                            }, MERMAID_LOADING_WATCHDOG_MS);
+                            mermaidLoadingWatchdogTimers.set(applyPreview, watchdogId);
+
                             logMermaidTrace(
-                                `queued id=${requestId} revision=${scheduledRevision} theme=${scheduledTheme}`
+                                `queued id=${requestId} attempt=${attempt} revision=${scheduledRevision} theme=${scheduledTheme}`
                             );
 
-                            enqueueMermaidRender(async () => {
+                            enqueueMermaidRender(applyPreview, async () => {
                                 if (!isRenderContextActive()) {
+                                    clearMermaidLoadingWatchdog(applyPreview);
                                     logMermaidTrace(`staleContext id=${requestId} phase=beforeRender`);
                                     return;
                                 }
@@ -922,11 +981,8 @@ function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe
                                 try {
                                     const output = await withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
                                     if (!isRenderContextActive()) {
+                                        clearMermaidLoadingWatchdog(applyPreview);
                                         logMermaidTrace(`staleContext id=${requestId} phase=afterRender`);
-                                        return;
-                                    }
-                                    if (!isLatestRequest()) {
-                                        logMermaidTrace(`superseded id=${requestId}`);
                                         return;
                                     }
                                     if (scheduledTheme !== lastAppliedMermaidTheme) {
@@ -944,19 +1000,26 @@ function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe
                                     logMermaidTrace(
                                         `success id=${requestId} theme=${lastAppliedMermaidTheme}`
                                     );
-                                    if (isRenderContextActive()) {
-                                        applyPreview(wrapMermaidSvg(output.svg));
-                                    }
+                                    settlePreview(wrapMermaidSvg(output.svg));
                                 } catch (error) {
                                     if (!isRenderContextActive()) {
+                                        clearMermaidLoadingWatchdog(applyPreview);
                                         logMermaidTrace(`staleContext id=${requestId} phase=error`);
                                         return;
                                     }
-                                    if (!isLatestRequest()) {
-                                        logMermaidTrace(`supersededError id=${requestId}`);
+                                    const detail = error instanceof Error ? error.message : String(error);
+                                    const timedOut = detail.includes("timed out");
+                                    if (timedOut && attempt < MERMAID_RENDER_MAX_RETRIES) {
+                                        logMermaidTrace(`retry id=${requestId} nextAttempt=${attempt + 1}`);
+                                        window.setTimeout(() => {
+                                            if (!isRenderContextActive()) {
+                                                clearMermaidLoadingWatchdog(applyPreview);
+                                                return;
+                                            }
+                                            renderNow(attempt + 1);
+                                        }, MERMAID_RENDER_RETRY_DELAY_MS);
                                         return;
                                     }
-                                    const detail = error instanceof Error ? error.message : String(error);
                                     logMermaidTrace(`failed id=${requestId} detail=${detail}`);
                                     if (isRenderContextActive()) {
                                         renderMermaidError(applyPreview, error);
@@ -965,18 +1028,7 @@ function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe
                             });
                         };
 
-                        if (shouldPausePreviewRender()) {
-                            logMermaidTrace(`paused id=${requestId} tabInactive`);
-                            registerPausedMermaidPreview(applyPreview, renderNow);
-                            pendingPausedPreviewRefresh = true;
-                            if (isRenderContextActive()) {
-                                applyPreview(`<div class="markflow-preview-paused">${runtimeSettings.previewPausedMessage}</div>`);
-                            }
-                            return;
-                        }
-
-                        unregisterPausedMermaidPreview(applyPreview);
-                        pendingPausedPreviewRefresh = pausedMermaidRenderers.size > 0;
+                        registerMermaidPreviewRenderer(applyPreview, renderNow);
 
                         if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
                             const previousManualId = manualPreviewIdByRenderer.get(applyPreview);
@@ -1052,6 +1104,10 @@ async function startCrepe(crepe: Crepe, layoutReason: string, restoreState?: Edi
     if (pendingLayoutRecovery) {
         pendingLayoutRecovery = false;
         recoverEditorLayout("create:flushQueued");
+    }
+    if (pendingHostForceRerender) {
+        pendingHostForceRerender = false;
+        triggerForceRerender();
     }
 }
 
@@ -1153,11 +1209,15 @@ async function initEditor() {
         const isShortcut = (event.metaKey || event.ctrlKey)
             && event.shiftKey
             && event.key.toLowerCase() === MANUAL_MERMAID_SHORTCUT_KEY;
-        if (!isShortcut || runtimeSettings.renderTriggerMode !== "MANUAL_REFRESH") {
+        if (!isShortcut) {
+            return;
+        }
+        // Always allow Mermaid+LaTeX force re-render if shortcut is enabled
+        if (!runtimeSettings.forceRerenderShortcutEnabled) {
             return;
         }
         event.preventDefault();
-        renderAllManualMermaidPreviews();
+        renderAllMermaidAndLatexPreviews();
     });
 
     (window as { __markflowRenderMermaidPreview?: (manualId: string) => void }).__markflowRenderMermaidPreview = (manualId) => {

@@ -12,6 +12,8 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
+import com.intellij.openapi.keymap.KeymapManager
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
@@ -36,6 +38,7 @@ import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarFile
 import javax.swing.JComponent
+import javax.swing.KeyStroke
 import com.sun.net.httpserver.HttpServer
 
 class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
@@ -61,6 +64,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var isEditorActive = true
     private var pendingRuntimeSettingsPush = false
     private var pendingRuntimeSettingsForceReload = false
+    private var pendingForceRerender = false
     private var lastActivationSettingsPushAtMs = 0L
     private var pendingWebToDocumentContent: String? = null
     private var webToDocumentApplyScheduled = false
@@ -179,7 +183,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 LOG.debug("MARKFLOW_UI JCEF onLoadEnd: url=${cefBrowser?.url ?: browser.cefBrowser.url}, status=$httpStatusCode")
                 val currentText = readInitialMarkdownText()
                 val currentTextLiteral = toJsStringLiteral(currentText)
-                val runtimeSettingsJson = buildRuntimeSettingsJson()
+                val conflictDetected = detectShortcutConflict()
+                val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(conflictDetected)
                 val initialMarkdownSeq = ++intelliJToWebPushSequence
                 val initialSettingsSeq = settingsPushSequence.incrementAndGet()
                 LOG.warn("MARKFLOW_DIAG bridge:inject runtimeSettings=${runtimeSettingsJson.take(240)}")
@@ -274,6 +279,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 LOG.info("MARKFLOW_UI webViewLoaded=true for ${file.path}")
                 applyPendingState()
                 applyPendingRuntimeSettings()
+                flushPendingForceRerender()
             }
 
             override fun onLoadError(
@@ -302,15 +308,43 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
     }
 
-    private fun buildRuntimeSettingsJson(): String {
+    private fun buildRuntimeSettingsJsonWithConflict(conflictDetected: Boolean): String {
         return try {
-            val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
+            val settings = MarkFlowSettingsService.getInstance().runtimeSettings(conflictDetected)
             gson.toJson(settings)
         } catch (ex: Exception) {
             LOG.warn("Failed to serialize runtime settings to JSON: ${ex.message}", ex)
             "{}"
         }
     }
+
+    private fun detectShortcutConflict(): Boolean {
+        return try {
+            val settings = MarkFlowSettingsService.getInstance().state
+            if (!settings.forceRerenderShortcutEnabled) {
+                return false
+            }
+
+            val keymapManager = KeymapManager.getInstance()
+            val activeKeymap = keymapManager.activeKeymap
+            val ctrlShiftR = KeyStroke.getKeyStroke("ctrl shift R")
+            val metaShiftR = KeyStroke.getKeyStroke("meta shift R")
+            val candidates = buildList {
+                if (ctrlShiftR != null) add(ctrlShiftR)
+                if (SystemInfo.isMac && metaShiftR != null) add(metaShiftR)
+            }
+
+            candidates.any { shortcut ->
+                activeKeymap
+                    .getActionIds(shortcut)
+                    .any { actionId -> actionId != MarkFlowForceRerenderAction.ACTION_ID }
+            }
+        } catch (ex: Exception) {
+            LOG.warn("Failed to detect shortcut conflict: ${ex.message}", ex)
+            false
+        }
+    }
+
 
     private fun readInitialMarkdownText(): String {
         document?.text?.let { return it }
@@ -608,7 +642,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             }
             return
         }
-        val runtimeSettingsJson = buildRuntimeSettingsJson()
+        val conflictDetected = detectShortcutConflict()
+        val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(conflictDetected)
         LOG.warn("MARKFLOW_DIAG settings:push id=$pushId file=${file.path} payload=$runtimeSettingsJson")
         val script = """
             (function syncRuntimeSettingsPush(seq, payload) {
@@ -856,6 +891,25 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             browser.cefBrowser.url,
             0
         )
+    }
+
+
+    fun forceRerenderPreviews() {
+        if (!webViewLoaded) {
+            pendingForceRerender = true
+            return
+        }
+        browser.cefBrowser.executeJavaScript(
+            "window.dispatchEvent(new CustomEvent('markflowForceRerender'));",
+            browser.cefBrowser.url,
+            0
+        )
+    }
+
+    private fun flushPendingForceRerender() {
+        if (!pendingForceRerender || !webViewLoaded) return
+        pendingForceRerender = false
+        forceRerenderPreviews()
     }
 
     override fun dispose() {

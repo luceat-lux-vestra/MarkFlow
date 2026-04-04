@@ -13,9 +13,9 @@ import org.jdom.Element
 // plugin.xml에 <fileEditorProvider implementation="your.package.MakFlowEditorProvider"/> 로 등록해야 합니다.
 class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean {
-        val ext = file.extension?.lowercase()
-        val accepted = file.fileType.name.equals("Markdown", ignoreCase = true) || isMarkdownExtension(ext)
+        val accepted = MarkFlowFileSupport.isMarkFlowTarget(file)
         if (accepted) {
+            val ext = file.extension?.lowercase()
             LOG.info("MARKFLOW_UI accept: ${file.path} (type=${file.fileType.name}, ext=${ext ?: "<none>"})")
         }
         return accepted
@@ -26,7 +26,7 @@ class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
         return MarkFlowEditor(project, file)
     }
 
-    override fun getEditorTypeId(): String = "MarkFlowEditor"
+    override fun getEditorTypeId(): String = MarkFlowFileSupport.EDITOR_TYPE_ID
 
     override fun getPolicy(): FileEditorPolicy = FileEditorPolicy.HIDE_DEFAULT_EDITOR
 
@@ -36,10 +36,6 @@ class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
 
     override fun writeState(state: FileEditorState, project: Project, targetElement: Element) {
         (state as? MarkFlowEditorState)?.writeTo(targetElement)
-    }
-
-    private fun isMarkdownExtension(ext: String?): Boolean {
-        return ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkdn"
     }
 
     private companion object {

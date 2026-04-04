@@ -13,8 +13,20 @@
         <applicationConfigurable
                 id="preferences.markflow"
                 parentId="tools"
-                displayName="MarkFlow"
+                key="settings.markflow.displayName"
                 instance="com.algorist.markflow.MarkFlowSettingsConfigurable"/>
+        <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.MarkFlowEditorProvider" order="first"/>
     </extensions>
+
+    <actions>
+        <action id="MarkFlowForceRerenderAction"
+                class="com.algorist.markflow.MarkFlowForceRerenderAction"
+                >
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift R"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift R"/>
+            <add-to-group group-id="MainToolBar" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

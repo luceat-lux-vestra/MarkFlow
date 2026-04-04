@@ -26,11 +26,6 @@ enum class RenderTriggerMode {
     MANUAL_REFRESH
 }
 
-enum class BackgroundPreviewPolicy {
-    ALWAYS_RENDER,
-    PAUSE_WHEN_TAB_INACTIVE
-}
-
 enum class MermaidErrorDisplay {
     INLINE_ERROR_BOX,
     SILENT_LOG_ONLY
@@ -52,11 +47,11 @@ data class MarkFlowSettingsState(
     var themeSource: String = ThemeSource.LIGHT.name,
     var renderTriggerMode: String = RenderTriggerMode.LIVE.name,
     var renderDebounceMs: Int = 500,
-    var backgroundPreviewPolicy: String = BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE.name,
     var mermaidErrorDisplay: String = MermaidErrorDisplay.INLINE_ERROR_BOX.name,
     var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
     var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
-    var previewOnlyByDefault: Boolean = true
+    var previewOnlyByDefault: Boolean = true,
+    var forceRerenderShortcutEnabled: Boolean = true
 )
 
 data class MarkFlowRuntimeSettings(
@@ -65,15 +60,16 @@ data class MarkFlowRuntimeSettings(
     val themeSource: String,
     val renderTriggerMode: String,
     val renderDebounceMs: Int,
-    val backgroundPreviewPolicy: String,
     val mermaidErrorDisplay: String,
     val katexDisplayDensity: String,
     val diagramSecurityLevel: String,
     val previewOnlyByDefault: Boolean,
+    val forceRerenderShortcutEnabled: Boolean,
+    val shortcutConflictDetected: Boolean,
+    val shortcutConflictMessage: String,
     val manualRenderToolbarLabel: String,
     val manualRenderInlineLabel: String,
     val manualRenderShortcutHint: String,
-    val previewPausedMessage: String,
     val mermaidSyntaxErrorMessage: String,
     val settingsRevision: Int
 )
@@ -113,13 +109,14 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         }
     }
 
-    fun runtimeSettings(): MarkFlowRuntimeSettings {
+    fun runtimeSettings(shortcutConflictDetected: Boolean = false): MarkFlowRuntimeSettings {
         normalize()
         val resolvedThemeSource = resolveThemeSourceForRuntime()
         val revision = settingsRevision.get()
         LOG.warn(
             "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
-                "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
+                "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision, " +
+                "shortcutConflictDetected=$shortcutConflictDetected"
         )
         return MarkFlowRuntimeSettings(
             mermaidSizeMode = state.mermaidSizeMode,
@@ -127,15 +124,16 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             themeSource = resolvedThemeSource,
             renderTriggerMode = state.renderTriggerMode,
             renderDebounceMs = state.renderDebounceMs,
-            backgroundPreviewPolicy = state.backgroundPreviewPolicy,
             mermaidErrorDisplay = state.mermaidErrorDisplay,
             katexDisplayDensity = state.katexDisplayDensity,
             diagramSecurityLevel = state.diagramSecurityLevel,
             previewOnlyByDefault = state.previewOnlyByDefault,
+            forceRerenderShortcutEnabled = state.forceRerenderShortcutEnabled,
+            shortcutConflictDetected = shortcutConflictDetected,
+            shortcutConflictMessage = "This shortcut may conflict with other IDE shortcuts. You can disable it in MarkFlow settings if needed.",
             manualRenderToolbarLabel = MyBundle.message("preview.manual.toolbarButton"),
             manualRenderInlineLabel = MyBundle.message("preview.manual.inlineButton"),
             manualRenderShortcutHint = MyBundle.message("preview.manual.shortcutHint"),
-            previewPausedMessage = MyBundle.message("preview.paused"),
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
             settingsRevision = revision
         )
@@ -159,7 +157,6 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
         target.themeSource = normalizeEnum(target.themeSource, ThemeSource.LIGHT)
         target.renderTriggerMode = normalizeEnum(target.renderTriggerMode, RenderTriggerMode.LIVE)
-        target.backgroundPreviewPolicy = normalizeEnum(target.backgroundPreviewPolicy, BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE)
         target.mermaidErrorDisplay = normalizeEnum(target.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         target.katexDisplayDensity = normalizeEnum(target.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)

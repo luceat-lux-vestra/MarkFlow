@@ -24,11 +24,11 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var themeSourceCombo: ComboBox<ThemeSource>
     private lateinit var renderTriggerCombo: ComboBox<RenderTriggerMode>
     private lateinit var renderDebounceSpinner: JSpinner
-    private lateinit var backgroundPolicyCombo: ComboBox<BackgroundPreviewPolicy>
     private lateinit var mermaidErrorDisplayCombo: ComboBox<MermaidErrorDisplay>
     private lateinit var katexDensityCombo: ComboBox<KatexDisplayDensity>
     private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
     private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
+    private lateinit var forceRerenderShortcutEnabledCheckBox: JCheckBox
 
     override fun getDisplayName(): String = MyBundle.message("settings.markflow.displayName")
 
@@ -40,11 +40,11 @@ class MarkFlowSettingsConfigurable : Configurable {
         themeSourceCombo = enumCombo(ThemeSource.entries.toTypedArray())
         renderTriggerCombo = enumCombo(RenderTriggerMode.entries.toTypedArray())
         renderDebounceSpinner = JSpinner(SpinnerNumberModel(DEFAULT_DEBOUNCE_MS, DEBOUNCE_MIN, DEBOUNCE_MAX, DEBOUNCE_STEP))
-        backgroundPolicyCombo = enumCombo(BackgroundPreviewPolicy.entries.toTypedArray())
         mermaidErrorDisplayCombo = enumCombo(MermaidErrorDisplay.entries.toTypedArray())
         katexDensityCombo = enumCombo(KatexDisplayDensity.entries.toTypedArray())
         diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())
         previewOnlyByDefaultCheckBox = JCheckBox()
+        forceRerenderShortcutEnabledCheckBox = JCheckBox()
 
         val root = JPanel(GridBagLayout())
         root.border = JBUI.Borders.empty(PANEL_PADDING)
@@ -54,8 +54,8 @@ class MarkFlowSettingsConfigurable : Configurable {
         row = addRow(root, row, MyBundle.message("settings.markflow.themeSource"), themeSourceCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderTrigger"), renderTriggerCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderDebounceMs"), renderDebounceSpinner)
-        row = addRow(root, row, MyBundle.message("settings.markflow.backgroundPreviewPolicy"), backgroundPolicyCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.previewOnlyByDefault"), previewOnlyByDefaultCheckBox)
+        row = addRow(root, row, "Force Re-render Shortcut (Cmd/Ctrl+Shift+R)", forceRerenderShortcutEnabledCheckBox)
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
         row = addRow(root, row, MyBundle.message("settings.markflow.mermaid.sizeMode"), mermaidSizeModeCombo)
@@ -89,11 +89,11 @@ class MarkFlowSettingsConfigurable : Configurable {
             || state.themeSource != selectedName(themeSourceCombo)
             || state.renderTriggerMode != selectedName(renderTriggerCombo)
             || state.renderDebounceMs != spinnerInt(renderDebounceSpinner)
-            || state.backgroundPreviewPolicy != selectedName(backgroundPolicyCombo)
             || state.mermaidErrorDisplay != selectedName(mermaidErrorDisplayCombo)
             || state.katexDisplayDensity != selectedName(katexDensityCombo)
             || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
             || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected
+            || state.forceRerenderShortcutEnabled != forceRerenderShortcutEnabledCheckBox.isSelected
     }
 
     override fun apply() {
@@ -103,16 +103,16 @@ class MarkFlowSettingsConfigurable : Configurable {
             themeSource = selectedName(themeSourceCombo),
             renderTriggerMode = selectedName(renderTriggerCombo),
             renderDebounceMs = spinnerInt(renderDebounceSpinner),
-            backgroundPreviewPolicy = selectedName(backgroundPolicyCombo),
             mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),
             katexDisplayDensity = selectedName(katexDensityCombo),
             diagramSecurityLevel = selectedName(diagramSecurityCombo),
-            previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected
+            previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,
+            forceRerenderShortcutEnabled = forceRerenderShortcutEnabledCheckBox.isSelected
         )
         LOG.warn(
             "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
                 "renderTrigger=${updated.renderTriggerMode}, debounceMs=${updated.renderDebounceMs}, " +
-                "security=${updated.diagramSecurityLevel}"
+                "security=${updated.diagramSecurityLevel}, forceRerenderShortcutEnabled=${updated.forceRerenderShortcutEnabled}"
         )
         MarkFlowSettingsService.getInstance().updateFromUi(updated)
     }
@@ -124,15 +124,11 @@ class MarkFlowSettingsConfigurable : Configurable {
         setSelectedByName(themeSourceCombo, state.themeSource, ThemeSource.LIGHT)
         setSelectedByName(renderTriggerCombo, state.renderTriggerMode, RenderTriggerMode.LIVE)
         renderDebounceSpinner.value = state.renderDebounceMs.coerceIn(DEBOUNCE_MIN, DEBOUNCE_MAX)
-        setSelectedByName(
-            backgroundPolicyCombo,
-            state.backgroundPreviewPolicy,
-            BackgroundPreviewPolicy.PAUSE_WHEN_TAB_INACTIVE
-        )
         setSelectedByName(mermaidErrorDisplayCombo, state.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault
+        forceRerenderShortcutEnabledCheckBox.isSelected = state.forceRerenderShortcutEnabled
     }
 
     override fun disposeUIResources() {

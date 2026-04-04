@@ -14,15 +14,16 @@ type MarkFlowRuntimeSettings = {
     themeSource?: "IDE_SYNC" | "LIGHT" | "DARK";
     renderTriggerMode?: "LIVE" | "DEBOUNCED" | "MANUAL_REFRESH";
     renderDebounceMs?: number;
-    backgroundPreviewPolicy?: "ALWAYS_RENDER" | "PAUSE_WHEN_TAB_INACTIVE";
     mermaidErrorDisplay?: "INLINE_ERROR_BOX" | "SILENT_LOG_ONLY";
     katexDisplayDensity?: "COMPACT" | "COMFORTABLE";
     diagramSecurityLevel?: "STRICT" | "LOOSE";
     previewOnlyByDefault?: boolean;
+    forceRerenderShortcutEnabled?: boolean;
+    shortcutConflictDetected?: boolean;
+    shortcutConflictMessage?: string;
     manualRenderToolbarLabel?: string;
     manualRenderInlineLabel?: string;
     manualRenderShortcutHint?: string;
-    previewPausedMessage?: string;
     mermaidSyntaxErrorMessage?: string;
     settingsRevision?: number;
 };
