@@ -30,6 +30,10 @@ let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
 let pendingLayoutRecovery = false;
+let externalUpdateGuardToken = 0;
+const mermaidDebounceTimers = new WeakMap<(html: string) => void, number>();
+const latestMermaidRequestByPreview = new WeakMap<(html: string) => void, number>();
+const manualPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
 
 const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
@@ -227,7 +231,7 @@ const rerenderPreviewsAfterSettingsChange = () => {
         ? currentMarkdown.slice(0, -1)
         : `${currentMarkdown}\n`;
 
-    isUpdatingFromIntelliJ = true;
+    beginExternalUpdateGuard();
     try {
         if (toggleMarkdown !== currentMarkdown) {
             replaceEditorMarkdown(activeCrepe, toggleMarkdown, true);
@@ -240,7 +244,7 @@ const rerenderPreviewsAfterSettingsChange = () => {
     // Some preview nodes cache rendered HTML; run a second invalidation pass on next frame.
     requestAnimationFrame(() => {
         if (!activeCrepe || !isCrepeReady) return;
-        isUpdatingFromIntelliJ = true;
+        beginExternalUpdateGuard();
         try {
             replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
         } finally {
@@ -313,7 +317,7 @@ const shouldPausePreviewRender = () => {
     return runtimeSettings.backgroundPreviewPolicy === "PAUSE_WHEN_TAB_INACTIVE" && !isEditorActive;
 };
 
-const scheduleMermaidRender = (renderNow: () => void) => {
+const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: string) => void) => {
     if (runtimeSettings.renderTriggerMode === "LIVE") {
         logMermaidTrace("trigger live");
         renderNow();
@@ -322,9 +326,21 @@ const scheduleMermaidRender = (renderNow: () => void) => {
 
     if (runtimeSettings.renderTriggerMode === "DEBOUNCED") {
         logMermaidTrace(`trigger debounced ${runtimeSettings.renderDebounceMs}ms`);
-        window.setTimeout(() => {
+        if (applyPreviewKey) {
+            const previousTimerId = mermaidDebounceTimers.get(applyPreviewKey);
+            if (previousTimerId !== undefined) {
+                window.clearTimeout(previousTimerId);
+            }
+        }
+        const timerId = window.setTimeout(() => {
+            if (applyPreviewKey) {
+                mermaidDebounceTimers.delete(applyPreviewKey);
+            }
             renderNow();
         }, runtimeSettings.renderDebounceMs);
+        if (applyPreviewKey) {
+            mermaidDebounceTimers.set(applyPreviewKey, timerId);
+        }
         return;
     }
 
@@ -422,9 +438,18 @@ const recoverEditorLayout = (reason: string) => {
 };
 
 function clearExternalUpdateGuardLater() {
+    const token = externalUpdateGuardToken;
     setTimeout(() => {
+        if (token !== externalUpdateGuardToken) {
+            return;
+        }
         isUpdatingFromIntelliJ = false;
     }, EXTERNAL_UPDATE_GUARD_MS);
+}
+
+function beginExternalUpdateGuard() {
+    externalUpdateGuardToken += 1;
+    isUpdatingFromIntelliJ = true;
 }
 
 function captureEditorUiState(crepe: Crepe): EditorUiState {
@@ -588,7 +613,7 @@ function flushPendingIntelliJState(crepe: Crepe) {
     pendingMarkdownFromIntelliJ = null;
     if (pendingMarkdown !== null) {
         markFlowStage("bridge:updateFromIntelliJ:flush", pendingMarkdown.slice(0, 32));
-        isUpdatingFromIntelliJ = true;
+        beginExternalUpdateGuard();
         try {
             replaceEditorMarkdown(crepe, pendingMarkdown);
         } finally {
@@ -711,6 +736,8 @@ async function initEditor() {
                 renderPreview: (language, content, applyPreview) => {
                     if (isMermaidLanguage(language) && content.trim()) {
                         const requestId = ++mermaidRenderRequestId;
+                        latestMermaidRequestByPreview.set(applyPreview, requestId);
+                        const isLatestRequest = () => latestMermaidRequestByPreview.get(applyPreview) === requestId;
                         markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
                         logMermaidTrace(
                             `renderPreview id=${requestId} theme=${lastAppliedMermaidTheme} len=${content.length}`
@@ -734,6 +761,10 @@ async function initEditor() {
                                 logMermaidTrace(`start id=${requestId} svg=${svgId}`);
                                 try {
                                     const output = await withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
+                                    if (!isLatestRequest()) {
+                                        logMermaidTrace(`superseded id=${requestId}`);
+                                        return;
+                                    }
                                     if (scheduledTheme !== lastAppliedMermaidTheme) {
                                         logMermaidTrace(
                                             `stale id=${requestId} scheduledTheme=${scheduledTheme} currentTheme=${lastAppliedMermaidTheme}`
@@ -751,6 +782,10 @@ async function initEditor() {
                                     );
                                     applyPreview(wrapMermaidSvg(output.svg));
                                 } catch (error) {
+                                    if (!isLatestRequest()) {
+                                        logMermaidTrace(`supersededError id=${requestId}`);
+                                        return;
+                                    }
                                     const detail = error instanceof Error ? error.message : String(error);
                                     logMermaidTrace(`failed id=${requestId} detail=${detail}`);
                                     renderMermaidError(applyPreview, error);
@@ -759,16 +794,22 @@ async function initEditor() {
                         };
 
                         if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
+                            const previousManualId = manualPreviewIdByRenderer.get(applyPreview);
+                            if (previousManualId) {
+                                manualMermaidRenderers.delete(previousManualId);
+                            }
                             const manualId = `manual-mermaid-${uid()}`;
+                            manualPreviewIdByRenderer.set(applyPreview, manualId);
                             manualMermaidRenderers.set(manualId, () => {
                                 manualMermaidRenderers.delete(manualId);
+                                manualPreviewIdByRenderer.delete(applyPreview);
                                 renderNow();
                             });
                             applyPreview(`<div class="markflow-manual-preview"><button type="button" class="markflow-manual-preview-button" onclick="window.__markflowRenderMermaidPreview && window.__markflowRenderMermaidPreview('${manualId}')">${runtimeSettings.manualRenderInlineLabel}</button><div class="markflow-manual-shortcut-hint">${runtimeSettings.manualRenderShortcutHint}</div></div>`);
                             return;
                         }
 
-                        scheduleMermaidRender(renderNow);
+                        scheduleMermaidRender(renderNow, applyPreview);
                         return;
                     }
 
@@ -788,7 +829,7 @@ async function initEditor() {
             return;
         }
 
-        isUpdatingFromIntelliJ = true;
+        beginExternalUpdateGuard();
         try {
             replaceEditorMarkdown(crepe, newMarkdown);
         } finally {

@@ -62,6 +62,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var pendingRuntimeSettingsPush = false
     private var pendingRuntimeSettingsForceReload = false
     private var lastActivationSettingsPushAtMs = 0L
+    private var pendingWebToDocumentContent: String? = null
+    private var webToDocumentApplyScheduled = false
+    private var intelliJToWebPushSequence = 0
 
     init {
         LOG.info("MARKFLOW_UI editor init: ${file.path}")
@@ -99,18 +102,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 lastKnownSelectionEnd = json["selectionEnd"]?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
                     ?.asInt ?: lastKnownSelectionEnd
 
-                ApplicationManager.getApplication().invokeLater {
-                    WriteCommandAction.runWriteCommandAction(project) {
-                        if (document != null && document.text != newContent) {
-                            isUpdatingFromWeb = true
-                            try {
-                                document.setText(newContent)
-                            } finally {
-                                isUpdatingFromWeb = false
-                            }
-                         }
-                     }
-                 }
+                scheduleWebToDocumentApply(newContent)
                  JBCefJSQuery.Response("Success")
              } catch (ex: Exception) {
                  LOG.warn("Failed to parse JS bridge request for ${file.path}: ${ex.message}", ex)
@@ -124,8 +116,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 // 웹에서 쏜 데이터로 인해 변경된 것이 아닐 때만 웹으로 다시 쏨
                 if (!isUpdatingFromWeb) {
                     val newText = event.document.text
-                    val script = "if (window.updateFromIntelliJ) { window.updateFromIntelliJ(${toJsStringLiteral(newText)}); }"
-                    browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+                    pushMarkdownToWebview(newText)
                 }
             }
         }, this) // FileEditor(this)가 Dispose 될 때 리스너 자동 해제
@@ -171,6 +162,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 val currentText = readInitialMarkdownText()
                 val currentTextLiteral = toJsStringLiteral(currentText)
                 val runtimeSettingsJson = buildRuntimeSettingsJson()
+                val initialMarkdownSeq = ++intelliJToWebPushSequence
+                val initialSettingsSeq = settingsPushSequence.incrementAndGet()
                 LOG.warn("MARKFLOW_DIAG bridge:inject runtimeSettings=${runtimeSettingsJson.take(240)}")
 
                 val injectJs = """
@@ -197,42 +190,61 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                         if (typeof window.markflowLog === 'function') {
                             window.markflowLog('bridge:injected');
                         }
-                        (function syncInitialMarkdown(attempt) {
-                            if (typeof window.updateFromIntelliJ === 'function') {
-                                window.updateFromIntelliJ($currentTextLiteral);
-                                if (typeof window.markflowLog === 'function') {
-                                    window.markflowLog('bridge:initialMarkdown:applied');
+                        (function syncInitialMarkdown(seq, payload) {
+                            window.__markflowIntelliJUpdateSeq = Math.max(window.__markflowIntelliJUpdateSeq || 0, seq);
+                            (function applyMarkdown(attempt) {
+                                if ((window.__markflowIntelliJUpdateSeq || 0) !== seq) {
+                                    if (typeof window.markflowLog === 'function') {
+                                        window.markflowLog('bridge:initialMarkdown:dropped:' + seq);
+                                    }
+                                    return;
                                 }
-                                return;
-                            }
-                            if (attempt < 20) {
-                                setTimeout(function() {
-                                    syncInitialMarkdown(attempt + 1);
-                                }, 50);
-                                return;
-                            }
-                            if (typeof window.markflowLog === 'function') {
-                                window.markflowLog('bridge:initialMarkdown:timeout');
-                            }
-                        })(0);
-                        (function syncInitialSettings(attempt) {
-                            if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
-                                window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings || {});
-                                if (typeof window.markflowLog === 'function') {
-                                    window.markflowLog('bridge:initialSettings:applied');
+                                if (typeof window.updateFromIntelliJ === 'function') {
+                                    window.updateFromIntelliJ(payload);
+                                    if (typeof window.markflowLog === 'function') {
+                                        window.markflowLog('bridge:initialMarkdown:applied:' + seq);
+                                    }
+                                    return;
                                 }
-                                return;
-                            }
-                            if (attempt < 20) {
-                                setTimeout(function() {
-                                    syncInitialSettings(attempt + 1);
-                                }, 50);
-                                return;
-                            }
-                            if (typeof window.markflowLog === 'function') {
-                                window.markflowLog('bridge:initialSettings:timeout');
-                            }
-                        })(0);
+                                if (attempt < 20) {
+                                    setTimeout(function() {
+                                        applyMarkdown(attempt + 1);
+                                    }, 50);
+                                    return;
+                                }
+                                if (typeof window.markflowLog === 'function') {
+                                    window.markflowLog('bridge:initialMarkdown:timeout:' + seq);
+                                }
+                            })(0);
+                        })($initialMarkdownSeq, $currentTextLiteral);
+                        (function syncInitialSettings(seq, payload) {
+                            window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
+                            (function applySettings(attempt) {
+                                if ((window.__markflowRuntimeSettingsSeq || 0) !== seq) {
+                                    if (typeof window.markflowLog === 'function') {
+                                        window.markflowLog('bridge:initialSettings:dropped:' + seq);
+                                    }
+                                    return;
+                                }
+                                window.intelliJ_markFlowSettings = payload;
+                                if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
+                                    window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings || {});
+                                    if (typeof window.markflowLog === 'function') {
+                                        window.markflowLog('bridge:initialSettings:applied:' + seq);
+                                    }
+                                    return;
+                                }
+                                if (attempt < 20) {
+                                    setTimeout(function() {
+                                        applySettings(attempt + 1);
+                                    }, 50);
+                                    return;
+                                }
+                                if (typeof window.markflowLog === 'function') {
+                                    window.markflowLog('bridge:initialSettings:timeout:' + seq);
+                                }
+                            })(0);
+                        })($initialSettingsSeq, $runtimeSettingsJson);
                         if (typeof window.setMarkFlowEditorActive === 'function') {
                           window.setMarkFlowEditorActive(${if (isEditorActive) "true" else "false"});
                         }
@@ -581,27 +593,112 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         val runtimeSettingsJson = buildRuntimeSettingsJson()
         LOG.warn("MARKFLOW_DIAG settings:push id=$pushId file=${file.path} payload=$runtimeSettingsJson")
         val script = """
-            (function syncRuntimeSettings(attempt) {
-                window.intelliJ_markFlowSettings = $runtimeSettingsJson;
-                if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
-                    window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings);
-                    if (typeof window.markflowLog === 'function') {
-                        window.markflowLog('bridge:runtimeSettings:applied:$pushId');
+            (function syncRuntimeSettingsPush(seq, payload) {
+                window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
+                (function syncRuntimeSettings(attempt) {
+                    if ((window.__markflowRuntimeSettingsSeq || 0) !== seq) {
+                        if (typeof window.markflowLog === 'function') {
+                            window.markflowLog('bridge:runtimeSettings:dropped:' + seq);
+                        }
+                        return;
                     }
-                    return;
-                }
-                if (attempt < 20) {
-                    setTimeout(function() {
-                        syncRuntimeSettings(attempt + 1);
-                    }, 50);
-                    return;
-                }
-                if (typeof window.markflowLog === 'function') {
-                    window.markflowLog('bridge:runtimeSettings:timeout:$pushId');
-                }
-            })(0);
+
+                    window.intelliJ_markFlowSettings = payload;
+                    if (typeof window.applyMarkFlowSettingsFromIntelliJ === 'function') {
+                        window.applyMarkFlowSettingsFromIntelliJ(window.intelliJ_markFlowSettings);
+                        if (typeof window.markflowLog === 'function') {
+                            window.markflowLog('bridge:runtimeSettings:applied:' + seq);
+                        }
+                        return;
+                    }
+
+                    if (attempt < 20) {
+                        setTimeout(function() {
+                            syncRuntimeSettings(attempt + 1);
+                        }, 50);
+                        return;
+                    }
+
+                    if (typeof window.markflowLog === 'function') {
+                        window.markflowLog('bridge:runtimeSettings:timeout:' + seq);
+                    }
+                })(0);
+            })($pushId, $runtimeSettingsJson);
         """.trimIndent()
         browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+    }
+
+    private fun scheduleWebToDocumentApply(newContent: String) {
+        pendingWebToDocumentContent = newContent
+        if (webToDocumentApplyScheduled) {
+            return
+        }
+
+        webToDocumentApplyScheduled = true
+        ApplicationManager.getApplication().invokeLater {
+            webToDocumentApplyScheduled = false
+            if (disposed) {
+                return@invokeLater
+            }
+
+            val target = pendingWebToDocumentContent ?: return@invokeLater
+            pendingWebToDocumentContent = null
+
+            WriteCommandAction.runWriteCommandAction(project) {
+                if (document != null && document.text != target) {
+                    isUpdatingFromWeb = true
+                    try {
+                        document.setText(target)
+                    } finally {
+                        isUpdatingFromWeb = false
+                    }
+                }
+            }
+        }
+    }
+
+    private fun pushMarkdownToWebview(markdown: String) {
+        if (disposed) {
+            return
+        }
+
+        val seq = ++intelliJToWebPushSequence
+        val markdownLiteral = toJsStringLiteral(markdown)
+        val script = """
+            (function syncIntelliJMarkdown(seq, payload) {
+                window.__markflowIntelliJUpdateSeq = Math.max(window.__markflowIntelliJUpdateSeq || 0, seq);
+                (function applyMarkdown(attempt) {
+                    if ((window.__markflowIntelliJUpdateSeq || 0) !== seq) {
+                        if (typeof window.markflowLog === 'function') {
+                            window.markflowLog('bridge:updateFromIntelliJ:dropped:' + seq);
+                        }
+                        return;
+                    }
+
+                    if (typeof window.updateFromIntelliJ === 'function') {
+                        window.updateFromIntelliJ(payload);
+                        if (typeof window.markflowLog === 'function') {
+                            window.markflowLog('bridge:updateFromIntelliJ:applied:' + seq);
+                        }
+                        return;
+                    }
+
+                    if (attempt < 20) {
+                        setTimeout(function() {
+                            applyMarkdown(attempt + 1);
+                        }, 25);
+                        return;
+                    }
+
+                    if (typeof window.markflowLog === 'function') {
+                        window.markflowLog('bridge:updateFromIntelliJ:timeout:' + seq);
+                    }
+                })(0);
+            })($seq, $markdownLiteral);
+        """.trimIndent()
+
+        browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+        LOG.debug("MARKFLOW_DIAG bridge:updateFromIntelliJ queued seq=$seq file=${file.path}")
     }
 
     private fun applyPendingRuntimeSettings() {
