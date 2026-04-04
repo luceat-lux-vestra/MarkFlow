@@ -11,7 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 enum class MermaidSizeMode {
     FIT_TO_VIEWPORT,
-    ACTUAL_SIZE_SCROLL
+    ACTUAL_SIZE_SCROLL,
+    SHRINK_TO_FIT
 }
 
 enum class ThemeSource {

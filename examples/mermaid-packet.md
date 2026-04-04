@@ -1,0 +1,13 @@
+# Mermaid Packet Example
+
+```mermaid
+packet-beta
+    0-15: "Source Port"
+    16-31: "Destination Port"
+    32-63: "Sequence Number"
+    64-95: "Acknowledgment Number"
+    96-99: "Data Offset"
+    100-105: "Flags"
+    106-121: "Window Size"
+```
+

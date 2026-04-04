@@ -9,7 +9,7 @@ type IntelliJEditorState = {
 };
 
 type MarkFlowRuntimeSettings = {
-    mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL";
+    mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;
     themeSource?: "IDE_SYNC" | "LIGHT" | "DARK";
     renderTriggerMode?: "LIVE" | "DEBOUNCED" | "MANUAL_REFRESH";

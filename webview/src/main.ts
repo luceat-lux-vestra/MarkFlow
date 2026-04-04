@@ -74,7 +74,8 @@ const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
 };
 
 const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
-    const merged = {...DEFAULT_RUNTIME_SETTINGS, ...(raw ?? {})};
+    const overrides: MarkFlowRuntimeSettings = raw ?? {};
+    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
     return {
         ...merged,
         mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200),
@@ -122,26 +123,103 @@ const createMermaidPreviewConfig = () => {
             background: "#ffffff"
         };
 
+    // FIT_TO_VIEWPORT: useMaxWidth=true (always fit to viewport)
+    // SHRINK_TO_FIT: useMaxWidth=false (actual size with CSS max-width constraint)
+    // ACTUAL_SIZE_SCROLL: useMaxWidth=false (actual size with scroll)
+    const useMaxWidth = runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT";
+
     return {
     startOnLoad: false,
     theme,
     themeVariables,
     securityLevel: resolveDiagramSecurityLevel(),
+    useMaxWidth,
     htmlLabels: false,
     flowchart: {
         htmlLabels: false,
-        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
+        useMaxWidth
     },
     class: {
         htmlLabels: false,
-        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
+        useMaxWidth
     },
     state: {
         htmlLabels: false,
-        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
+        useMaxWidth
+    },
+    stateDiagram: {
+        useMaxWidth
     },
     mindmap: {
-        useMaxWidth: runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT"
+        useMaxWidth
+    },
+    sequence: {
+        useMaxWidth
+    },
+    sequenceDiagram: {
+        useMaxWidth
+    },
+    gantt: {
+        useMaxWidth
+    },
+    pie: {
+        useMaxWidth
+    },
+    journey: {
+        useMaxWidth
+    },
+    requirement: {
+        useMaxWidth
+    },
+    requirementDiagram: {
+        useMaxWidth
+    },
+    sankey: {
+        useMaxWidth
+    },
+    block: {
+        useMaxWidth
+    },
+    c4: {
+        useMaxWidth
+    },
+    git: {
+        useMaxWidth
+    },
+    gitGraph: {
+        useMaxWidth
+    },
+    er: {
+        useMaxWidth
+    },
+    erDiagram: {
+        useMaxWidth
+    },
+    quadrantChart: {
+        useMaxWidth
+    },
+    xychart: {
+        // Mermaid xychart-beta fails to render reliably with non-fit useMaxWidth=false.
+        useMaxWidth: true
+    },
+    timeline: {
+        useMaxWidth
+    },
+    architecture: {
+        useMaxWidth
+    },
+    kanban: {
+        useMaxWidth
+    },
+    packet: {
+        useMaxWidth
+    },
+    venn: {
+        useMaxWidth
+    },
+    xyChart: {
+        // Keep camelCase variant aligned for Mermaid parser compatibility.
+        useMaxWidth: true
     }
     };
 };
@@ -427,9 +505,16 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
 };
 
 const wrapMermaidSvg = (svg: string) => {
-    const sizeClass = runtimeSettings.mermaidSizeMode === "ACTUAL_SIZE_SCROLL" ? "actual" : "fit";
+    const isXyChartSvg = /xychart/i.test(svg);
+    const sizeClassByMode: Record<string, string> = {
+        FIT_TO_VIEWPORT: "fit-to-viewport",
+        SHRINK_TO_FIT: "shrink-to-fit",
+        ACTUAL_SIZE_SCROLL: "actual-size-scroll"
+    };
+    const sizeClass = sizeClassByMode[runtimeSettings.mermaidSizeMode] ?? "fit-to-viewport";
+    const chartTypeClass = isXyChartSvg ? " markflow-mermaid-chart-xychart" : "";
     const zoomScale = runtimeSettings.mermaidZoomPercent / 100;
-    return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}" style="transform: scale(${zoomScale}); transform-origin: top left; width: fit-content;">${svg}</div>`;
+    return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}${chartTypeClass}" style="transform: scale(${zoomScale}); transform-origin: top left;">${svg}</div>`;
 };
 
 const renderMermaidError = (applyPreview: (html: string) => void, error: unknown) => {
