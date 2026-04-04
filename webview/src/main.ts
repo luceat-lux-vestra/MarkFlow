@@ -116,6 +116,14 @@ const createMermaidPreviewConfig = () => {
     };
 };
 
+const reconfigureMermaid = () => {
+    const nextConfig = createMermaidPreviewConfig();
+    emitToIntelliJLog(
+        `MARKFLOW_UI mermaid:initialize theme=${nextConfig.theme} security=${nextConfig.securityLevel}`
+    );
+    mermaid.initialize(nextConfig);
+};
+
 // Diagnostics.
 const emitToIntelliJLog = (message: string) => {
     const logger = window.markflowLog;
@@ -249,12 +257,7 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
         `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${runtimeSettings.themeSource} security=${runtimeSettings.diagramSecurityLevel}`
     );
     logThemeDiagnostics(raw, nextTheme);
-    mermaid.mermaidAPI.reset();
-    const nextConfig = createMermaidPreviewConfig();
-    emitToIntelliJLog(
-        `MARKFLOW_UI mermaid:initialize theme=${nextConfig.theme} security=${nextConfig.securityLevel}`
-    );
-    mermaid.initialize(nextConfig);
+    reconfigureMermaid();
     lastAppliedMermaidTheme = nextTheme;
     lastAppliedSettingsRevision = nextRevision;
     const app = document.getElementById("app");
@@ -673,8 +676,7 @@ async function initEditor() {
                         const renderNow = () => {
                             const scheduledRevision = lastAppliedSettingsRevision;
                             const scheduledTheme = lastAppliedMermaidTheme;
-                            mermaid.mermaidAPI.reset();
-                            mermaid.initialize(createMermaidPreviewConfig());
+                            reconfigureMermaid();
                             const svgId = `mermaid-svg-${uid()}`;
                             mermaid.render(svgId, content)
                                 .then((output) => {
