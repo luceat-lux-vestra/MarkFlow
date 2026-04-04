@@ -41,6 +41,7 @@ import com.sun.net.httpserver.HttpServer
 class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
 
     private val browser = JBCefBrowser()
+    private val gson = Gson()
     private val document: Document? = FileDocumentManager.getInstance().getDocument(file)
     private val jsQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val debugQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
@@ -123,13 +124,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 // 웹에서 쏜 데이터로 인해 변경된 것이 아닐 때만 웹으로 다시 쏨
                 if (!isUpdatingFromWeb) {
                     val newText = event.document.text
-                    // JS 문자열 이스케이프 (중요: 줄바꿈, 따옴표 처리)
-                    val escapedText = newText.replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                        .replace("\n", "\\n")
-                        .replace("\r", "")
-
-                    val script = "if (window.updateFromIntelliJ) { window.updateFromIntelliJ(\"$escapedText\"); }"
+                    val script = "if (window.updateFromIntelliJ) { window.updateFromIntelliJ(${toJsStringLiteral(newText)}); }"
                     browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
                 }
             }
@@ -173,15 +168,13 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
                 if (frame != null && !frame.isMain) return
                 LOG.debug("MARKFLOW_UI JCEF onLoadEnd: url=${cefBrowser?.url ?: browser.cefBrowser.url}, status=$httpStatusCode")
-                val currentText = document?.text?.replace("\\", "\\\\")
-                    ?.replace("\"", "\\\"")
-                    ?.replace("\n", "\\n")
-                    ?.replace("\r", "") ?: ""
+                val currentText = document?.text ?: ""
+                val currentTextLiteral = toJsStringLiteral(currentText)
                 val runtimeSettingsJson = buildRuntimeSettingsJson()
                 LOG.warn("MARKFLOW_DIAG bridge:inject runtimeSettings=${runtimeSettingsJson.take(240)}")
 
                 val injectJs = """
-                    window.intelliJ_initialMarkdown = "$currentText";
+                    window.intelliJ_initialMarkdown = $currentTextLiteral;
                     window.intelliJ_markFlowSettings = $runtimeSettingsJson;
                     ${jsQuery.inject("window.cefQuery")}
                     ${debugQuery.inject("window.markflowLog")}
@@ -206,7 +199,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                         }
                         (function syncInitialMarkdown(attempt) {
                             if (typeof window.updateFromIntelliJ === 'function') {
-                                window.updateFromIntelliJ("$currentText");
+                                window.updateFromIntelliJ($currentTextLiteral);
                                 if (typeof window.markflowLog === 'function') {
                                     window.markflowLog('bridge:initialMarkdown:applied');
                                 }
@@ -282,12 +275,14 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private fun buildRuntimeSettingsJson(): String {
         return try {
             val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
-            Gson().toJson(settings)
+            gson.toJson(settings)
         } catch (ex: Exception) {
             LOG.warn("Failed to serialize runtime settings to JSON: ${ex.message}", ex)
             "{}"
         }
     }
+
+    private fun toJsStringLiteral(value: String): String = gson.toJson(value)
 
     private fun loadWebviewIndexUrl(): String? {
         return try {
@@ -342,14 +337,18 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 }
 
                 try {
-                    val bytes = Files.readAllBytes(target)
                     val contentType = Files.probeContentType(target)
                         ?: URLConnection.guessContentTypeFromName(target.fileName.toString())
                         ?: "application/octet-stream"
+                    val contentLength = Files.size(target)
                     exchange.responseHeaders["Content-Type"] = contentType
                     exchange.responseHeaders["Cache-Control"] = "no-cache"
-                    exchange.sendResponseHeaders(200, bytes.size.toLong())
-                    exchange.responseBody.use { output -> output.write(bytes) }
+                    exchange.sendResponseHeaders(200, contentLength)
+                    Files.newInputStream(target).use { input ->
+                        exchange.responseBody.use { output ->
+                            input.copyTo(output)
+                        }
+                    }
                 } catch (ioe: IOException) {
                     LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
                     exchange.sendResponseHeaders(500, -1)
@@ -555,7 +554,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             try {
                 browser.cefBrowser.reload()
                 LOG.warn("MARKFLOW_DIAG settings:forceReloadTriggered id=$pushId file=${file.path}")
-            } catch (ex: Exception) {
+            } catch (_: Exception) {
+                LOG.warn("MARKFLOW_DIAG settings:forceReload failed id=$pushId file=${file.path}")
                 val bootstrapUrl = loadWebviewIndexUrl()
                 if (bootstrapUrl != null) {
                     LOG.warn("MARKFLOW_DIAG settings:forceReloadFallback id=$pushId url=$bootstrapUrl")
@@ -728,27 +728,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
     }
 
-    private data class MarkFlowEditorState(
-        val version: Int = CURRENT_VERSION,
-        val scrollTop: Int = 0,
-        val cursorOffset: Int = -1,
-        val selectionStart: Int = -1,
-        val selectionEnd: Int = -1
-    ) : FileEditorState {
-        override fun canBeMergedWith(otherState: FileEditorState, level: FileEditorStateLevel): Boolean {
-            if (otherState !is MarkFlowEditorState) return false
-            if (otherState.version != version) return false
-
-            return when (level) {
-                FileEditorStateLevel.NAVIGATION -> true
-                else -> otherState == this
-            }
-        }
-
-        companion object {
-            const val CURRENT_VERSION = 1
-        }
-    }
 
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)

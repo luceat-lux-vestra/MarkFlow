@@ -31,11 +31,11 @@ class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun getPolicy(): FileEditorPolicy = FileEditorPolicy.HIDE_DEFAULT_EDITOR
 
     override fun readState(sourceElement: Element, project: Project, file: VirtualFile): FileEditorState {
-        return FileEditorState.INSTANCE
+        return MarkFlowEditorState.readFrom(sourceElement) ?: FileEditorState.INSTANCE
     }
 
     override fun writeState(state: FileEditorState, project: Project, targetElement: Element) {
-        // Keep provider state explicit and minimal to prevent null persisted state entries.
+        (state as? MarkFlowEditorState)?.writeTo(targetElement)
     }
 
     private fun isMarkdownExtension(ext: String?): Boolean {
