@@ -27,6 +27,7 @@ You can configure these in `Settings > Tools > MarkFlow`.
 - **Advanced:** Diagram security level (STRICT/LOOSE)
 
 <!-- Plugin description -->
+( markdown, mermaid, latex-katex, wysiwyg )
 MarkFlow is a lightweight WYSIWYG Markdown editor for IntelliJ-based IDEs.
 It uses a hybrid architecture: Kotlin + IntelliJ Platform on the backend, and TypeScript + Milkdown in a JCEF webview on the frontend.
 It provides two-way IntelliJ/Webview synchronization, editor state restoration, Mermaid and KaTeX preview support, and configurable rendering options for fast IDE-native Markdown workflows.
