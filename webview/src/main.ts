@@ -20,6 +20,126 @@ const BOOT_READY_TIMEOUT_MS = 5000;
 // Generate unique ids for Mermaid preview rendering.
 const uid = () => Math.random().toString(36).substring(7);
 
+const normalizePreviewSnippet = (value: string, maxLength = 160) => value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+
+const FLOWCHART_FALLBACK_STYLE = `<style>
+  text, tspan, .nodeLabel, .edgeLabel, .label, .titleText {
+    color: CanvasText !important;
+    fill: CanvasText !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    stroke: none !important;
+  }
+</style>`;
+
+const isFlowchartSource = (source: string) => /^\s*flowchart\b/i.test(source);
+
+function injectFlowchartFallback(svg: string) {
+    if (!svg.includes("<svg")) return svg;
+
+    return svg.replace(/<svg\b([^>]*)>/i, (match) => `${match}${FLOWCHART_FALLBACK_STYLE}`);
+}
+
+function logFlowchartLiveDiagnostics(svgId: string) {
+    const svg = document.getElementById(svgId) as SVGSVGElement | null;
+    if (!svg) {
+        emitToIntelliJLog(`MARKFLOW_UI mermaid:liveDiagnostics missingSvg ${svgId}`);
+        return;
+    }
+
+    const firstNodeLabel = svg.querySelector(".nodeLabel") as Element | null;
+    const firstEdgeLabel = svg.querySelector(".edgeLabel") as Element | null;
+    const nodeStyles = firstNodeLabel ? getComputedStyle(firstNodeLabel) : null;
+    const edgeStyles = firstEdgeLabel ? getComputedStyle(firstEdgeLabel) : null;
+
+    const payload = {
+        svgId,
+        svgClass: svg.getAttribute("class") ?? "",
+        svgWidth: svg.getAttribute("width") ?? "",
+        svgHeight: svg.getAttribute("height") ?? "",
+        nodeLabelTag: firstNodeLabel?.tagName ?? "",
+        nodeLabelText: firstNodeLabel?.textContent?.trim().slice(0, 120) ?? "",
+        nodeLabelFill: nodeStyles?.fill ?? "",
+        nodeLabelColor: nodeStyles?.color ?? "",
+        nodeLabelOpacity: nodeStyles?.opacity ?? "",
+        nodeLabelVisibility: nodeStyles?.visibility ?? "",
+        edgeLabelTag: firstEdgeLabel?.tagName ?? "",
+        edgeLabelText: firstEdgeLabel?.textContent?.trim().slice(0, 120) ?? "",
+        edgeLabelFill: edgeStyles?.fill ?? "",
+        edgeLabelColor: edgeStyles?.color ?? "",
+        edgeLabelOpacity: edgeStyles?.opacity ?? "",
+        edgeLabelVisibility: edgeStyles?.visibility ?? ""
+    };
+
+    emitToIntelliJLog(`MARKFLOW_UI mermaid:liveDiagnostics ${JSON.stringify(payload)}`);
+}
+
+function logMermaidPreviewDiagnostics(svgId: string, language: string, source: string, svg: string) {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(svg, "image/svg+xml");
+    const root = parsed.documentElement;
+    const isParserError = root.tagName.toLowerCase() === "parsererror";
+
+    const counts = {
+        text: root.querySelectorAll("text").length,
+        tspan: root.querySelectorAll("tspan").length,
+        foreignObject: root.getElementsByTagName("foreignObject").length,
+        nodeLabel: root.querySelectorAll(".nodeLabel").length,
+        edgeLabel: root.querySelectorAll(".edgeLabel").length,
+        label: root.querySelectorAll(".label").length,
+        titleText: root.querySelectorAll(".titleText").length
+    };
+
+    const firstNodeLabel = root.querySelector(".nodeLabel");
+    const firstEdgeLabel = root.querySelector(".edgeLabel");
+
+    const summary = {
+        svgId,
+        language,
+        isFlowchart: isFlowchartSource(source),
+        sourceLength: source.length,
+        svgLength: svg.length,
+        rootTag: root.tagName,
+        rootClass: root.getAttribute("class") ?? "",
+        isParserError,
+        counts,
+        firstText: root.querySelector("text")?.outerHTML?.slice(0, 200) ?? "",
+        firstForeignObject: root.getElementsByTagName("foreignObject")[0]?.outerHTML?.slice(0, 200) ?? "",
+        firstNodeLabel: firstNodeLabel?.outerHTML?.slice(0, 240) ?? "",
+        firstNodeLabelText: firstNodeLabel?.textContent?.trim().slice(0, 120) ?? "",
+        firstEdgeLabel: firstEdgeLabel?.outerHTML?.slice(0, 240) ?? "",
+        firstEdgeLabelText: firstEdgeLabel?.textContent?.trim().slice(0, 120) ?? "",
+        snippet: normalizePreviewSnippet(svg)
+    };
+
+    const serialized = JSON.stringify(summary);
+    console.info(`MARKFLOW_UI mermaid:diagnostics ${serialized}`);
+    emitToIntelliJLog(`MARKFLOW_UI mermaid:diagnostics ${serialized}`);
+}
+
+// Keep Mermaid preview rendering readable across SVG- and HTML-label based diagram families.
+const MERMAID_PREVIEW_CONFIG = {
+    startOnLoad: false,
+    theme: "default",
+    securityLevel: "strict",
+    htmlLabels: false,
+    flowchart: {
+        htmlLabels: false,
+        useMaxWidth: true
+    },
+    class: {
+        htmlLabels: false,
+        useMaxWidth: true
+    },
+    state: {
+        htmlLabels: false,
+        useMaxWidth: true
+    },
+    mindmap: {
+        useMaxWidth: true
+    }
+} as const;
+
 // Diagnostics.
 const emitToIntelliJLog = (message: string) => {
     const logger = window.markflowLog;
@@ -315,7 +435,7 @@ async function initEditor() {
     }
 
     // 1) Initialize Mermaid.
-    mermaid.initialize({startOnLoad: false, theme: "default"});
+    mermaid.initialize(MERMAID_PREVIEW_CONFIG);
     markFlowStage("mermaid:initialized");
 
     // 2) Load initial markdown injected by Kotlin.
@@ -331,13 +451,20 @@ async function initEditor() {
             [Crepe.Feature.CodeMirror]: {
                 renderPreview: (language, content, applyPreview) => {
                     if (language === "mermaid" && content.trim()) {
-                        markFlowStage("mermaid:renderPreview", content.slice(0, 32));
+                        markFlowStage("mermaid:renderPreview", normalizePreviewSnippet(content, 32));
                         const svgId = `mermaid-svg-${uid()}`;
                         mermaid.render(svgId, content)
                             .then((output) => {
-                                applyPreview(output.svg);
+                                const renderedSvg = injectFlowchartFallback(output.svg);
+                                logMermaidPreviewDiagnostics(svgId, language, content, renderedSvg);
+                                applyPreview(renderedSvg);
+                                if (isFlowchartSource(content)) {
+                                    requestAnimationFrame(() => logFlowchartLiveDiagnostics(svgId));
+                                }
                             })
-                            .catch(() => {
+                            .catch((error) => {
+                                console.error("MARKFLOW_UI mermaid:renderError", error);
+                                emitToIntelliJLog(`MARKFLOW_UI mermaid:renderError ${String(error)}`);
                                 applyPreview("<div class=\"mermaid-error\">Mermaid Syntax Error</div>");
                             });
                     }

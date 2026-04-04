@@ -297,8 +297,9 @@ code {
 }
 */
 
+/*
 :root {
-  color-scheme: light; /* CSS 레벨에서도 라이트 모드 강제 */
+  color-scheme: light; !* CSS 레벨에서도 라이트 모드 강제 *!
 }
 
 html, body {
@@ -306,6 +307,34 @@ html, body {
   padding: 0;
   width: 100%;
   height: 100vh;
-  background-color: #ffffff !important; /* 무조건 흰색 */
-  color: #000000 !important; /* 무조건 검은색 */
+  background-color: #ffffff !important; !* 무조건 흰색 *!
+  color: #000000 !important; !* 무조건 검은색 *!
 }
+
+.mermaid {
+  color: #111827;
+}
+
+.mermaid svg {
+  overflow: visible;
+}
+
+.mermaid text,
+.mermaid tspan,
+.mermaid foreignObject,
+.mermaid .nodeLabel,
+.mermaid .edgeLabel,
+.mermaid .label,
+.mermaid .titleText {
+  color: #111827;
+  fill: #111827;
+}
+*/
+
+svg.flowchart,
+.mermaid .flowchart svg {
+  overflow: visible;
+}
+
+
+
