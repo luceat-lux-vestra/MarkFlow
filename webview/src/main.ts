@@ -25,6 +25,7 @@ const MANUAL_MERMAID_SHORTCUT_KEY = "r";
 let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
+let pendingLayoutRecovery = false;
 
 const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
@@ -354,6 +355,26 @@ const getScrollElement = () => {
     return app ?? document.scrollingElement ?? document.documentElement;
 };
 
+const recoverEditorLayout = (reason: string) => {
+    if (!activeCrepe || !isCrepeReady) {
+        pendingLayoutRecovery = true;
+        emitToIntelliJLog(`MARKFLOW_UI layout:queued reason=${reason}`);
+        return;
+    }
+
+    emitToIntelliJLog(`MARKFLOW_UI layout:start reason=${reason}`);
+    window.dispatchEvent(new Event("resize"));
+
+    requestAnimationFrame(() => {
+        if (!activeCrepe || !isCrepeReady) return;
+        rerenderPreviewsAfterSettingsChange();
+        requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"));
+            emitToIntelliJLog(`MARKFLOW_UI layout:done reason=${reason}`);
+        });
+    });
+};
+
 function clearExternalUpdateGuardLater() {
     setTimeout(() => {
         isUpdatingFromIntelliJ = false;
@@ -587,9 +608,13 @@ function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
 
 async function initEditor() {
     markFlowStage("init:start");
-    if (!window.cefQuery) {
-        markFlowStage("bridge:missing");
-    }
+    setTimeout(() => {
+        if (!window.cefQuery) {
+            markFlowStage("bridge:missing");
+            return;
+        }
+        markFlowStage("bridge:ready");
+    }, 300);
 
     // 1) Initialize Mermaid.
     applyRuntimeSettingsFromHost(window.intelliJ_markFlowSettings);
@@ -604,6 +629,9 @@ async function initEditor() {
     window.setMarkFlowEditorActive = (active: boolean) => {
         isEditorActive = active;
         markFlowStage("bridge:editorActive", active ? "true" : "false");
+        if (active) {
+            recoverEditorLayout("editorActive");
+        }
     };
 
     window.addEventListener("keydown", (event: KeyboardEvent) => {
@@ -738,11 +766,16 @@ async function initEditor() {
             markFlowStage("crepe:create:done");
             installMarkdownPasteHandler(crepe);
             flushPendingIntelliJState(crepe);
+            recoverEditorLayout("create:done");
             if (pendingSettingsRerenderRevision !== null) {
                 console.info(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
                 emitToIntelliJLog(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
                 pendingSettingsRerenderRevision = null;
                 rerenderPreviewsAfterSettingsChange();
+            }
+            if (pendingLayoutRecovery) {
+                pendingLayoutRecovery = false;
+                recoverEditorLayout("create:flushQueued");
             }
         })
         .catch((error) => {

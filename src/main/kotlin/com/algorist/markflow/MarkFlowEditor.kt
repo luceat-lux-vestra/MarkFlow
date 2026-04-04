@@ -60,6 +60,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var isEditorActive = true
     private var pendingRuntimeSettingsPush = false
     private var pendingRuntimeSettingsForceReload = false
+    private var lastActivationSettingsPushAtMs = 0L
 
     init {
         LOG.info("MARKFLOW_UI editor init: ${file.path}")
@@ -685,12 +686,20 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun selectNotify() {
         isEditorActive = true
-        if (!webViewLoaded) return
-        browser.cefBrowser.executeJavaScript(
-            "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive(true); }",
-            browser.cefBrowser.url,
-            0
-        )
+        if (webViewLoaded) {
+            browser.cefBrowser.executeJavaScript(
+                "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive(true); }",
+                browser.cefBrowser.url,
+                0
+            )
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastActivationSettingsPushAtMs >= ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS) {
+            lastActivationSettingsPushAtMs = now
+            LOG.warn("MARKFLOW_DIAG settings:reapplyOnSelect file=${file.path} loaded=$webViewLoaded")
+            applyRuntimeSettingsToWebview(forceReload = false)
+        }
     }
 
     override fun deselectNotify() {
@@ -779,5 +788,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
 
         private val settingsPushSequence = AtomicInteger(0)
+        private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
     }
 }
