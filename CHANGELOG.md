@@ -17,3 +17,4 @@
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Force re-render action for Mermaid/KaTeX previews with `Cmd/Ctrl+Alt+Shift+R` shortcut and toolbar/tools menu entry.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
+- Shared JCEF browser pool with split-editor reuse, configurable max pool size, and configurable idle eviction timeout.

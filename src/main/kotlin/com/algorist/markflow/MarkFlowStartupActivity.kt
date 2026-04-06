@@ -10,6 +10,12 @@ import com.intellij.openapi.startup.ProjectActivity
 class MarkFlowStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         val manager = FileEditorManager.getInstance(project)
+        val sharedBrowserService = project.getService(MarkFlowSharedBrowserService::class.java)
+
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) return@invokeLater
+            sharedBrowserService.preWarm()
+        }
 
         // Re-assert MarkFlow editor for markdown files restored during IDE startup.
         ApplicationManager.getApplication().invokeLater {

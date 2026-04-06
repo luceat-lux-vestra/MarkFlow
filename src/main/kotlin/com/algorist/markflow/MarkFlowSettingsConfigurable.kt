@@ -29,6 +29,8 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
     private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
     private lateinit var forceRerenderShortcutEnabledCheckBox: JCheckBox
+    private lateinit var maxPoolSizeSpinner: JSpinner
+    private lateinit var idleEvictAfterMsSpinner: JSpinner
 
     override fun getDisplayName(): String = MyBundle.message("settings.markflow.displayName")
 
@@ -36,15 +38,25 @@ class MarkFlowSettingsConfigurable : Configurable {
         panel?.let { return it }
 
         mermaidSizeModeCombo = enumCombo(MermaidSizeMode.entries.toTypedArray())
-        mermaidZoomSpinner = JSpinner(SpinnerNumberModel(DEFAULT_ZOOM_PERCENT, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP))
+        mermaidZoomSpinner = JSpinner(
+            SpinnerNumberModel(DEFAULT_ZOOM_PERCENT, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP)
+        )
         themeSourceCombo = enumCombo(ThemeSource.entries.toTypedArray())
         renderTriggerCombo = enumCombo(RenderTriggerMode.entries.toTypedArray())
-        renderDebounceSpinner = JSpinner(SpinnerNumberModel(DEFAULT_DEBOUNCE_MS, DEBOUNCE_MIN, DEBOUNCE_MAX, DEBOUNCE_STEP))
+        renderDebounceSpinner = JSpinner(
+            SpinnerNumberModel(DEFAULT_DEBOUNCE_MS, DEBOUNCE_MIN, DEBOUNCE_MAX, DEBOUNCE_STEP)
+        )
         mermaidErrorDisplayCombo = enumCombo(MermaidErrorDisplay.entries.toTypedArray())
         katexDensityCombo = enumCombo(KatexDisplayDensity.entries.toTypedArray())
         diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())
         previewOnlyByDefaultCheckBox = JCheckBox()
         forceRerenderShortcutEnabledCheckBox = JCheckBox()
+        maxPoolSizeSpinner = JSpinner(
+            SpinnerNumberModel(DEFAULT_MAX_POOL_SIZE, MAX_POOL_SIZE_MIN, MAX_POOL_SIZE_MAX, MAX_POOL_SIZE_STEP)
+        )
+        idleEvictAfterMsSpinner = JSpinner(
+            SpinnerNumberModel(DEFAULT_IDLE_EVICT_AFTER_MS, IDLE_EVICT_MIN, IDLE_EVICT_MAX, IDLE_EVICT_STEP)
+        )
 
         val root = JPanel(GridBagLayout())
         root.border = JBUI.Borders.empty(PANEL_PADDING)
@@ -54,7 +66,12 @@ class MarkFlowSettingsConfigurable : Configurable {
         row = addRow(root, row, MyBundle.message("settings.markflow.themeSource"), themeSourceCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderTrigger"), renderTriggerCombo)
         row = addRow(root, row, MyBundle.message("settings.markflow.renderDebounceMs"), renderDebounceSpinner)
-        row = addRow(root, row, MyBundle.message("settings.markflow.previewOnlyByDefault"), previewOnlyByDefaultCheckBox)
+        row = addRow(
+            root,
+            row,
+            MyBundle.message("settings.markflow.previewOnlyByDefault"),
+            previewOnlyByDefaultCheckBox
+        )
         row = addRow(root, row, "Force Re-render Shortcut (Cmd/Ctrl+Alt+Shift+R)", forceRerenderShortcutEnabledCheckBox)
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
@@ -67,6 +84,20 @@ class MarkFlowSettingsConfigurable : Configurable {
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.advanced"))
         row = addRow(root, row, MyBundle.message("settings.markflow.diagram.securityLevel"), diagramSecurityCombo)
+        row = addRow(
+            root,
+            row,
+            MyBundle.message("settings.markflow.browserPoolSize"),
+            maxPoolSizeSpinner,
+            MyBundle.message("settings.markflow.browserPoolSize.tooltip")
+        )
+        row = addRow(
+            root,
+            row,
+            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs"),
+            idleEvictAfterMsSpinner,
+            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs.tooltip")
+        )
 
         val spacer = GridBagConstraints().apply {
             gridx = 0
@@ -94,6 +125,8 @@ class MarkFlowSettingsConfigurable : Configurable {
             || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
             || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected
             || state.forceRerenderShortcutEnabled != forceRerenderShortcutEnabledCheckBox.isSelected
+            || state.maxPoolSize != spinnerInt(maxPoolSizeSpinner)
+            || state.idleEvictAfterMs != spinnerInt(idleEvictAfterMsSpinner)
     }
 
     override fun apply() {
@@ -107,12 +140,16 @@ class MarkFlowSettingsConfigurable : Configurable {
             katexDisplayDensity = selectedName(katexDensityCombo),
             diagramSecurityLevel = selectedName(diagramSecurityCombo),
             previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,
-            forceRerenderShortcutEnabled = forceRerenderShortcutEnabledCheckBox.isSelected
+            forceRerenderShortcutEnabled = forceRerenderShortcutEnabledCheckBox.isSelected,
+            maxPoolSize = spinnerInt(maxPoolSizeSpinner),
+            idleEvictAfterMs = spinnerInt(idleEvictAfterMsSpinner)
         )
         LOG.warn(
             "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
                 "renderTrigger=${updated.renderTriggerMode}, debounceMs=${updated.renderDebounceMs}, " +
-                "security=${updated.diagramSecurityLevel}, forceRerenderShortcutEnabled=${updated.forceRerenderShortcutEnabled}"
+                "security=${updated.diagramSecurityLevel}, " +
+                "forceRerenderShortcutEnabled=${updated.forceRerenderShortcutEnabled}, " +
+                "maxPoolSize=${updated.maxPoolSize}, idleEvictAfterMs=${updated.idleEvictAfterMs}"
         )
         MarkFlowSettingsService.getInstance().updateFromUi(updated)
     }
@@ -129,6 +166,8 @@ class MarkFlowSettingsConfigurable : Configurable {
         setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault
         forceRerenderShortcutEnabledCheckBox.isSelected = state.forceRerenderShortcutEnabled
+        maxPoolSizeSpinner.value = state.maxPoolSize.coerceIn(MAX_POOL_SIZE_MIN, MAX_POOL_SIZE_MAX)
+        idleEvictAfterMsSpinner.value = state.idleEvictAfterMs.coerceIn(IDLE_EVICT_MIN, IDLE_EVICT_MAX)
     }
 
     override fun disposeUIResources() {
@@ -168,8 +207,12 @@ class MarkFlowSettingsConfigurable : Configurable {
         return row + 1
     }
 
-    private fun addRow(root: JPanel, row: Int, labelText: String, input: JComponent): Int {
+    private fun addRow(root: JPanel, row: Int, labelText: String, input: JComponent, tooltip: String? = null): Int {
         val label = JLabel(labelText)
+        if (!tooltip.isNullOrBlank()) {
+            label.toolTipText = tooltip
+            input.toolTipText = tooltip
+        }
         val labelConstraints = GridBagConstraints().apply {
             gridx = 0
             gridy = row
@@ -227,5 +270,15 @@ class MarkFlowSettingsConfigurable : Configurable {
         private const val DEBOUNCE_MIN = 300
         private const val DEBOUNCE_MAX = 800
         private const val DEBOUNCE_STEP = 50
+
+        private const val DEFAULT_MAX_POOL_SIZE = MarkFlowSettingsService.DEFAULT_MAX_POOL_SIZE
+        private const val MAX_POOL_SIZE_MIN = 1
+        private const val MAX_POOL_SIZE_MAX = 16
+        private const val MAX_POOL_SIZE_STEP = 1
+
+        private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS
+        private const val IDLE_EVICT_MIN = 10_000
+        private const val IDLE_EVICT_MAX = 3_600_000
+        private const val IDLE_EVICT_STEP = 10_000
     }
 }
