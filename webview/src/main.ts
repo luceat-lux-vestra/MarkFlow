@@ -626,7 +626,7 @@ const clearRecoveryState = (reason: string) => {
     }
 
     emitToIntelliJLog(
-        `MARKFLOW_UI recovery:clear reason=${reason} epoch=${activeRecoveryEpoch ?? -1} role=${activeRecoveryRole ?? "none"}`
+        `MARKFLOW_UI recovery:clear reason=${reason} epoch=${activeRecoveryEpoch ?? -1} role=${activeRecoveryRole ?? "none"} sessionId=${window.__markflowSessionId ?? "unknown"}`
     );
     activeRecoveryEpoch = null;
     activeRecoveryRole = null;
@@ -639,21 +639,26 @@ const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, rea
         return;
     }
 
+    const currentSessionId = window.__markflowSessionId;
     const request = JSON.stringify({
         action: `recovery:${status}`,
-        sessionId: window.__markflowSessionId,
+        sessionId: currentSessionId,
         epoch,
         reason
     });
 
+    emitToIntelliJLog(
+        `MARKFLOW_UI recovery:notify${status} epoch=${epoch} sessionId=${currentSessionId} reason=${reason}`
+    );
+
     window.cefQuery({
         request,
         onSuccess: (response) => {
-            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"}`);
+            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"} sessionId=${currentSessionId}`);
             clearRecoveryState(`notify:${status}:ack`);
         },
         onFailure: (_errCode, errMsg) => {
-            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg}`);
+            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg} sessionId=${currentSessionId}`);
             clearRecoveryState(`notify:${status}:failed`);
         }
     });
@@ -671,11 +676,16 @@ const requestRecoveryLease = (reason: string): Promise<void> => {
     }
 
     recoveryRequestInFlight = true;
+    const currentSessionId = window.__markflowSessionId;
     const request = JSON.stringify({
         action: "recovery:request",
-        sessionId: window.__markflowSessionId,
+        sessionId: currentSessionId,
         reason
     });
+
+    emitToIntelliJLog(
+        `MARKFLOW_UI recovery:request reason=${reason} sessionId=${currentSessionId}`
+    );
 
     return new Promise((resolve) => {
         window.cefQuery?.({
@@ -683,9 +693,25 @@ const requestRecoveryLease = (reason: string): Promise<void> => {
             onSuccess: (response) => {
                 try {
                     const parsed = response ? (JSON.parse(response) as RecoveryBridgeResponse) : {};
+                    const sessionId = window.__markflowSessionId;
+
+                    // Verify session ID hasn't changed since request was sent
+                    if (sessionId !== currentSessionId) {
+                        emitToIntelliJLog(
+                            `MARKFLOW_UI recovery:request:sessionMismatch oldSession=${currentSessionId} newSession=${sessionId}`
+                        );
+                        clearRecoveryState("request:sessionChanged");
+                        resolve();
+                        return;
+                    }
+
                     activeRecoveryRole = parsed.role === "leader" || parsed.role === "follower" ? parsed.role : null;
                     activeRecoveryEpoch = typeof parsed.epoch === "number" ? parsed.epoch : null;
                     recoveryRequestInFlight = false;
+
+                    emitToIntelliJLog(
+                        `MARKFLOW_UI recovery:request:success role=${activeRecoveryRole} epoch=${activeRecoveryEpoch} sessionId=${sessionId}`
+                    );
                 } catch (error) {
                     emitToIntelliJLog(`MARKFLOW_UI recovery:request:parseFailed ${String(error)}`);
                     clearRecoveryState("request:parseFailed");
@@ -693,7 +719,7 @@ const requestRecoveryLease = (reason: string): Promise<void> => {
                 resolve();
             },
             onFailure: (_errCode, errMsg) => {
-                emitToIntelliJLog(`MARKFLOW_UI recovery:request:failed ${errMsg}`);
+                emitToIntelliJLog(`MARKFLOW_UI recovery:request:failed ${errMsg} sessionId=${currentSessionId}`);
                 clearRecoveryState("request:failed");
                 resolve();
             }
@@ -1256,46 +1282,49 @@ async function recreateCrepeInstance(reason: string) {
     isRecreatingCrepe = true;
     pendingCrepeRecreate = false;
 
-    await requestRecoveryLease(`recreate:${reason}`);
-
-    const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
-    const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);
-    const uiState = captureEditorUiState(current);
-
-    removeMarkdownPasteHandler?.();
-    removeMarkdownPasteHandler = null;
-
     try {
-        (current as unknown as { destroy?: () => void }).destroy?.();
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI crepe:destroy failed ${String(error)}`);
+        await requestRecoveryLease(`recreate:${reason}`);
+
+        const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
+        const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);
+        const uiState = captureEditorUiState(current);
+
+        removeMarkdownPasteHandler?.();
+        removeMarkdownPasteHandler = null;
+
+        try {
+            (current as unknown as { destroy?: () => void }).destroy?.();
+        } catch (error) {
+            emitToIntelliJLog(`MARKFLOW_UI crepe:destroy failed ${String(error)}`);
+        }
+
+        const app = document.getElementById("app");
+        if (app) {
+            app.innerHTML = "";
+        }
+
+        isCrepeReady = false;
+        invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
+        const nextSessionId = ++crepeSessionSequence;
+        const next = createCrepeInstance(markdown, nextSessionId);
+        activeCrepeSessionId = nextSessionId;
+        activeCrepe = next;
+        attachCrepeBridge(next);
+
+        const recoveryEpochForRun = activeRecoveryEpoch;
+        const recoveryRoleForRun = activeRecoveryRole;
+        markFlowStage("crepe:recreate:start", reason);
+        await startCrepe(next, "recreate:done", uiState);
+        markFlowStage("crepe:recreate:done", reason);
+
+        if (recoveryRoleForRun === "leader" && recoveryEpochForRun !== null) {
+            const succeeded = isCrepeReady && activeCrepe === next;
+            notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochForRun, reason);
+        }
+    } finally {
+        isRecreatingCrepe = false;
     }
 
-    const app = document.getElementById("app");
-    if (app) {
-        app.innerHTML = "";
-    }
-
-    isCrepeReady = false;
-    invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
-    const nextSessionId = ++crepeSessionSequence;
-    const next = createCrepeInstance(markdown, nextSessionId);
-    activeCrepeSessionId = nextSessionId;
-    activeCrepe = next;
-    attachCrepeBridge(next);
-
-    const recoveryEpochForRun = activeRecoveryEpoch;
-    const recoveryRoleForRun = activeRecoveryRole;
-    markFlowStage("crepe:recreate:start", reason);
-    await startCrepe(next, "recreate:done", uiState);
-    markFlowStage("crepe:recreate:done", reason);
-
-    if (recoveryRoleForRun === "leader" && recoveryEpochForRun !== null) {
-        const succeeded = isCrepeReady && activeCrepe === next;
-        notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochForRun, reason);
-    }
-
-    isRecreatingCrepe = false;
     if (pendingCrepeRecreate) {
         void recreateCrepeInstance("settings:queued");
     }

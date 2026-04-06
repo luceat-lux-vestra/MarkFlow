@@ -185,6 +185,16 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         lease.attachedEditor = null
         lease.attachedHost = null
         lease.lastUsedAtMs = System.currentTimeMillis()
+
+        // Clean up recovery lease when editor detaches to avoid stale recovery state
+        synchronized(recoveryLock) {
+            val filePath = editor.getFile().path
+            val current = recoveryLeasesByFile[filePath]
+            if (current?.leader === editor && current.leaseId == lease.id) {
+                recoveryLeasesByFile.remove(filePath)
+                LOG.info("MARKFLOW_UI recovery:detach cleaned filePath=$filePath leaseId=${lease.id}")
+            }
+        }
     }
 
     fun pushMarkdownFromEditor(editor: MarkFlowEditor, markdown: String) {
@@ -336,6 +346,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val reason = json["reason"]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
                         val response = claimRecoveryLease(targetEditor, lease.id, reason)
+                        logLeaseEvent(
+                            event = "recovery_request",
+                            lease = lease,
+                            editor = targetEditor,
+                            note = "role=${response.role} epoch=${response.epoch}"
+                        )
                         jsonResponse(response)
                     }
 
@@ -343,6 +359,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val epoch = readJsonInt(json, "epoch", -1)
                         val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = true)
+                        logLeaseEvent(
+                            event = "recovery_complete",
+                            lease = lease,
+                            editor = targetEditor,
+                            note = "epoch=$epoch status=${response.role}"
+                        )
                         jsonResponse(response)
                     }
 
@@ -350,6 +372,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val epoch = readJsonInt(json, "epoch", -1)
                         val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = false)
+                        logLeaseEvent(
+                            event = "recovery_failed",
+                            lease = lease,
+                            editor = targetEditor,
+                            note = "epoch=$epoch status=${response.role}"
+                        )
                         jsonResponse(response)
                     }
 
@@ -657,6 +685,18 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         lease.debugQuery.dispose()
         lease.jsQuery.dispose()
         lease.browser.dispose()
+
+        // Clean up recovery lease on disposal
+        lease.attachedEditor?.let { editor ->
+            synchronized(recoveryLock) {
+                val filePath = editor.getFile().path
+                val current = recoveryLeasesByFile[filePath]
+                if (current?.leader === editor && current.leaseId == lease.id) {
+                    recoveryLeasesByFile.remove(filePath)
+                    LOG.info("MARKFLOW_UI recovery:dispose cleaned filePath=$filePath leaseId=${lease.id}")
+                }
+            }
+        }
     }
 
     private fun reapplyRuntimeSettingsForAllAttachedLeases(forceReload: Boolean) {
@@ -678,6 +718,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 val nextEpoch = (current?.epoch ?: 0) + 1
                 val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
                 recoveryLeasesByFile[filePath] = updated
+                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason")
                 return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
             }
 
@@ -686,9 +727,11 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 val nextEpoch = active.epoch
                 val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
                 recoveryLeasesByFile[filePath] = updated
+                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason (reused)")
                 return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
             }
 
+            LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${active.epoch} reason=$reason")
             return RecoveryBridgeResponse(role = "follower", epoch = active.epoch, reason = reason)
         }
     }
@@ -705,8 +748,19 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             val current = recoveryLeasesByFile[filePath]
             if (current?.leader === editor && current.leaseId == leaseId && current.epoch == epoch) {
                 recoveryLeasesByFile.remove(filePath)
+                LOG.info("MARKFLOW_UI recovery:complete leaseId=$leaseId epoch=$epoch success=$success")
                 return RecoveryBridgeResponse(role = reason, epoch = epoch, reason = reason)
             }
+
+            // Log ignored recovery completions for debugging race conditions
+            val logStatus = when {
+                current == null -> "noActiveLease"
+                current.leader !== editor -> "editorMismatch"
+                current.leaseId != leaseId -> "leaseMismatch"
+                current.epoch != epoch -> "epochMismatch"
+                else -> "unknown"
+            }
+            LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$logStatus")
         }
         return RecoveryBridgeResponse(role = "ignored", epoch = epoch, reason = reason)
     }
