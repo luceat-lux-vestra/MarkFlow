@@ -260,7 +260,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 leaseById[idleId] ?: createLeaseLocked()
             }
 
-            leaseById.size >= MAX_POOL_SIZE -> {
+            leaseById.size >= currentMaxPoolSize() -> {
                 null
             }
 
@@ -609,6 +609,14 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         return "pool[total=${totals.first} idle=${totals.second} attached=${totals.third} editorsOpen=$openEditorCount]"
     }
 
+    private fun currentMaxPoolSize(): Int {
+        return MarkFlowSettingsService.getInstance().state.maxPoolSize.coerceAtLeast(1)
+    }
+
+    private fun currentIdleEvictAfterMs(): Long {
+        return MarkFlowSettingsService.getInstance().state.idleEvictAfterMs.coerceAtLeast(1).toLong()
+    }
+
     private fun evictIdleLeases() {
         if (disposed) return
 
@@ -625,7 +633,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                     .toSet()
 
                 idleLeases.filter { lease ->
-                    lease.id !in keepIds && now - lease.lastUsedAtMs >= IDLE_EVICT_AFTER_MS
+                    lease.id !in keepIds && now - lease.lastUsedAtMs >= currentIdleEvictAfterMs()
                 }
             }
         }
@@ -970,9 +978,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         private val recoveryLeasesByFile = mutableMapOf<String, RecoveryLease>()
 
         private const val BRIDGE_ERROR_STATUS = 500
-        private const val MAX_POOL_SIZE = 4
         private const val MIN_IDLE_LEASE_COUNT = 1
-        private const val IDLE_EVICT_AFTER_MS = 120_000L
         private const val EVICTION_PERIOD_MS = 30_000L
 
         private data class BrowserLease(

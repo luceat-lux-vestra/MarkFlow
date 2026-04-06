@@ -52,7 +52,9 @@ data class MarkFlowSettingsState(
     var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
     var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
     var previewOnlyByDefault: Boolean = true,
-    var forceRerenderShortcutEnabled: Boolean = true
+    var forceRerenderShortcutEnabled: Boolean = true,
+    var maxPoolSize: Int = 4,
+    var idleEvictAfterMs: Int = 120_000
 )
 
 data class MarkFlowRuntimeSettings(
@@ -163,6 +165,8 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
         target.renderDebounceMs = target.renderDebounceMs.coerceIn(300, 800)
+        target.maxPoolSize = target.maxPoolSize.coerceIn(MIN_POOL_SIZE, MAX_POOL_SIZE_LIMIT)
+        target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
     }
 
     private inline fun <reified T : Enum<T>> normalizeEnum(raw: String, fallback: T): String {
@@ -172,6 +176,14 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     companion object {
         private val LOG = Logger.getInstance(MarkFlowSettingsService::class.java)
         private val settingsRevision = AtomicInteger(1)
+
+        const val DEFAULT_MAX_POOL_SIZE = 4
+        const val DEFAULT_IDLE_EVICT_AFTER_MS = 120_000
+
+        private const val MIN_POOL_SIZE = 1
+        private const val MAX_POOL_SIZE_LIMIT = 16
+        private const val MIN_IDLE_EVICT_AFTER_MS = 10_000
+        private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000
 
         fun getInstance(): MarkFlowSettingsService {
             return ApplicationManager.getApplication().getService(MarkFlowSettingsService::class.java)
