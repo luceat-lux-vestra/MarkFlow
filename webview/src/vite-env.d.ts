@@ -31,6 +31,7 @@ type MarkFlowRuntimeSettings = {
 interface Window {
     intelliJ_initialMarkdown?: string;
     intelliJ_markFlowSettings?: MarkFlowRuntimeSettings;
+    __markflowSessionId?: string;
     cefQuery?: (options: {
         request: string;
         onSuccess?: (response?: string) => void;

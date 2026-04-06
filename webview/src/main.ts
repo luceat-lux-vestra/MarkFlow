@@ -641,6 +641,7 @@ const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, rea
 
     const request = JSON.stringify({
         action: `recovery:${status}`,
+        sessionId: window.__markflowSessionId,
         epoch,
         reason
     });
@@ -655,6 +656,48 @@ const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, rea
             emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg}`);
             clearRecoveryState(`notify:${status}:failed`);
         }
+    });
+};
+
+type RecoveryBridgeResponse = {
+    role?: string;
+    epoch?: number;
+};
+
+const requestRecoveryLease = (reason: string): Promise<void> => {
+    if (!window.cefQuery) {
+        clearRecoveryState("request:bridgeMissing");
+        return Promise.resolve();
+    }
+
+    recoveryRequestInFlight = true;
+    const request = JSON.stringify({
+        action: "recovery:request",
+        sessionId: window.__markflowSessionId,
+        reason
+    });
+
+    return new Promise((resolve) => {
+        window.cefQuery?.({
+            request,
+            onSuccess: (response) => {
+                try {
+                    const parsed = response ? (JSON.parse(response) as RecoveryBridgeResponse) : {};
+                    activeRecoveryRole = parsed.role === "leader" || parsed.role === "follower" ? parsed.role : null;
+                    activeRecoveryEpoch = typeof parsed.epoch === "number" ? parsed.epoch : null;
+                    recoveryRequestInFlight = false;
+                } catch (error) {
+                    emitToIntelliJLog(`MARKFLOW_UI recovery:request:parseFailed ${String(error)}`);
+                    clearRecoveryState("request:parseFailed");
+                }
+                resolve();
+            },
+            onFailure: (_errCode, errMsg) => {
+                emitToIntelliJLog(`MARKFLOW_UI recovery:request:failed ${errMsg}`);
+                clearRecoveryState("request:failed");
+                resolve();
+            }
+        });
     });
 };
 
@@ -983,8 +1026,10 @@ function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
     }
 
     const safeState = sanitizeUiState(uiState);
+    const sessionId = window.__markflowSessionId;
     const request = JSON.stringify({
         action: "update",
+        sessionId,
         content: markdownText,
         version: safeState.version,
         scrollTop: safeState.scrollTop,
@@ -1210,6 +1255,8 @@ async function recreateCrepeInstance(reason: string) {
 
     isRecreatingCrepe = true;
     pendingCrepeRecreate = false;
+
+    await requestRecoveryLease(`recreate:${reason}`);
 
     const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
     const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);

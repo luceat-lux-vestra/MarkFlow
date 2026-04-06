@@ -116,6 +116,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             val existing = editorToLeaseId[editor]?.let { leaseById[it] }
             existing ?: acquireLeaseLocked(editor)
         }
+        if (lease == null) {
+            LOG.warn("MARKFLOW_UI attach skipped: lease pool reached max size for ${editor.getFile().path}")
+            return
+        }
 
         logLeaseEvent(
             event = if (hadExistingLease) "lease_attach_reuse" else "lease_attach_acquire",
@@ -146,6 +150,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         lease.attachedEditor = editor
         lease.attachedHost = host
+        lease.isEditorActive = false
         lease.sessionId = nextSessionId(lease.id)
         lease.lastUsedAtMs = System.currentTimeMillis()
         logLeaseEvent(event = "lease_attached", lease = lease, editor = editor)
@@ -237,6 +242,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
     fun setEditorActive(editor: MarkFlowEditor, active: Boolean) {
         val lease = leaseForEditor(editor) ?: return
+        lease.isEditorActive = active
         executeSetActiveFlag(lease, active)
     }
 
@@ -246,13 +252,24 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         return synchronized(lifecycleLock) { leaseById[leaseId] }
     }
 
-    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease {
+    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease? {
         val idleId = idleLeaseIds.firstOrNull()
-        val lease = if (idleId != null) {
-            idleLeaseIds.remove(idleId)
-            leaseById[idleId] ?: createLeaseLocked()
-        } else {
-            createLeaseLocked()
+        val lease = when {
+            idleId != null -> {
+                idleLeaseIds.remove(idleId)
+                leaseById[idleId] ?: createLeaseLocked()
+            }
+
+            leaseById.size >= MAX_POOL_SIZE -> {
+                null
+            }
+
+            else -> {
+                createLeaseLocked()
+            }
+        }
+        if (lease == null) {
+            return null
         }
         editorToLeaseId[editor] = lease.id
         logLeaseEvent(
@@ -313,6 +330,27 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                             selectionEnd = readJsonInt(json, "selectionEnd", -1)
                         )
                         successResponse()
+                    }
+
+                    "recovery:request" -> {
+                        val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
+                        val reason = json["reason"]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                        val response = claimRecoveryLease(targetEditor, lease.id, reason)
+                        jsonResponse(response)
+                    }
+
+                    "recovery:complete" -> {
+                        val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
+                        val epoch = readJsonInt(json, "epoch", -1)
+                        val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = true)
+                        jsonResponse(response)
+                    }
+
+                    "recovery:failed" -> {
+                        val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
+                        val epoch = readJsonInt(json, "epoch", -1)
+                        val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = false)
+                        jsonResponse(response)
                     }
 
                     else -> ignoredResponse()
@@ -386,7 +424,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())
         val initialMarkdownSeq = ++lease.intelliJToWebPushSequence
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
-        val activeLiteral = if (editor != null) "true" else "false"
+        val activeLiteral = if (lease.isEditorActive) "true" else "false"
         val sessionLiteral = gson.toJson(lease.sessionId)
 
         val injectJs = """
@@ -456,13 +494,14 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         pushMarkdownFromEditor(editor, editor.currentMarkdownText())
         editor.applyPendingStateIfPossible()
-        executeSetActiveFlag(lease, true)
+        executeSetActiveFlag(lease, lease.isEditorActive)
         if (pushSettings) {
             applyRuntimeSettingsToLease(lease, forceReload = false)
         }
     }
 
     private fun executeSetActiveFlag(lease: BrowserLease, active: Boolean) {
+        lease.isEditorActive = active
         if (!lease.webViewLoaded) return
         val value = if (active) "true" else "false"
         lease.browser.cefBrowser.executeJavaScript(
@@ -621,10 +660,54 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         }
     }
 
+    private fun claimRecoveryLease(editor: MarkFlowEditor, leaseId: Int, reason: String): RecoveryBridgeResponse {
+        synchronized(recoveryLock) {
+            val filePath = editor.getFile().path
+            val current = recoveryLeasesByFile[filePath]
+            val currentLeaderValid = current?.leader?.isDisposedEditor() == false
+
+            if (!currentLeaderValid) {
+                val nextEpoch = (current?.epoch ?: 0) + 1
+                val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
+                recoveryLeasesByFile[filePath] = updated
+                return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
+            }
+
+            val active = current
+            if (active.leader === editor || active.leaseId == leaseId) {
+                val nextEpoch = active.epoch
+                val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
+                recoveryLeasesByFile[filePath] = updated
+                return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
+            }
+
+            return RecoveryBridgeResponse(role = "follower", epoch = active.epoch, reason = reason)
+        }
+    }
+
+    private fun completeRecoveryLease(
+        editor: MarkFlowEditor,
+        leaseId: Int,
+        epoch: Int,
+        success: Boolean
+    ): RecoveryBridgeResponse {
+        val reason = if (success) "complete" else "failed"
+        synchronized(recoveryLock) {
+            val filePath = editor.getFile().path
+            val current = recoveryLeasesByFile[filePath]
+            if (current?.leader === editor && current.leaseId == leaseId && current.epoch == epoch) {
+                recoveryLeasesByFile.remove(filePath)
+                return RecoveryBridgeResponse(role = reason, epoch = epoch, reason = reason)
+            }
+        }
+        return RecoveryBridgeResponse(role = "ignored", epoch = epoch, reason = reason)
+    }
+
     private fun ignoredResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Ignored")
     private fun successResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Success")
     private fun okResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("OK")
     private fun errorResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response(null, BRIDGE_ERROR_STATUS, "Error parsing request")
+    private fun jsonResponse(value: Any): JBCefJSQuery.Response = JBCefJSQuery.Response(gson.toJson(value))
 
     private fun buildRuntimeSettingsJsonWithConflict(conflictDetected: Boolean): String {
         return try {
@@ -881,10 +964,13 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         private val serviceLock = Any()
         private val sharedLifecycleLock = Any()
+        private val recoveryLock = Any()
         private val settingsPushSequence = AtomicInteger(0)
         private val activeServices = mutableSetOf<MarkFlowSharedBrowserService>()
+        private val recoveryLeasesByFile = mutableMapOf<String, RecoveryLease>()
 
         private const val BRIDGE_ERROR_STATUS = 500
+        private const val MAX_POOL_SIZE = 4
         private const val MIN_IDLE_LEASE_COUNT = 1
         private const val IDLE_EVICT_AFTER_MS = 120_000L
         private const val EVICTION_PERIOD_MS = 30_000L
@@ -901,8 +987,21 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             var pendingRuntimeSettingsForceReload: Boolean = false,
             var pendingForceRerender: Boolean = false,
             var intelliJToWebPushSequence: Int = 0,
+            var isEditorActive: Boolean = false,
             var sessionId: String = "",
             var lastUsedAtMs: Long
+        )
+
+        private data class RecoveryLease(
+            val epoch: Int,
+            val leader: MarkFlowEditor,
+            val leaseId: Int
+        )
+
+        private data class RecoveryBridgeResponse(
+            val role: String,
+            val epoch: Int,
+            val reason: String
         )
 
         fun notifyRuntimeSettingsChanged(forceReload: Boolean = false) {
