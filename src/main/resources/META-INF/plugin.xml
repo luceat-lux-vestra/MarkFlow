@@ -1,8 +1,8 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <id>com.github.luceatluxvestra.markflow</id>
+    <id>com.algorist.markflow</id>
     <name>MarkFlow</name>
-    <vendor>luceat-lux-vestra</vendor>
+    <vendor>algorist</vendor>
 
     <depends>com.intellij.modules.platform</depends>
 

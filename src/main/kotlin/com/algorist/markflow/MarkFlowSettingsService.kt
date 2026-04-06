@@ -106,7 +106,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
                 "revision=$nextRevision"
         )
         if (changed) {
-            MarkFlowEditor.notifyRuntimeSettingsChanged(forceReload = false)
+            MarkFlowSharedBrowserService.notifyRuntimeSettingsChanged(forceReload = false)
         }
     }
 
