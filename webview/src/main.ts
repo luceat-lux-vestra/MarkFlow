@@ -647,6 +647,15 @@ const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, rea
         reason
     });
 
+    // Verify session hasn't changed since we're about to notify
+    if (!window.__markflowSessionId || window.__markflowSessionId !== currentSessionId) {
+        emitToIntelliJLog(
+            `MARKFLOW_UI recovery:notify${status}:sessionMismatch sessionId=${currentSessionId} current=${window.__markflowSessionId}`
+        );
+        clearRecoveryState(`notify:${status}:sessionChanged`);
+        return;
+    }
+
     emitToIntelliJLog(
         `MARKFLOW_UI recovery:notify${status} epoch=${epoch} sessionId=${currentSessionId} reason=${reason}`
     );
@@ -654,8 +663,13 @@ const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, rea
     window.cefQuery({
         request,
         onSuccess: (response) => {
-            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"} sessionId=${currentSessionId}`);
-            clearRecoveryState(`notify:${status}:ack`);
+            // Re-verify session on response
+            if (window.__markflowSessionId === currentSessionId) {
+                emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"} sessionId=${currentSessionId}`);
+                clearRecoveryState(`notify:${status}:ack`);
+            } else {
+                emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackIgnored sessionChanged during response`);
+            }
         },
         onFailure: (_errCode, errMsg) => {
             emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg} sessionId=${currentSessionId}`);
@@ -683,14 +697,38 @@ const requestRecoveryLease = (reason: string): Promise<void> => {
         reason
     });
 
+    const RECOVERY_REQUEST_TIMEOUT_MS = 3000;
     emitToIntelliJLog(
-        `MARKFLOW_UI recovery:request reason=${reason} sessionId=${currentSessionId}`
+        `MARKFLOW_UI recovery:request reason=${reason} sessionId=${currentSessionId} timeout=${RECOVERY_REQUEST_TIMEOUT_MS}ms`
     );
 
     return new Promise((resolve) => {
+        let timeoutHandle: number | null = null;
+        let completed = false;
+
+        const cleanup = () => {
+            completed = true;
+            if (timeoutHandle !== null) {
+                window.clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+            }
+        };
+
+        // Set timeout
+        timeoutHandle = window.setTimeout(() => {
+            if (completed) return;
+            cleanup();
+            emitToIntelliJLog(`MARKFLOW_UI recovery:request:timeout after ${RECOVERY_REQUEST_TIMEOUT_MS}ms sessionId=${currentSessionId}`);
+            recoveryRequestInFlight = false;
+            clearRecoveryState("request:timeout");
+            resolve();
+        }, RECOVERY_REQUEST_TIMEOUT_MS);
+
         window.cefQuery?.({
             request,
             onSuccess: (response) => {
+                if (completed) return;
+                cleanup();
                 try {
                     const parsed = response ? (JSON.parse(response) as RecoveryBridgeResponse) : {};
                     const sessionId = window.__markflowSessionId;
@@ -719,6 +757,8 @@ const requestRecoveryLease = (reason: string): Promise<void> => {
                 resolve();
             },
             onFailure: (_errCode, errMsg) => {
+                if (completed) return;
+                cleanup();
                 emitToIntelliJLog(`MARKFLOW_UI recovery:request:failed ${errMsg} sessionId=${currentSessionId}`);
                 clearRecoveryState("request:failed");
                 resolve();
@@ -1282,8 +1322,20 @@ async function recreateCrepeInstance(reason: string) {
     isRecreatingCrepe = true;
     pendingCrepeRecreate = false;
 
+    // Capture current session ID for race condition detection
+    const recreateSessionId = window.__markflowSessionId;
+    const recoveryEpochAtStart = activeRecoveryEpoch;
+    const recoveryRoleAtStart = activeRecoveryRole;
+
     try {
         await requestRecoveryLease(`recreate:${reason}`);
+
+        // Verify session hasn't changed during recovery request
+        if (window.__markflowSessionId !== recreateSessionId) {
+            emitToIntelliJLog(`MARKFLOW_UI recreate:sessionChanged during recovery oldSession=${recreateSessionId} newSession=${window.__markflowSessionId}`);
+            clearRecoveryState("recreate:sessionChanged");
+            return;
+        }
 
         const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
         const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);
@@ -1311,15 +1363,17 @@ async function recreateCrepeInstance(reason: string) {
         activeCrepe = next;
         attachCrepeBridge(next);
 
-        const recoveryEpochForRun = activeRecoveryEpoch;
-        const recoveryRoleForRun = activeRecoveryRole;
         markFlowStage("crepe:recreate:start", reason);
         await startCrepe(next, "recreate:done", uiState);
         markFlowStage("crepe:recreate:done", reason);
 
-        if (recoveryRoleForRun === "leader" && recoveryEpochForRun !== null) {
+        // Notify recovery outcome only if we were leader AND session hasn't changed
+        if (recoveryRoleAtStart === "leader" && recoveryEpochAtStart !== null && window.__markflowSessionId === recreateSessionId) {
             const succeeded = isCrepeReady && activeCrepe === next;
-            notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochForRun, reason);
+            notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochAtStart, reason);
+        } else if (window.__markflowSessionId === recreateSessionId) {
+            // Always clear recovery state when recreate completes (leader or follower)
+            clearRecoveryState(`recreate:completed role=${recoveryRoleAtStart}`);
         }
     } finally {
         isRecreatingCrepe = false;
@@ -1409,7 +1463,10 @@ async function initEditor() {
         try {
             replaceEditorMarkdown(activeCrepe, newMarkdown);
             if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
+                const followerEpoch = activeRecoveryEpoch;
                 clearRecoveryState("follower:markdownApplied");
+                // Notify backend that follower successfully applied markdown
+                notifyRecoveryOutcome("complete", followerEpoch, "follower:markdownApplied");
             }
         } finally {
             clearExternalUpdateGuardLater();
@@ -1425,7 +1482,10 @@ async function initEditor() {
 
         applyEditorUiState(activeCrepe, state);
         if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
+            const followerEpoch = activeRecoveryEpoch;
             clearRecoveryState("follower:stateApplied");
+            // Notify backend that follower successfully applied state
+            notifyRecoveryOutcome("complete", followerEpoch, "follower:stateApplied");
         }
     };
     await startCrepe(crepe, "create:done");
