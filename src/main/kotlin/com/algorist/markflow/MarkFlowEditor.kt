@@ -15,6 +15,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import java.beans.PropertyChangeListener
+import java.awt.event.HierarchyEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -33,6 +34,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var pendingWebToDocumentContent: String? = null
     private var webToDocumentApplyScheduled = false
     private var lastActivationSettingsPushAtMs = 0L
+    private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
     private var disposed = false
@@ -47,6 +49,27 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 sharedBrowserService.pushMarkdownFromEditor(this@MarkFlowEditor, event.document.text)
             }
         }, this)
+
+        hostPanel.addHierarchyListener { event ->
+            if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() == 0L) {
+                return@addHierarchyListener
+            }
+            syncAttachmentWithVisibility()
+        }
+    }
+
+    private fun syncAttachmentWithVisibility() {
+        if (disposed) return
+        val shouldAttach = hostPanel.isShowing
+        if (shouldAttach && !isAttachedToSharedBrowser) {
+            sharedBrowserService.attach(this, hostPanel)
+            isAttachedToSharedBrowser = true
+            return
+        }
+        if (!shouldAttach && isAttachedToSharedBrowser) {
+            sharedBrowserService.detach(this, hostPanel)
+            isAttachedToSharedBrowser = false
+        }
     }
 
     internal fun applyWebUpdate(
@@ -167,17 +190,18 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     }
 
     override fun selectNotify() {
-        sharedBrowserService.attach(this, hostPanel)
+        syncAttachmentWithVisibility()
+        sharedBrowserService.setEditorActive(this, true)
 
         val now = System.currentTimeMillis()
         if (now - lastActivationSettingsPushAtMs >= ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS) {
             lastActivationSettingsPushAtMs = now
-            sharedBrowserService.reapplyRuntimeSettingsForActiveEditor(forceReload = false)
+            sharedBrowserService.reapplyRuntimeSettingsForEditor(this, forceReload = false)
         }
     }
 
     override fun deselectNotify() {
-        sharedBrowserService.detach(this, hostPanel)
+        sharedBrowserService.setEditorActive(this, false)
     }
 
     fun forceRerenderPreviews() {
@@ -187,6 +211,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     override fun dispose() {
         if (disposed) return
         disposed = true
+        if (isAttachedToSharedBrowser) {
+            sharedBrowserService.detach(this, hostPanel)
+            isAttachedToSharedBrowser = false
+        }
         sharedBrowserService.unregisterEditor(this)
         LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
     }
