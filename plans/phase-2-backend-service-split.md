@@ -37,7 +37,9 @@ src/main/kotlin/com/algorist/markflow/
 ├── browser/
 │   ├── MarkFlowSharedBrowserService.kt (~150줄 - orchestration만)
 │   ├── BrowserPool.kt               (~200줄 - browser lease 관리)
-│   ├── BrowserLease.kt              (~80줄 - BrowserLease data class)
+│   ├── BrowserLease.kt              (~16줄 - BrowserLease data class)
+│   ├── RecoveryLease.kt             (~7줄 - RecoveryLease data class)
+│   ├── RecoveryBridgeResponse.kt    (~7줄 - RecoveryBridgeResponse data class)
 │   ├── QueryHandler.kt              (~150줄 - JBCefJSQuery setup)
 │   ├── JcefHandlers.kt              (~100줄 - CefDisplayHandler, CefLoadHandler)
 │   └── RecoveryManager.kt           (~150줄 - leader/follower recovery)
@@ -52,84 +54,62 @@ src/main/kotlin/com/algorist/markflow/
 
 ## 파일별 상세 계획
 
-### `browser/BrowserLease.kt` (~80줄)
+### `browser/BrowserLease.kt` (~50줄)
 
-**이관 대상:** `MarkFlowSharedBrowserService.kt`의 중첩 `BrowserLease` data class (12-69줄)
+**이관 대상:** `MarkFlowSharedBrowserService.kt` companion object 내 중첩 `BrowserLease` data class (1038-1053줄)
 
 ```kotlin
 package com.algorist.markflow.browser
-
 import com.algorist.markflow.MarkFlowEditor
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
 import com.intellij.ui.jcef.JBCefBrowser
-import com.intellij.util.concurrency.AppExecutorUtil
-import org.cef.CefApp
-import org.cef.CefSettings
-import java.awt.Component
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
+import com.intellij.ui.jcef.JBCefJSQuery
+import javax.swing.JPanel
 
 data class BrowserLease(
+    val id: Int,
     val browser: JBCefBrowser,
-    val editor: MarkFlowEditor,
-    val acquiredAtMs: Long,
-    val projectId: String
-) {
-    private val isReleased = AtomicBoolean(false)
-    private val evictTimer = AppExecutorUtil.getAppScheduledExecutorService().schedule(
-        {}, 0, TimeUnit.MILLISECONDS
-    )
-
-    val isReleased: Boolean get() = isReleased.get()
-    val ageMs: Long get() = System.currentTimeMillis() - acquiredAtMs
-
-    fun release() {
-        if (isReleased.compareAndSet(false, true)) {
-            LOG.info("MARKFLOW_UI browser:leaseReleased editor=${editor.getFile().path} age=${ageMs}ms")
-        }
-    }
-
-    fun isExpired(afterMs: Long): Boolean = ageMs > afterMs
-}
+    val jsQuery: JBCefJSQuery,
+    val debugQuery: JBCefJSQuery,
+    var attachedEditor: MarkFlowEditor? = null,
+    var attachedHost: JPanel? = null,
+    var webViewLoaded: Boolean = false,
+    var pendingRuntimeSettingsPush: Boolean = false,
+    var pendingRuntimeSettingsForceReload: Boolean = false,
+    var pendingForceRerender: Boolean = false,
+    var intelliJToWebPushSequence: Int = 0,
+    var isEditorActive: Boolean = false,
+    var sessionId: String = "",
+    var lastUsedAtMs: Long
+)
 ```
 
----
+### `browser/RecoveryLease.kt` (~15줄)
 
-### `browser/BrowserPool.kt` (~200줄)
+**이관 대상:** `MarkFlowSharedBrowserService.kt` companion object 내 중첩 `RecoveryLease` data class (1055-1059줄)
 
-**이관 대상:** `MarkFlowSharedBrowserService.kt`의 브라우저 풀 관리 로직 (71-138줄, 800-900줄)
+```kotlin
+package com.algorist.markflow.browser
+import com.algorist.markflow.MarkFlowEditor
+
+data class RecoveryLease(
+    val epoch: Int,
+    val leader: MarkFlowEditor,
+    val leaseId: Int
+)
+```
+
+### `browser/RecoveryBridgeResponse.kt` (~15줄)
+
+**이관 대상:** `MarkFlowSharedBrowserService.kt` companion object 내 중첩 `RecoveryBridgeResponse` data class (1061-1065줄)
 
 ```kotlin
 package com.algorist.markflow.browser
 
-import com.algorist.markflow.MarkFlowEditor
-import com.algorist.markflow.MarkFlowSettingsService
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
-import com.intellij.ui.jcef.JBCefBrowser
-import com.intellij.util.concurrency.AppExecutorUtil
-import org.cef.CefApp
-import org.cef.CefSettings
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-
-class BrowserPool(private val project: Project) {
-
-    private val leases = ConcurrentHashMap<String, BrowserLease>()
-    private val availableQueue = java.util.concurrent.ConcurrentLinkedQueue<JBCefBrowser>()
-    private val browserCount = AtomicInteger(0)
-    private val sequence = AtomicInteger(0)
-
-    fun acquire(editor: MarkFlowEditor): BrowserLease
-    fun release(lease: BrowserLease)
-    fun evictIdleEditors()
-    fun getActiveEditorCount(): Int
-    fun shutdown()
-}
+data class RecoveryBridgeResponse(
+    val role: String,
+    val epoch: Int,
+    val reason: String
+)
 ```
 
 **이관 기능:**
@@ -292,20 +272,22 @@ class MarkFlowSharedBrowserService(private val project: Project) {
 
 ## 단계별 실행 순서
 
-1. `browser/BrowserLease.kt` 생성 - 중첩 `BrowserLease` data class 이관
-2. `browser/BrowserPool.kt` 생성 - 브라우저 풀 관리 로직 이관
-3. `browser/QueryHandler.kt` 생성 - JBCefJSQuery setup, action routing 이관
-4. `browser/JcefHandlers.kt` 생성 - CefDisplayHandler/CefLoadHandler 이관
-5. `browser/RecoveryManager.kt` 생성 - Recovery protocol 이관
-6. `browser/MarkFlowSharedBrowserService.kt` 리팩토링 - orchestration만 남기고 이관된 코드 삭제
-7. `MarkFlowEditor.kt` → `editor/MarkFlowEditor.kt` 이동
-8. `MarkFlowEditorProvider.kt` → `editor/MarkFlowEditorProvider.kt` 이동
-9. `MarkFlowEditorState.kt` → `editor/MarkFlowEditorState.kt` 이동
-10. `MarkFlowFileSupport.kt` → `editor/MarkFlowFileSupport.kt` 이동
-11. `MarkFlowSettingsService.kt` → `settings/MarkFlowSettingsService.kt` 이동
-12. `MarkFlowSettingsConfigurable.kt` → `settings/MarkFlowSettingsConfigurable.kt` 이동
-13. 모든 import 경로 업데이트
-14. 빌드 테스트
+1. `browser/BrowserLease.kt` 생성 - 중첩 `BrowserLease` data class 이관 (1038-1053줄)
+2. `browser/RecoveryLease.kt` 생성 - 중첩 `RecoveryLease` data class 이관 (1055-1059줄)
+3. `browser/RecoveryBridgeResponse.kt` 생성 - 중첩 `RecoveryBridgeResponse` data class 이관 (1061-1065줄)
+4. `browser/BrowserPool.kt` 생성 - 브라우저 풀 관리 로직 이관
+5. `browser/QueryHandler.kt` 생성 - JBCefJSQuery setup, action routing 이관
+6. `browser/JcefHandlers.kt` 생성 - CefDisplayHandler/CefLoadHandler 이관
+7. `browser/RecoveryManager.kt` 생성 - Recovery protocol 이관
+8. `browser/MarkFlowSharedBrowserService.kt` 리팩토링 - orchestration만 남기고 이관된 코드 삭제
+9. `MarkFlowEditor.kt` → `editor/MarkFlowEditor.kt` 이동
+10. `MarkFlowEditorProvider.kt` → `editor/MarkFlowEditorProvider.kt` 이동
+11. `MarkFlowEditorState.kt` → `editor/MarkFlowEditorState.kt` 이동
+12. `MarkFlowFileSupport.kt` → `editor/MarkFlowFileSupport.kt` 이동
+13. `MarkFlowSettingsService.kt` → `settings/MarkFlowSettingsService.kt` 이동
+14. `MarkFlowSettingsConfigurable.kt` → `settings/MarkFlowSettingsConfigurable.kt` 이동
+15. 모든 import 경로 업데이트
+16. 빌드 테스트
 
 ---
 
