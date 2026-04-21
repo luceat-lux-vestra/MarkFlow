@@ -4,7 +4,7 @@ import { reconfigureMermaid } from "../mermaid/config";
 import { renderAllRegisteredMermaidPreviews } from "../mermaid";
 import { applyRuntimeUiSettings, ensureManualPreviewToolbar, ensureShortcutConflictNotice } from "../settings";
 import { beginExternalUpdateGuard, clearExternalUpdateGuardLater, replaceEditorMarkdown } from "../editor-state/sync";
-import { recreateCrepeInstance } from "../mermaid/crepe";
+import { recreateCrepeInstance } from "../crepe";
 import type { MarkFlowRuntimeSettings } from "../state";
 
 // This file is the single source of truth for runtime settings.
