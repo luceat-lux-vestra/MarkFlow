@@ -30,6 +30,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.LinkedHashSet
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -157,6 +158,8 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         ensureLeaseLoaded(lease)
         if (lease.webViewLoaded) {
+            // Re-inject bridge for reused lease — onLoadEnd won't fire again
+            injectBridgeAndBootstrap(lease)
             syncLeaseWithEditor(lease, pushSettings = true)
         }
     }
@@ -258,8 +261,48 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
     private fun leaseForEditor(editor: MarkFlowEditor): BrowserLease? {
         if (disposed) return null
-        val leaseId = synchronized(lifecycleLock) { editorToLeaseId[editor] } ?: return null
-        return synchronized(lifecycleLock) { leaseById[leaseId] }
+        return synchronized(lifecycleLock) {
+            val leaseId = editorToLeaseId[editor] ?: return@synchronized null
+            leaseById[leaseId]?.takeIf { it.attachedEditor === editor }
+        }
+    }
+
+    fun getCurrentMarkdown(editor: MarkFlowEditor): String? {
+        val lease = leaseForEditor(editor) ?: return null
+        if (!lease.webViewLoaded) return null
+        val flushQuery = JBCefJSQuery.create(lease.browser as JBCefBrowserBase)
+        try {
+            val latch = CountDownLatch(1)
+            var result: String? = null
+            flushQuery.addHandler { request: String ->
+                result = request
+                latch.countDown()
+                JBCefJSQuery.Response("ok")
+            }
+            val injectSnippet = flushQuery.inject("window.__markflowFlushQuery")
+            val script = """
+                (function() {
+                    $injectSnippet
+                    var md = (typeof window.getMarkdown === 'function') ? window.getMarkdown() : "";
+                    if (typeof window.__markflowFlushQuery === 'function') {
+                        window.__markflowFlushQuery(md || "");
+                    }
+                })();
+            """.trimIndent()
+            lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
+            val completed = latch.await(2000, TimeUnit.MILLISECONDS)
+            if (!completed) {
+                LOG.warn("MARKFLOW_SAVE getCurrentMarkdown: timeout for ${editor.file.path}")
+                return null
+            }
+            val markdown = result?.takeIf { it.isNotEmpty() && it != "undefined" && it != "null" }
+            return markdown
+        } catch (e: Exception) {
+            LOG.error("MARKFLOW_SAVE getCurrentMarkdown: failed for ${editor.file.path}: ${e.message}", e)
+            return null
+        } finally {
+            flushQuery.dispose()
+        }
     }
 
     private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease? {
@@ -313,25 +356,33 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             try {
                 val normalized = request.trim()
                 if (normalized.isEmpty() || normalized == "undefined" || normalized == "null") {
+                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED empty request, lease=${lease.id}")
                     return@addHandler ignoredResponse()
                 }
 
                 val parsed = JsonParser.parseString(normalized)
                 if (!parsed.isJsonObject) {
+                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED not JSON, lease=${lease.id}")
                     return@addHandler ignoredResponse()
                 }
 
                 val json = parsed.asJsonObject
                 val requestSession = json["sessionId"]?.takeIf { it.isJsonPrimitive }?.asString
                 if (!requestSession.isNullOrBlank() && requestSession != lease.sessionId) {
+                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED session mismatch request=$requestSession lease=${lease.sessionId}, lease=${lease.id}")
                     return@addHandler ignoredResponse()
                 }
 
                 val action = json["action"]?.takeIf { it.isJsonPrimitive }?.asString
+                LOG.info("MARKFLOW_SAVE setupQueries:received action=$action lease=${lease.id} sessionId=$requestSession")
                 when (action) {
                     "update" -> {
-                        val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
+                        val targetEditor = lease.attachedEditor ?: run {
+                            LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED no attachedEditor, lease=${lease.id}")
+                            return@addHandler ignoredResponse()
+                        }
                         val content = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
+                        LOG.info("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
                         targetEditor.applyWebUpdate(
                             content = content,
                             scrollTop = readJsonInt(json, "scrollTop", 0),
@@ -410,7 +461,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 val safeMessage = message?.trim().orEmpty()
                 if (safeMessage.isNotEmpty()) {
                     val safeSource = source ?: "<unknown>"
-                    if (safeMessage.contains("MARKFLOW_UI") || safeMessage.contains("MARKFLOW_DIAG")) {
+                    if (safeMessage.contains("MARKFLOW_UI") || safeMessage.contains("MARKFLOW_DIAG") || safeMessage.contains("MARKFLOW_SAVE")) {
                         LOG.warn("MARKFLOW_DIAG JS console[$level] $safeSource:$line $safeMessage")
                     } else {
                         LOG.debug("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
@@ -426,8 +477,13 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             }
 
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                if (frame != null && !frame.isMain) return
+                LOG.warn("MARKFLOW_SAVE onLoadEnd: lease=${lease.id} frame=${frame?.isMain} url=${cefBrowser?.url}")
+                if (frame != null && !frame.isMain) {
+                    LOG.warn("MARKFLOW_SAVE onLoadEnd: SKIPPED subframe, lease=${lease.id}")
+                    return
+                }
                 lease.webViewLoaded = true
+                LOG.warn("MARKFLOW_SAVE onLoadEnd: calling injectBridgeAndBootstrap, lease=${lease.id}")
                 injectBridgeAndBootstrap(lease)
                 lease.attachedEditor?.onActivatedInSharedBrowser()
                 applyPendingRuntimeSettings(lease)
@@ -447,6 +503,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     }
 
     private fun injectBridgeAndBootstrap(lease: BrowserLease) {
+        LOG.warn("MARKFLOW_SAVE injectBridgeAndBootstrap: START lease=${lease.id} editor=${lease.attachedEditor?.file?.path}")
         val editor = lease.attachedEditor
         val markdownLiteral = gson.toJson(editor?.currentMarkdownText().orEmpty())
         val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())

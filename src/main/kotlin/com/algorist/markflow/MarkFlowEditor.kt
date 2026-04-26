@@ -1,6 +1,5 @@
 package com.algorist.markflow
 
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
@@ -31,8 +30,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownCursorOffset = -1
     private var lastKnownSelectionStart = -1
     private var lastKnownSelectionEnd = -1
-    private var pendingWebToDocumentContent: String? = null
-    private var webToDocumentApplyScheduled = false
     private var lastActivationSettingsPushAtMs = 0L
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
@@ -46,7 +43,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         document?.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
                 if (isUpdatingFromWeb.get() || disposed) return
-                sharedBrowserService.pushMarkdownFromEditor(this@MarkFlowEditor, event.document.text)
             }
         }, this)
 
@@ -79,35 +75,43 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         selectionStart: Int,
         selectionEnd: Int
     ) {
+        LOG.info("MARKFLOW_SAVE applyWebUpdate: file=${file.path} contentLength=${content.length}")
         lastKnownScrollTop = scrollTop
         lastKnownCursorOffset = cursorOffset
         lastKnownSelectionStart = selectionStart
         lastKnownSelectionEnd = selectionEnd
-        scheduleWebToDocumentApply(content)
+        saveContentToDocumentAndFile(content)
     }
 
-    private fun scheduleWebToDocumentApply(newContent: String) {
-        pendingWebToDocumentContent = newContent
-        if (webToDocumentApplyScheduled) return
-
-        webToDocumentApplyScheduled = true
-        ApplicationManager.getApplication().invokeLater {
-            webToDocumentApplyScheduled = false
-            if (disposed) return@invokeLater
-            val target = pendingWebToDocumentContent ?: return@invokeLater
-            pendingWebToDocumentContent = null
-
-            WriteCommandAction.runWriteCommandAction(project) {
-                val currentDocument = document ?: return@runWriteCommandAction
-                if (currentDocument.text == target) return@runWriteCommandAction
-                isUpdatingFromWeb.set(true)
-                try {
-                    currentDocument.setText(target)
-                } finally {
-                    isUpdatingFromWeb.set(false)
-                }
-            }
+    private fun saveContentToDocumentAndFile(newContent: String) {
+        val currentDocument = document ?: run {
+            LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: document is null, file=${file.path}")
+            return
         }
+
+        if (currentDocument.text == newContent) {
+            LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: no-op (text unchanged)")
+            return
+        }
+
+        isUpdatingFromWeb.set(true)
+        try {
+            WriteCommandAction.runWriteCommandAction(project) {
+                currentDocument.setText(newContent)
+            }
+            FileDocumentManager.getInstance().saveDocument(currentDocument)
+            LOG.info("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
+        } catch (e: Exception) {
+            LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: failed, file=${file.path}: ${e.message}", e)
+        } finally {
+            isUpdatingFromWeb.set(false)
+        }
+    }
+
+    private fun flushPendingWebContent() {
+        LOG.info("MARKFLOW_SAVE flushPendingWebContent: called for ${file.path}")
+        val markdown = sharedBrowserService.getCurrentMarkdown(this) ?: return
+        saveContentToDocumentAndFile(markdown)
     }
 
     internal fun currentMarkdownText(): String {
@@ -161,7 +165,15 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun getFile(): VirtualFile = file
 
-    override fun isModified(): Boolean = false
+    override fun isModified(): Boolean {
+        val docText = document?.text ?: return false
+        val fileText = try {
+            String(file.contentsToByteArray(), file.charset)
+        } catch (ex: Exception) {
+            return false
+        }
+        return docText != fileText
+    }
 
     override fun isValid(): Boolean = !disposed
 
@@ -201,6 +213,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     }
 
     override fun deselectNotify() {
+        if (disposed) return
+        // Synchronously flush and save current webview content BEFORE IntelliJ calls detach()
+        // This ensures content is saved even when the async cefQuery would be dropped by detach()
+        flushPendingWebContent()
         sharedBrowserService.setEditorActive(this, false)
     }
 
@@ -210,6 +226,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun dispose() {
         if (disposed) return
+        // Synchronously flush and save current webview content before cleanup
+        flushPendingWebContent()
         disposed = true
         if (isAttachedToSharedBrowser) {
             sharedBrowserService.detach(this, hostPanel)
