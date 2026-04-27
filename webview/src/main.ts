@@ -1049,7 +1049,8 @@ function flushPendingIntelliJState(crepe: Crepe) {
         markFlowStage("bridge:updateFromIntelliJ:flush", pendingMarkdown.slice(0, 32));
         beginExternalUpdateGuard();
         try {
-            replaceEditorMarkdown(crepe, pendingMarkdown);
+            // Host-driven sync should not become a user-undo step.
+            replaceEditorMarkdown(crepe, pendingMarkdown, true);
         } finally {
             clearExternalUpdateGuardLater();
         }
@@ -1485,7 +1486,8 @@ async function initEditor() {
 
         beginExternalUpdateGuard();
         try {
-            replaceEditorMarkdown(activeCrepe, newMarkdown);
+            // Host-driven sync should not become a user-undo step.
+            replaceEditorMarkdown(activeCrepe, newMarkdown, true);
             if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
                 const followerEpoch = activeRecoveryEpoch;
                 clearRecoveryState("follower:markdownApplied");

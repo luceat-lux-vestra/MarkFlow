@@ -1,6 +1,6 @@
 package com.algorist.markflow
 
-import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
@@ -99,8 +99,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         val saveAction = {
             isUpdatingFromWeb.set(true)
             try {
-                WriteCommandAction.runWriteCommandAction(project) {
-                    currentDocument.setText(newContent)
+                CommandProcessor.getInstance().runUndoTransparentAction {
+                    app.runWriteAction {
+                        currentDocument.setText(newContent)
+                    }
                 }
                 FileDocumentManager.getInstance().saveDocument(currentDocument)
                 LOG.info("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
