@@ -22,7 +22,7 @@ For a minimal Mermaid sanity check, see `mermaid-minimal.md`.
 
 ***
 
-## 1. Basic Markdow
+## 1. Basic Markdown
 
 ### 1.1 Paragraphs
 

@@ -92,19 +92,39 @@
 ### 검증
 - `./gradlew compileKotlin`: 성공 (BUILD SUCCESSFUL)
 
-## Phase 3 - Runtime Recheck Plan (다음 단계)
+## Phase 3 - Runtime Recheck Result (완료)
 
-### 확인할 로그 시퀀스
-1. `MARKFLOW_UI SAVE:FIRING ...`
-2. `MARKFLOW_UI SAVE:ENTRY cefQuery=function ...` (또는 undefined 아님)
-3. `MARKFLOW_SAVE setupQueries:received action=update ...`
-4. `MARKFLOW_SAVE applyWebUpdate ...`
-5. `MARKFLOW_SAVE saveContentToDocumentAndFile: saved ...`
+### 사용자 재검증 로그 (2026-04-27 20:58)
+- `MARKFLOW_UI SAVE:FIRING len=5458 prevLen=5459`
+- `MARKFLOW_SAVE markdownUpdated:SEND len=5458 prevLen=5459`
+- `MARKFLOW_UI SAVE:ENTRY cefQuery=function len=5458`
+- `MARKFLOW_UI SAVE:CEF_QUERY sessionId=lease-2-session-6 contentLen=5458`
+- `MARKFLOW_SAVE sendToIntelliJ:CEF_QUERY sessionId=lease-2-session-6 contentLen=5458`
+- `MARKFLOW_SAVE saveContentToDocumentAndFile: non-EDT dispatch ... thread=CefHandlers-execution-0`
+- `MARKFLOW_UI SAVE:ACK received`
+- `MARKFLOW_SAVE sendToIntelliJ:ACK received`
 
-### 판정 기준
-- 1~5가 순서대로 보이면 1차 목표(타이핑 즉시 저장) 달성
-- 2에서 다시 undefined면 브리지 주입 타이밍 문제를 추가 조사
-- 3 이후에서 끊기면 backend save 경로를 재점검
+### 판독
+- `cefQuery=undefined` 이슈는 해소됨 (`cefQuery=function` 확인)
+- 프론트 -> JCEF 브리지 전송 + ACK 왕복이 정상 동작
+- 저장 호출도 실제로 실행됨 (`saveContentToDocumentAndFile` 진입 로그 확인)
+- `non-EDT dispatch`는 오류가 아니라, non-EDT 수신을 EDT로 강제 전환하는 보호 로직이 동작했다는 의미
 
-## Next
-- IDE에서 동일 시나리오를 다시 재현해 저장 체인이 어디까지 진행되는지 확인 후 다음 최소 수정 적용
+### 현재 상태 결론
+- 브리지 단절로 저장이 막히던 핵심 문제는 해결된 것으로 판단
+- 현재 로그 기준으로는 "타이핑 시 저장 경로 진입"까지 정상
+
+### 남은 확인 (최종 안전 확인)
+1. 같은 타이핑 직후 파일 디스크 내용이 실제 변경됐는지 확인
+2. 탭 전환/에디터 닫기에서도 동일하게 내용 유지되는지 확인
+
+## Phase 4 - Final Validation Plan (다음 단계)
+
+### 확인 포인트
+- IntelliJ 내부 상태 뿐 아니라 실제 파일 바이트/텍스트가 갱신되는지
+- `deselectNotify()` / `dispose()` 경로의 flush가 데이터 손실 없이 동작하는지
+
+### 성공 기준
+- 타이핑 후 즉시 파일 재열기 시 변경 내용 유지
+- 탭 전환 후 재열기 시 변경 내용 유지
+- 에디터 닫기 후 재열기 시 변경 내용 유지
