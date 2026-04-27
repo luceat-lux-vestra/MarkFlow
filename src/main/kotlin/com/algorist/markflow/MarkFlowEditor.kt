@@ -1,6 +1,7 @@
 package com.algorist.markflow
 
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
@@ -94,17 +95,27 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             return
         }
 
-        isUpdatingFromWeb.set(true)
-        try {
-            WriteCommandAction.runWriteCommandAction(project) {
-                currentDocument.setText(newContent)
+        val app = ApplicationManager.getApplication()
+        val saveAction = {
+            isUpdatingFromWeb.set(true)
+            try {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    currentDocument.setText(newContent)
+                }
+                FileDocumentManager.getInstance().saveDocument(currentDocument)
+                LOG.info("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
+            } catch (e: Exception) {
+                LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: failed, file=${file.path}: ${e.message}", e)
+            } finally {
+                isUpdatingFromWeb.set(false)
             }
-            FileDocumentManager.getInstance().saveDocument(currentDocument)
-            LOG.info("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
-        } catch (e: Exception) {
-            LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: failed, file=${file.path}: ${e.message}", e)
-        } finally {
-            isUpdatingFromWeb.set(false)
+        }
+
+        if (app.isDispatchThread) {
+            saveAction()
+        } else {
+            LOG.warn("MARKFLOW_SAVE saveContentToDocumentAndFile: non-EDT dispatch, file=${file.path} thread=${Thread.currentThread().name}")
+            app.invokeAndWait(saveAction)
         }
     }
 

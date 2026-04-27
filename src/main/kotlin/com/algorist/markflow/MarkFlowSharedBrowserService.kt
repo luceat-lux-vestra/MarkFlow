@@ -279,14 +279,11 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 latch.countDown()
                 JBCefJSQuery.Response("ok")
             }
-            val injectSnippet = flushQuery.inject("window.__markflowFlushQuery")
+            val flushCallSnippet = flushQuery.inject("md")
             val script = """
                 (function() {
-                    $injectSnippet
                     var md = (typeof window.getMarkdown === 'function') ? window.getMarkdown() : "";
-                    if (typeof window.__markflowFlushQuery === 'function') {
-                        window.__markflowFlushQuery(md || "");
-                    }
+                    $flushCallSnippet
                 })();
             """.trimIndent()
             lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
@@ -511,13 +508,28 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
         val activeLiteral = if (lease.isEditorActive) "true" else "false"
         val sessionLiteral = gson.toJson(lease.sessionId)
+        val cefQueryBridgeCall = lease.jsQuery.inject(
+            "window.__markflowBridgeRequest",
+            "window.__markflowBridgeOnSuccess",
+            "window.__markflowBridgeOnFailure"
+        )
+        val debugBridgeCall = lease.debugQuery.inject("window.__markflowDebugRequest")
 
         val injectJs = """
             window.intelliJ_initialMarkdown = $markdownLiteral;
             window.intelliJ_markFlowSettings = $runtimeSettingsJson;
             window.__markflowSessionId = $sessionLiteral;
-            ${lease.jsQuery.inject("window.cefQuery")}
-            ${lease.debugQuery.inject("window.markflowLog")}
+            window.cefQuery = function(payload) {
+                var source = payload || {};
+                window.__markflowBridgeRequest = String(source.request || "");
+                window.__markflowBridgeOnSuccess = typeof source.onSuccess === 'function' ? source.onSuccess : function() {};
+                window.__markflowBridgeOnFailure = typeof source.onFailure === 'function' ? source.onFailure : function() {};
+                $cefQueryBridgeCall
+            };
+            window.markflowLog = function(message) {
+                window.__markflowDebugRequest = String(message || "");
+                $debugBridgeCall
+            };
             (function() {
                 if (!window.__markflowGlobalErrorBridgeInstalled) {
                     window.__markflowGlobalErrorBridgeInstalled = true;
