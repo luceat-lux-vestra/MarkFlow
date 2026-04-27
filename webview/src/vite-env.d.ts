@@ -8,6 +8,14 @@ type IntelliJEditorState = {
     selectionEnd: number;
 };
 
+type EditorUiState = {
+    version: number;
+    scrollTop: number;
+    cursorOffset: number;
+    selectionStart: number;
+    selectionEnd: number;
+};
+
 type MarkFlowRuntimeSettings = {
     mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;
@@ -42,4 +50,6 @@ interface Window {
     applyEditorStateFromIntelliJ?: (state: IntelliJEditorState) => void;
     applyMarkFlowSettingsFromIntelliJ?: (settings: MarkFlowRuntimeSettings) => void;
     setMarkFlowEditorActive?: (active: boolean) => void;
+    getMarkdown?: () => string;
+    sendToIntelliJ?: (markdownText: string, uiState: EditorUiState) => void;
 }
