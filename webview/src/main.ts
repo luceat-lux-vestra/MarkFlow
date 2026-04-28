@@ -7,6 +7,7 @@ import "@milkdown/crepe/theme/frame.css";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
 import "./style.css";
+import "./styles/mermaid.css";
 
 // Shared editor state.
 // Prevent feedback loops while applying external IntelliJ updates.

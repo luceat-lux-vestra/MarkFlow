@@ -10,7 +10,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.jdom.Element
 
-// plugin.xml에 <fileEditorProvider implementation="your.package.MakFlowEditorProvider"/> 로 등록해야 합니다.
 class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean {
         val accepted = MarkFlowFileSupport.isMarkFlowTarget(file)
