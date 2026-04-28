@@ -19,6 +19,7 @@ import java.awt.event.HierarchyEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.Timer
 import java.awt.BorderLayout
 import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.editor.state.MarkFlowEditorState
@@ -35,6 +36,11 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownSelectionEnd = -1
     private var lastActivationSettingsPushAtMs = 0L
     private var isAttachedToSharedBrowser = false
+    private val hiddenDetachTimer = Timer(HIDDEN_DETACH_GRACE_MS.toInt()) {
+        handleHiddenDetachTimer()
+    }.apply {
+        isRepeats = false
+    }
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
     private var disposed = false
@@ -61,18 +67,39 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         if (disposed) return
         val shouldAttach = hostPanel.isShowing
         val hasLease = sharedBrowserService.hasLease(this)
+        sharedBrowserService.updateEditorVisibility(this, shouldAttach)
         if (shouldAttach && !hasLease) {
+            hiddenDetachTimer.stop()
             isAttachedToSharedBrowser = sharedBrowserService.attach(this, hostPanel)
             return
         }
         if (shouldAttach) {
+            hiddenDetachTimer.stop()
             isAttachedToSharedBrowser = hasLease
             return
         }
         if (!shouldAttach && hasLease) {
-            sharedBrowserService.detach(this, hostPanel)
-            isAttachedToSharedBrowser = false
+            scheduleHiddenDetach()
         } else if (!shouldAttach) {
+            hiddenDetachTimer.stop()
+            isAttachedToSharedBrowser = false
+        }
+    }
+
+    private fun scheduleHiddenDetach() {
+        if (hiddenDetachTimer.isRunning) {
+            hiddenDetachTimer.restart()
+        } else {
+            hiddenDetachTimer.start()
+        }
+    }
+
+    private fun handleHiddenDetachTimer() {
+        if (disposed || hostPanel.isShowing) {
+            return
+        }
+        if (sharedBrowserService.hasLease(this)) {
+            sharedBrowserService.detach(this, hostPanel)
             isAttachedToSharedBrowser = false
         }
     }
@@ -246,6 +273,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         // Synchronously flush and save current webview content before cleanup
         flushPendingWebContent()
         disposed = true
+        hiddenDetachTimer.stop()
         if (isAttachedToSharedBrowser) {
             sharedBrowserService.detach(this, hostPanel)
             isAttachedToSharedBrowser = false
@@ -263,5 +291,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
         private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
+        private const val HIDDEN_DETACH_GRACE_MS = 250L
     }
 }

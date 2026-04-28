@@ -48,6 +48,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         browserLeasePool.detach(editor, host)
     }
 
+    fun updateEditorVisibility(editor: MarkFlowEditor, isShowing: Boolean) {
+        browserLeasePool.updateEditorVisibility(editor, isShowing)
+    }
+
     fun pushMarkdownFromEditor(editor: MarkFlowEditor, markdown: String) {
         browserLeasePool.pushMarkdownFromEditor(editor, markdown)
     }

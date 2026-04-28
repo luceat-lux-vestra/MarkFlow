@@ -94,7 +94,7 @@ internal class MarkFlowBrowserLeasePool {
                 val previousHost = it.attachedHost
                 it.attachedEditor = editor
                 it.attachedHost = host
-                it.isEditorActive = false
+                it.hiddenSinceAtMs = 0L
                 it.sessionId = nextSessionId(it.id)
                 it.lastUsedAtMs = System.currentTimeMillis()
                 LeaseAttachmentSnapshot(it, previousHost, it.sessionId)
@@ -174,6 +174,20 @@ internal class MarkFlowBrowserLeasePool {
 
         if (isLeaseSessionCurrent(lease, sessionId)) {
             MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
+        }
+    }
+
+    fun updateEditorVisibility(editor: MarkFlowEditor, isShowing: Boolean) {
+        if (disposed) return
+        synchronized(lifecycleLock) {
+            val leaseId = editorToLeaseId[editor] ?: return
+            val lease = leaseById[leaseId] ?: return
+            if (lease.attachedEditor !== editor) return
+            if (isShowing) {
+                lease.hiddenSinceAtMs = 0L
+            } else if (lease.hiddenSinceAtMs == 0L) {
+                lease.hiddenSinceAtMs = System.currentTimeMillis()
+            }
         }
     }
 
@@ -339,26 +353,36 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     private fun reclaimLeaseLocked(newEditor: MarkFlowEditor): BrowserLease? {
-        val candidate = leaseById.values
-            .filter { lease ->
-                lease.attachedEditor != null &&
-                    !lease.isEditorActive &&
-                    lease.attachedHost?.isShowing == false
-            }
-            .minByOrNull { it.lastUsedAtMs }
+        val now = System.currentTimeMillis()
+        val candidateState = selectLeaseToReclaim(
+            leaseById.values.mapNotNull { lease ->
+                if (lease.attachedEditor == null) return@mapNotNull null
+                MarkFlowLeaseReclaimCandidate(
+                    leaseId = lease.id,
+                    isActive = lease.isEditorActive,
+                    isShowing = lease.attachedHost?.isShowing == true,
+                    hiddenSinceAtMs = lease.hiddenSinceAtMs,
+                    lastUsedAtMs = lease.lastUsedAtMs
+                )
+            },
+            nowMs = now,
+            hiddenGraceMs = HIDDEN_RECLAIM_GRACE_MS
+        )
             ?: run {
                 LOG.warn(
-                    "MARKFLOW_UI attach skipped: no hidden inactive lease available to reclaim for ${newEditor.getFile().path}"
+                    "MARKFLOW_UI attach skipped: no stable hidden inactive lease available to reclaim for ${newEditor.getFile().path}"
                 )
                 return null
             }
 
+        val candidate = leaseById[candidateState.leaseId] ?: return null
         val oldEditor = candidate.attachedEditor ?: return null
         val previousSessionId = candidate.sessionId
         editorToLeaseId.remove(oldEditor)
         oldEditor.onSharedBrowserDetachedByPool()
         candidate.attachedEditor = newEditor
         candidate.isEditorActive = false
+        candidate.hiddenSinceAtMs = 0L
         candidate.sessionId = nextSessionId(candidate.id)
         candidate.lastUsedAtMs = System.currentTimeMillis()
         editorToLeaseId[newEditor] = candidate.id
@@ -366,7 +390,7 @@ internal class MarkFlowBrowserLeasePool {
             event = "lease_reclaim",
             lease = candidate,
             editor = newEditor,
-            note = "fromEditor=${oldEditor.getFile().path}, previousSession=$previousSessionId"
+            note = "fromEditor=${oldEditor.getFile().path}, previousSession=$previousSessionId, hiddenAge=${now - candidateState.hiddenSinceAtMs}"
         )
         return candidate
     }
@@ -868,6 +892,7 @@ internal class MarkFlowBrowserLeasePool {
         private const val BRIDGE_ERROR_STATUS = 500
         private const val MIN_IDLE_LEASE_COUNT = 1
         private const val EVICTION_PERIOD_MS = 30_000L
+        private const val HIDDEN_RECLAIM_GRACE_MS = 250L
 
         private data class BrowserLease(
             val id: Int,
@@ -881,6 +906,7 @@ internal class MarkFlowBrowserLeasePool {
             var pendingRuntimeSettingsForceReload: Boolean = false,
             var intelliJToWebPushSequence: Int = 0,
             var isEditorActive: Boolean = false,
+            var hiddenSinceAtMs: Long = 0L,
             var sessionId: String = "",
             var lastUsedAtMs: Long
         )
