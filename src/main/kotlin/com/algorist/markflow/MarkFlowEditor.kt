@@ -233,10 +233,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         sharedBrowserService.setEditorActive(this, false)
     }
 
-    fun forceRerenderPreviews() {
-        sharedBrowserService.forceRerender(this)
-    }
-
     override fun dispose() {
         if (disposed) return
         // Synchronously flush and save current webview content before cleanup

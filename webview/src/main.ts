@@ -18,11 +18,7 @@ let removeMarkdownPasteHandler: (() => void) | null = null;
 const EXTERNAL_UPDATE_GUARD_MS = 50;
 const BOOT_READY_TIMEOUT_MS = 5000;
 let isEditorActive = true;
-// Keep debounce scheduling local per render request; a single global timer causes multi-block previews to cancel each other.
-// let mermaidDebounceTimer: number | null = null;
-const manualMermaidRenderers = new Map<string, () => void>();
 let activeCrepe: Crepe | null = null;
-const MANUAL_MERMAID_SHORTCUT_KEY = "r";
 const MERMAID_RENDER_TIMEOUT_MS = 8000;
 const MERMAID_RENDER_RETRY_DELAY_MS = 250;
 const MERMAID_RENDER_MAX_RETRIES = 1;
@@ -34,7 +30,6 @@ let lastAppliedMermaidTheme: "default" | "dark" = "default";
 let lastAppliedSettingsRevision = -1;
 let pendingSettingsRerenderRevision: number | null = null;
 let pendingLayoutRecovery = false;
-let pendingHostForceRerender = false;
 let externalUpdateGuardToken = 0;
 let isRecreatingCrepe = false;
 let pendingCrepeRecreate = false;
@@ -46,10 +41,7 @@ let activeRecoveryRole: RecoveryRole | null = null;
 let previewResumeRetryToken = 0;
 let crepeSessionSequence = 0;
 let activeCrepeSessionId = 0;
-const mermaidDebounceTimers = new WeakMap<(html: string) => void, number>();
-const allMermaidDebounceTimerIds = new Set<number>();
 const mermaidLoadingWatchdogTimers = new WeakMap<(html: string) => void, number>();
-const manualPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
 const mermaidPreviewRenderers = new Map<string, () => void>();
 let mermaidPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
 
@@ -57,18 +49,10 @@ const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
     mermaidZoomPercent: 100,
     themeSource: "LIGHT",
-    renderTriggerMode: "LIVE",
-    renderDebounceMs: 500,
     mermaidErrorDisplay: "INLINE_ERROR_BOX",
     katexDisplayDensity: "COMFORTABLE",
     diagramSecurityLevel: "STRICT",
     previewOnlyByDefault: true,
-    forceRerenderShortcutEnabled: true,
-    shortcutConflictDetected: false,
-    shortcutConflictMessage: "This shortcut may conflict with other IDE shortcuts. You can disable it in MarkFlow settings if needed.",
-    manualRenderToolbarLabel: "Render Mermaid",
-    manualRenderInlineLabel: "Render Mermaid Preview",
-    manualRenderShortcutHint: "Shortcut: Cmd/Ctrl+Alt+Shift+R",
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
     settingsRevision: 1
 };
@@ -78,8 +62,7 @@ const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Requi
     const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
     return {
         ...merged,
-        mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200),
-        renderDebounceMs: Math.min(Math.max(merged.renderDebounceMs, 300), 800)
+        mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200)
     };
 };
 
@@ -275,12 +258,6 @@ const applyRuntimeUiSettings = () => {
     app.setAttribute("data-katex-density", runtimeSettings.katexDisplayDensity);
 };
 
-const renderAllManualMermaidPreviews = () => {
-    const renderers = Array.from(manualMermaidRenderers.values());
-    manualMermaidRenderers.clear();
-    renderers.forEach((render) => render());
-};
-
 const registerMermaidPreviewRenderer = (applyPreview: (html: string) => void, renderNow: () => void) => {
     const existingId = mermaidPreviewIdByRenderer.get(applyPreview);
     const previewId = existingId ?? `mermaid-preview-${uid()}`;
@@ -297,37 +274,6 @@ const renderAllRegisteredMermaidPreviews = () => {
     Array.from(mermaidPreviewRenderers.values()).forEach((render) => render());
 };
 
-const renderAllMermaidAndLatexPreviews = () => {
-    emitToIntelliJLog("MARKFLOW_UI forceRerender:triggered");
-    renderAllManualMermaidPreviews();
-    renderAllRegisteredMermaidPreviews();
-    if (activeCrepe && isCrepeReady) {
-        requestAnimationFrame(() => {
-            if (!activeCrepe || !isCrepeReady) return;
-            window.dispatchEvent(new Event("resize"));
-            emitToIntelliJLog("MARKFLOW_UI forceRerender:done");
-        });
-        return;
-    }
-
-    pendingHostForceRerender = true;
-    emitToIntelliJLog("MARKFLOW_UI forceRerender:queued");
-};
-
-const triggerForceRerender = () => {
-    renderAllMermaidAndLatexPreviews();
-};
-
-window.addEventListener("markflowForceRerender", () => {
-    emitToIntelliJLog("MARKFLOW_UI action:forceRerender received");
-    triggerForceRerender();
-});
-
-const clearAllMermaidDebounceTimers = () => {
-    allMermaidDebounceTimerIds.forEach((timerId) => window.clearTimeout(timerId));
-    allMermaidDebounceTimerIds.clear();
-};
-
 const clearMermaidLoadingWatchdog = (applyPreview: (html: string) => void) => {
     const timerId = mermaidLoadingWatchdogTimers.get(applyPreview);
     if (timerId !== undefined) {
@@ -339,75 +285,10 @@ const clearMermaidLoadingWatchdog = (applyPreview: (html: string) => void) => {
 const invalidateMermaidPreviewLifecycle = (reason: string) => {
     mermaidPreviewEpoch += 1;
     mermaidRenderRequestId += 1;
-    manualMermaidRenderers.clear();
     mermaidPreviewRenderers.clear();
     mermaidPreviewIdByRenderer = new WeakMap();
-    clearAllMermaidDebounceTimers();
     mermaidRenderQueues = new WeakMap();
     emitToIntelliJLog(`MARKFLOW_UI mermaid:lifecycleInvalidated reason=${reason} epoch=${mermaidPreviewEpoch}`);
-};
-
-const ensureManualPreviewToolbar = () => {
-    const existing = document.getElementById("markflow-manual-refresh");
-    if (runtimeSettings.renderTriggerMode !== "MANUAL_REFRESH") {
-        manualMermaidRenderers.clear();
-        existing?.remove();
-        return;
-    }
-
-    if (existing) {
-        const existingButton = existing.querySelector<HTMLButtonElement>(".markflow-manual-refresh-button");
-        if (existingButton) {
-            existingButton.textContent = runtimeSettings.manualRenderToolbarLabel;
-            existingButton.title = runtimeSettings.manualRenderShortcutHint;
-        }
-        return;
-    }
-
-    const toolbar = document.createElement("div");
-    toolbar.id = "markflow-manual-refresh";
-    toolbar.className = "markflow-manual-refresh-toolbar";
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "markflow-manual-refresh-button";
-    button.textContent = runtimeSettings.manualRenderToolbarLabel;
-    button.title = runtimeSettings.manualRenderShortcutHint;
-    button.addEventListener("click", () => {
-        renderAllManualMermaidPreviews();
-    });
-
-    toolbar.append(button);
-    document.body.append(toolbar);
-};
-
-const ensureShortcutConflictNotice = () => {
-    const conflictNoticeId = "markflow-shortcut-conflict-notice";
-    const existing = document.getElementById(conflictNoticeId);
-
-    if (!runtimeSettings.forceRerenderShortcutEnabled || !runtimeSettings.shortcutConflictDetected) {
-        existing?.remove();
-        return;
-    }
-
-    if (existing) {
-        return;
-    }
-
-    const notice = document.createElement("div");
-    notice.id = conflictNoticeId;
-    notice.className = "markflow-shortcut-conflict-notice";
-    notice.innerHTML = `
-        <div class="markflow-notice-content">
-            <span class="markflow-notice-icon">⚠️</span>
-            <span class="markflow-notice-text">${runtimeSettings.shortcutConflictMessage}</span>
-        </div>
-    `;
-
-    const app = document.getElementById("app");
-    if (app) {
-        app.insertBefore(notice, app.firstChild);
-    }
 };
 
 const rerenderPreviewsAfterSettingsChange = () => {
@@ -477,8 +358,6 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
         app.setAttribute("data-markflow-settings-revision", String(lastAppliedSettingsRevision));
     }
     applyRuntimeUiSettings();
-    ensureManualPreviewToolbar();
-    ensureShortcutConflictNotice();
     hasAppliedRuntimeSettingsOnce = true;
     lastAppliedPreviewOnlyByDefault = runtimeSettings.previewOnlyByDefault;
 
@@ -541,36 +420,8 @@ const requestPreviewResumeRefresh = (reason: string) => {
     });
 };
 
-const scheduleMermaidRender = (renderNow: () => void, applyPreviewKey?: (html: string) => void) => {
-    if (runtimeSettings.renderTriggerMode === "LIVE") {
-        logMermaidTrace("trigger live");
-        renderNow();
-        return;
-    }
-
-    if (runtimeSettings.renderTriggerMode === "DEBOUNCED") {
-        logMermaidTrace(`trigger debounced ${runtimeSettings.renderDebounceMs}ms`);
-        if (applyPreviewKey) {
-            const previousTimerId = mermaidDebounceTimers.get(applyPreviewKey);
-            if (previousTimerId !== undefined) {
-                window.clearTimeout(previousTimerId);
-                allMermaidDebounceTimerIds.delete(previousTimerId);
-            }
-        }
-        const timerId = window.setTimeout(() => {
-            allMermaidDebounceTimerIds.delete(timerId);
-            if (applyPreviewKey) {
-                mermaidDebounceTimers.delete(applyPreviewKey);
-            }
-            renderNow();
-        }, runtimeSettings.renderDebounceMs);
-        allMermaidDebounceTimerIds.add(timerId);
-        if (applyPreviewKey) {
-            mermaidDebounceTimers.set(applyPreviewKey, timerId);
-        }
-        return;
-    }
-
+const scheduleMermaidRender = (renderNow: () => void) => {
+    logMermaidTrace("trigger live");
     renderNow();
 };
 
@@ -1229,31 +1080,7 @@ function createCrepeInstance(initialText: string, crepeSessionId: number): Crepe
                         };
 
                         registerMermaidPreviewRenderer(applyPreview, renderNow);
-
-                        if (runtimeSettings.renderTriggerMode === "MANUAL_REFRESH") {
-                            const previousManualId = manualPreviewIdByRenderer.get(applyPreview);
-                            if (previousManualId) {
-                                manualMermaidRenderers.delete(previousManualId);
-                            }
-                            const manualId = `manual-mermaid-${uid()}`;
-                            manualPreviewIdByRenderer.set(applyPreview, manualId);
-                            manualMermaidRenderers.set(manualId, () => {
-                                if (!isRenderContextActive()) {
-                                    manualMermaidRenderers.delete(manualId);
-                                    manualPreviewIdByRenderer.delete(applyPreview);
-                                    return;
-                                }
-                                manualMermaidRenderers.delete(manualId);
-                                manualPreviewIdByRenderer.delete(applyPreview);
-                                renderNow();
-                            });
-                            if (isRenderContextActive()) {
-                                applyPreview(`<div class="markflow-manual-preview"><button type="button" class="markflow-manual-preview-button" onclick="window.__markflowRenderMermaidPreview && window.__markflowRenderMermaidPreview('${manualId}')">${runtimeSettings.manualRenderInlineLabel}</button><div class="markflow-manual-shortcut-hint">${runtimeSettings.manualRenderShortcutHint}</div></div>`);
-                            }
-                            return;
-                        }
-
-                        scheduleMermaidRender(renderNow, applyPreview);
+                        scheduleMermaidRender(renderNow);
                         return;
                     }
 
@@ -1316,10 +1143,6 @@ async function startCrepe(crepe: Crepe, layoutReason: string, restoreState?: Edi
     if (pendingLayoutRecovery) {
         pendingLayoutRecovery = false;
         recoverEditorLayout("create:flushQueued");
-    }
-    if (pendingHostForceRerender) {
-        pendingHostForceRerender = false;
-        triggerForceRerender();
     }
 }
 
@@ -1445,26 +1268,6 @@ async function initEditor() {
         requestPreviewResumeRefresh("visibilitychange");
     });
 
-    window.addEventListener("keydown", (event: KeyboardEvent) => {
-        const isShortcut = (event.metaKey || event.ctrlKey)
-            && event.altKey
-            && event.shiftKey
-            && event.key.toLowerCase() === MANUAL_MERMAID_SHORTCUT_KEY;
-        if (!isShortcut) {
-            return;
-        }
-        // Always allow Mermaid+LaTeX force re-render if shortcut is enabled
-        if (!runtimeSettings.forceRerenderShortcutEnabled) {
-            return;
-        }
-        event.preventDefault();
-        renderAllMermaidAndLatexPreviews();
-    });
-
-    (window as { __markflowRenderMermaidPreview?: (manualId: string) => void }).__markflowRenderMermaidPreview = (manualId) => {
-        manualMermaidRenderers.get(manualId)?.();
-    };
-
     // 2) Load initial markdown injected by Kotlin.
     const initialText = window.intelliJ_initialMarkdown ?? "";
     markFlowStage("initialText:ready", initialText.slice(0, 48));
@@ -1531,4 +1334,3 @@ async function initEditor() {
 
 
 initEditor();
-

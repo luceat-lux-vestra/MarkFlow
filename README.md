@@ -11,17 +11,16 @@ MarkFlow is an IntelliJ IDEA plugin that provides a Typora-style Markdown editin
 - Automatic takeover for Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`)
 - Two-way IntelliJ <-> Webview synchronization via `JBCefJSQuery`
 - Editor UI state restore (scroll position, cursor, selection)
-- Mermaid live preview in code blocks with rendering controls
+- Mermaid live preview in code blocks
 - KaTeX rendering for inline and block math expressions
 - Markdown-aware clipboard paste (with safe fallback in code blocks)
-- Force re-render action/shortcut (`Cmd/Ctrl+Alt+Shift+R`) for Mermaid and KaTeX previews
 - Frontend build integrated into Gradle plugin tasks
 
 ## Options
 
 You can configure these in `Settings > Tools > MarkFlow`.
 
-- **General:** Theme source, Render trigger (LIVE/DEBOUNCED/MANUAL_REFRESH), Render debounce (ms), Preview only by default, Force Re-render shortcut on/off
+- **General:** Theme source, Preview only by default
 - **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior
 - **KaTeX:** Display density
 - **Advanced:** Diagram security level (STRICT/LOOSE)

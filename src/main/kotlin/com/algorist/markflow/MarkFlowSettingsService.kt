@@ -21,12 +21,6 @@ enum class ThemeSource {
     DARK
 }
 
-enum class RenderTriggerMode {
-    LIVE,
-    DEBOUNCED,
-    MANUAL_REFRESH
-}
-
 enum class MermaidErrorDisplay {
     INLINE_ERROR_BOX,
     SILENT_LOG_ONLY
@@ -46,13 +40,10 @@ data class MarkFlowSettingsState(
     var mermaidSizeMode: String = MermaidSizeMode.FIT_TO_VIEWPORT.name,
     var mermaidZoomPercent: Int = 100,
     var themeSource: String = ThemeSource.LIGHT.name,
-    var renderTriggerMode: String = RenderTriggerMode.LIVE.name,
-    var renderDebounceMs: Int = 500,
     var mermaidErrorDisplay: String = MermaidErrorDisplay.INLINE_ERROR_BOX.name,
     var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
     var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
     var previewOnlyByDefault: Boolean = true,
-    var forceRerenderShortcutEnabled: Boolean = true,
     var maxPoolSize: Int = 4,
     var idleEvictAfterMs: Int = 120_000
 )
@@ -61,18 +52,10 @@ data class MarkFlowRuntimeSettings(
     val mermaidSizeMode: String,
     val mermaidZoomPercent: Int,
     val themeSource: String,
-    val renderTriggerMode: String,
-    val renderDebounceMs: Int,
     val mermaidErrorDisplay: String,
     val katexDisplayDensity: String,
     val diagramSecurityLevel: String,
     val previewOnlyByDefault: Boolean,
-    val forceRerenderShortcutEnabled: Boolean,
-    val shortcutConflictDetected: Boolean,
-    val shortcutConflictMessage: String,
-    val manualRenderToolbarLabel: String,
-    val manualRenderInlineLabel: String,
-    val manualRenderShortcutHint: String,
     val mermaidSyntaxErrorMessage: String,
     val settingsRevision: Int
 )
@@ -90,7 +73,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         settingsRevision.incrementAndGet()
         LOG.warn(
             "MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}, " +
-                "renderTrigger=${this.state.renderTriggerMode}, debounceMs=${this.state.renderDebounceMs}"
+                "diagramSecurityLevel=${this.state.diagramSecurityLevel}"
         )
     }
 
@@ -104,7 +87,6 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +
                 "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +
                 "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +
-                "renderTrigger=${state.renderTriggerMode}, debounceMs=${state.renderDebounceMs}, " +
                 "revision=$nextRevision"
         )
         if (changed) {
@@ -112,31 +94,22 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         }
     }
 
-    fun runtimeSettings(shortcutConflictDetected: Boolean = false): MarkFlowRuntimeSettings {
+    fun runtimeSettings(): MarkFlowRuntimeSettings {
         normalize()
         val resolvedThemeSource = resolveThemeSourceForRuntime()
         val revision = settingsRevision.get()
         LOG.warn(
             "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
-                "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision, " +
-                "shortcutConflictDetected=$shortcutConflictDetected"
+                "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
         )
         return MarkFlowRuntimeSettings(
             mermaidSizeMode = state.mermaidSizeMode,
             mermaidZoomPercent = state.mermaidZoomPercent,
             themeSource = resolvedThemeSource,
-            renderTriggerMode = state.renderTriggerMode,
-            renderDebounceMs = state.renderDebounceMs,
             mermaidErrorDisplay = state.mermaidErrorDisplay,
             katexDisplayDensity = state.katexDisplayDensity,
             diagramSecurityLevel = state.diagramSecurityLevel,
             previewOnlyByDefault = state.previewOnlyByDefault,
-            forceRerenderShortcutEnabled = state.forceRerenderShortcutEnabled,
-            shortcutConflictDetected = shortcutConflictDetected,
-            shortcutConflictMessage = "This shortcut may conflict with other IDE shortcuts. You can disable it in MarkFlow settings if needed.",
-            manualRenderToolbarLabel = MyBundle.message("preview.manual.toolbarButton"),
-            manualRenderInlineLabel = MyBundle.message("preview.manual.inlineButton"),
-            manualRenderShortcutHint = MyBundle.message("preview.manual.shortcutHint"),
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
             settingsRevision = revision
         )
@@ -159,12 +132,10 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     private fun normalize(target: MarkFlowSettingsState = state) {
         target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
         target.themeSource = normalizeEnum(target.themeSource, ThemeSource.LIGHT)
-        target.renderTriggerMode = normalizeEnum(target.renderTriggerMode, RenderTriggerMode.LIVE)
         target.mermaidErrorDisplay = normalizeEnum(target.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         target.katexDisplayDensity = normalizeEnum(target.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
-        target.renderDebounceMs = target.renderDebounceMs.coerceIn(300, 800)
         target.maxPoolSize = target.maxPoolSize.coerceIn(MIN_POOL_SIZE, MAX_POOL_SIZE_LIMIT)
         target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
     }

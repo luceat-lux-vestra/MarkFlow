@@ -7,9 +7,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.keymap.KeymapManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
@@ -35,7 +33,6 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarFile
-import javax.swing.KeyStroke
 import javax.swing.JPanel
 
 @Service(Service.Level.PROJECT)
@@ -232,20 +229,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
         return true
-    }
-
-    fun forceRerender(editor: MarkFlowEditor) {
-        val lease = leaseForEditor(editor) ?: return
-        if (!lease.webViewLoaded) {
-            lease.pendingForceRerender = true
-            return
-        }
-
-        lease.browser.cefBrowser.executeJavaScript(
-            "window.dispatchEvent(new CustomEvent('markflowForceRerender'));",
-            lease.browser.cefBrowser.url,
-            0
-        )
     }
 
     fun reapplyRuntimeSettingsForEditor(editor: MarkFlowEditor, forceReload: Boolean) {
@@ -484,7 +467,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 injectBridgeAndBootstrap(lease)
                 lease.attachedEditor?.onActivatedInSharedBrowser()
                 applyPendingRuntimeSettings(lease)
-                flushPendingForceRerender(lease)
             }
 
             override fun onLoadError(
@@ -503,7 +485,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         LOG.warn("MARKFLOW_SAVE injectBridgeAndBootstrap: START lease=${lease.id} editor=${lease.attachedEditor?.file?.path}")
         val editor = lease.attachedEditor
         val markdownLiteral = gson.toJson(editor?.currentMarkdownText().orEmpty())
-        val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())
+        val runtimeSettingsJson = buildRuntimeSettingsJson()
         val initialMarkdownSeq = ++lease.intelliJToWebPushSequence
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
         val activeLiteral = if (lease.isEditorActive) "true" else "false"
@@ -634,7 +616,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         }
 
         val pushId = settingsPushSequence.incrementAndGet()
-        val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())
+        val runtimeSettingsJson = buildRuntimeSettingsJson()
         val script = """
             (function syncRuntimeSettingsPush(seq, payload) {
                 window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
@@ -662,16 +644,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         lease.pendingRuntimeSettingsPush = false
         lease.pendingRuntimeSettingsForceReload = false
         applyRuntimeSettingsToLease(lease, forceReload)
-    }
-
-    private fun flushPendingForceRerender(lease: BrowserLease) {
-        if (!lease.pendingForceRerender || !lease.webViewLoaded) return
-        lease.pendingForceRerender = false
-        lease.browser.cefBrowser.executeJavaScript(
-            "window.dispatchEvent(new CustomEvent('markflowForceRerender'));",
-            lease.browser.cefBrowser.url,
-            0
-        )
     }
 
     private fun ensureLeaseLoaded(lease: BrowserLease) {
@@ -840,42 +812,13 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     private fun errorResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response(null, BRIDGE_ERROR_STATUS, "Error parsing request")
     private fun jsonResponse(value: Any): JBCefJSQuery.Response = JBCefJSQuery.Response(gson.toJson(value))
 
-    private fun buildRuntimeSettingsJsonWithConflict(conflictDetected: Boolean): String {
+    private fun buildRuntimeSettingsJson(): String {
         return try {
-            val settings = MarkFlowSettingsService.getInstance().runtimeSettings(conflictDetected)
+            val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
             gson.toJson(settings)
         } catch (ex: Exception) {
             LOG.warn("MARKFLOW_UI failed to serialize runtime settings: ${ex.message}", ex)
             "{}"
-        }
-    }
-
-    private fun detectShortcutConflict(): Boolean {
-        return try {
-            val settings = MarkFlowSettingsService.getInstance().state
-            if (!settings.forceRerenderShortcutEnabled) {
-                return false
-            }
-
-            val activeKeymap = KeymapManager.getInstance().activeKeymap
-            val ctrlAltShiftR = KeyStroke.getKeyStroke("ctrl alt shift R")
-            val metaAltShiftR = KeyStroke.getKeyStroke("meta alt shift R")
-            val candidates = buildList {
-                if (SystemInfo.isMac) {
-                    if (metaAltShiftR != null) add(metaAltShiftR)
-                } else {
-                    if (ctrlAltShiftR != null) add(ctrlAltShiftR)
-                }
-            }
-
-            candidates.any { shortcut ->
-                activeKeymap
-                    .getActionIds(shortcut)
-                    .any { actionId -> actionId != MarkFlowForceRerenderAction.ACTION_ID }
-            }
-        } catch (ex: Exception) {
-            LOG.warn("MARKFLOW_UI failed to detect shortcut conflict: ${ex.message}", ex)
-            false
         }
     }
 
@@ -1114,7 +1057,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             var webViewLoaded: Boolean = false,
             var pendingRuntimeSettingsPush: Boolean = false,
             var pendingRuntimeSettingsForceReload: Boolean = false,
-            var pendingForceRerender: Boolean = false,
             var intelliJToWebPushSequence: Int = 0,
             var isEditorActive: Boolean = false,
             var sessionId: String = "",
@@ -1154,4 +1096,3 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         }
     }
 }
-
