@@ -1,13 +1,28 @@
 import {Crepe} from "@milkdown/crepe";
-import {editorViewCtx, parserCtx} from "@milkdown/core";
-import {Slice} from "@milkdown/prose/model";
-import {TextSelection} from "@milkdown/prose/state";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
 import "./style.css";
 import "./styles/mermaid.css";
+import {
+    applyRuntimeUiSettings,
+    createMermaidPreviewConfig,
+    logThemeDiagnostics,
+    resolveRuntimeSettings,
+    resolveMermaidTheme
+} from "./app/runtime-settings";
+import {
+    applyEditorUiState,
+    captureEditorUiState,
+    isEditorViewContextError,
+    logEditorViewContextError,
+    recoverEditorLayout,
+    replaceEditorMarkdown,
+    safeReadMarkdown
+} from "./app/editor-state";
+import {installMarkdownPasteHandler} from "./app/clipboard";
+import {createRecoveryController} from "./app/recovery";
 
 // Shared editor state.
 // Prevent feedback loops while applying external IntelliJ updates.
@@ -36,36 +51,12 @@ let isRecreatingCrepe = false;
 let pendingCrepeRecreate = false;
 let hasAppliedRuntimeSettingsOnce = false;
 let lastAppliedPreviewOnlyByDefault = true;
-let recoveryRequestInFlight = false;
-let activeRecoveryEpoch: number | null = null;
-let activeRecoveryRole: RecoveryRole | null = null;
 let previewResumeRetryToken = 0;
 let crepeSessionSequence = 0;
 let activeCrepeSessionId = 0;
 const mermaidLoadingWatchdogTimers = new WeakMap<(html: string) => void, number>();
 const mermaidPreviewRenderers = new Map<string, () => void>();
 let mermaidPreviewIdByRenderer = new WeakMap<(html: string) => void, string>();
-
-const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
-    mermaidSizeMode: "FIT_TO_VIEWPORT",
-    mermaidZoomPercent: 100,
-    themeSource: "LIGHT",
-    mermaidErrorDisplay: "INLINE_ERROR_BOX",
-    katexDisplayDensity: "COMFORTABLE",
-    diagramSecurityLevel: "STRICT",
-    previewOnlyByDefault: true,
-    mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
-    settingsRevision: 1
-};
-
-const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
-    const overrides: MarkFlowRuntimeSettings = raw ?? {};
-    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
-    return {
-        ...merged,
-        mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200)
-    };
-};
 
 let runtimeSettings = resolveRuntimeSettings(window.intelliJ_markFlowSettings);
 
@@ -76,140 +67,8 @@ const normalizePreviewSnippet = (value: string, maxLength = 160) => value.replac
 
 const isMermaidLanguage = (language: string) => language.trim().toLowerCase() === "mermaid";
 
-// Keep Mermaid preview rendering readable across SVG- and HTML-label based diagram families.
-const resolveMermaidTheme = (): "default" | "dark" => {
-    if (runtimeSettings.themeSource === "LIGHT") return "default";
-    if (runtimeSettings.themeSource === "DARK") return "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
-};
-
-const resolveDiagramSecurityLevel = (): "strict" | "loose" => {
-    return runtimeSettings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
-};
-
-lastAppliedMermaidTheme = resolveMermaidTheme();
-
-const createMermaidPreviewConfig = () => {
-    const theme = resolveMermaidTheme();
-    const themeVariables = theme === "dark"
-        ? {
-            primaryColor: "#1f2937",
-            primaryTextColor: "#f9fafb",
-            lineColor: "#f9fafb",
-            textColor: "#f9fafb",
-            background: "#111827"
-        }
-        : {
-            primaryColor: "#e5e7eb",
-            primaryTextColor: "#111827",
-            lineColor: "#111827",
-            textColor: "#111827",
-            background: "#ffffff"
-        };
-
-    // FIT_TO_VIEWPORT: useMaxWidth=true (always fit to viewport)
-    // SHRINK_TO_FIT: useMaxWidth=false (actual size with CSS max-width constraint)
-    // ACTUAL_SIZE_SCROLL: useMaxWidth=false (actual size with scroll)
-    const useMaxWidth = runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT";
-
-    return {
-    startOnLoad: false,
-    theme,
-    themeVariables,
-    securityLevel: resolveDiagramSecurityLevel(),
-    useMaxWidth,
-    htmlLabels: false,
-    flowchart: {
-        htmlLabels: false,
-        useMaxWidth
-    },
-    class: {
-        htmlLabels: false,
-        useMaxWidth
-    },
-    state: {
-        htmlLabels: false,
-        useMaxWidth
-    },
-    stateDiagram: {
-        useMaxWidth
-    },
-    mindmap: {
-        useMaxWidth
-    },
-    sequence: {
-        useMaxWidth
-    },
-    sequenceDiagram: {
-        useMaxWidth
-    },
-    gantt: {
-        useMaxWidth
-    },
-    pie: {
-        useMaxWidth
-    },
-    journey: {
-        useMaxWidth
-    },
-    requirement: {
-        useMaxWidth
-    },
-    requirementDiagram: {
-        useMaxWidth
-    },
-    sankey: {
-        useMaxWidth
-    },
-    block: {
-        useMaxWidth
-    },
-    c4: {
-        useMaxWidth
-    },
-    git: {
-        useMaxWidth
-    },
-    gitGraph: {
-        useMaxWidth
-    },
-    er: {
-        useMaxWidth
-    },
-    erDiagram: {
-        useMaxWidth
-    },
-    quadrantChart: {
-        useMaxWidth
-    },
-    xychart: {
-        // Mermaid xychart-beta fails to render reliably with non-fit useMaxWidth=false.
-        useMaxWidth: true
-    },
-    timeline: {
-        useMaxWidth
-    },
-    architecture: {
-        useMaxWidth
-    },
-    kanban: {
-        useMaxWidth
-    },
-    packet: {
-        useMaxWidth
-    },
-    venn: {
-        useMaxWidth
-    },
-    xyChart: {
-        // Keep camelCase variant aligned for Mermaid parser compatibility.
-        useMaxWidth: true
-    }
-    };
-};
-
 const reconfigureMermaid = () => {
-    const nextConfig = createMermaidPreviewConfig();
+    const nextConfig = createMermaidPreviewConfig(runtimeSettings);
     emitToIntelliJLog(
         `MARKFLOW_UI mermaid:initialize theme=${nextConfig.theme} security=${nextConfig.securityLevel}`
     );
@@ -243,21 +102,9 @@ const markFlowStage = (stage: string, detail = "") => {
     }
 };
 
-const logThemeDiagnostics = (raw: MarkFlowRuntimeSettings | undefined, appliedTheme: "default" | "dark") => {
-    const payload = {
-        source: raw?.themeSource ?? "<undefined>",
-        resolvedSource: runtimeSettings.themeSource,
-        appliedTheme,
-        securityLevel: runtimeSettings.diagramSecurityLevel
-    };
-    emitToIntelliJLog(`MARKFLOW_UI theme:settings ${JSON.stringify(payload)}`);
-};
+const recovery = createRecoveryController(emitToIntelliJLog);
 
-const applyRuntimeUiSettings = () => {
-    const app = document.getElementById("app");
-    if (!app) return;
-    app.setAttribute("data-katex-density", runtimeSettings.katexDisplayDensity);
-};
+lastAppliedMermaidTheme = resolveMermaidTheme(runtimeSettings);
 
 const registerMermaidPreviewRenderer = (applyPreview: (html: string) => void, renderNow: () => void) => {
     const existingId = mermaidPreviewIdByRenderer.get(applyPreview);
@@ -302,11 +149,11 @@ const rerenderPreviewsAfterSettingsChange = () => {
     if (!activeCrepe || !isCrepeReady) return;
 
     const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
-    const currentMarkdown = safeReadMarkdown(activeCrepe, fallbackMarkdown, "rerender");
+    const currentMarkdown = safeReadMarkdown(activeCrepe, fallbackMarkdown, "rerender", emitToIntelliJLog);
 
     beginExternalUpdateGuard();
     try {
-        replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
+        replaceEditorMarkdown(activeCrepe, currentMarkdown, emitToIntelliJLog, true);
     } finally {
         clearExternalUpdateGuardLater();
     }
@@ -316,7 +163,7 @@ const rerenderPreviewsAfterSettingsChange = () => {
         if (!activeCrepe || !isCrepeReady) return;
         beginExternalUpdateGuard();
         try {
-            replaceEditorMarkdown(activeCrepe, currentMarkdown, true);
+            replaceEditorMarkdown(activeCrepe, currentMarkdown, emitToIntelliJLog, true);
         } finally {
             clearExternalUpdateGuardLater();
             console.info(`MARKFLOW_UI rerender:done revision=${lastAppliedSettingsRevision}`);
@@ -333,7 +180,7 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     const nextRevision = Number.isFinite(runtimeSettings.settingsRevision)
         ? Number(runtimeSettings.settingsRevision)
         : -1;
-    const nextTheme = resolveMermaidTheme();
+    const nextTheme = resolveMermaidTheme(runtimeSettings);
 
     // Ignore duplicated pushes for the same applied revision/theme to prevent rerender storms.
     if (!previewOnlyByDefaultChanged && nextRevision === lastAppliedSettingsRevision && nextTheme === lastAppliedMermaidTheme) {
@@ -349,7 +196,7 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
     emitToIntelliJLog(
         `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${runtimeSettings.themeSource} security=${runtimeSettings.diagramSecurityLevel}`
     );
-    logThemeDiagnostics(raw, nextTheme);
+    logThemeDiagnostics(raw, runtimeSettings, nextTheme, emitToIntelliJLog);
     reconfigureMermaid();
     lastAppliedMermaidTheme = nextTheme;
     lastAppliedSettingsRevision = nextRevision;
@@ -358,7 +205,7 @@ const applyRuntimeSettingsFromHost = (raw: MarkFlowRuntimeSettings | undefined) 
         app.setAttribute("data-markflow-theme", runtimeSettings.themeSource);
         app.setAttribute("data-markflow-settings-revision", String(lastAppliedSettingsRevision));
     }
-    applyRuntimeUiSettings();
+    applyRuntimeUiSettings(runtimeSettings);
     hasAppliedRuntimeSettingsOnce = true;
     lastAppliedPreviewOnlyByDefault = runtimeSettings.previewOnlyByDefault;
 
@@ -417,7 +264,7 @@ const requestPreviewResumeRefresh = (reason: string) => {
         if (!isEditorActive || document.visibilityState === "hidden") {
             return;
         }
-        recoverEditorLayout(reason);
+        recoverEditorLayout(reason, isCrepeReady, activeCrepe, emitToIntelliJLog);
     });
 };
 
@@ -472,180 +319,11 @@ const showBootError = (stage: string, detail: string) => {
     `;
 };
 
-const clearRecoveryState = (reason: string) => {
-    if (activeRecoveryEpoch === null && activeRecoveryRole === null && !recoveryRequestInFlight) {
-        return;
-    }
-
-    emitToIntelliJLog(
-        `MARKFLOW_UI recovery:clear reason=${reason} epoch=${activeRecoveryEpoch ?? -1} role=${activeRecoveryRole ?? "none"} sessionId=${window.__markflowSessionId ?? "unknown"}`
-    );
-    activeRecoveryEpoch = null;
-    activeRecoveryRole = null;
-    recoveryRequestInFlight = false;
-};
-
-const notifyRecoveryOutcome = (status: "complete" | "failed", epoch: number, reason: string) => {
-    if (!window.cefQuery) {
-        clearRecoveryState(`notify:${status}:bridgeMissing`);
-        return;
-    }
-
-    const currentSessionId = window.__markflowSessionId;
-    const request = JSON.stringify({
-        action: `recovery:${status}`,
-        sessionId: currentSessionId,
-        epoch,
-        reason
-    });
-
-    // Verify session hasn't changed since we're about to notify
-    if (!window.__markflowSessionId || window.__markflowSessionId !== currentSessionId) {
-        emitToIntelliJLog(
-            `MARKFLOW_UI recovery:notify${status}:sessionMismatch sessionId=${currentSessionId} current=${window.__markflowSessionId}`
-        );
-        clearRecoveryState(`notify:${status}:sessionChanged`);
-        return;
-    }
-
-    emitToIntelliJLog(
-        `MARKFLOW_UI recovery:notify${status} epoch=${epoch} sessionId=${currentSessionId} reason=${reason}`
-    );
-
-    window.cefQuery({
-        request,
-        onSuccess: (response) => {
-            // Re-verify session on response
-            if (window.__markflowSessionId === currentSessionId) {
-                emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ack ${response ?? "<empty>"} sessionId=${currentSessionId}`);
-                clearRecoveryState(`notify:${status}:ack`);
-            } else {
-                emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackIgnored sessionChanged during response`);
-            }
-        },
-        onFailure: (_errCode, errMsg) => {
-            emitToIntelliJLog(`MARKFLOW_UI recovery:${status}:ackFailed ${errMsg} sessionId=${currentSessionId}`);
-            clearRecoveryState(`notify:${status}:failed`);
-        }
-    });
-};
-
-type RecoveryBridgeResponse = {
-    role?: string;
-    epoch?: number;
-};
-
-const requestRecoveryLease = (reason: string): Promise<void> => {
-    if (!window.cefQuery) {
-        clearRecoveryState("request:bridgeMissing");
-        return Promise.resolve();
-    }
-
-    recoveryRequestInFlight = true;
-    const currentSessionId = window.__markflowSessionId;
-    const request = JSON.stringify({
-        action: "recovery:request",
-        sessionId: currentSessionId,
-        reason
-    });
-
-    const RECOVERY_REQUEST_TIMEOUT_MS = 3000;
-    emitToIntelliJLog(
-        `MARKFLOW_UI recovery:request reason=${reason} sessionId=${currentSessionId} timeout=${RECOVERY_REQUEST_TIMEOUT_MS}ms`
-    );
-
-    return new Promise((resolve) => {
-        let timeoutHandle: number | null = null;
-        let completed = false;
-
-        const cleanup = () => {
-            completed = true;
-            if (timeoutHandle !== null) {
-                window.clearTimeout(timeoutHandle);
-                timeoutHandle = null;
-            }
-        };
-
-        // Set timeout
-        timeoutHandle = window.setTimeout(() => {
-            if (completed) return;
-            cleanup();
-            emitToIntelliJLog(`MARKFLOW_UI recovery:request:timeout after ${RECOVERY_REQUEST_TIMEOUT_MS}ms sessionId=${currentSessionId}`);
-            recoveryRequestInFlight = false;
-            clearRecoveryState("request:timeout");
-            resolve();
-        }, RECOVERY_REQUEST_TIMEOUT_MS);
-
-        window.cefQuery?.({
-            request,
-            onSuccess: (response) => {
-                if (completed) return;
-                cleanup();
-                try {
-                    const parsed = response ? (JSON.parse(response) as RecoveryBridgeResponse) : {};
-                    const sessionId = window.__markflowSessionId;
-
-                    // Verify session ID hasn't changed since request was sent
-                    if (sessionId !== currentSessionId) {
-                        emitToIntelliJLog(
-                            `MARKFLOW_UI recovery:request:sessionMismatch oldSession=${currentSessionId} newSession=${sessionId}`
-                        );
-                        clearRecoveryState("request:sessionChanged");
-                        resolve();
-                        return;
-                    }
-
-                    activeRecoveryRole = parsed.role === "leader" || parsed.role === "follower" ? parsed.role : null;
-                    activeRecoveryEpoch = typeof parsed.epoch === "number" ? parsed.epoch : null;
-                    recoveryRequestInFlight = false;
-
-                    emitToIntelliJLog(
-                        `MARKFLOW_UI recovery:request:success role=${activeRecoveryRole} epoch=${activeRecoveryEpoch} sessionId=${sessionId}`
-                    );
-                } catch (error) {
-                    emitToIntelliJLog(`MARKFLOW_UI recovery:request:parseFailed ${String(error)}`);
-                    clearRecoveryState("request:parseFailed");
-                }
-                resolve();
-            },
-            onFailure: (_errCode, errMsg) => {
-                if (completed) return;
-                cleanup();
-                emitToIntelliJLog(`MARKFLOW_UI recovery:request:failed ${errMsg} sessionId=${currentSessionId}`);
-                clearRecoveryState("request:failed");
-                resolve();
-            }
-        });
-    });
-};
-
-const isEditorViewContextError = (error: unknown): boolean => {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.includes("Context \"editorView\" not found");
-};
-
-const logEditorViewContextError = (reason: string, error: unknown) => {
-    emitToIntelliJLog(`MARKFLOW_UI ${reason} editorView context missing: ${String(error)}`);
-};
-
-
-const safeReadMarkdown = (crepe: Crepe, fallback: string, reason: string): string => {
-    try {
-        return crepe.getMarkdown();
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI markdown:read failed reason=${reason} error=${String(error)}`);
-        if (isEditorViewContextError(error)) {
-            logEditorViewContextError(`markdownRead:${reason}`, error);
-        }
-        return fallback;
-    }
-};
-
 window.addEventListener("error", (event) => {
     const detail = event.message || String(event.error ?? "unknown error");
     markFlowStage("window:error", detail);
     if (isEditorViewContextError(event.error ?? detail)) {
-        logEditorViewContextError("window:error", event.error ?? detail);
+        logEditorViewContextError("window:error", event.error ?? detail, emitToIntelliJLog);
         return;
     }
     showBootError("window:error", detail);
@@ -655,41 +333,11 @@ window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
     markFlowStage("window:unhandledrejection", reason);
     if (isEditorViewContextError(event.reason ?? reason)) {
-        logEditorViewContextError("window:unhandledrejection", event.reason ?? reason);
+        logEditorViewContextError("window:unhandledrejection", event.reason ?? reason, emitToIntelliJLog);
         return;
     }
     showBootError("window:unhandledrejection", reason);
 });
-
-
-
-type RecoveryRole = "leader" | "follower";
-
-// Editor state helpers.
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-
-const getScrollElement = () => {
-    const app = document.getElementById("app");
-    return app ?? document.scrollingElement ?? document.documentElement;
-};
-
-
-const recoverEditorLayout = (reason: string) => {
-    if (!activeCrepe || !isCrepeReady) {
-        pendingLayoutRecovery = true;
-        emitToIntelliJLog(`MARKFLOW_UI layout:queued reason=${reason}`);
-        return;
-    }
-
-    emitToIntelliJLog(`MARKFLOW_UI layout:start reason=${reason}`);
-    window.dispatchEvent(new Event("resize"));
-
-    requestAnimationFrame(() => {
-        if (!activeCrepe || !isCrepeReady) return;
-        window.dispatchEvent(new Event("resize"));
-        emitToIntelliJLog(`MARKFLOW_UI layout:done reason=${reason}`);
-    });
-};
 
 function clearExternalUpdateGuardLater() {
     const token = externalUpdateGuardToken;
@@ -706,192 +354,6 @@ function beginExternalUpdateGuard() {
     isUpdatingFromIntelliJ = true;
 }
 
-function captureEditorUiState(crepe: Crepe): EditorUiState {
-    let cursorOffset = -1;
-    let selectionStart = -1;
-    let selectionEnd = -1;
-
-    try {
-        crepe.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            const selection = view.state.selection;
-            cursorOffset = selection.head;
-            selectionStart = Math.min(selection.from, selection.to);
-            selectionEnd = Math.max(selection.from, selection.to);
-        });
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI state:capture skipped ${String(error)}`);
-    }
-
-    return {
-        version: 1,
-        scrollTop: getScrollElement().scrollTop,
-        cursorOffset,
-        selectionStart,
-        selectionEnd
-    };
-}
-
-function applyEditorUiState(crepe: Crepe, state: Partial<EditorUiState>) {
-    const scrollTop = Math.max(0, state.scrollTop ?? 0);
-
-    try {
-        crepe.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            const docSize = view.state.doc.content.size;
-
-            const fallbackCursor = state.cursorOffset ?? -1;
-            const rawStart = state.selectionStart ?? fallbackCursor;
-            const rawEnd = state.selectionEnd ?? fallbackCursor;
-
-            if (rawStart == null || rawEnd == null || rawStart < 0 || rawEnd < 0) {
-                return;
-            }
-
-            const start = clamp(rawStart, 0, docSize);
-            const end = clamp(rawEnd, 0, docSize);
-            const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, start, end));
-            view.dispatch(tr);
-            view.focus();
-        });
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI state:apply skipped ${String(error)}`);
-        if (isEditorViewContextError(error)) {
-            logEditorViewContextError("state:apply", error);
-        }
-    }
-
-    requestAnimationFrame(() => {
-        getScrollElement().scrollTop = scrollTop;
-    });
-}
-
-function replaceEditorMarkdown(crepe: Crepe, newMarkdown: string, skipHistory = false) {
-    try {
-        crepe.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            const parser = ctx.get(parserCtx);
-
-            const doc = parser(newMarkdown);
-            if (!doc) return;
-
-            const state = view.state;
-            const tr = state.tr.replaceWith(0, state.doc.content.size, doc);
-            if (skipHistory) {
-                tr.setMeta("addToHistory", false);
-            }
-            view.dispatch(tr);
-        });
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI markdown:replace skipped ${String(error)}`);
-        if (isEditorViewContextError(error)) {
-            logEditorViewContextError("markdown:replace", error);
-        }
-    }
-}
-
-// Markdown clipboard handling.
-function normalizeClipboardMarkdown(text: string) {
-    return text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-}
-
-function hasMarkdownTableStructure(lines: string[]) {
-    const tableLikeLines = lines.filter((line) => /^\s*\|.*\|\s*$/.test(line));
-    if (tableLikeLines.length < 2) return false;
-
-    return lines.some((line) => /^\s*\|?\s*[:\-]{3,}(?:\s*\|\s*[:\-]{3,})+\s*\|?\s*$/.test(line));
-}
-
-function looksLikeMarkdownClipboard(text: string) {
-    const normalized = normalizeClipboardMarkdown(text);
-    const lines = normalized.split("\n");
-
-    if (/^#{1,6}\s+\S/m.test(normalized)) return true;
-    if (/^\s*```/m.test(normalized)) return true;
-    if (/^\s*\$\$/m.test(normalized)) return true;
-    if (/^\s*>\s+\S/m.test(normalized)) return true;
-    if (/^\s*[-*+]\s+\S/m.test(normalized)) return true;
-    if (/^\s*\d+\.\s+\S/m.test(normalized)) return true;
-    if (/^\s*[-*_]{3,}\s*$/m.test(normalized)) return true;
-    if (/!\[[^\]]*]\([^)]+\)/m.test(normalized)) return true;
-    if (/\[[^\]]+]\([^)]+\)/m.test(normalized)) return true;
-    return hasMarkdownTableStructure(lines);
-}
-
-function getMarkdownClipboardText(event: ClipboardEvent) {
-    const clipboardData = event.clipboardData;
-    if (!clipboardData) return null;
-
-    const markdownText = clipboardData.getData("text/markdown");
-    if (markdownText.trim()) return normalizeClipboardMarkdown(markdownText);
-
-    const plainText = clipboardData.getData("text/plain");
-    if (!plainText.trim()) return null;
-
-    const normalizedPlainText = normalizeClipboardMarkdown(plainText);
-    return looksLikeMarkdownClipboard(normalizedPlainText) ? normalizedPlainText : null;
-}
-
-function replaceSelectionWithMarkdown(crepe: Crepe, markdownText: string) {
-    try {
-        crepe.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            const parser = ctx.get(parserCtx);
-
-            try {
-                const doc = parser(markdownText);
-                if (!doc) {
-                    view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
-                    return;
-                }
-
-                view.dispatch(view.state.tr.replaceSelection(new Slice(doc.content, 0, 0)).scrollIntoView());
-            } catch (error) {
-                console.warn("MARKFLOW_UI markdown paste fallback to plain text", error);
-                view.dispatch(view.state.tr.insertText(markdownText).scrollIntoView());
-            }
-        });
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI paste:replace skipped ${String(error)}`);
-        if (isEditorViewContextError(error)) {
-            logEditorViewContextError("paste:replaceSelection", error);
-        }
-    }
-}
-
-function installMarkdownPasteHandler(crepe: Crepe) {
-    removeMarkdownPasteHandler?.();
-    removeMarkdownPasteHandler = null;
-
-    try {
-        crepe.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-
-            const handler = (event: ClipboardEvent) => {
-                const markdownText = getMarkdownClipboardText(event);
-                if (!markdownText) return;
-
-                const selection = view.state.selection;
-                if (selection.$from.parent.type.spec.code || selection.$to.parent.type.spec.code) {
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopImmediatePropagation();
-                replaceSelectionWithMarkdown(crepe, markdownText);
-            };
-
-            view.dom.addEventListener("paste", handler, true);
-            removeMarkdownPasteHandler = () => view.dom.removeEventListener("paste", handler, true);
-        });
-    } catch (error) {
-        emitToIntelliJLog(`MARKFLOW_UI paste:install skipped ${String(error)}`);
-        if (isEditorViewContextError(error)) {
-            logEditorViewContextError("paste:install", error);
-        }
-    }
-}
-
 function flushPendingIntelliJState(crepe: Crepe) {
     if (!isCrepeReady) return;
 
@@ -902,7 +364,7 @@ function flushPendingIntelliJState(crepe: Crepe) {
         beginExternalUpdateGuard();
         try {
             // Host-driven sync should not become a user-undo step.
-            replaceEditorMarkdown(crepe, pendingMarkdown, true);
+            replaceEditorMarkdown(crepe, pendingMarkdown, emitToIntelliJLog, true);
         } finally {
             clearExternalUpdateGuardLater();
         }
@@ -912,7 +374,7 @@ function flushPendingIntelliJState(crepe: Crepe) {
     pendingEditorStateFromIntelliJ = null;
     if (pendingState !== null) {
         markFlowStage("bridge:applyEditorState:flush", `${pendingState.scrollTop},${pendingState.cursorOffset}`);
-        applyEditorUiState(crepe, pendingState);
+        applyEditorUiState(crepe, pendingState, emitToIntelliJLog);
     }
 }
 
@@ -1110,7 +572,7 @@ function attachCrepeBridge(crepe: Crepe) {
             if (markdown !== prevMarkdown) {
                 console.info(`MARKFLOW_UI SAVE:FIRING len=${markdown.length} prevLen=${prevMarkdown.length}`);
                 emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:SEND len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                sendToIntelliJ(markdown, captureEditorUiState(crepe));
+                sendToIntelliJ(markdown, captureEditorUiState(crepe, emitToIntelliJLog));
             }
         });
     });
@@ -1128,12 +590,12 @@ async function startCrepe(crepe: Crepe, layoutReason: string, restoreState?: Edi
 
     isCrepeReady = true;
     markFlowStage("crepe:create:done");
-    installMarkdownPasteHandler(crepe);
+    removeMarkdownPasteHandler = installMarkdownPasteHandler(crepe, emitToIntelliJLog);
     if (restoreState) {
-        applyEditorUiState(crepe, restoreState);
+        applyEditorUiState(crepe, restoreState, emitToIntelliJLog);
     }
     flushPendingIntelliJState(crepe);
-    recoverEditorLayout(layoutReason);
+    recoverEditorLayout(layoutReason, isCrepeReady, activeCrepe, emitToIntelliJLog);
 
     if (pendingSettingsRerenderRevision !== null) {
         console.info(`MARKFLOW_UI rerender:flushQueued revision=${pendingSettingsRerenderRevision}`);
@@ -1143,7 +605,7 @@ async function startCrepe(crepe: Crepe, layoutReason: string, restoreState?: Edi
     }
     if (pendingLayoutRecovery) {
         pendingLayoutRecovery = false;
-        recoverEditorLayout("create:flushQueued");
+        recoverEditorLayout("create:flushQueued", isCrepeReady, activeCrepe, emitToIntelliJLog);
     }
 }
 
@@ -1164,22 +626,22 @@ async function recreateCrepeInstance(reason: string) {
 
     // Capture current session ID for race condition detection
     const recreateSessionId = window.__markflowSessionId;
-    const recoveryEpochAtStart = activeRecoveryEpoch;
-    const recoveryRoleAtStart = activeRecoveryRole;
+    const recoveryEpochAtStart = recovery.state.activeRecoveryEpoch;
+    const recoveryRoleAtStart = recovery.state.activeRecoveryRole;
 
     try {
-        await requestRecoveryLease(`recreate:${reason}`);
+        await recovery.requestRecoveryLease(`recreate:${reason}`);
 
         // Verify session hasn't changed during recovery request
         if (window.__markflowSessionId !== recreateSessionId) {
             emitToIntelliJLog(`MARKFLOW_UI recreate:sessionChanged during recovery oldSession=${recreateSessionId} newSession=${window.__markflowSessionId}`);
-            clearRecoveryState("recreate:sessionChanged");
+            recovery.clearRecoveryState("recreate:sessionChanged");
             return;
         }
 
         const fallbackMarkdown = pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
-        const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`);
-        const uiState = captureEditorUiState(current);
+        const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`, emitToIntelliJLog);
+        const uiState = captureEditorUiState(current, emitToIntelliJLog);
 
         removeMarkdownPasteHandler?.();
         removeMarkdownPasteHandler = null;
@@ -1210,10 +672,10 @@ async function recreateCrepeInstance(reason: string) {
         // Notify recovery outcome only if we were leader AND session hasn't changed
         if (recoveryRoleAtStart === "leader" && recoveryEpochAtStart !== null && window.__markflowSessionId === recreateSessionId) {
             const succeeded = isCrepeReady && activeCrepe === next;
-            notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochAtStart, reason);
+            recovery.notifyRecoveryOutcome(succeeded ? "complete" : "failed", recoveryEpochAtStart, reason);
         } else if (window.__markflowSessionId === recreateSessionId) {
             // Always clear recovery state when recreate completes (leader or follower)
-            clearRecoveryState(`recreate:completed role=${recoveryRoleAtStart}`);
+            recovery.clearRecoveryState(`recreate:completed role=${recoveryRoleAtStart}`);
         }
     } finally {
         isRecreatingCrepe = false;
@@ -1254,7 +716,7 @@ async function initEditor() {
 
     window.getMarkdown = () => {
         if (!activeCrepe || !isCrepeReady) return "";
-        return safeReadMarkdown(activeCrepe, "", "window.getMarkdown");
+        return safeReadMarkdown(activeCrepe, "", "window.getMarkdown", emitToIntelliJLog);
     };
 
     window.sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {
@@ -1291,12 +753,12 @@ async function initEditor() {
         beginExternalUpdateGuard();
         try {
             // Host-driven sync should not become a user-undo step.
-            replaceEditorMarkdown(activeCrepe, newMarkdown, true);
-            if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
-                const followerEpoch = activeRecoveryEpoch;
-                clearRecoveryState("follower:markdownApplied");
+            replaceEditorMarkdown(activeCrepe, newMarkdown, emitToIntelliJLog, true);
+            if (recovery.state.activeRecoveryRole === "follower" && recovery.state.activeRecoveryEpoch !== null) {
+                const followerEpoch = recovery.state.activeRecoveryEpoch;
+                recovery.clearRecoveryState("follower:markdownApplied");
                 // Notify backend that follower successfully applied markdown
-                notifyRecoveryOutcome("complete", followerEpoch, "follower:markdownApplied");
+                recovery.notifyRecoveryOutcome("complete", followerEpoch, "follower:markdownApplied");
             }
         } finally {
             clearExternalUpdateGuardLater();
@@ -1310,12 +772,12 @@ async function initEditor() {
             return;
         }
 
-        applyEditorUiState(activeCrepe, state);
-        if (activeRecoveryRole === "follower" && activeRecoveryEpoch !== null) {
-            const followerEpoch = activeRecoveryEpoch;
-            clearRecoveryState("follower:stateApplied");
+        applyEditorUiState(activeCrepe, state, emitToIntelliJLog);
+        if (recovery.state.activeRecoveryRole === "follower" && recovery.state.activeRecoveryEpoch !== null) {
+            const followerEpoch = recovery.state.activeRecoveryEpoch;
+            recovery.clearRecoveryState("follower:stateApplied");
             // Notify backend that follower successfully applied state
-            notifyRecoveryOutcome("complete", followerEpoch, "follower:stateApplied");
+            recovery.notifyRecoveryOutcome("complete", followerEpoch, "follower:stateApplied");
         }
     };
     await startCrepe(crepe, "create:done");
