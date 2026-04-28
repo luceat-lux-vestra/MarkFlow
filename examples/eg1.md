@@ -24,3 +24,4 @@ classDef secureState fill:#e6ffe6,stroke:#008000,stroke-width:2px;
 class ErrorLog,DLQ errorState;
 class DB,Kafka secureState;
 ```
+

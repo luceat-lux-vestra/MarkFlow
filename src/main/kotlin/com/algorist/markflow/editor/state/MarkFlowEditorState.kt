@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.editor.state
 
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel

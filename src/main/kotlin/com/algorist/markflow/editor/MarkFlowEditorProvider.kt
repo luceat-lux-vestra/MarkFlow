@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.editor
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditor
@@ -9,8 +9,9 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.jdom.Element
+import com.algorist.markflow.file.MarkFlowFileSupport
+import com.algorist.markflow.editor.state.MarkFlowEditorState
 
-// plugin.xml에 <fileEditorProvider implementation="your.package.MakFlowEditorProvider"/> 로 등록해야 합니다.
 class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean {
         val accepted = MarkFlowFileSupport.isMarkFlowTarget(file)

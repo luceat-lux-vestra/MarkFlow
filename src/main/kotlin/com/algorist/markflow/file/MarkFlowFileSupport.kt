@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.file
 
 import com.intellij.openapi.vfs.VirtualFile
 
@@ -14,4 +14,3 @@ object MarkFlowFileSupport {
             || ext == "mkdn"
     }
 }
-

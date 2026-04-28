@@ -20,18 +20,10 @@ type MarkFlowRuntimeSettings = {
     mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;
     themeSource?: "IDE_SYNC" | "LIGHT" | "DARK";
-    renderTriggerMode?: "LIVE" | "DEBOUNCED" | "MANUAL_REFRESH";
-    renderDebounceMs?: number;
     mermaidErrorDisplay?: "INLINE_ERROR_BOX" | "SILENT_LOG_ONLY";
     katexDisplayDensity?: "COMPACT" | "COMFORTABLE";
     diagramSecurityLevel?: "STRICT" | "LOOSE";
     previewOnlyByDefault?: boolean;
-    forceRerenderShortcutEnabled?: boolean;
-    shortcutConflictDetected?: boolean;
-    shortcutConflictMessage?: string;
-    manualRenderToolbarLabel?: string;
-    manualRenderInlineLabel?: string;
-    manualRenderShortcutHint?: string;
     mermaidSyntaxErrorMessage?: string;
     settingsRevision?: number;
 };

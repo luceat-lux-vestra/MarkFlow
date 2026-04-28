@@ -6,6 +6,8 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.algorist.markflow.browser.MarkFlowSharedBrowserService
+import com.algorist.markflow.file.MarkFlowFileSupport
 
 class MarkFlowStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
@@ -46,4 +48,3 @@ class MarkFlowStartupActivity : ProjectActivity {
         private val LOG = Logger.getInstance(MarkFlowStartupActivity::class.java)
     }
 }
-

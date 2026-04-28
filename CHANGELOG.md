@@ -13,8 +13,7 @@
 - KaTeX math rendering support for inline and block formulas.
 - Markdown clipboard paste now preserves Markdown structure, while code blocks keep the default paste behavior.
 - Packaged webview loading through classloader resources with shared local HTTP serving.
-- Configurable MarkFlow settings panel (theme source, render trigger mode, debounce timing, preview defaults, and shortcut toggle).
+- Configurable MarkFlow settings panel (theme source and preview defaults).
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
-- Force re-render action for Mermaid/KaTeX previews with `Cmd/Ctrl+Alt+Shift+R` shortcut and toolbar/tools menu entry.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
-- Shared JCEF browser pool with split-editor reuse, configurable max pool size, and configurable idle eviction timeout.
+- Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.

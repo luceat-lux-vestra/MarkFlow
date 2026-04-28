@@ -1,20 +1,16 @@
-package com.algorist.markflow
+package com.algorist.markflow.browser
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.intellij.openapi.Disposable
+import com.algorist.markflow.editor.MarkFlowEditor
+import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.keymap.KeymapManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.concurrency.AppExecutorUtil
-import com.sun.net.httpserver.HttpServer
 import org.cef.CefSettings
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -22,25 +18,14 @@ import org.cef.handler.CefDisplayHandlerAdapter
 import org.cef.handler.CefLoadHandler
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.network.CefRequest
-import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.JarURLConnection
-import java.net.URLConnection
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.LinkedHashSet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.jar.JarFile
-import javax.swing.KeyStroke
 import javax.swing.JPanel
 
-@Service(Service.Level.PROJECT)
-class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Project) : Disposable {
-
+internal class MarkFlowBrowserLeasePool {
     private val gson = Gson()
     private val lifecycleLock = Any()
     private val leaseById = linkedMapOf<Int, BrowserLease>()
@@ -48,7 +33,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     private val idleLeaseIds = LinkedHashSet<Int>()
     private val openEditors = mutableSetOf<MarkFlowEditor>()
 
-    private var sharedResourcesAcquired = false
     private val leaseSequence = AtomicInteger(0)
     private val sessionSequence = AtomicInteger(0)
     private val evictionTask: ScheduledFuture<*>
@@ -57,16 +41,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     private var disposed = false
 
     init {
-        synchronized(serviceLock) {
-            activeServices.add(this)
-        }
-
-        try {
-            acquireSharedWebviewPort()
-        } catch (ex: Throwable) {
-            LOG.error("MARKFLOW_UI failed to acquire shared web resources: ${ex.message}", ex)
-        }
-
         evictionTask = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(
             {
                 val app = ApplicationManager.getApplication()
@@ -106,21 +80,28 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         detach(editor, null)
     }
 
-    fun attach(editor: MarkFlowEditor, host: JPanel) {
-        if (disposed || editor.isDisposedEditor()) return
+    fun attach(editor: MarkFlowEditor, host: JPanel): Boolean {
+        if (disposed || editor.isDisposedEditor()) return false
 
         val hadExistingLease = synchronized(lifecycleLock) {
             editorToLeaseId.containsKey(editor)
         }
 
-        val lease = synchronized(lifecycleLock) {
+        val attachmentSnapshot = synchronized(lifecycleLock) {
             val existing = editorToLeaseId[editor]?.let { leaseById[it] }
-            existing ?: acquireLeaseLocked(editor)
+            val lease = existing ?: acquireLeaseLocked(editor)
+            lease.let {
+                val previousHost = it.attachedHost
+                it.attachedEditor = editor
+                it.attachedHost = host
+                it.sessionId = nextSessionId(it.id)
+                it.lastUsedAtMs = System.currentTimeMillis()
+                LeaseAttachmentSnapshot(it, previousHost, it.sessionId)
+            }
         }
-        if (lease == null) {
-            LOG.warn("MARKFLOW_UI attach skipped: lease pool reached max size for ${editor.getFile().path}")
-            return
-        }
+        val lease = attachmentSnapshot.lease
+        val sessionId = attachmentSnapshot.sessionId
+        val previousHost = attachmentSnapshot.previousHost
 
         logLeaseEvent(
             event = if (hadExistingLease) "lease_attach_reuse" else "lease_attach_acquire",
@@ -129,8 +110,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             note = "hostHash=${host.hashCode()}"
         )
 
-        // Single browser component cannot belong to multiple containers, so we reattach on focus changes.
-        lease.attachedHost?.takeIf { it !== host }?.let { oldHost ->
+        previousHost?.takeIf { it !== host }?.let { oldHost ->
             oldHost.remove(lease.browser.component)
             oldHost.revalidate()
             oldHost.repaint()
@@ -142,6 +122,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             )
         }
 
+        if (!isLeaseSessionCurrent(lease, sessionId)) {
+            return false
+        }
+
         if (lease.browser.component.parent !== host) {
             host.remove(lease.browser.component)
             host.add(lease.browser.component)
@@ -149,54 +133,43 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             host.repaint()
         }
 
-        lease.attachedEditor = editor
-        lease.attachedHost = host
-        lease.isEditorActive = false
-        lease.sessionId = nextSessionId(lease.id)
-        lease.lastUsedAtMs = System.currentTimeMillis()
         logLeaseEvent(event = "lease_attached", lease = lease, editor = editor)
 
         ensureLeaseLoaded(lease)
-        if (lease.webViewLoaded) {
-            // Re-inject bridge for reused lease — onLoadEnd won't fire again
+        if (lease.webViewLoaded && isLeaseSessionCurrent(lease, sessionId)) {
             injectBridgeAndBootstrap(lease)
             syncLeaseWithEditor(lease, pushSettings = true)
         }
+        return true
     }
 
     fun detach(editor: MarkFlowEditor, host: JPanel?) {
         if (disposed) return
-        val lease = synchronized(lifecycleLock) {
+        val detachSnapshot = synchronized(lifecycleLock) {
             val leaseId = editorToLeaseId.remove(editor) ?: return
             idleLeaseIds.add(leaseId)
-            leaseById[leaseId]
-        } ?: return
+            val lease = leaseById[leaseId] ?: return
+            DetachSnapshot(lease, lease.sessionId, host ?: lease.attachedHost)
+        }
+        val lease = detachSnapshot.lease
+        val sessionId = detachSnapshot.sessionId
 
         logLeaseEvent(
             event = "lease_detach",
             lease = lease,
             editor = editor,
-            note = "hostHash=${(host ?: lease.attachedHost)?.hashCode() ?: -1}"
+            note = "hostHash=${detachSnapshot.host?.hashCode() ?: -1}"
         )
 
-        executeSetActiveFlag(lease, false)
-        val currentHost = host ?: lease.attachedHost
-        currentHost?.remove(lease.browser.component)
-        currentHost?.revalidate()
-        currentHost?.repaint()
+        executeSetActiveFlag(lease, false, sessionId)
+        detachSnapshot.host?.remove(lease.browser.component)
+        detachSnapshot.host?.revalidate()
+        detachSnapshot.host?.repaint()
 
-        lease.attachedEditor = null
-        lease.attachedHost = null
-        lease.lastUsedAtMs = System.currentTimeMillis()
+        clearLeaseAttachmentIfCurrent(lease, sessionId, editor)
 
-        // Clean up recovery lease when editor detaches to avoid stale recovery state
-        synchronized(recoveryLock) {
-            val filePath = editor.getFile().path
-            val current = recoveryLeasesByFile[filePath]
-            if (current?.leader === editor && current.leaseId == lease.id) {
-                recoveryLeasesByFile.remove(filePath)
-                LOG.info("MARKFLOW_UI recovery:detach cleaned filePath=$filePath leaseId=${lease.id}")
-            }
+        if (isLeaseSessionCurrent(lease, sessionId)) {
+            MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
         }
     }
 
@@ -206,8 +179,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
         val seq = ++lease.intelliJToWebPushSequence
         val markdownLiteral = gson.toJson(markdown)
+        val sessionLiteral = gson.toJson(lease.sessionId)
         val script = """
             (function syncIntelliJMarkdown(seq, payload) {
+                if (window.__markflowSessionId !== $sessionLiteral) {
+                    return;
+                }
                 window.__markflowIntelliJUpdateSeq = Math.max(window.__markflowIntelliJUpdateSeq || 0, seq);
                 (function applyMarkdown(attempt) {
                     if ((window.__markflowIntelliJUpdateSeq || 0) !== seq) {
@@ -230,22 +207,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         val lease = leaseForEditor(editor) ?: return false
         if (!lease.webViewLoaded) return false
 
-        lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
-        return true
-    }
-
-    fun forceRerender(editor: MarkFlowEditor) {
-        val lease = leaseForEditor(editor) ?: return
-        if (!lease.webViewLoaded) {
-            lease.pendingForceRerender = true
-            return
-        }
-
         lease.browser.cefBrowser.executeJavaScript(
-            "window.dispatchEvent(new CustomEvent('markflowForceRerender'));",
+            wrapWithSessionGuard(lease.sessionId, script),
             lease.browser.cefBrowser.url,
             0
         )
+        return true
     }
 
     fun reapplyRuntimeSettingsForEditor(editor: MarkFlowEditor, forceReload: Boolean) {
@@ -255,16 +222,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
     fun setEditorActive(editor: MarkFlowEditor, active: Boolean) {
         val lease = leaseForEditor(editor) ?: return
-        lease.isEditorActive = active
-        executeSetActiveFlag(lease, active)
-    }
-
-    private fun leaseForEditor(editor: MarkFlowEditor): BrowserLease? {
-        if (disposed) return null
-        return synchronized(lifecycleLock) {
-            val leaseId = editorToLeaseId[editor] ?: return@synchronized null
-            leaseById[leaseId]?.takeIf { it.attachedEditor === editor }
-        }
+        executeSetActiveFlag(lease, active, lease.sessionId)
     }
 
     fun getCurrentMarkdown(editor: MarkFlowEditor): String? {
@@ -272,6 +230,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         if (!lease.webViewLoaded) return null
         val flushQuery = JBCefJSQuery.create(lease.browser as JBCefBrowserBase)
         try {
+            val sessionLiteral = gson.toJson(lease.sessionId)
             val latch = CountDownLatch(1)
             var result: String? = null
             flushQuery.addHandler { request: String ->
@@ -282,7 +241,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             val flushCallSnippet = flushQuery.inject("md")
             val script = """
                 (function() {
-                    var md = (typeof window.getMarkdown === 'function') ? window.getMarkdown() : "";
+                    var md = "";
+                    if (window.__markflowSessionId === $sessionLiteral && typeof window.getMarkdown === 'function') {
+                        md = window.getMarkdown() || "";
+                    }
                     $flushCallSnippet
                 })();
             """.trimIndent()
@@ -292,8 +254,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 LOG.warn("MARKFLOW_SAVE getCurrentMarkdown: timeout for ${editor.file.path}")
                 return null
             }
-            val markdown = result?.takeIf { it.isNotEmpty() && it != "undefined" && it != "null" }
-            return markdown
+            return result?.takeIf { it.isNotEmpty() && it != "undefined" && it != "null" }
         } catch (e: Exception) {
             LOG.error("MARKFLOW_SAVE getCurrentMarkdown: failed for ${editor.file.path}: ${e.message}", e)
             return null
@@ -302,24 +263,56 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         }
     }
 
-    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease? {
-        val idleId = idleLeaseIds.firstOrNull()
-        val lease = when {
-            idleId != null -> {
-                idleLeaseIds.remove(idleId)
-                leaseById[idleId] ?: createLeaseLocked()
-            }
-
-            leaseById.size >= currentMaxPoolSize() -> {
-                null
-            }
-
-            else -> {
-                createLeaseLocked()
-            }
+    fun reapplyRuntimeSettingsForAllAttachedLeases(forceReload: Boolean) {
+        val snapshot = synchronized(lifecycleLock) {
+            leaseById.values.filter { it.attachedEditor != null }.toList()
         }
-        if (lease == null) {
-            return null
+        snapshot.forEach { lease ->
+            applyRuntimeSettingsToLease(lease, forceReload)
+        }
+    }
+
+    fun dispose() {
+        if (disposed) return
+        disposed = true
+        evictionTask.cancel(false)
+        LOG.info("MARKFLOW_DIAG pool_dispose_start ${poolStats()}")
+
+        val leases = synchronized(lifecycleLock) {
+            val snapshot = leaseById.values.toList()
+            leaseById.clear()
+            editorToLeaseId.clear()
+            idleLeaseIds.clear()
+            snapshot
+        }
+        leases.forEach { lease ->
+            lease.attachedHost?.remove(lease.browser.component)
+            lease.debugQuery.dispose()
+            lease.jsQuery.dispose()
+            lease.browser.dispose()
+        }
+        LOG.info("MARKFLOW_DIAG pool_dispose_done leases=${leases.size}")
+    }
+
+    private fun leaseForEditor(editor: MarkFlowEditor): BrowserLease? {
+        if (disposed) return null
+        return synchronized(lifecycleLock) {
+            val leaseId = editorToLeaseId[editor] ?: return@synchronized null
+            leaseById[leaseId]?.takeIf { it.attachedEditor === editor }
+        }
+    }
+
+    fun hasLease(editor: MarkFlowEditor): Boolean {
+        return leaseForEditor(editor) != null
+    }
+
+    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease {
+        val idleId = idleLeaseIds.firstOrNull()
+        val lease = if (idleId != null) {
+            idleLeaseIds.remove(idleId)
+            leaseById[idleId] ?: createLeaseLocked()
+        } else {
+            createLeaseLocked()
         }
         editorToLeaseId[editor] = lease.id
         logLeaseEvent(
@@ -393,7 +386,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                     "recovery:request" -> {
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val reason = json["reason"]?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
-                        val response = claimRecoveryLease(targetEditor, lease.id, reason)
+                        val response = MarkFlowRecoveryCoordinator.claimRecoveryLease(targetEditor, lease.id, reason)
                         logLeaseEvent(
                             event = "recovery_request",
                             lease = lease,
@@ -406,7 +399,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                     "recovery:complete" -> {
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val epoch = readJsonInt(json, "epoch", -1)
-                        val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = true)
+                        val response = MarkFlowRecoveryCoordinator.completeRecoveryLease(targetEditor, lease.id, epoch, success = true)
                         logLeaseEvent(
                             event = "recovery_complete",
                             lease = lease,
@@ -419,7 +412,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                     "recovery:failed" -> {
                         val targetEditor = lease.attachedEditor ?: return@addHandler ignoredResponse()
                         val epoch = readJsonInt(json, "epoch", -1)
-                        val response = completeRecoveryLease(targetEditor, lease.id, epoch, success = false)
+                        val response = MarkFlowRecoveryCoordinator.completeRecoveryLease(targetEditor, lease.id, epoch, success = false)
                         logLeaseEvent(
                             event = "recovery_failed",
                             lease = lease,
@@ -484,7 +477,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 injectBridgeAndBootstrap(lease)
                 lease.attachedEditor?.onActivatedInSharedBrowser()
                 applyPendingRuntimeSettings(lease)
-                flushPendingForceRerender(lease)
             }
 
             override fun onLoadError(
@@ -503,7 +495,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         LOG.warn("MARKFLOW_SAVE injectBridgeAndBootstrap: START lease=${lease.id} editor=${lease.attachedEditor?.file?.path}")
         val editor = lease.attachedEditor
         val markdownLiteral = gson.toJson(editor?.currentMarkdownText().orEmpty())
-        val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())
+        val runtimeSettingsJson = buildRuntimeSettingsJson()
         val initialMarkdownSeq = ++lease.intelliJToWebPushSequence
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
         val activeLiteral = if (lease.isEditorActive) "true" else "false"
@@ -589,20 +581,30 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         val editor = lease.attachedEditor ?: return
         if (!lease.webViewLoaded) return
 
-        pushMarkdownFromEditor(editor, editor.currentMarkdownText())
         editor.applyPendingStateIfPossible()
-        executeSetActiveFlag(lease, lease.isEditorActive)
+        executeSetActiveFlag(lease, lease.isEditorActive, lease.sessionId)
         if (pushSettings) {
             applyRuntimeSettingsToLease(lease, forceReload = false)
         }
     }
 
-    private fun executeSetActiveFlag(lease: BrowserLease, active: Boolean) {
+    private fun executeSetActiveFlag(lease: BrowserLease, active: Boolean, expectedSessionId: String) {
+        if (!isLeaseSessionCurrent(lease, expectedSessionId)) return
         lease.isEditorActive = active
         if (!lease.webViewLoaded) return
         val value = if (active) "true" else "false"
+        val sessionLiteral = gson.toJson(expectedSessionId)
         lease.browser.cefBrowser.executeJavaScript(
-            "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive($value); }",
+            """
+                (function(expectedSessionId, activeValue) {
+                    if (window.__markflowSessionId !== expectedSessionId) {
+                        return;
+                    }
+                    if (window.setMarkFlowEditorActive) {
+                        window.setMarkFlowEditorActive(activeValue);
+                    }
+                })($sessionLiteral, $value);
+            """.trimIndent(),
             lease.browser.cefBrowser.url,
             0
         )
@@ -625,7 +627,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             try {
                 lease.browser.cefBrowser.reload()
             } catch (_: Exception) {
-                val fallback = loadWebviewIndexUrl()
+                val fallback = MarkFlowWebviewResourceManager.loadWebviewIndexUrl()
                 if (fallback != null) {
                     lease.browser.loadURL(fallback)
                 }
@@ -634,9 +636,13 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         }
 
         val pushId = settingsPushSequence.incrementAndGet()
-        val runtimeSettingsJson = buildRuntimeSettingsJsonWithConflict(detectShortcutConflict())
+        val runtimeSettingsJson = buildRuntimeSettingsJson()
+        val sessionLiteral = gson.toJson(lease.sessionId)
         val script = """
             (function syncRuntimeSettingsPush(seq, payload) {
+                if (window.__markflowSessionId !== $sessionLiteral) {
+                    return;
+                }
                 window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
                 (function syncRuntimeSettings(attempt) {
                     if ((window.__markflowRuntimeSettingsSeq || 0) !== seq) {
@@ -664,22 +670,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         applyRuntimeSettingsToLease(lease, forceReload)
     }
 
-    private fun flushPendingForceRerender(lease: BrowserLease) {
-        if (!lease.pendingForceRerender || !lease.webViewLoaded) return
-        lease.pendingForceRerender = false
-        lease.browser.cefBrowser.executeJavaScript(
-            "window.dispatchEvent(new CustomEvent('markflowForceRerender'));",
-            lease.browser.cefBrowser.url,
-            0
-        )
-    }
-
     private fun ensureLeaseLoaded(lease: BrowserLease) {
         if (lease.webViewLoaded) return
         val currentUrl = lease.browser.cefBrowser.url
         if (!currentUrl.isNullOrBlank() && currentUrl != "about:blank") return
 
-        val bootstrapUrl = loadWebviewIndexUrl()
+        val bootstrapUrl = MarkFlowWebviewResourceManager.loadWebviewIndexUrl()
         if (bootstrapUrl != null) {
             lease.browser.loadURL(bootstrapUrl)
             return
@@ -706,10 +702,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         return "pool[total=${totals.first} idle=${totals.second} attached=${totals.third} editorsOpen=$openEditorCount]"
     }
 
-    private fun currentMaxPoolSize(): Int {
-        return MarkFlowSettingsService.getInstance().state.maxPoolSize.coerceAtLeast(1)
-    }
-
     private fun currentIdleEvictAfterMs(): Long {
         return MarkFlowSettingsService.getInstance().state.idleEvictAfterMs.coerceAtLeast(1).toLong()
     }
@@ -731,6 +723,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
                 idleLeases.filter { lease ->
                     lease.id !in keepIds && now - lease.lastUsedAtMs >= currentIdleEvictAfterMs()
+                }.onEach { lease ->
+                    leaseById.remove(lease.id)
+                    idleLeaseIds.remove(lease.id)
+                    lease.attachedEditor?.let { editorToLeaseId.remove(it) }
                 }
             }
         }
@@ -755,83 +751,38 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         lease.jsQuery.dispose()
         lease.browser.dispose()
 
-        // Clean up recovery lease on disposal
         lease.attachedEditor?.let { editor ->
-            synchronized(recoveryLock) {
-                val filePath = editor.getFile().path
-                val current = recoveryLeasesByFile[filePath]
-                if (current?.leader === editor && current.leaseId == lease.id) {
-                    recoveryLeasesByFile.remove(filePath)
-                    LOG.info("MARKFLOW_UI recovery:dispose cleaned filePath=$filePath leaseId=${lease.id}")
+            MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
+        }
+    }
+
+    private fun isLeaseSessionCurrent(lease: BrowserLease, expectedSessionId: String): Boolean {
+        synchronized(lifecycleLock) {
+            return lease.sessionId == expectedSessionId
+        }
+    }
+
+    private fun clearLeaseAttachmentIfCurrent(lease: BrowserLease, expectedSessionId: String, editor: MarkFlowEditor) {
+        synchronized(lifecycleLock) {
+            if (lease.sessionId != expectedSessionId || lease.attachedEditor !== editor) {
+                return
+            }
+            lease.attachedEditor = null
+            lease.attachedHost = null
+            lease.lastUsedAtMs = System.currentTimeMillis()
+        }
+    }
+
+    private fun wrapWithSessionGuard(expectedSessionId: String, script: String): String {
+        val sessionLiteral = gson.toJson(expectedSessionId)
+        return """
+            (function(expectedSessionId) {
+                if (window.__markflowSessionId !== expectedSessionId) {
+                    return;
                 }
-            }
-        }
-    }
-
-    private fun reapplyRuntimeSettingsForAllAttachedLeases(forceReload: Boolean) {
-        val snapshot = synchronized(lifecycleLock) {
-            leaseById.values.filter { it.attachedEditor != null }.toList()
-        }
-        snapshot.forEach { lease ->
-            applyRuntimeSettingsToLease(lease, forceReload)
-        }
-    }
-
-    private fun claimRecoveryLease(editor: MarkFlowEditor, leaseId: Int, reason: String): RecoveryBridgeResponse {
-        synchronized(recoveryLock) {
-            val filePath = editor.getFile().path
-            val current = recoveryLeasesByFile[filePath]
-            val currentLeaderValid = current?.leader?.isDisposedEditor() == false
-
-            if (!currentLeaderValid) {
-                val nextEpoch = (current?.epoch ?: 0) + 1
-                val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
-                recoveryLeasesByFile[filePath] = updated
-                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason")
-                return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
-            }
-
-            val active = current
-            if (active.leader === editor || active.leaseId == leaseId) {
-                val nextEpoch = active.epoch
-                val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
-                recoveryLeasesByFile[filePath] = updated
-                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason (reused)")
-                return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
-            }
-
-            LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${active.epoch} reason=$reason")
-            return RecoveryBridgeResponse(role = "follower", epoch = active.epoch, reason = reason)
-        }
-    }
-
-    private fun completeRecoveryLease(
-        editor: MarkFlowEditor,
-        leaseId: Int,
-        epoch: Int,
-        success: Boolean
-    ): RecoveryBridgeResponse {
-        val reason = if (success) "complete" else "failed"
-        synchronized(recoveryLock) {
-            val filePath = editor.getFile().path
-            val current = recoveryLeasesByFile[filePath]
-            if (current?.leader === editor && current.leaseId == leaseId && current.epoch == epoch) {
-                recoveryLeasesByFile.remove(filePath)
-                LOG.info("MARKFLOW_UI recovery:complete leaseId=$leaseId epoch=$epoch success=$success")
-                return RecoveryBridgeResponse(role = reason, epoch = epoch, reason = reason)
-            }
-
-            // Log ignored recovery completions for debugging race conditions
-            val logStatus = when {
-                current == null -> "noActiveLease"
-                current.leader !== editor -> "editorMismatch"
-                current.leaseId != leaseId -> "leaseMismatch"
-                current.epoch != epoch -> "epochMismatch"
-                else -> "unknown"
-            }
-            LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$logStatus")
-        }
-        return RecoveryBridgeResponse(role = "ignored", epoch = epoch, reason = reason)
+                $script
+            })($sessionLiteral);
+        """.trimIndent()
     }
 
     private fun ignoredResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Ignored")
@@ -840,42 +791,13 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     private fun errorResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response(null, BRIDGE_ERROR_STATUS, "Error parsing request")
     private fun jsonResponse(value: Any): JBCefJSQuery.Response = JBCefJSQuery.Response(gson.toJson(value))
 
-    private fun buildRuntimeSettingsJsonWithConflict(conflictDetected: Boolean): String {
+    private fun buildRuntimeSettingsJson(): String {
         return try {
-            val settings = MarkFlowSettingsService.getInstance().runtimeSettings(conflictDetected)
+            val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
             gson.toJson(settings)
         } catch (ex: Exception) {
             LOG.warn("MARKFLOW_UI failed to serialize runtime settings: ${ex.message}", ex)
             "{}"
-        }
-    }
-
-    private fun detectShortcutConflict(): Boolean {
-        return try {
-            val settings = MarkFlowSettingsService.getInstance().state
-            if (!settings.forceRerenderShortcutEnabled) {
-                return false
-            }
-
-            val activeKeymap = KeymapManager.getInstance().activeKeymap
-            val ctrlAltShiftR = KeyStroke.getKeyStroke("ctrl alt shift R")
-            val metaAltShiftR = KeyStroke.getKeyStroke("meta alt shift R")
-            val candidates = buildList {
-                if (SystemInfo.isMac) {
-                    if (metaAltShiftR != null) add(metaAltShiftR)
-                } else {
-                    if (ctrlAltShiftR != null) add(ctrlAltShiftR)
-                }
-            }
-
-            candidates.any { shortcut ->
-                activeKeymap
-                    .getActionIds(shortcut)
-                    .any { actionId -> actionId != MarkFlowForceRerenderAction.ACTION_ID }
-            }
-        } catch (ex: Exception) {
-            LOG.warn("MARKFLOW_UI failed to detect shortcut conflict: ${ex.message}", ex)
-            false
         }
     }
 
@@ -887,221 +809,12 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         return element.asInt
     }
 
-    private fun loadWebviewIndexUrl(): String? {
-        val port = acquireSharedWebviewPort() ?: return null
-        return "http://127.0.0.1:$port/index.html"
-    }
-
-    private fun acquireSharedWebviewPort(): Int? {
-        return synchronized(sharedLifecycleLock) {
-            val extractedRoot = ensureExtractedWebviewRootLocked() ?: return null
-            val port = ensureWebviewHttpServerLocked(extractedRoot) ?: return null
-            if (!sharedResourcesAcquired) {
-                sharedWebviewOwnerCount++
-                sharedResourcesAcquired = true
-            }
-            port
-        }
-    }
-
-    private fun ensureWebviewHttpServerLocked(root: Path): Int? {
-        webviewServerPort?.let { return it }
-
-        return try {
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-            server.createContext("/") { exchange ->
-                val requestPath = exchange.requestURI?.path.orEmpty()
-                if (requestPath.isEmpty()) {
-                    exchange.sendResponseHeaders(404, -1)
-                    exchange.close()
-                    return@createContext
-                }
-
-                val normalized = if (requestPath == "/") "index.html" else requestPath.removePrefix("/")
-                val target = root.resolve(normalized).normalize()
-                if (!target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
-                    exchange.sendResponseHeaders(404, -1)
-                    exchange.close()
-                    return@createContext
-                }
-
-                try {
-                    val contentType = Files.probeContentType(target)
-                        ?: URLConnection.guessContentTypeFromName(target.fileName.toString())
-                        ?: "application/octet-stream"
-                    exchange.responseHeaders["Content-Type"] = contentType
-                    exchange.responseHeaders["Cache-Control"] = "no-cache"
-                    exchange.sendResponseHeaders(200, Files.size(target))
-                    Files.newInputStream(target).use { input ->
-                        exchange.responseBody.use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                } catch (ioe: IOException) {
-                    LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
-                    exchange.sendResponseHeaders(500, -1)
-                    exchange.close()
-                }
-            }
-            server.executor = null
-            server.start()
-            webviewHttpServer = server
-            webviewServerPort = server.address.port
-            LOG.info("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
-            server.address.port
-        } catch (ex: Exception) {
-            LOG.error("MARKFLOW_UI failed to start webview server: ${ex.message}", ex)
-            null
-        }
-    }
-
-    private fun ensureExtractedWebviewRootLocked(): Path? {
-        extractedWebviewRoot?.let { return it }
-
-        val resource = MarkFlowSharedBrowserService::class.java.classLoader.getResource(WEBVIEW_ENTRY_RESOURCE)
-        if (resource == null) {
-            LOG.error("MARKFLOW_UI webview resource not found: $WEBVIEW_ENTRY_RESOURCE")
-            return null
-        }
-
-        if (resource.protocol == "file") {
-            return try {
-                val indexPath = Path.of(resource.toURI())
-                val root = indexPath.parent ?: return null
-                extractedWebviewRoot = root
-                extractedWebviewRootIsTemp = false
-                root
-            } catch (ex: Exception) {
-                LOG.error("MARKFLOW_UI failed to resolve file webview resource: ${ex.message}", ex)
-                null
-            }
-        }
-
-        if (resource.protocol != "jar") {
-            LOG.error("MARKFLOW_UI unsupported webview resource protocol: ${resource.protocol}")
-            return null
-        }
-
-        val connection = resource.openConnection() as? JarURLConnection
-        if (connection == null) {
-            LOG.error("MARKFLOW_UI failed to open jar connection for resource: $resource")
-            return null
-        }
-
-        val pluginJarPath = try {
-            Path.of(connection.jarFileURL.toURI())
-        } catch (ex: Exception) {
-            LOG.error("MARKFLOW_UI failed to resolve jar path for webview resource: ${ex.message}", ex)
-            return null
-        }
-
-        return try {
-            val tempRoot = Files.createTempDirectory("markflow-webview-")
-            JarFile(pluginJarPath.toFile()).use { jar ->
-                val entries = jar.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
-
-                    val target = tempRoot.resolve(entry.name.removePrefix("webview/"))
-                    target.parent?.let(Files::createDirectories)
-                    jar.getInputStream(entry).use { input ->
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-                    }
-                }
-            }
-            extractedWebviewRoot = tempRoot
-            extractedWebviewRootIsTemp = true
-            tempRoot
-        } catch (ex: Exception) {
-            LOG.error("MARKFLOW_UI failed to extract webview resources: ${ex.message}", ex)
-            null
-        }
-    }
-
-    private fun releaseSharedWebviewResources() {
-        if (!sharedResourcesAcquired) return
-
-        synchronized(sharedLifecycleLock) {
-            if (sharedWebviewOwnerCount > 0) {
-                sharedWebviewOwnerCount--
-            }
-            sharedResourcesAcquired = false
-
-            if (sharedWebviewOwnerCount > 0) {
-                return
-            }
-
-            webviewHttpServer?.let { server ->
-                try {
-                    server.stop(0)
-                } catch (ex: Exception) {
-                    LOG.warn("MARKFLOW_UI failed to stop webview server: ${ex.message}", ex)
-                }
-            }
-            webviewHttpServer = null
-            webviewServerPort = null
-
-            if (extractedWebviewRootIsTemp) {
-                extractedWebviewRoot?.toFile()?.deleteRecursively()
-            }
-            extractedWebviewRoot = null
-            extractedWebviewRootIsTemp = false
-        }
-    }
-
-    override fun dispose() {
-        if (disposed) return
-        disposed = true
-        evictionTask.cancel(false)
-        LOG.info("MARKFLOW_DIAG pool_dispose_start ${poolStats()}")
-
-        val leases = synchronized(lifecycleLock) {
-            val snapshot = leaseById.values.toList()
-            leaseById.clear()
-            editorToLeaseId.clear()
-            idleLeaseIds.clear()
-            snapshot
-        }
-        leases.forEach { lease ->
-            lease.attachedHost?.remove(lease.browser.component)
-            lease.debugQuery.dispose()
-            lease.jsQuery.dispose()
-            lease.browser.dispose()
-        }
-        LOG.info("MARKFLOW_DIAG pool_dispose_done leases=${leases.size}")
-
-        releaseSharedWebviewResources()
-
-        synchronized(serviceLock) {
-            activeServices.remove(this)
-        }
-    }
-
-    companion object {
-        private val LOG = Logger.getInstance(MarkFlowSharedBrowserService::class.java)
-        private const val WEBVIEW_ENTRY_RESOURCE = "webview/index.html"
-
-        @Volatile
-        private var extractedWebviewRoot: Path? = null
-        @Volatile
-        private var extractedWebviewRootIsTemp = false
-        @Volatile
-        private var webviewHttpServer: HttpServer? = null
-        @Volatile
-        private var webviewServerPort: Int? = null
-        @Volatile
-        private var sharedWebviewOwnerCount = 0
-
-        private val serviceLock = Any()
-        private val sharedLifecycleLock = Any()
-        private val recoveryLock = Any()
+    private companion object {
+        private val LOG = Logger.getInstance(MarkFlowBrowserLeasePool::class.java)
         private val settingsPushSequence = AtomicInteger(0)
-        private val activeServices = mutableSetOf<MarkFlowSharedBrowserService>()
-        private val recoveryLeasesByFile = mutableMapOf<String, RecoveryLease>()
 
         private const val BRIDGE_ERROR_STATUS = 500
-        private const val MIN_IDLE_LEASE_COUNT = 1
+        private const val MIN_IDLE_LEASE_COUNT = 0
         private const val EVICTION_PERIOD_MS = 30_000L
 
         private data class BrowserLease(
@@ -1114,44 +827,22 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             var webViewLoaded: Boolean = false,
             var pendingRuntimeSettingsPush: Boolean = false,
             var pendingRuntimeSettingsForceReload: Boolean = false,
-            var pendingForceRerender: Boolean = false,
             var intelliJToWebPushSequence: Int = 0,
             var isEditorActive: Boolean = false,
             var sessionId: String = "",
             var lastUsedAtMs: Long
         )
 
-        private data class RecoveryLease(
-            val epoch: Int,
-            val leader: MarkFlowEditor,
-            val leaseId: Int
+        private data class LeaseAttachmentSnapshot(
+            val lease: BrowserLease,
+            val previousHost: JPanel?,
+            val sessionId: String
         )
 
-        private data class RecoveryBridgeResponse(
-            val role: String,
-            val epoch: Int,
-            val reason: String
+        private data class DetachSnapshot(
+            val lease: BrowserLease,
+            val sessionId: String,
+            val host: JPanel?
         )
-
-        fun notifyRuntimeSettingsChanged(forceReload: Boolean = false) {
-            val app = ApplicationManager.getApplication()
-            val snapshot = synchronized(serviceLock) { activeServices.toList() }
-            if (snapshot.isEmpty()) return
-
-            val action = {
-                snapshot.forEach { service ->
-                    if (!service.disposed) {
-                        service.reapplyRuntimeSettingsForAllAttachedLeases(forceReload)
-                    }
-                }
-            }
-
-            if (app.isDispatchThread) {
-                action()
-            } else {
-                app.invokeLater(action)
-            }
-        }
     }
 }
-

@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.editor
 
 import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.application.ApplicationManager
@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import java.awt.BorderLayout
+import com.algorist.markflow.browser.MarkFlowSharedBrowserService
+import com.algorist.markflow.editor.state.MarkFlowEditorState
 
 class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
 
@@ -58,13 +60,19 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private fun syncAttachmentWithVisibility() {
         if (disposed) return
         val shouldAttach = hostPanel.isShowing
-        if (shouldAttach && !isAttachedToSharedBrowser) {
-            sharedBrowserService.attach(this, hostPanel)
-            isAttachedToSharedBrowser = true
+        val hasLease = sharedBrowserService.hasLease(this)
+        if (shouldAttach && !hasLease) {
+            isAttachedToSharedBrowser = sharedBrowserService.attach(this, hostPanel)
             return
         }
-        if (!shouldAttach && isAttachedToSharedBrowser) {
+        if (shouldAttach) {
+            isAttachedToSharedBrowser = hasLease
+            return
+        }
+        if (!shouldAttach && hasLease) {
             sharedBrowserService.detach(this, hostPanel)
+            isAttachedToSharedBrowser = false
+        } else if (!shouldAttach) {
             isAttachedToSharedBrowser = false
         }
     }
@@ -233,10 +241,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         sharedBrowserService.setEditorActive(this, false)
     }
 
-    fun forceRerenderPreviews() {
-        sharedBrowserService.forceRerender(this)
-    }
-
     override fun dispose() {
         if (disposed) return
         // Synchronously flush and save current webview content before cleanup
@@ -249,6 +253,12 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         sharedBrowserService.unregisterEditor(this)
         LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
     }
+
+    internal fun onSharedBrowserDetachedByPool() {
+        isAttachedToSharedBrowser = false
+    }
+
+    internal fun isShowingInHost(): Boolean = hostPanel.isShowing
 
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
