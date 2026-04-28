@@ -568,7 +568,6 @@ internal class MarkFlowBrowserLeasePool {
         val editor = lease.attachedEditor ?: return
         if (!lease.webViewLoaded) return
 
-        pushMarkdownFromEditor(editor, editor.currentMarkdownText())
         editor.applyPendingStateIfPossible()
         executeSetActiveFlag(lease, lease.isEditorActive)
         if (pushSettings) {

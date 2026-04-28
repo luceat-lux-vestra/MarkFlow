@@ -121,6 +121,20 @@ export const applyEditorUiState = (
     });
 };
 
+export const focusEditorView = (crepe: Crepe, emitToIntelliJLog: (message: string) => void) => {
+    try {
+        crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            view.focus();
+        });
+    } catch (error) {
+        emitToIntelliJLog(`MARKFLOW_UI editor:focus skipped ${String(error)}`);
+        if (isEditorViewContextError(error)) {
+            logEditorViewContextError("editor:focus", error, emitToIntelliJLog);
+        }
+    }
+};
+
 export const replaceEditorMarkdown = (
     crepe: Crepe,
     newMarkdown: string,
@@ -128,6 +142,11 @@ export const replaceEditorMarkdown = (
     skipHistory = false
 ) => {
     try {
+        const currentMarkdown = crepe.getMarkdown();
+        if (currentMarkdown === newMarkdown) {
+            return;
+        }
+
         crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
             const parser = ctx.get(parserCtx);
