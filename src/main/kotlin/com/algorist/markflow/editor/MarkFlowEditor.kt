@@ -60,13 +60,19 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private fun syncAttachmentWithVisibility() {
         if (disposed) return
         val shouldAttach = hostPanel.isShowing
-        if (shouldAttach && !isAttachedToSharedBrowser) {
-            sharedBrowserService.attach(this, hostPanel)
-            isAttachedToSharedBrowser = true
+        val hasLease = sharedBrowserService.hasLease(this)
+        if (shouldAttach && !hasLease) {
+            isAttachedToSharedBrowser = sharedBrowserService.attach(this, hostPanel)
             return
         }
-        if (!shouldAttach && isAttachedToSharedBrowser) {
+        if (shouldAttach) {
+            isAttachedToSharedBrowser = hasLease
+            return
+        }
+        if (!shouldAttach && hasLease) {
             sharedBrowserService.detach(this, hostPanel)
+            isAttachedToSharedBrowser = false
+        } else if (!shouldAttach) {
             isAttachedToSharedBrowser = false
         }
     }
@@ -247,6 +253,12 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         sharedBrowserService.unregisterEditor(this)
         LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
     }
+
+    internal fun onSharedBrowserDetachedByPool() {
+        isAttachedToSharedBrowser = false
+    }
+
+    internal fun isShowingInHost(): Boolean = hostPanel.isShowing
 
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)

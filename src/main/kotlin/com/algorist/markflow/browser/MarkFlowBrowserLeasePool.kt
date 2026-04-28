@@ -80,21 +80,32 @@ internal class MarkFlowBrowserLeasePool {
         detach(editor, null)
     }
 
-    fun attach(editor: MarkFlowEditor, host: JPanel) {
-        if (disposed || editor.isDisposedEditor()) return
+    fun attach(editor: MarkFlowEditor, host: JPanel): Boolean {
+        if (disposed || editor.isDisposedEditor()) return false
 
         val hadExistingLease = synchronized(lifecycleLock) {
             editorToLeaseId.containsKey(editor)
         }
 
-        val lease = synchronized(lifecycleLock) {
+        val attachmentSnapshot = synchronized(lifecycleLock) {
             val existing = editorToLeaseId[editor]?.let { leaseById[it] }
-            existing ?: acquireLeaseLocked(editor)
-        }
-        if (lease == null) {
+            val lease = existing ?: acquireLeaseLocked(editor)
+            lease?.let {
+                val previousHost = it.attachedHost
+                it.attachedEditor = editor
+                it.attachedHost = host
+                it.isEditorActive = false
+                it.sessionId = nextSessionId(it.id)
+                it.lastUsedAtMs = System.currentTimeMillis()
+                LeaseAttachmentSnapshot(it, previousHost, it.sessionId)
+            }
+        } ?: run {
             LOG.warn("MARKFLOW_UI attach skipped: lease pool reached max size for ${editor.getFile().path}")
-            return
+            return false
         }
+        val lease = attachmentSnapshot.lease
+        val sessionId = attachmentSnapshot.sessionId
+        val previousHost = attachmentSnapshot.previousHost
 
         logLeaseEvent(
             event = if (hadExistingLease) "lease_attach_reuse" else "lease_attach_acquire",
@@ -103,7 +114,7 @@ internal class MarkFlowBrowserLeasePool {
             note = "hostHash=${host.hashCode()}"
         )
 
-        lease.attachedHost?.takeIf { it !== host }?.let { oldHost ->
+        previousHost?.takeIf { it !== host }?.let { oldHost ->
             oldHost.remove(lease.browser.component)
             oldHost.revalidate()
             oldHost.repaint()
@@ -115,6 +126,10 @@ internal class MarkFlowBrowserLeasePool {
             )
         }
 
+        if (!isLeaseSessionCurrent(lease, sessionId)) {
+            return false
+        }
+
         if (lease.browser.component.parent !== host) {
             host.remove(lease.browser.component)
             host.add(lease.browser.component)
@@ -122,46 +137,44 @@ internal class MarkFlowBrowserLeasePool {
             host.repaint()
         }
 
-        lease.attachedEditor = editor
-        lease.attachedHost = host
-        lease.isEditorActive = false
-        lease.sessionId = nextSessionId(lease.id)
-        lease.lastUsedAtMs = System.currentTimeMillis()
         logLeaseEvent(event = "lease_attached", lease = lease, editor = editor)
 
         ensureLeaseLoaded(lease)
-        if (lease.webViewLoaded) {
+        if (lease.webViewLoaded && isLeaseSessionCurrent(lease, sessionId)) {
             injectBridgeAndBootstrap(lease)
             syncLeaseWithEditor(lease, pushSettings = true)
         }
+        return true
     }
 
     fun detach(editor: MarkFlowEditor, host: JPanel?) {
         if (disposed) return
-        val lease = synchronized(lifecycleLock) {
+        val detachSnapshot = synchronized(lifecycleLock) {
             val leaseId = editorToLeaseId.remove(editor) ?: return
             idleLeaseIds.add(leaseId)
-            leaseById[leaseId]
-        } ?: return
+            val lease = leaseById[leaseId] ?: return
+            DetachSnapshot(lease, lease.sessionId, host ?: lease.attachedHost)
+        }
+        val lease = detachSnapshot.lease
+        val sessionId = detachSnapshot.sessionId
 
         logLeaseEvent(
             event = "lease_detach",
             lease = lease,
             editor = editor,
-            note = "hostHash=${(host ?: lease.attachedHost)?.hashCode() ?: -1}"
+            note = "hostHash=${detachSnapshot.host?.hashCode() ?: -1}"
         )
 
-        executeSetActiveFlag(lease, false)
-        val currentHost = host ?: lease.attachedHost
-        currentHost?.remove(lease.browser.component)
-        currentHost?.revalidate()
-        currentHost?.repaint()
+        executeSetActiveFlag(lease, false, sessionId)
+        detachSnapshot.host?.remove(lease.browser.component)
+        detachSnapshot.host?.revalidate()
+        detachSnapshot.host?.repaint()
 
-        lease.attachedEditor = null
-        lease.attachedHost = null
-        lease.lastUsedAtMs = System.currentTimeMillis()
+        clearLeaseAttachmentIfCurrent(lease, sessionId, editor)
 
-        MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
+        if (isLeaseSessionCurrent(lease, sessionId)) {
+            MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
+        }
     }
 
     fun pushMarkdownFromEditor(editor: MarkFlowEditor, markdown: String) {
@@ -170,8 +183,12 @@ internal class MarkFlowBrowserLeasePool {
 
         val seq = ++lease.intelliJToWebPushSequence
         val markdownLiteral = gson.toJson(markdown)
+        val sessionLiteral = gson.toJson(lease.sessionId)
         val script = """
             (function syncIntelliJMarkdown(seq, payload) {
+                if (window.__markflowSessionId !== $sessionLiteral) {
+                    return;
+                }
                 window.__markflowIntelliJUpdateSeq = Math.max(window.__markflowIntelliJUpdateSeq || 0, seq);
                 (function applyMarkdown(attempt) {
                     if ((window.__markflowIntelliJUpdateSeq || 0) !== seq) {
@@ -194,7 +211,11 @@ internal class MarkFlowBrowserLeasePool {
         val lease = leaseForEditor(editor) ?: return false
         if (!lease.webViewLoaded) return false
 
-        lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
+        lease.browser.cefBrowser.executeJavaScript(
+            wrapWithSessionGuard(lease.sessionId, script),
+            lease.browser.cefBrowser.url,
+            0
+        )
         return true
     }
 
@@ -205,8 +226,7 @@ internal class MarkFlowBrowserLeasePool {
 
     fun setEditorActive(editor: MarkFlowEditor, active: Boolean) {
         val lease = leaseForEditor(editor) ?: return
-        lease.isEditorActive = active
-        executeSetActiveFlag(lease, active)
+        executeSetActiveFlag(lease, active, lease.sessionId)
     }
 
     fun getCurrentMarkdown(editor: MarkFlowEditor): String? {
@@ -214,6 +234,7 @@ internal class MarkFlowBrowserLeasePool {
         if (!lease.webViewLoaded) return null
         val flushQuery = JBCefJSQuery.create(lease.browser as JBCefBrowserBase)
         try {
+            val sessionLiteral = gson.toJson(lease.sessionId)
             val latch = CountDownLatch(1)
             var result: String? = null
             flushQuery.addHandler { request: String ->
@@ -224,7 +245,10 @@ internal class MarkFlowBrowserLeasePool {
             val flushCallSnippet = flushQuery.inject("md")
             val script = """
                 (function() {
-                    var md = (typeof window.getMarkdown === 'function') ? window.getMarkdown() : "";
+                    var md = "";
+                    if (window.__markflowSessionId === $sessionLiteral && typeof window.getMarkdown === 'function') {
+                        md = window.getMarkdown() || "";
+                    }
                     $flushCallSnippet
                 })();
             """.trimIndent()
@@ -282,6 +306,10 @@ internal class MarkFlowBrowserLeasePool {
         }
     }
 
+    fun hasLease(editor: MarkFlowEditor): Boolean {
+        return leaseForEditor(editor) != null
+    }
+
     private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease? {
         val idleId = idleLeaseIds.firstOrNull()
         val lease = when {
@@ -291,7 +319,7 @@ internal class MarkFlowBrowserLeasePool {
             }
 
             leaseById.size >= currentMaxPoolSize() -> {
-                null
+                reclaimLeaseLocked(editor)
             }
 
             else -> {
@@ -308,6 +336,39 @@ internal class MarkFlowBrowserLeasePool {
             editor = editor
         )
         return lease
+    }
+
+    private fun reclaimLeaseLocked(newEditor: MarkFlowEditor): BrowserLease? {
+        val candidate = leaseById.values
+            .filter { lease ->
+                lease.attachedEditor != null &&
+                    !lease.isEditorActive &&
+                    lease.attachedHost?.isShowing == false
+            }
+            .minByOrNull { it.lastUsedAtMs }
+            ?: run {
+                LOG.warn(
+                    "MARKFLOW_UI attach skipped: no hidden inactive lease available to reclaim for ${newEditor.getFile().path}"
+                )
+                return null
+            }
+
+        val oldEditor = candidate.attachedEditor ?: return null
+        val previousSessionId = candidate.sessionId
+        editorToLeaseId.remove(oldEditor)
+        oldEditor.onSharedBrowserDetachedByPool()
+        candidate.attachedEditor = newEditor
+        candidate.isEditorActive = false
+        candidate.sessionId = nextSessionId(candidate.id)
+        candidate.lastUsedAtMs = System.currentTimeMillis()
+        editorToLeaseId[newEditor] = candidate.id
+        logLeaseEvent(
+            event = "lease_reclaim",
+            lease = candidate,
+            editor = newEditor,
+            note = "fromEditor=${oldEditor.getFile().path}, previousSession=$previousSessionId"
+        )
+        return candidate
     }
 
     private fun createLeaseLocked(): BrowserLease {
@@ -569,18 +630,29 @@ internal class MarkFlowBrowserLeasePool {
         if (!lease.webViewLoaded) return
 
         editor.applyPendingStateIfPossible()
-        executeSetActiveFlag(lease, lease.isEditorActive)
+        executeSetActiveFlag(lease, lease.isEditorActive, lease.sessionId)
         if (pushSettings) {
             applyRuntimeSettingsToLease(lease, forceReload = false)
         }
     }
 
-    private fun executeSetActiveFlag(lease: BrowserLease, active: Boolean) {
+    private fun executeSetActiveFlag(lease: BrowserLease, active: Boolean, expectedSessionId: String) {
+        if (!isLeaseSessionCurrent(lease, expectedSessionId)) return
         lease.isEditorActive = active
         if (!lease.webViewLoaded) return
         val value = if (active) "true" else "false"
+        val sessionLiteral = gson.toJson(expectedSessionId)
         lease.browser.cefBrowser.executeJavaScript(
-            "if (window.setMarkFlowEditorActive) { window.setMarkFlowEditorActive($value); }",
+            """
+                (function(expectedSessionId, activeValue) {
+                    if (window.__markflowSessionId !== expectedSessionId) {
+                        return;
+                    }
+                    if (window.setMarkFlowEditorActive) {
+                        window.setMarkFlowEditorActive(activeValue);
+                    }
+                })($sessionLiteral, $value);
+            """.trimIndent(),
             lease.browser.cefBrowser.url,
             0
         )
@@ -613,8 +685,12 @@ internal class MarkFlowBrowserLeasePool {
 
         val pushId = settingsPushSequence.incrementAndGet()
         val runtimeSettingsJson = buildRuntimeSettingsJson()
+        val sessionLiteral = gson.toJson(lease.sessionId)
         val script = """
             (function syncRuntimeSettingsPush(seq, payload) {
+                if (window.__markflowSessionId !== $sessionLiteral) {
+                    return;
+                }
                 window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
                 (function syncRuntimeSettings(attempt) {
                     if ((window.__markflowRuntimeSettingsSeq || 0) !== seq) {
@@ -699,6 +775,10 @@ internal class MarkFlowBrowserLeasePool {
 
                 idleLeases.filter { lease ->
                     lease.id !in keepIds && now - lease.lastUsedAtMs >= currentIdleEvictAfterMs()
+                }.onEach { lease ->
+                    leaseById.remove(lease.id)
+                    idleLeaseIds.remove(lease.id)
+                    lease.attachedEditor?.let { editorToLeaseId.remove(it) }
                 }
             }
         }
@@ -726,6 +806,35 @@ internal class MarkFlowBrowserLeasePool {
         lease.attachedEditor?.let { editor ->
             MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
         }
+    }
+
+    private fun isLeaseSessionCurrent(lease: BrowserLease, expectedSessionId: String): Boolean {
+        synchronized(lifecycleLock) {
+            return lease.sessionId == expectedSessionId
+        }
+    }
+
+    private fun clearLeaseAttachmentIfCurrent(lease: BrowserLease, expectedSessionId: String, editor: MarkFlowEditor) {
+        synchronized(lifecycleLock) {
+            if (lease.sessionId != expectedSessionId || lease.attachedEditor !== editor) {
+                return
+            }
+            lease.attachedEditor = null
+            lease.attachedHost = null
+            lease.lastUsedAtMs = System.currentTimeMillis()
+        }
+    }
+
+    private fun wrapWithSessionGuard(expectedSessionId: String, script: String): String {
+        val sessionLiteral = gson.toJson(expectedSessionId)
+        return """
+            (function(expectedSessionId) {
+                if (window.__markflowSessionId !== expectedSessionId) {
+                    return;
+                }
+                $script
+            })($sessionLiteral);
+        """.trimIndent()
     }
 
     private fun ignoredResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Ignored")
@@ -774,6 +883,18 @@ internal class MarkFlowBrowserLeasePool {
             var isEditorActive: Boolean = false,
             var sessionId: String = "",
             var lastUsedAtMs: Long
+        )
+
+        private data class LeaseAttachmentSnapshot(
+            val lease: BrowserLease,
+            val previousHost: JPanel?,
+            val sessionId: String
+        )
+
+        private data class DetachSnapshot(
+            val lease: BrowserLease,
+            val sessionId: String,
+            val host: JPanel?
         )
     }
 }

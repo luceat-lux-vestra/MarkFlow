@@ -40,8 +40,8 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         browserLeasePool.unregisterEditor(editor)
     }
 
-    fun attach(editor: MarkFlowEditor, host: JPanel) {
-        browserLeasePool.attach(editor, host)
+    fun attach(editor: MarkFlowEditor, host: JPanel): Boolean {
+        return browserLeasePool.attach(editor, host)
     }
 
     fun detach(editor: MarkFlowEditor, host: JPanel?) {
@@ -62,6 +62,10 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
 
     fun setEditorActive(editor: MarkFlowEditor, active: Boolean) {
         browserLeasePool.setEditorActive(editor, active)
+    }
+
+    fun hasLease(editor: MarkFlowEditor): Boolean {
+        return browserLeasePool.hasLease(editor)
     }
 
     fun getCurrentMarkdown(editor: MarkFlowEditor): String? {

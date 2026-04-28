@@ -26,6 +26,8 @@ export class MarkFlowEditorSession {
     private pendingCrepeRecreate = false;
     private previewResumeRetryToken = 0;
     private crepeSessionSequence = 0;
+    private hasBootCompleted = false;
+    private hasShownBootError = false;
 
     constructor() {
         this.bridge = createEditorBridge({
@@ -61,7 +63,20 @@ export class MarkFlowEditorSession {
                 logEditorViewContextError("window:error", event.error ?? detail, this.emitToIntelliJLog);
                 return;
             }
-            showBootError("window:error", detail, this.emitToIntelliJLog);
+            if (this.hasBootCompleted) {
+                this.emitToIntelliJLog(
+                    `MARKFLOW_UI window:error postBoot detail=${detail} file=${event.filename ?? "<unknown>"} line=${event.lineno ?? -1} col=${event.colno ?? -1}`
+                );
+                return;
+            }
+            if (detail === "Script error." && !event.error) {
+                this.emitToIntelliJLog("MARKFLOW_UI window:error ignoredGenericScriptError during boot");
+                return;
+            }
+            if (!this.hasShownBootError) {
+                this.hasShownBootError = true;
+                showBootError("window:error", detail, this.emitToIntelliJLog);
+            }
         });
 
         window.addEventListener("unhandledrejection", (event) => {
@@ -71,7 +86,14 @@ export class MarkFlowEditorSession {
                 logEditorViewContextError("window:unhandledrejection", event.reason ?? reason, this.emitToIntelliJLog);
                 return;
             }
-            showBootError("window:unhandledrejection", reason, this.emitToIntelliJLog);
+            if (this.hasBootCompleted) {
+                this.emitToIntelliJLog(`MARKFLOW_UI window:unhandledrejection postBoot reason=${reason}`);
+                return;
+            }
+            if (!this.hasShownBootError) {
+                this.hasShownBootError = true;
+                showBootError("window:unhandledrejection", reason, this.emitToIntelliJLog);
+            }
         });
 
         window.addEventListener("visibilitychange", () => {
@@ -107,6 +129,7 @@ export class MarkFlowEditorSession {
             }
         }, BOOT_READY_TIMEOUT_MS);
 
+        this.hasBootCompleted = true;
         markFlowStage("init:done", this.emitToIntelliJLog);
     };
 
