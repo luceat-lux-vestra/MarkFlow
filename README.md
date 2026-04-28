@@ -27,10 +27,9 @@ You can configure these in `Settings > Tools > MarkFlow`.
 
 ## Operational tips
 
-- If you often use split editors or open many Markdown files at once, increase **Browser pool size** slightly so a spare JCEF instance is available without waiting for a full recreate.
 - If MarkFlow feels too heavy when many tabs sit idle, reduce **Idle browser eviction delay (ms)** so unused pooled browsers are cleaned up sooner.
-- For the smoothest split-editor switching, keep the pool size at least as large as the number of concurrently visible Markdown panes you use most often.
-- The first Markdown tab still pre-warms one browser on startup, so a pool size of `1` is the lightest configuration and works well for single-editor workflows.
+- Split editors now allocate browsers on demand, so the first open on a new pane may incur a one-time JCEF startup cost.
+- The first Markdown tab still pre-warms one browser on startup, which keeps the single-editor workflow responsive.
 
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, wysiwyg )

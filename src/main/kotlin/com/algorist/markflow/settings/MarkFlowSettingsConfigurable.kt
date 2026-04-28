@@ -33,7 +33,6 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var katexDensityCombo: ComboBox<KatexDisplayDensity>
     private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
     private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
-    private lateinit var maxPoolSizeSpinner: JSpinner
     private lateinit var idleEvictAfterMsSpinner: JSpinner
 
     override fun getDisplayName(): String = MyBundle.message("settings.markflow.displayName")
@@ -50,9 +49,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         katexDensityCombo = enumCombo(KatexDisplayDensity.entries.toTypedArray())
         diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())
         previewOnlyByDefaultCheckBox = JCheckBox()
-        maxPoolSizeSpinner = JSpinner(
-            SpinnerNumberModel(DEFAULT_MAX_POOL_SIZE, MAX_POOL_SIZE_MIN, MAX_POOL_SIZE_MAX, MAX_POOL_SIZE_STEP)
-        )
         idleEvictAfterMsSpinner = JSpinner(
             SpinnerNumberModel(DEFAULT_IDLE_EVICT_AFTER_MS, IDLE_EVICT_MIN, IDLE_EVICT_MAX, IDLE_EVICT_STEP)
         )
@@ -80,13 +76,6 @@ class MarkFlowSettingsConfigurable : Configurable {
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.advanced"))
         row = addRow(root, row, MyBundle.message("settings.markflow.diagram.securityLevel"), diagramSecurityCombo)
-        row = addRow(
-            root,
-            row,
-            MyBundle.message("settings.markflow.browserPoolSize"),
-            maxPoolSizeSpinner,
-            MyBundle.message("settings.markflow.browserPoolSize.tooltip")
-        )
         row = addRow(
             root,
             row,
@@ -118,7 +107,6 @@ class MarkFlowSettingsConfigurable : Configurable {
             || state.katexDisplayDensity != selectedName(katexDensityCombo)
             || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
             || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected
-            || state.maxPoolSize != spinnerInt(maxPoolSizeSpinner)
             || state.idleEvictAfterMs != spinnerInt(idleEvictAfterMsSpinner)
     }
 
@@ -131,13 +119,12 @@ class MarkFlowSettingsConfigurable : Configurable {
             katexDisplayDensity = selectedName(katexDensityCombo),
             diagramSecurityLevel = selectedName(diagramSecurityCombo),
             previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,
-            maxPoolSize = spinnerInt(maxPoolSizeSpinner),
             idleEvictAfterMs = spinnerInt(idleEvictAfterMsSpinner)
         )
         LOG.warn(
             "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
                 "security=${updated.diagramSecurityLevel}, " +
-                "maxPoolSize=${updated.maxPoolSize}, idleEvictAfterMs=${updated.idleEvictAfterMs}"
+                "idleEvictAfterMs=${updated.idleEvictAfterMs}"
         )
         MarkFlowSettingsService.getInstance().updateFromUi(updated)
     }
@@ -151,7 +138,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault
-        maxPoolSizeSpinner.value = state.maxPoolSize.coerceIn(MAX_POOL_SIZE_MIN, MAX_POOL_SIZE_MAX)
         idleEvictAfterMsSpinner.value = state.idleEvictAfterMs.coerceIn(IDLE_EVICT_MIN, IDLE_EVICT_MAX)
     }
 
@@ -250,11 +236,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         private const val ZOOM_MIN = 50
         private const val ZOOM_MAX = 200
         private const val ZOOM_STEP = 10
-
-        private const val DEFAULT_MAX_POOL_SIZE = MarkFlowSettingsService.DEFAULT_MAX_POOL_SIZE
-        private const val MAX_POOL_SIZE_MIN = 1
-        private const val MAX_POOL_SIZE_MAX = 16
-        private const val MAX_POOL_SIZE_STEP = 1
 
         private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS
         private const val IDLE_EVICT_MIN = 10_000

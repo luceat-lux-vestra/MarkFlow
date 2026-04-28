@@ -35,7 +35,6 @@ data class MarkFlowSettingsState(
     var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
     var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
     var previewOnlyByDefault: Boolean = true,
-    var maxPoolSize: Int = 4,
     var idleEvictAfterMs: Int = 120_000
 )
 

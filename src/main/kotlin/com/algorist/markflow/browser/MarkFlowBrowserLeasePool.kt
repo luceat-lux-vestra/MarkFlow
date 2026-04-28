@@ -90,18 +90,14 @@ internal class MarkFlowBrowserLeasePool {
         val attachmentSnapshot = synchronized(lifecycleLock) {
             val existing = editorToLeaseId[editor]?.let { leaseById[it] }
             val lease = existing ?: acquireLeaseLocked(editor)
-            lease?.let {
+            lease.let {
                 val previousHost = it.attachedHost
                 it.attachedEditor = editor
                 it.attachedHost = host
-                it.hiddenSinceAtMs = 0L
                 it.sessionId = nextSessionId(it.id)
                 it.lastUsedAtMs = System.currentTimeMillis()
                 LeaseAttachmentSnapshot(it, previousHost, it.sessionId)
             }
-        } ?: run {
-            LOG.warn("MARKFLOW_UI attach skipped: lease pool reached max size for ${editor.getFile().path}")
-            return false
         }
         val lease = attachmentSnapshot.lease
         val sessionId = attachmentSnapshot.sessionId
@@ -174,20 +170,6 @@ internal class MarkFlowBrowserLeasePool {
 
         if (isLeaseSessionCurrent(lease, sessionId)) {
             MarkFlowRecoveryCoordinator.clearRecoveryLease(editor, lease.id)
-        }
-    }
-
-    fun updateEditorVisibility(editor: MarkFlowEditor, isShowing: Boolean) {
-        if (disposed) return
-        synchronized(lifecycleLock) {
-            val leaseId = editorToLeaseId[editor] ?: return
-            val lease = leaseById[leaseId] ?: return
-            if (lease.attachedEditor !== editor) return
-            if (isShowing) {
-                lease.hiddenSinceAtMs = 0L
-            } else if (lease.hiddenSinceAtMs == 0L) {
-                lease.hiddenSinceAtMs = System.currentTimeMillis()
-            }
         }
     }
 
@@ -324,24 +306,13 @@ internal class MarkFlowBrowserLeasePool {
         return leaseForEditor(editor) != null
     }
 
-    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease? {
+    private fun acquireLeaseLocked(editor: MarkFlowEditor): BrowserLease {
         val idleId = idleLeaseIds.firstOrNull()
-        val lease = when {
-            idleId != null -> {
-                idleLeaseIds.remove(idleId)
-                leaseById[idleId] ?: createLeaseLocked()
-            }
-
-            leaseById.size >= currentMaxPoolSize() -> {
-                reclaimLeaseLocked(editor)
-            }
-
-            else -> {
-                createLeaseLocked()
-            }
-        }
-        if (lease == null) {
-            return null
+        val lease = if (idleId != null) {
+            idleLeaseIds.remove(idleId)
+            leaseById[idleId] ?: createLeaseLocked()
+        } else {
+            createLeaseLocked()
         }
         editorToLeaseId[editor] = lease.id
         logLeaseEvent(
@@ -350,49 +321,6 @@ internal class MarkFlowBrowserLeasePool {
             editor = editor
         )
         return lease
-    }
-
-    private fun reclaimLeaseLocked(newEditor: MarkFlowEditor): BrowserLease? {
-        val now = System.currentTimeMillis()
-        val candidateState = selectLeaseToReclaim(
-            leaseById.values.mapNotNull { lease ->
-                if (lease.attachedEditor == null) return@mapNotNull null
-                MarkFlowLeaseReclaimCandidate(
-                    leaseId = lease.id,
-                    isActive = lease.isEditorActive,
-                    isShowing = lease.attachedHost?.isShowing == true,
-                    hiddenSinceAtMs = lease.hiddenSinceAtMs,
-                    lastUsedAtMs = lease.lastUsedAtMs
-                )
-            },
-            nowMs = now,
-            hiddenGraceMs = HIDDEN_RECLAIM_GRACE_MS
-        )
-            ?: run {
-                LOG.warn(
-                    "MARKFLOW_UI attach skipped: no stable hidden inactive lease available to reclaim for ${newEditor.getFile().path}"
-                )
-                return null
-            }
-
-        val candidate = leaseById[candidateState.leaseId] ?: return null
-        val oldEditor = candidate.attachedEditor ?: return null
-        val previousSessionId = candidate.sessionId
-        editorToLeaseId.remove(oldEditor)
-        oldEditor.onSharedBrowserDetachedByPool()
-        candidate.attachedEditor = newEditor
-        candidate.isEditorActive = false
-        candidate.hiddenSinceAtMs = 0L
-        candidate.sessionId = nextSessionId(candidate.id)
-        candidate.lastUsedAtMs = System.currentTimeMillis()
-        editorToLeaseId[newEditor] = candidate.id
-        logLeaseEvent(
-            event = "lease_reclaim",
-            lease = candidate,
-            editor = newEditor,
-            note = "fromEditor=${oldEditor.getFile().path}, previousSession=$previousSessionId, hiddenAge=${now - candidateState.hiddenSinceAtMs}"
-        )
-        return candidate
     }
 
     private fun createLeaseLocked(): BrowserLease {
@@ -774,10 +702,6 @@ internal class MarkFlowBrowserLeasePool {
         return "pool[total=${totals.first} idle=${totals.second} attached=${totals.third} editorsOpen=$openEditorCount]"
     }
 
-    private fun currentMaxPoolSize(): Int {
-        return MarkFlowSettingsService.getInstance().state.maxPoolSize.coerceAtLeast(1)
-    }
-
     private fun currentIdleEvictAfterMs(): Long {
         return MarkFlowSettingsService.getInstance().state.idleEvictAfterMs.coerceAtLeast(1).toLong()
     }
@@ -890,9 +814,8 @@ internal class MarkFlowBrowserLeasePool {
         private val settingsPushSequence = AtomicInteger(0)
 
         private const val BRIDGE_ERROR_STATUS = 500
-        private const val MIN_IDLE_LEASE_COUNT = 1
+        private const val MIN_IDLE_LEASE_COUNT = 0
         private const val EVICTION_PERIOD_MS = 30_000L
-        private const val HIDDEN_RECLAIM_GRACE_MS = 250L
 
         private data class BrowserLease(
             val id: Int,
@@ -906,7 +829,6 @@ internal class MarkFlowBrowserLeasePool {
             var pendingRuntimeSettingsForceReload: Boolean = false,
             var intelliJToWebPushSequence: Int = 0,
             var isEditorActive: Boolean = false,
-            var hiddenSinceAtMs: Long = 0L,
             var sessionId: String = "",
             var lastUsedAtMs: Long
         )

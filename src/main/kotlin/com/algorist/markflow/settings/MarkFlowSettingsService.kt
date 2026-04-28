@@ -94,7 +94,6 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.katexDisplayDensity = normalizeEnum(target.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
-        target.maxPoolSize = target.maxPoolSize.coerceIn(MIN_POOL_SIZE, MAX_POOL_SIZE_LIMIT)
         target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
     }
 
@@ -106,11 +105,8 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         private val LOG = Logger.getInstance(MarkFlowSettingsService::class.java)
         private val settingsRevision = AtomicInteger(1)
 
-        const val DEFAULT_MAX_POOL_SIZE = 4
         const val DEFAULT_IDLE_EVICT_AFTER_MS = 120_000
 
-        private const val MIN_POOL_SIZE = 1
-        private const val MAX_POOL_SIZE_LIMIT = 16
         private const val MIN_IDLE_EVICT_AFTER_MS = 10_000
         private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000
 
