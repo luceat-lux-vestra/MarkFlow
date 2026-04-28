@@ -16,4 +16,4 @@
 - Configurable MarkFlow settings panel (theme source and preview defaults).
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
-- Shared JCEF browser pool with split-editor reuse and configurable idle eviction timeout.
+- Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
