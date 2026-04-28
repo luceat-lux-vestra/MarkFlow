@@ -292,7 +292,7 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
                 LOG.warn("MARKFLOW_SAVE getCurrentMarkdown: timeout for ${editor.file.path}")
                 return null
             }
-            val markdown = result?.takeIf { it.isNotEmpty() && it != "undefined" && it != "null" }
+            val markdown = result?.takeIf { it != "undefined" && it != "null" }
             return markdown
         } catch (e: Exception) {
             LOG.error("MARKFLOW_SAVE getCurrentMarkdown: failed for ${editor.file.path}: ${e.message}", e)
@@ -474,13 +474,19 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
             }
 
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                LOG.warn("MARKFLOW_SAVE onLoadEnd: lease=${lease.id} frame=${frame?.isMain} url=${cefBrowser?.url}")
+                val onLoadEndMessage =
+                    "MARKFLOW_SAVE onLoadEnd: lease=${lease.id} frame=${frame?.isMain} status=$httpStatusCode url=${cefBrowser?.url}"
+                if (httpStatusCode == 200) {
+                    LOG.debug(onLoadEndMessage)
+                } else {
+                    LOG.warn(onLoadEndMessage)
+                }
                 if (frame != null && !frame.isMain) {
                     LOG.warn("MARKFLOW_SAVE onLoadEnd: SKIPPED subframe, lease=${lease.id}")
                     return
                 }
                 lease.webViewLoaded = true
-                LOG.warn("MARKFLOW_SAVE onLoadEnd: calling injectBridgeAndBootstrap, lease=${lease.id}")
+                LOG.debug("MARKFLOW_SAVE onLoadEnd: calling injectBridgeAndBootstrap, lease=${lease.id}")
                 injectBridgeAndBootstrap(lease)
                 lease.attachedEditor?.onActivatedInSharedBrowser()
                 applyPendingRuntimeSettings(lease)

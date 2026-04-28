@@ -1082,9 +1082,8 @@ function sanitizeUiState(uiState: EditorUiState): EditorUiState {
 
 // Send JSON payloads to Kotlin via the JCEF bridge.
 function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
-    console.info(`MARKFLOW_UI SAVE:ENTRY cefQuery=${typeof window.cefQuery} len=${markdownText.length}`);
     if (!window.cefQuery) {
-        console.info("MARKFLOW_UI SAVE:BLOCKED cefQuery missing");
+        console.warn("MARKFLOW_UI SAVE:BLOCKED cefQuery missing");
         emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:BLOCKED cefQuery missing");
         return;
     }
@@ -1103,21 +1102,17 @@ function sendToIntelliJ(markdownText: string, uiState: EditorUiState) {
     });
 
     if (!request || request === "undefined") {
-        console.info("MARKFLOW_UI SAVE:BLOCKED request invalid");
+        console.warn("MARKFLOW_UI SAVE:BLOCKED request invalid");
         emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:BLOCKED request invalid");
         return;
     }
 
-    console.info(`MARKFLOW_UI SAVE:CEF_QUERY sessionId=${sessionId} contentLen=${markdownText.length}`);
-    emitToIntelliJLog(`MARKFLOW_SAVE sendToIntelliJ:CEF_QUERY sessionId=${sessionId} contentLen=${markdownText.length}`);
     window.cefQuery({
         request,
         onSuccess: () => {
-            console.info("MARKFLOW_UI SAVE:ACK received");
-            emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:ACK received");
         },
         onFailure: (_errCode, errMsg) => {
-            console.info(`MARKFLOW_UI SAVE:FAIL ${errMsg}`);
+            console.warn(`MARKFLOW_UI SAVE:FAIL ${errMsg}`);
             emitToIntelliJLog(`MARKFLOW_SAVE sendToIntelliJ:FAIL ${errMsg}`);
         }
     });
@@ -1270,18 +1265,12 @@ function attachCrepeBridge(crepe: Crepe) {
     crepe.on((listener) => {
         listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
             if (!isCrepeReady || activeCrepe !== crepe) {
-                console.info(`MARKFLOW_UI SAVE:BLOCKED listener isCrepeReady=${isCrepeReady} activeCrepeMatch=${activeCrepe === crepe}`);
-                emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:BLOCKED isCrepeReady=${isCrepeReady} activeCrepeMatch=${activeCrepe === crepe}`);
                 return;
             }
             if (isUpdatingFromIntelliJ) {
-                console.info(`MARKFLOW_UI SAVE:BLOCKED isUpdatingFromIntelliJ=true`);
-                emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:BLOCKED isUpdatingFromIntelliJ=true`);
                 return;
             }
             if (markdown !== prevMarkdown) {
-                console.info(`MARKFLOW_UI SAVE:FIRING len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:SEND len=${markdown.length} prevLen=${prevMarkdown.length}`);
                 sendToIntelliJ(markdown, captureEditorUiState(crepe));
             }
         });

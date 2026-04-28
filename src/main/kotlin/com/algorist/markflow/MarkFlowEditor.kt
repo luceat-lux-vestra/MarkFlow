@@ -5,8 +5,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
-import com.intellij.openapi.editor.event.DocumentEvent
-import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
@@ -35,17 +33,13 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
+    private var lastKnownMarkdown: String? = null
+    @Volatile
     private var disposed = false
 
     init {
         LOG.info("MARKFLOW_UI editor init: ${file.path}")
         sharedBrowserService.registerEditor(this)
-
-        document?.addDocumentListener(object : DocumentListener {
-            override fun documentChanged(event: DocumentEvent) {
-                if (isUpdatingFromWeb.get() || disposed) return
-            }
-        }, this)
 
         hostPanel.addHierarchyListener { event ->
             if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() == 0L) {
@@ -77,6 +71,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         selectionEnd: Int
     ) {
         LOG.info("MARKFLOW_SAVE applyWebUpdate: file=${file.path} contentLength=${content.length}")
+        lastKnownMarkdown = content
         lastKnownScrollTop = scrollTop
         lastKnownCursorOffset = cursorOffset
         lastKnownSelectionStart = selectionStart
@@ -123,7 +118,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     private fun flushPendingWebContent() {
         LOG.info("MARKFLOW_SAVE flushPendingWebContent: called for ${file.path}")
-        val markdown = sharedBrowserService.getCurrentMarkdown(this) ?: return
+        val markdown = lastKnownMarkdown ?: run {
+            LOG.debug("MARKFLOW_SAVE flushPendingWebContent: no cached markdown, skipping flush for ${file.path}")
+            return
+        }
         saveContentToDocumentAndFile(markdown)
     }
 
@@ -179,13 +177,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     override fun getFile(): VirtualFile = file
 
     override fun isModified(): Boolean {
-        val docText = document?.text ?: return false
-        val fileText = try {
-            String(file.contentsToByteArray(), file.charset)
-        } catch (ex: Exception) {
-            return false
-        }
-        return docText != fileText
+        val currentDocument = document ?: return false
+        return FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)
     }
 
     override fun isValid(): Boolean = !disposed
