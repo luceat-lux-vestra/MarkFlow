@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.settings
 
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
@@ -14,6 +14,13 @@ import javax.swing.JPanel
 import javax.swing.JSeparator
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
+import com.algorist.markflow.MyBundle
+import com.algorist.markflow.settings.state.DiagramSecurityLevel
+import com.algorist.markflow.settings.state.KatexDisplayDensity
+import com.algorist.markflow.settings.state.MarkFlowSettingsState
+import com.algorist.markflow.settings.state.MermaidErrorDisplay
+import com.algorist.markflow.settings.state.MermaidSizeMode
+import com.algorist.markflow.settings.state.ThemeSource
 
 class MarkFlowSettingsConfigurable : Configurable {
 

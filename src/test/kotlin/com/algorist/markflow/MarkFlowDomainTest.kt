@@ -3,6 +3,8 @@ package com.algorist.markflow
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jdom.Element
+import com.algorist.markflow.editor.state.MarkFlowEditorState
+import com.algorist.markflow.file.MarkFlowFileSupport
 
 class MarkFlowDomainTest : BasePlatformTestCase() {
 

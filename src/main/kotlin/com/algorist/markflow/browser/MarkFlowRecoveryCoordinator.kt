@@ -1,6 +1,6 @@
 package com.algorist.markflow.browser
 
-import com.algorist.markflow.MarkFlowEditor
+import com.algorist.markflow.editor.MarkFlowEditor
 import com.intellij.openapi.diagnostic.Logger
 
 internal object MarkFlowRecoveryCoordinator {

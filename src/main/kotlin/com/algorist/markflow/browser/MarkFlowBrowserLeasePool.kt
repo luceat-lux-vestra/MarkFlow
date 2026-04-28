@@ -3,8 +3,8 @@ package com.algorist.markflow.browser
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.algorist.markflow.MarkFlowEditor
-import com.algorist.markflow.MarkFlowSettingsService
+import com.algorist.markflow.editor.MarkFlowEditor
+import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.jcef.JBCefBrowser

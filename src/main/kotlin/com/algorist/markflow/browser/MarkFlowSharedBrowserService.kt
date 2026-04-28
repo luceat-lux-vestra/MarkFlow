@@ -1,7 +1,6 @@
-package com.algorist.markflow
+package com.algorist.markflow.browser
 
-import com.algorist.markflow.browser.MarkFlowBrowserLeasePool
-import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
+import com.algorist.markflow.editor.MarkFlowEditor
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service

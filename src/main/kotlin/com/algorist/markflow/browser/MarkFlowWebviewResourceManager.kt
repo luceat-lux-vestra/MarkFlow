@@ -1,6 +1,5 @@
 package com.algorist.markflow.browser
 
-import com.algorist.markflow.MarkFlowSharedBrowserService
 import com.intellij.openapi.diagnostic.Logger
 import com.sun.net.httpserver.HttpServer
 import java.io.IOException

@@ -1,4 +1,4 @@
-package com.algorist.markflow
+package com.algorist.markflow.editor
 
 import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.application.ApplicationManager
@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import java.awt.BorderLayout
+import com.algorist.markflow.browser.MarkFlowSharedBrowserService
+import com.algorist.markflow.editor.state.MarkFlowEditorState
 
 class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
 
