@@ -195,43 +195,53 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             return
         }
 
-        val currentText = currentDocument.text
-        if (currentText == newContent) {
+        // Fast pre-check to avoid EDT dispatch when content is already up-to-date.
+        // The definitive check is repeated inside the write action to handle concurrent mutations.
+        if (currentDocument.text == newContent) {
             if (MarkFlowDiagnostics.enabled) {
                 LOG.debug("MARKFLOW_SAVE applyContentToDocument: no-op (text unchanged)")
             }
             return
         }
 
-        val edit = DocumentContentDiff.compute(currentText, newContent)
-        if (edit == null) {
-            if (MarkFlowDiagnostics.enabled) {
-                LOG.debug("MARKFLOW_SAVE applyContentToDocument: diff resolved to no-op, file=${file.path}")
-            }
-            return
-        }
-
         val app = ApplicationManager.getApplication()
+        var applied = false
         val applyAction = {
             isUpdatingFromWeb.set(true)
             try {
                 CommandProcessor.getInstance().runUndoTransparentAction {
                     app.runWriteAction {
+                        // Re-read the document text and re-compute the diff inside the write
+                        // action so that replacement offsets are always based on the current
+                        // document state. This eliminates the race where a background-thread
+                        // caller computes offsets against a stale snapshot and then applies
+                        // them to a document that has since changed.
+                        val currentText = currentDocument.text
+                        if (currentText == newContent) {
+                            return@runWriteAction
+                        }
+                        val edit = DocumentContentDiff.compute(currentText, newContent)
+                            ?: return@runWriteAction
                         if (edit.startOffset == 0 && edit.endOffset == currentText.length) {
                             currentDocument.setText(edit.replacement)
                         } else {
                             currentDocument.replaceString(edit.startOffset, edit.endOffset, edit.replacement)
                         }
+                        applied = true
                     }
                 }
-                if (MarkFlowDiagnostics.enabled) {
-                    LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
-                }
-                if (persistImmediately) {
-                    cancelPendingDocumentSave()
-                    persistDocument(currentDocument)
-                } else {
-                    scheduleDocumentSave(currentDocument)
+                if (applied) {
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
+                    }
+                    if (persistImmediately) {
+                        cancelPendingDocumentSave()
+                        persistDocument(currentDocument)
+                    } else {
+                        scheduleDocumentSave(currentDocument)
+                    }
+                } else if (MarkFlowDiagnostics.enabled) {
+                    LOG.debug("MARKFLOW_SAVE applyContentToDocument: diff resolved to no-op, file=${file.path}")
                 }
             } catch (e: Exception) {
                 LOG.error("MARKFLOW_SAVE applyContentToDocument: failed, file=${file.path}: ${e.message}", e)
@@ -361,6 +371,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun deselectNotify() {
         if (disposed) return
+        // Trigger an immediate flush of any debounced content in the webview before
+        // persisting, so the cefQuery has a chance to arrive before flushPendingWebContent().
+        sharedBrowserService.executeForEditor(this, "window.markflowFlushNow?.()")
         // Synchronously flush and save current webview content BEFORE IntelliJ calls detach()
         // This ensures content is saved even when the async cefQuery would be dropped by detach()
         flushPendingWebContent()
@@ -369,6 +382,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun dispose() {
         if (disposed) return
+        // Trigger an immediate flush of any debounced content in the webview before cleanup,
+        // so the cefQuery has a chance to arrive before flushPendingWebContent().
+        sharedBrowserService.executeForEditor(this, "window.markflowFlushNow?.()")
         // Synchronously flush and save current webview content before cleanup
         flushPendingWebContent()
         disposed = true

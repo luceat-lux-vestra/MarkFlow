@@ -45,7 +45,8 @@ export class MarkFlowEditorSession {
             onEditorActive: this.handleEditorActive,
             onIntelliJMarkdownUpdate: this.handleIntelliJMarkdownUpdate,
             onIntelliJEditorState: this.handleIntelliJEditorState,
-            emitToIntelliJLog: this.emitToIntelliJLog
+            emitToIntelliJLog: this.emitToIntelliJLog,
+            onFlushNow: () => this.flushPendingMarkdownSync()
         });
     }
 

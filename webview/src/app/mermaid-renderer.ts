@@ -201,9 +201,13 @@ export class MarkFlowMermaidRenderer {
             return;
         }
 
-        void this.mermaidModulePromise.then((module) => {
-            this.initializeMermaid(module.default);
-        });
+        void this.mermaidModulePromise
+            .then((module) => {
+                this.initializeMermaid(module.default);
+            })
+            .catch((err: unknown) => {
+                this.emitToIntelliJLog(`MARKFLOW_UI mermaid:settingsApply:importFailed ${String(err)}`);
+            });
     }
 
     private initializeMermaid(mermaid: MermaidModule["default"]) {

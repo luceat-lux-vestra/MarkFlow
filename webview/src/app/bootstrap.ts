@@ -1,3 +1,4 @@
+import "katex/dist/katex.min.css";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
 import "../style.css";

@@ -6,6 +6,7 @@ type EditorBridgeCallbacks = {
     onIntelliJMarkdownUpdate: (markdown: string) => void;
     onIntelliJEditorState: (state: EditorUiState) => void;
     emitToIntelliJLog: (message: string) => void;
+    onFlushNow: () => void;
 };
 
 export type EditorBridge = {
@@ -77,6 +78,10 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
 
         window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {
             callbacks.onIntelliJEditorState(state);
+        };
+
+        window.markflowFlushNow = () => {
+            callbacks.onFlushNow();
         };
     };
 
