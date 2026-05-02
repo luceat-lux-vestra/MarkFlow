@@ -30,7 +30,7 @@ export const deriveMarkdownSourceDefaults = (sourceMarkdown: string): MarkdownSo
 
     for (const line of lines) {
         if (defaults.bullet === DEFAULT_SOURCE_DEFAULTS.bullet) {
-            const bulletMatch = line.match(/^\s{0,3}([*+\-])\s+/);
+            const bulletMatch = line.match(/^\s*([*+\-])\s+/);
             if (bulletMatch) {
                 defaults.bullet = bulletMatch[1] as "-" | "+" | "*";
                 defaults.bulletOther = defaults.bullet === "*" ? "-" : "*";
@@ -38,35 +38,35 @@ export const deriveMarkdownSourceDefaults = (sourceMarkdown: string): MarkdownSo
         }
 
         if (defaults.bulletOrdered === DEFAULT_SOURCE_DEFAULTS.bulletOrdered) {
-            const orderedMatch = line.match(/^\s{0,3}\d+([.)])\s+/);
+            const orderedMatch = line.match(/^\s*\d+([.)])\s+/);
             if (orderedMatch) {
                 defaults.bulletOrdered = orderedMatch[1] as "." | ")";
             }
         }
 
         if (defaults.fence === DEFAULT_SOURCE_DEFAULTS.fence) {
-            const fenceMatch = line.match(/^\s{0,3}([`~]{3,})/);
+            const fenceMatch = line.match(/^\s*([`~]{3,})/);
             if (fenceMatch) {
                 defaults.fence = fenceMatch[1].charAt(0) as "`" | "~";
             }
         }
 
         if (defaults.rule === DEFAULT_SOURCE_DEFAULTS.rule) {
-            const ruleMatch = line.match(/^\s{0,3}([*\-_])(?:\s*\1){2,}\s*$/);
+            const ruleMatch = line.match(/^\s*([*\-_])(?:\s*\1){2,}\s*$/);
             if (ruleMatch) {
                 defaults.rule = ruleMatch[1] as "-" | "*" | "_";
             }
         }
 
         if (!defaults.setext) {
-            const setextMatch = line.match(/^\s{0,3}(=+|-+)\s*$/);
+            const setextMatch = line.match(/^\s*(=+|-+)\s*$/);
             if (setextMatch) {
                 defaults.setext = true;
             }
         }
 
         if (!defaults.closeAtx) {
-            const atxMatch = line.match(/^\s{0,3}(#{1,6})(?:\s+|$)/);
+            const atxMatch = line.match(/^\s*(#{1,6})(?:\s+|$)/);
             if (atxMatch && /\s#+\s*$/.test(line)) {
                 defaults.closeAtx = true;
             }

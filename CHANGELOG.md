@@ -11,7 +11,9 @@
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
 - Automatic takeover of Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) with the MarkFlow editor.
-- Two-way synchronization between IntelliJ document text and the JCEF webview editor.
+- Two-way synchronization between IntelliJ document text and the JCEF webview editor, now gated by a source-revision protocol to reject and recover from stale updates.
+- Source-preserving Markdown stringify: original formatting (bullet style, fence marker, heading style, rule style, etc.) is kept byte-stable for unchanged blocks and recovered from nested/indented structures.
+- Raw-source buffer that patches only modified top-level AST nodes so the surrounding Markdown text is left untouched.
 - Editor UI state persistence and restore (scroll position, cursor, and selection).
 - Mermaid diagram live preview support in Markdown code blocks.
 - KaTeX math rendering support for inline and block formulas.
