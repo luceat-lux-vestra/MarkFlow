@@ -3,7 +3,7 @@ import type {EditorUiState, MarkFlowRuntimeSettings} from "./types";
 import {createEditorBridge, type EditorBridge} from "./bridge";
 import {installMarkdownPasteHandler} from "./clipboard";
 import {applyEditorUiState, captureEditorUiState, focusEditorView, recoverEditorLayout, replaceEditorMarkdown, safeReadMarkdown} from "./editor-state";
-import {emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
+import {emitDiagnosticsLog, emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
 import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
 
@@ -162,7 +162,7 @@ export class MarkFlowEditorSession {
 
         if (!this.isCrepeReady || !this.activeCrepe) {
             this.pendingSettingsRerenderRevision = this.mermaidRenderer.getLastAppliedSettingsRevision();
-            console.debug(`MARKFLOW_UI rerender:queued revision=${this.pendingSettingsRerenderRevision}`);
+            emitDiagnosticsLog(`MARKFLOW_UI rerender:queued revision=${this.pendingSettingsRerenderRevision}`, this.emitToIntelliJLog);
             return;
         }
         this.rerenderPreviewsAfterSettingsChange();
@@ -222,11 +222,14 @@ export class MarkFlowEditorSession {
         crepe.on((listener) => {
             listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
                 if (!this.isCrepeReady || this.activeCrepe !== crepe) {
-                    console.debug(`MARKFLOW_UI SAVE:BLOCKED listener isCrepeReady=${this.isCrepeReady} activeCrepeMatch=${this.activeCrepe === crepe}`);
+                    emitDiagnosticsLog(
+                        `MARKFLOW_UI SAVE:BLOCKED listener isCrepeReady=${this.isCrepeReady} activeCrepeMatch=${this.activeCrepe === crepe}`,
+                        this.emitToIntelliJLog
+                    );
                     return;
                 }
                 if (this.isUpdatingFromIntelliJ) {
-                    console.debug("MARKFLOW_UI SAVE:BLOCKED isUpdatingFromIntelliJ=true");
+                    emitDiagnosticsLog("MARKFLOW_UI SAVE:BLOCKED isUpdatingFromIntelliJ=true", this.emitToIntelliJLog);
                     return;
                 }
                 if (markdown !== prevMarkdown) {
@@ -258,7 +261,10 @@ export class MarkFlowEditorSession {
         recoverEditorLayout(layoutReason, this.isCrepeReady, this.activeCrepe, this.emitToIntelliJLog);
 
         if (this.pendingSettingsRerenderRevision !== null) {
-            console.debug(`MARKFLOW_UI rerender:flushQueued revision=${this.pendingSettingsRerenderRevision}`);
+            emitDiagnosticsLog(
+                `MARKFLOW_UI rerender:flushQueued revision=${this.pendingSettingsRerenderRevision}`,
+                this.emitToIntelliJLog
+            );
             this.pendingSettingsRerenderRevision = null;
             this.rerenderPreviewsAfterSettingsChange();
         }
@@ -401,8 +407,9 @@ export class MarkFlowEditorSession {
     }
 
     private rerenderPreviewsAfterSettingsChange() {
-        console.debug(
-            `MARKFLOW_UI rerender:start ready=${this.isCrepeReady} hasCrepe=${this.activeCrepe !== null} revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`
+        emitDiagnosticsLog(
+            `MARKFLOW_UI rerender:start ready=${this.isCrepeReady} hasCrepe=${this.activeCrepe !== null} revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`,
+            this.emitToIntelliJLog
         );
         if (!this.activeCrepe || !this.isCrepeReady) return;
 
@@ -423,7 +430,10 @@ export class MarkFlowEditorSession {
                 replaceEditorMarkdown(this.activeCrepe, currentMarkdown, this.emitToIntelliJLog, true);
             } finally {
                 this.clearExternalUpdateGuardLater();
-                console.debug(`MARKFLOW_UI rerender:done revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`);
+                emitDiagnosticsLog(
+                    `MARKFLOW_UI rerender:done revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`,
+                    this.emitToIntelliJLog
+                );
             }
         });
     }

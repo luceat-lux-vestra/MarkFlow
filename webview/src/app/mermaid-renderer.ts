@@ -1,6 +1,6 @@
 import {applyRuntimeUiSettings, createMermaidPreviewConfig, logThemeDiagnostics, resolveMermaidTheme, resolveRuntimeSettings} from "./runtime-settings";
 import type {MarkFlowRuntimeSettings} from "./types";
-import {logMermaidTrace} from "./editor-telemetry";
+import {emitDiagnosticsLog, logMermaidTrace} from "./editor-telemetry";
 
 type MermaidPreviewRenderer = (html: string) => void;
 type MermaidModule = typeof import("mermaid");
@@ -92,7 +92,7 @@ export class MarkFlowMermaidRenderer {
             };
         }
 
-        console.debug(`MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${this.runtimeSettings.themeSource}`);
+        emitDiagnosticsLog(`MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${this.runtimeSettings.themeSource}`, this.emitToIntelliJLog);
         this.emitToIntelliJLog(
             `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${this.runtimeSettings.themeSource} security=${this.runtimeSettings.diagramSecurityLevel}`
         );
@@ -487,8 +487,7 @@ export class MarkFlowMermaidRenderer {
             .then(task)
             .catch((error) => {
                 const detail = error instanceof Error ? error.message : String(error);
-                console.debug(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
-                this.emitToIntelliJLog(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
+                emitDiagnosticsLog(`MARKFLOW_UI mermaid:queueFailure ${detail}`, this.emitToIntelliJLog);
             });
 
         this.mermaidRenderQueues.set(applyPreview, nextQueue);

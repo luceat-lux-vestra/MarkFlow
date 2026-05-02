@@ -20,12 +20,15 @@ const isDiagnosticsLoggingEnabled = () => {
     return diagnosticsLoggingEnabled;
 };
 
-export const markFlowStage = (stage: string, emit: (message: string) => void, detail = "") => {
-    const message = detail ? `MARKFLOW_UI ${stage}: ${detail}` : `MARKFLOW_UI ${stage}`;
-    console.debug(message);
+export const emitDiagnosticsLog = (message: string, emit: (message: string) => void) => {
     if (isDiagnosticsLoggingEnabled()) {
         emit(message);
     }
+};
+
+export const markFlowStage = (stage: string, emit: (message: string) => void, detail = "") => {
+    const message = detail ? `MARKFLOW_UI ${stage}: ${detail}` : `MARKFLOW_UI ${stage}`;
+    emitDiagnosticsLog(message, emit);
     const app = document.getElementById("app");
     if (app) {
         app.setAttribute("data-markflow-stage", stage);
@@ -34,10 +37,7 @@ export const markFlowStage = (stage: string, emit: (message: string) => void, de
 
 export const logMermaidTrace = (detail: string, emit: (message: string) => void) => {
     const line = `MARKFLOW_UI mermaid:${detail}`;
-    console.debug(line);
-    if (isDiagnosticsLoggingEnabled()) {
-        emit(line);
-    }
+    emitDiagnosticsLog(line, emit);
 };
 
 export const showBootError = (stage: string, detail: string, emit: (message: string) => void) => {
