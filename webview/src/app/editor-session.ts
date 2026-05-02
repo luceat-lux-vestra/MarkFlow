@@ -7,6 +7,8 @@ import {emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError
 import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
 
+const MARKDOWN_SYNC_DEBOUNCE_MS = 400;
+
 export class MarkFlowEditorSession {
     private readonly emitToIntelliJLog = baseEmitToIntelliJLog;
     private readonly recovery = createRecoveryController(this.emitToIntelliJLog);
@@ -28,6 +30,12 @@ export class MarkFlowEditorSession {
     private crepeSessionSequence = 0;
     private hasBootCompleted = false;
     private hasShownBootError = false;
+    private pendingMarkdownSync: {
+        crepe: Crepe;
+        sessionId: number;
+        markdown: string;
+    } | null = null;
+    private markdownSyncTimerId: number | null = null;
 
     constructor() {
         this.bridge = createEditorBridge({
@@ -114,7 +122,7 @@ export class MarkFlowEditorSession {
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         this.mermaidRenderer.setCrepeReady(false);
         this.activeCrepe = crepe;
-        this.attachCrepeBridge(crepe);
+        this.attachCrepeBridge(crepe, crepeSessionId);
         markFlowStage("crepe:constructed", this.emitToIntelliJLog);
 
         await this.startCrepe(crepe, "create:done");
@@ -168,6 +176,8 @@ export class MarkFlowEditorSession {
                 focusEditorView(this.activeCrepe, this.emitToIntelliJLog);
             }
             this.requestPreviewResumeRefresh("editorActive");
+        } else {
+            this.flushPendingMarkdownSync();
         }
     };
 
@@ -211,8 +221,8 @@ export class MarkFlowEditorSession {
         return safeReadMarkdown(this.activeCrepe, "", "window.getMarkdown", this.emitToIntelliJLog);
     };
 
-    private attachCrepeBridge(crepe: Crepe) {
-        markFlowStage("bridge:attachCrepeBridge:start", this.emitToIntelliJLog, `crepeSession=${this.crepeSessionSequence}`);
+    private attachCrepeBridge(crepe: Crepe, sessionId: number) {
+        markFlowStage("bridge:attachCrepeBridge:start", this.emitToIntelliJLog, `crepeSession=${sessionId}`);
         crepe.on((listener) => {
             listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
                 if (!this.isCrepeReady || this.activeCrepe !== crepe) {
@@ -226,9 +236,7 @@ export class MarkFlowEditorSession {
                     return;
                 }
                 if (markdown !== prevMarkdown) {
-                    console.info(`MARKFLOW_UI SAVE:FIRING len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                    this.emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:SEND len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                    this.bridge.sendToIntelliJ(markdown, captureEditorUiState(crepe, this.emitToIntelliJLog));
+                    this.scheduleMarkdownSync(crepe, sessionId, markdown);
                 }
             });
         });
@@ -316,7 +324,7 @@ export class MarkFlowEditorSession {
             const next = this.createCrepeInstance(markdown, nextSessionId);
             this.mermaidRenderer.setActiveCrepeSessionId(nextSessionId);
             this.activeCrepe = next;
-            this.attachCrepeBridge(next);
+            this.attachCrepeBridge(next, nextSessionId);
 
             markFlowStage("crepe:recreate:start", this.emitToIntelliJLog, reason);
             await this.startCrepe(next, "recreate:done", uiState);
@@ -358,6 +366,46 @@ export class MarkFlowEditorSession {
             markFlowStage("bridge:applyEditorState:flush", this.emitToIntelliJLog, `${pendingState.scrollTop},${pendingState.cursorOffset}`);
             applyEditorUiState(crepe, pendingState, this.emitToIntelliJLog);
         }
+    }
+
+    private scheduleMarkdownSync(crepe: Crepe, sessionId: number, markdown: string) {
+        this.pendingMarkdownSync = {
+            crepe,
+            sessionId,
+            markdown
+        };
+
+        if (this.markdownSyncTimerId !== null) {
+            window.clearTimeout(this.markdownSyncTimerId);
+        }
+
+        this.markdownSyncTimerId = window.setTimeout(() => {
+            this.markdownSyncTimerId = null;
+            this.flushPendingMarkdownSync();
+        }, MARKDOWN_SYNC_DEBOUNCE_MS);
+    }
+
+    private flushPendingMarkdownSync() {
+        if (this.markdownSyncTimerId !== null) {
+            window.clearTimeout(this.markdownSyncTimerId);
+            this.markdownSyncTimerId = null;
+        }
+
+        const pending = this.pendingMarkdownSync;
+        if (!pending) {
+            return;
+        }
+
+        this.pendingMarkdownSync = null;
+
+        if (!this.isCrepeReady || this.activeCrepe !== pending.crepe || this.crepeSessionSequence !== pending.sessionId) {
+            return;
+        }
+
+        this.bridge.sendToIntelliJ(
+            pending.markdown,
+            captureEditorUiState(pending.crepe, this.emitToIntelliJLog)
+        );
     }
 
     private rerenderPreviewsAfterSettingsChange() {
