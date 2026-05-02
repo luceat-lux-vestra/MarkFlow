@@ -33,9 +33,14 @@ You can configure these in `Settings > Tools > MarkFlow`.
 
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, wysiwyg )
-MarkFlow is a lightweight WYSIWYG Markdown editor for IntelliJ-based IDEs.
-It uses a hybrid architecture: Kotlin + IntelliJ Platform on the backend, and TypeScript + Milkdown in a JCEF webview on the frontend.
-It provides two-way IntelliJ/Webview synchronization, editor state restoration, Mermaid and KaTeX preview support, and configurable rendering options for fast IDE-native Markdown workflows.
+
+MarkFlow is a Typora-style WYSIWYG Markdown editor for IntelliJ-based IDEs.
+
+It opens supported Markdown files in a custom IntelliJ editor, keeps the document and JCEF webview synchronized in both
+directions, and restores editor state such as scroll position, caret, and selection when reopening files.
+
+MarkFlow supports Mermaid diagrams, KaTeX math, and Markdown-aware paste handling, with configurable rendering options
+for theme source, Mermaid sizing and zoom, error display, KaTeX density, and preview defaults.
 <!-- Plugin description end -->
 
 [template]: https://github.com/JetBrains/intellij-platform-plugin-template

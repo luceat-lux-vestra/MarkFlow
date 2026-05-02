@@ -3,6 +3,7 @@ package com.algorist.markflow
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jdom.Element
+import com.algorist.markflow.editor.DocumentContentDiff
 import com.algorist.markflow.editor.state.MarkFlowEditorState
 import com.algorist.markflow.file.MarkFlowFileSupport
 
@@ -34,5 +35,27 @@ class MarkFlowDomainTest : BasePlatformTestCase() {
 
     fun testEditorStateReadReturnsNullForEmptyElement() {
         assertNull(MarkFlowEditorState.readFrom(Element("state")))
+    }
+
+    fun testDocumentContentDiffComputesMiddleInsertion() {
+        val edit = DocumentContentDiff.compute("hello world", "hello brave world")
+
+        assertNotNull(edit)
+        assertEquals(6, edit?.startOffset)
+        assertEquals(6, edit?.endOffset)
+        assertEquals("brave ", edit?.replacement)
+    }
+
+    fun testDocumentContentDiffComputesPrefixDeletion() {
+        val edit = DocumentContentDiff.compute("prefix body", "body")
+
+        assertNotNull(edit)
+        assertEquals(0, edit?.startOffset)
+        assertEquals(7, edit?.endOffset)
+        assertEquals("", edit?.replacement)
+    }
+
+    fun testDocumentContentDiffReturnsNullForIdenticalContent() {
+        assertNull(DocumentContentDiff.compute("same", "same"))
     }
 }

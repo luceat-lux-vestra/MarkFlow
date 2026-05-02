@@ -15,6 +15,7 @@ import javax.swing.JSeparator
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
 import com.algorist.markflow.MyBundle
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.settings.state.DiagramSecurityLevel
 import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MarkFlowSettingsState
@@ -121,11 +122,13 @@ class MarkFlowSettingsConfigurable : Configurable {
             previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,
             idleEvictAfterMs = spinnerInt(idleEvictAfterMsSpinner)
         )
-        LOG.warn(
-            "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
-                "security=${updated.diagramSecurityLevel}, " +
-                "idleEvictAfterMs=${updated.idleEvictAfterMs}"
-        )
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn(
+                "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
+                    "security=${updated.diagramSecurityLevel}, " +
+                    "idleEvictAfterMs=${updated.idleEvictAfterMs}"
+            )
+        }
         MarkFlowSettingsService.getInstance().updateFromUi(updated)
     }
 

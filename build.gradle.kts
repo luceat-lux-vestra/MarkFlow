@@ -2,6 +2,7 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.language.jvm.tasks.ProcessResources
+import org.gradle.process.JavaForkOptions
 
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.time.LocalDateTime
@@ -138,6 +139,7 @@ val isCi = providers.environmentVariable("CI").orNull == "true"
 val webviewDir = file("webview")
 val webviewOutputDir = file("build/webview")
 val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+val diagnosticsJvmProperty = "markflow.diagnostics"
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -198,6 +200,9 @@ tasks.named<ProcessResources>("processResources") {
 
 tasks.named("runIde") {
     dependsOn(buildWebview)
+    if (this is JavaForkOptions) {
+        jvmArgs("-D$diagnosticsJvmProperty=true")
+    }
 }
 
 tasks.named("buildPlugin") {
@@ -220,6 +225,7 @@ intellijPlatformTesting {
             task {
                 jvmArgumentProviders += CommandLineArgumentProvider {
                     listOf(
+                        "-D$diagnosticsJvmProperty=true",
                         "-Drobot-server.port=8082",
                         "-Dide.mac.message.dialogs.as.sheets=false",
                         "-Djb.privacy.policy.text=<!--999.999-->",

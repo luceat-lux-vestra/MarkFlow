@@ -1,11 +1,14 @@
-import {Crepe} from "@milkdown/crepe";
+import type {Crepe} from "@milkdown/crepe";
 import type {EditorUiState, MarkFlowRuntimeSettings} from "./types";
 import {createEditorBridge, type EditorBridge} from "./bridge";
 import {installMarkdownPasteHandler} from "./clipboard";
 import {applyEditorUiState, captureEditorUiState, focusEditorView, recoverEditorLayout, replaceEditorMarkdown, safeReadMarkdown} from "./editor-state";
-import {emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
+import {emitDiagnosticsLog, emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
 import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
+
+const MARKDOWN_SYNC_DEBOUNCE_MS = 400;
+type CrepeModule = typeof import("@milkdown/crepe");
 
 export class MarkFlowEditorSession {
     private readonly emitToIntelliJLog = baseEmitToIntelliJLog;
@@ -28,6 +31,13 @@ export class MarkFlowEditorSession {
     private crepeSessionSequence = 0;
     private hasBootCompleted = false;
     private hasShownBootError = false;
+    private crepeModulePromise: Promise<CrepeModule> | null = null;
+    private pendingMarkdownSync: {
+        crepe: Crepe;
+        sessionId: number;
+        markdown: string;
+    } | null = null;
+    private markdownSyncTimerId: number | null = null;
 
     constructor() {
         this.bridge = createEditorBridge({
@@ -35,8 +45,8 @@ export class MarkFlowEditorSession {
             onEditorActive: this.handleEditorActive,
             onIntelliJMarkdownUpdate: this.handleIntelliJMarkdownUpdate,
             onIntelliJEditorState: this.handleIntelliJEditorState,
-            getMarkdown: this.getMarkdown,
-            emitToIntelliJLog: this.emitToIntelliJLog
+            emitToIntelliJLog: this.emitToIntelliJLog,
+            onFlushNow: () => this.flushPendingMarkdownSync()
         });
     }
 
@@ -107,14 +117,14 @@ export class MarkFlowEditorSession {
         // 2) Load initial markdown injected by Kotlin.
         const initialText = window.intelliJ_initialMarkdown ?? "";
         markFlowStage("initialText:ready", this.emitToIntelliJLog, initialText.slice(0, 48));
+        this.mermaidRenderer.setDocumentCharacterCount(initialText.length);
 
         // 3) Create the Crepe editor instance.
         const crepeSessionId = ++this.crepeSessionSequence;
-        const crepe = this.createCrepeInstance(initialText, crepeSessionId);
+        const crepe = await this.createCrepeInstance(initialText, crepeSessionId);
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
-        this.mermaidRenderer.setCrepeReady(false);
         this.activeCrepe = crepe;
-        this.attachCrepeBridge(crepe);
+        this.attachCrepeBridge(crepe, crepeSessionId);
         markFlowStage("crepe:constructed", this.emitToIntelliJLog);
 
         await this.startCrepe(crepe, "create:done");
@@ -153,8 +163,7 @@ export class MarkFlowEditorSession {
 
         if (!this.isCrepeReady || !this.activeCrepe) {
             this.pendingSettingsRerenderRevision = this.mermaidRenderer.getLastAppliedSettingsRevision();
-            console.info(`MARKFLOW_UI rerender:queued revision=${this.pendingSettingsRerenderRevision}`);
-            this.emitToIntelliJLog(`MARKFLOW_UI rerender:queued revision=${this.pendingSettingsRerenderRevision}`);
+            emitDiagnosticsLog(`MARKFLOW_UI rerender:queued revision=${this.pendingSettingsRerenderRevision}`, this.emitToIntelliJLog);
             return;
         }
         this.rerenderPreviewsAfterSettingsChange();
@@ -168,11 +177,14 @@ export class MarkFlowEditorSession {
                 focusEditorView(this.activeCrepe, this.emitToIntelliJLog);
             }
             this.requestPreviewResumeRefresh("editorActive");
+        } else {
+            this.flushPendingMarkdownSync();
         }
     };
 
     private handleIntelliJMarkdownUpdate = (newMarkdown: string) => {
         markFlowStage("bridge:updateFromIntelliJ", this.emitToIntelliJLog, newMarkdown.slice(0, 32));
+        this.mermaidRenderer.setDocumentCharacterCount(newMarkdown.length);
         if (!this.isCrepeReady || !this.activeCrepe) {
             this.pendingMarkdownFromIntelliJ = newMarkdown;
             return;
@@ -206,29 +218,24 @@ export class MarkFlowEditorSession {
         }
     };
 
-    private readonly getMarkdown = () => {
-        if (!this.activeCrepe || !this.isCrepeReady) return "";
-        return safeReadMarkdown(this.activeCrepe, "", "window.getMarkdown", this.emitToIntelliJLog);
-    };
-
-    private attachCrepeBridge(crepe: Crepe) {
-        markFlowStage("bridge:attachCrepeBridge:start", this.emitToIntelliJLog, `crepeSession=${this.crepeSessionSequence}`);
+    private attachCrepeBridge(crepe: Crepe, sessionId: number) {
+        markFlowStage("bridge:attachCrepeBridge:start", this.emitToIntelliJLog, `crepeSession=${sessionId}`);
         crepe.on((listener) => {
             listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
                 if (!this.isCrepeReady || this.activeCrepe !== crepe) {
-                    console.info(`MARKFLOW_UI SAVE:BLOCKED listener isCrepeReady=${this.isCrepeReady} activeCrepeMatch=${this.activeCrepe === crepe}`);
-                    this.emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:BLOCKED isCrepeReady=${this.isCrepeReady} activeCrepeMatch=${this.activeCrepe === crepe}`);
+                    emitDiagnosticsLog(
+                        `MARKFLOW_UI SAVE:BLOCKED listener isCrepeReady=${this.isCrepeReady} activeCrepeMatch=${this.activeCrepe === crepe}`,
+                        this.emitToIntelliJLog
+                    );
                     return;
                 }
                 if (this.isUpdatingFromIntelliJ) {
-                    console.info("MARKFLOW_UI SAVE:BLOCKED isUpdatingFromIntelliJ=true");
-                    this.emitToIntelliJLog("MARKFLOW_SAVE markdownUpdated:BLOCKED isUpdatingFromIntelliJ=true");
+                    emitDiagnosticsLog("MARKFLOW_UI SAVE:BLOCKED isUpdatingFromIntelliJ=true", this.emitToIntelliJLog);
                     return;
                 }
                 if (markdown !== prevMarkdown) {
-                    console.info(`MARKFLOW_UI SAVE:FIRING len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                    this.emitToIntelliJLog(`MARKFLOW_SAVE markdownUpdated:SEND len=${markdown.length} prevLen=${prevMarkdown.length}`);
-                    this.bridge.sendToIntelliJ(markdown, captureEditorUiState(crepe, this.emitToIntelliJLog));
+                    this.mermaidRenderer.setDocumentCharacterCount(markdown.length);
+                    this.scheduleMarkdownSync(crepe, sessionId, markdown);
                 }
             });
         });
@@ -246,7 +253,6 @@ export class MarkFlowEditorSession {
         }
 
         this.isCrepeReady = true;
-        this.mermaidRenderer.setCrepeReady(true);
         markFlowStage("crepe:create:done", this.emitToIntelliJLog);
         this.removeMarkdownPasteHandler = installMarkdownPasteHandler(crepe, this.emitToIntelliJLog);
         if (restoreState) {
@@ -256,8 +262,10 @@ export class MarkFlowEditorSession {
         recoverEditorLayout(layoutReason, this.isCrepeReady, this.activeCrepe, this.emitToIntelliJLog);
 
         if (this.pendingSettingsRerenderRevision !== null) {
-            console.info(`MARKFLOW_UI rerender:flushQueued revision=${this.pendingSettingsRerenderRevision}`);
-            this.emitToIntelliJLog(`MARKFLOW_UI rerender:flushQueued revision=${this.pendingSettingsRerenderRevision}`);
+            emitDiagnosticsLog(
+                `MARKFLOW_UI rerender:flushQueued revision=${this.pendingSettingsRerenderRevision}`,
+                this.emitToIntelliJLog
+            );
             this.pendingSettingsRerenderRevision = null;
             this.rerenderPreviewsAfterSettingsChange();
         }
@@ -310,13 +318,12 @@ export class MarkFlowEditorSession {
             }
 
             this.isCrepeReady = false;
-            this.mermaidRenderer.setCrepeReady(false);
             this.mermaidRenderer.invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
             const nextSessionId = ++this.crepeSessionSequence;
-            const next = this.createCrepeInstance(markdown, nextSessionId);
+            const next = await this.createCrepeInstance(markdown, nextSessionId);
             this.mermaidRenderer.setActiveCrepeSessionId(nextSessionId);
             this.activeCrepe = next;
-            this.attachCrepeBridge(next);
+            this.attachCrepeBridge(next, nextSessionId);
 
             markFlowStage("crepe:recreate:start", this.emitToIntelliJLog, reason);
             await this.startCrepe(next, "recreate:done", uiState);
@@ -360,12 +367,50 @@ export class MarkFlowEditorSession {
         }
     }
 
-    private rerenderPreviewsAfterSettingsChange() {
-        console.info(
-            `MARKFLOW_UI rerender:start ready=${this.isCrepeReady} hasCrepe=${this.activeCrepe !== null} revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`
+    private scheduleMarkdownSync(crepe: Crepe, sessionId: number, markdown: string) {
+        this.pendingMarkdownSync = {
+            crepe,
+            sessionId,
+            markdown
+        };
+
+        if (this.markdownSyncTimerId !== null) {
+            window.clearTimeout(this.markdownSyncTimerId);
+        }
+
+        this.markdownSyncTimerId = window.setTimeout(() => {
+            this.markdownSyncTimerId = null;
+            this.flushPendingMarkdownSync();
+        }, MARKDOWN_SYNC_DEBOUNCE_MS);
+    }
+
+    private flushPendingMarkdownSync() {
+        if (this.markdownSyncTimerId !== null) {
+            window.clearTimeout(this.markdownSyncTimerId);
+            this.markdownSyncTimerId = null;
+        }
+
+        const pending = this.pendingMarkdownSync;
+        if (!pending) {
+            return;
+        }
+
+        this.pendingMarkdownSync = null;
+
+        if (!this.isCrepeReady || this.activeCrepe !== pending.crepe || this.crepeSessionSequence !== pending.sessionId) {
+            return;
+        }
+
+        this.bridge.sendToIntelliJ(
+            pending.markdown,
+            captureEditorUiState(pending.crepe, this.emitToIntelliJLog)
         );
-        this.emitToIntelliJLog(
-            `MARKFLOW_UI rerender:start ready=${this.isCrepeReady} hasCrepe=${this.activeCrepe !== null} revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`
+    }
+
+    private rerenderPreviewsAfterSettingsChange() {
+        emitDiagnosticsLog(
+            `MARKFLOW_UI rerender:start ready=${this.isCrepeReady} hasCrepe=${this.activeCrepe !== null} revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`,
+            this.emitToIntelliJLog
         );
         if (!this.activeCrepe || !this.isCrepeReady) return;
 
@@ -386,8 +431,10 @@ export class MarkFlowEditorSession {
                 replaceEditorMarkdown(this.activeCrepe, currentMarkdown, this.emitToIntelliJLog, true);
             } finally {
                 this.clearExternalUpdateGuardLater();
-                console.info(`MARKFLOW_UI rerender:done revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`);
-                this.emitToIntelliJLog(`MARKFLOW_UI rerender:done revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`);
+                emitDiagnosticsLog(
+                    `MARKFLOW_UI rerender:done revision=${this.mermaidRenderer.getLastAppliedSettingsRevision()}`,
+                    this.emitToIntelliJLog
+                );
             }
         });
     }
@@ -420,7 +467,16 @@ export class MarkFlowEditorSession {
         }, EXTERNAL_UPDATE_GUARD_MS);
     }
 
-    private createCrepeInstance(initialText: string, crepeSessionId: number): Crepe {
+    private async ensureCrepeModule(): Promise<CrepeModule> {
+        if (this.crepeModulePromise === null) {
+            this.crepeModulePromise = import("@milkdown/crepe");
+        }
+
+        return this.crepeModulePromise;
+    }
+
+    private async createCrepeInstance(initialText: string, crepeSessionId: number): Promise<Crepe> {
+        const {Crepe} = await this.ensureCrepeModule();
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         return new Crepe({
             root: document.getElementById("app"),

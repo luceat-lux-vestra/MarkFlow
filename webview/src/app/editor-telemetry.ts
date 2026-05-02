@@ -8,10 +8,27 @@ export const emitToIntelliJLog = (message: string) => {
     }
 };
 
+let diagnosticsLoggingEnabled: boolean | null = null;
+
+const isDiagnosticsLoggingEnabled = () => {
+    if (diagnosticsLoggingEnabled !== null) {
+        return diagnosticsLoggingEnabled;
+    }
+
+    diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true;
+
+    return diagnosticsLoggingEnabled;
+};
+
+export const emitDiagnosticsLog = (message: string, emit: (message: string) => void) => {
+    if (isDiagnosticsLoggingEnabled()) {
+        emit(message);
+    }
+};
+
 export const markFlowStage = (stage: string, emit: (message: string) => void, detail = "") => {
     const message = detail ? `MARKFLOW_UI ${stage}: ${detail}` : `MARKFLOW_UI ${stage}`;
-    console.info(message);
-    emit(message);
+    emitDiagnosticsLog(message, emit);
     const app = document.getElementById("app");
     if (app) {
         app.setAttribute("data-markflow-stage", stage);
@@ -20,8 +37,7 @@ export const markFlowStage = (stage: string, emit: (message: string) => void, de
 
 export const logMermaidTrace = (detail: string, emit: (message: string) => void) => {
     const line = `MARKFLOW_UI mermaid:${detail}`;
-    console.info(line);
-    emit(line);
+    emitDiagnosticsLog(line, emit);
 };
 
 export const showBootError = (stage: string, detail: string, emit: (message: string) => void) => {

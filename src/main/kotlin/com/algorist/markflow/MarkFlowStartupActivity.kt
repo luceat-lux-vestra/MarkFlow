@@ -38,7 +38,9 @@ class MarkFlowStartupActivity : ProjectActivity {
                         if (project.isDisposed) return@invokeLater
                         source.setSelectedEditor(file, MarkFlowFileSupport.EDITOR_TYPE_ID)
                     }
-                    LOG.debug("MARKFLOW_UI startup:forced editor for ${file.path}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.debug("MARKFLOW_UI startup:forced editor for ${file.path}")
+                    }
                 }
             }
         )

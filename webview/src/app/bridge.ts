@@ -5,8 +5,8 @@ type EditorBridgeCallbacks = {
     onEditorActive: (active: boolean) => void;
     onIntelliJMarkdownUpdate: (markdown: string) => void;
     onIntelliJEditorState: (state: EditorUiState) => void;
-    getMarkdown: () => string;
     emitToIntelliJLog: (message: string) => void;
+    onFlushNow: () => void;
 };
 
 export type EditorBridge = {
@@ -26,9 +26,7 @@ const sanitizeUiState = (uiState: EditorUiState): EditorUiState => {
 
 export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBridge => {
     const sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {
-        console.info(`MARKFLOW_UI SAVE:ENTRY cefQuery=${typeof window.cefQuery} len=${markdownText.length}`);
         if (!window.cefQuery) {
-            console.info("MARKFLOW_UI SAVE:BLOCKED cefQuery missing");
             callbacks.emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:BLOCKED cefQuery missing");
             return;
         }
@@ -47,21 +45,14 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
         });
 
         if (!request || request === "undefined") {
-            console.info("MARKFLOW_UI SAVE:BLOCKED request invalid");
             callbacks.emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:BLOCKED request invalid");
             return;
         }
 
-        console.info(`MARKFLOW_UI SAVE:CEF_QUERY sessionId=${sessionId} contentLen=${markdownText.length}`);
-        callbacks.emitToIntelliJLog(`MARKFLOW_SAVE sendToIntelliJ:CEF_QUERY sessionId=${sessionId} contentLen=${markdownText.length}`);
         window.cefQuery({
             request,
-            onSuccess: () => {
-                console.info("MARKFLOW_UI SAVE:ACK received");
-                callbacks.emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:ACK received");
-            },
+            onSuccess: () => {},
             onFailure: (_errCode, errMsg) => {
-                console.info(`MARKFLOW_UI SAVE:FAIL ${errMsg}`);
                 callbacks.emitToIntelliJLog(`MARKFLOW_SAVE sendToIntelliJ:FAIL ${errMsg}`);
             }
         });
@@ -77,10 +68,6 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
             callbacks.onEditorActive(active);
         };
 
-        window.getMarkdown = () => {
-            return callbacks.getMarkdown();
-        };
-
         window.sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {
             sendToIntelliJ(markdownText, uiState);
         };
@@ -91,6 +78,10 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
 
         window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {
             callbacks.onIntelliJEditorState(state);
+        };
+
+        window.markflowFlushNow = () => {
+            callbacks.onFlushNow();
         };
     };
 

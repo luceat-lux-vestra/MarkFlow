@@ -8,6 +8,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.util.xmlb.XmlSerializerUtil
 import java.util.concurrent.atomic.AtomicInteger
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.MyBundle
 import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.settings.state.DiagramSecurityLevel
@@ -29,10 +30,12 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         XmlSerializerUtil.copyBean(state, this.state)
         normalize()
         settingsRevision.incrementAndGet()
-        LOG.warn(
-            "MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}, " +
-                "diagramSecurityLevel=${this.state.diagramSecurityLevel}"
-        )
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn(
+                "MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}, " +
+                    "diagramSecurityLevel=${this.state.diagramSecurityLevel}"
+            )
+        }
     }
 
     fun updateFromUi(newState: MarkFlowSettingsState) {
@@ -41,12 +44,14 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         normalize()
         val changed = previousState != state
         val nextRevision = if (changed) settingsRevision.incrementAndGet() else settingsRevision.get()
-        LOG.warn(
-            "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +
-                "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +
-                "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +
-                "revision=$nextRevision"
-        )
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn(
+                "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +
+                    "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +
+                    "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +
+                    "revision=$nextRevision"
+            )
+        }
         if (changed) {
             MarkFlowSharedBrowserService.notifyRuntimeSettingsChanged(forceReload = false)
         }
@@ -56,10 +61,12 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         normalize()
         val resolvedThemeSource = resolveThemeSourceForRuntime()
         val revision = settingsRevision.get()
-        LOG.warn(
-            "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
-                "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
-        )
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn(
+                "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
+                    "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
+            )
+        }
         return MarkFlowRuntimeSettings(
             mermaidSizeMode = state.mermaidSizeMode,
             mermaidZoomPercent = state.mermaidZoomPercent,
@@ -75,7 +82,9 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
 
     private fun resolveThemeSourceForRuntime(): String {
         if (state.themeSource != ThemeSource.IDE_SYNC.name) {
-            LOG.warn("MARKFLOW_SETTINGS resolveTheme explicit=${state.themeSource}")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn("MARKFLOW_SETTINGS resolveTheme explicit=${state.themeSource}")
+            }
             return state.themeSource
         }
         val ideResolved = if (EditorColorsManager.getInstance().isDarkEditor) {
@@ -83,7 +92,9 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         } else {
             ThemeSource.LIGHT.name
         }
-        LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC->$ideResolved")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC->$ideResolved")
+        }
         return ideResolved
     }
 
