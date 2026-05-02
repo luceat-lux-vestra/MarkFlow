@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Performance optimizations.
+
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
 - Automatic takeover of Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) with the MarkFlow editor.
