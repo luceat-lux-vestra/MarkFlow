@@ -222,8 +222,18 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     private fun flushPendingWebContent() {
         cancelPendingDocumentSave()
-        val markdown = takePendingWebContent() ?: sharedBrowserService.getCurrentMarkdown(this) ?: return
-        applyContentToDocument(markdown, persistImmediately = true)
+        val markdown = takePendingWebContent()
+        if (markdown != null) {
+            applyContentToDocument(markdown, persistImmediately = true)
+            return
+        }
+
+        val currentDocument = document ?: return
+        if (!FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)) {
+            return
+        }
+
+        persistDocument(currentDocument)
     }
 
     private fun flushQueuedWebContent() {
