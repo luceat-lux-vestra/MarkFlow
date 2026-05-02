@@ -101,6 +101,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     private fun queueWebContentSave(newContent: String) {
         synchronized(webContentLock) {
+            if (pendingWebContent == newContent) {
+                return
+            }
             pendingWebContent = newContent
             pendingDocumentSaveFuture?.cancel(false)
             pendingDocumentSaveFuture = null
