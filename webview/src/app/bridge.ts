@@ -1,9 +1,9 @@
-import type {EditorUiState, MarkFlowRuntimeSettings} from "./types";
+import type {EditorUiState, MarkdownSourceSnapshot, MarkdownUpdateAck, MarkFlowRuntimeSettings} from "./types";
 
 type EditorBridgeCallbacks = {
     onSettings: (settings: MarkFlowRuntimeSettings | undefined) => void;
     onEditorActive: (active: boolean) => void;
-    onIntelliJMarkdownUpdate: (markdown: string) => void;
+    onIntelliJMarkdownUpdate: (snapshot: MarkdownSourceSnapshot) => void;
     onIntelliJEditorState: (state: EditorUiState) => void;
     emitToIntelliJLog: (message: string) => void;
     onFlushNow: () => void;
@@ -11,7 +11,12 @@ type EditorBridgeCallbacks = {
 
 export type EditorBridge = {
     install: () => void;
-    sendToIntelliJ: (markdownText: string, uiState: EditorUiState) => void;
+    sendToIntelliJ: (
+        rawMarkdown: string,
+        sourceRevision: number,
+        uiState: EditorUiState,
+        onSuccess?: (ack: MarkdownUpdateAck) => void
+    ) => void;
 };
 
 const sanitizeUiState = (uiState: EditorUiState): EditorUiState => {
@@ -25,7 +30,12 @@ const sanitizeUiState = (uiState: EditorUiState): EditorUiState => {
 };
 
 export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBridge => {
-    const sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {
+    const sendToIntelliJ = (
+        rawMarkdown: string,
+        sourceRevision: number,
+        uiState: EditorUiState,
+        onSuccess?: (ack: MarkdownUpdateAck) => void
+    ) => {
         if (!window.cefQuery) {
             callbacks.emitToIntelliJLog("MARKFLOW_SAVE sendToIntelliJ:BLOCKED cefQuery missing");
             return;
@@ -36,7 +46,8 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
         const request = JSON.stringify({
             action: "update",
             sessionId,
-            content: markdownText,
+            rawMarkdown,
+            sourceRevision,
             version: safeState.version,
             scrollTop: safeState.scrollTop,
             cursorOffset: safeState.cursorOffset,
@@ -51,7 +62,22 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
 
         window.cefQuery({
             request,
-            onSuccess: () => {},
+            onSuccess: (response) => {
+                if (!onSuccess) {
+                    return;
+                }
+
+                if (!response) {
+                    onSuccess({ok: true, sourceRevision});
+                    return;
+                }
+
+                try {
+                    onSuccess(JSON.parse(response) as MarkdownUpdateAck);
+                } catch (_error) {
+                    onSuccess({ok: true, sourceRevision});
+                }
+            },
             onFailure: (_errCode, errMsg) => {
                 callbacks.emitToIntelliJLog(`MARKFLOW_SAVE sendToIntelliJ:FAIL ${errMsg}`);
             }
@@ -68,12 +94,20 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
             callbacks.onEditorActive(active);
         };
 
-        window.sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {
-            sendToIntelliJ(markdownText, uiState);
+        window.sendToIntelliJ = (rawMarkdown: string, sourceRevision: number, uiState: EditorUiState) => {
+            sendToIntelliJ(rawMarkdown, sourceRevision, uiState);
         };
 
-        window.updateFromIntelliJ = (newMarkdown: string) => {
-            callbacks.onIntelliJMarkdownUpdate(newMarkdown);
+        window.updateFromIntelliJ = (snapshot: MarkdownSourceSnapshot | string) => {
+            if (typeof snapshot === "string") {
+                callbacks.onIntelliJMarkdownUpdate({
+                    rawMarkdown: snapshot,
+                    sourceRevision: Number(window.__markflowSourceRevision ?? window.intelliJ_sourceRevision ?? 1),
+                    leaseSessionId: String(window.__markflowSessionId ?? "")
+                });
+                return;
+            }
+            callbacks.onIntelliJMarkdownUpdate(snapshot);
         };
 
         window.applyEditorStateFromIntelliJ = (state: EditorUiState) => {

@@ -14,6 +14,18 @@ export type EditorUiState = {
     selectionEnd: number;
 };
 
+export type MarkdownSourceSnapshot = {
+    rawMarkdown: string;
+    sourceRevision: number;
+    leaseSessionId: string;
+};
+
+export type MarkdownUpdateAck = {
+    ok: boolean;
+    sourceRevision: number;
+    reason?: string;
+};
+
 export type MarkFlowRuntimeSettings = {
     mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;

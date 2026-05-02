@@ -1,5 +1,11 @@
 /// <reference types="vite/client" />
 
+type MarkdownSourceSnapshot = {
+    rawMarkdown: string;
+    sourceRevision: number;
+    leaseSessionId: string;
+};
+
 type IntelliJEditorState = {
     version: number;
     scrollTop: number;
@@ -30,20 +36,22 @@ type MarkFlowRuntimeSettings = {
 
 interface Window {
     intelliJ_initialMarkdown?: string;
+    intelliJ_sourceRevision?: number;
     intelliJ_markFlowSettings?: MarkFlowRuntimeSettings;
     __markflowSessionId?: string;
+    __markflowSourceRevision?: number;
     cefQuery?: (options: {
         request: string;
         onSuccess?: (response?: string) => void;
         onFailure?: (errorCode: number, errorMessage: string) => void;
     }) => void;
     markflowLog?: (message: string) => void;
-    updateFromIntelliJ?: (newMarkdown: string) => void;
+    updateFromIntelliJ?: (snapshot: MarkdownSourceSnapshot | string) => void;
     applyEditorStateFromIntelliJ?: (state: IntelliJEditorState) => void;
     applyMarkFlowSettingsFromIntelliJ?: (settings: MarkFlowRuntimeSettings) => void;
     setMarkFlowEditorActive?: (active: boolean) => void;
     getMarkdown?: () => string;
-    sendToIntelliJ?: (markdownText: string, uiState: EditorUiState) => void;
+    sendToIntelliJ?: (rawMarkdown: string, sourceRevision: number, uiState: EditorUiState) => void;
     markflowFlushNow?: () => void;
     __markflowDiagnosticsEnabled?: boolean;
 }

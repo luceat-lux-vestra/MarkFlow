@@ -1,11 +1,13 @@
 import type {Crepe} from "@milkdown/crepe";
-import type {EditorUiState, MarkFlowRuntimeSettings} from "./types";
+import type {EditorUiState, MarkdownSourceSnapshot, MarkFlowRuntimeSettings} from "./types";
 import {createEditorBridge, type EditorBridge} from "./bridge";
 import {installMarkdownPasteHandler} from "./clipboard";
 import {applyEditorUiState, captureEditorUiState, focusEditorView, recoverEditorLayout, replaceEditorMarkdown, safeReadMarkdown} from "./editor-state";
 import {emitDiagnosticsLog, emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
 import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
+import {updateRawMarkdownFromSerialized} from "./markdown-source-buffer";
+import {configureSourcePreservingMarkdown} from "./source-preserving-markdown";
 
 const MARKDOWN_SYNC_DEBOUNCE_MS = 400;
 type CrepeModule = typeof import("@milkdown/crepe");
@@ -19,6 +21,7 @@ export class MarkFlowEditorSession {
     private isUpdatingFromIntelliJ = false;
     private isCrepeReady = false;
     private pendingMarkdownFromIntelliJ: string | null = null;
+    private pendingSourceRevisionFromIntelliJ: number | null = null;
     private pendingEditorStateFromIntelliJ: EditorUiState | null = null;
     private removeMarkdownPasteHandler: (() => void) | null = null;
     private isEditorActive = true;
@@ -36,8 +39,12 @@ export class MarkFlowEditorSession {
         crepe: Crepe;
         sessionId: number;
         markdown: string;
+        sourceRevision: number;
     } | null = null;
     private markdownSyncTimerId: number | null = null;
+    private currentSourceRevision = 1;
+    private currentRawMarkdown = "";
+    private currentLeaseSessionId = "";
 
     constructor() {
         this.bridge = createEditorBridge({
@@ -116,6 +123,9 @@ export class MarkFlowEditorSession {
 
         // 2) Load initial markdown injected by Kotlin.
         const initialText = window.intelliJ_initialMarkdown ?? "";
+        this.currentRawMarkdown = initialText;
+        this.syncSourceRevision(this.readCurrentBootstrapSourceRevision());
+        this.currentLeaseSessionId = String(window.__markflowSessionId ?? "");
         markFlowStage("initialText:ready", this.emitToIntelliJLog, initialText.slice(0, 48));
         this.mermaidRenderer.setDocumentCharacterCount(initialText.length);
 
@@ -182,11 +192,28 @@ export class MarkFlowEditorSession {
         }
     };
 
-    private handleIntelliJMarkdownUpdate = (newMarkdown: string) => {
-        markFlowStage("bridge:updateFromIntelliJ", this.emitToIntelliJLog, newMarkdown.slice(0, 32));
+    private handleIntelliJMarkdownUpdate = (snapshot: MarkdownSourceSnapshot) => {
+        const newMarkdown = snapshot.rawMarkdown;
+        this.syncLeaseSession(snapshot.leaseSessionId);
+        const incomingRevision = Number.isFinite(snapshot.sourceRevision) ? snapshot.sourceRevision : this.currentSourceRevision;
+        if (incomingRevision < this.currentSourceRevision) {
+            emitDiagnosticsLog(
+                `MARKFLOW_UI bridge:updateFromIntelliJ:SKIP stale incoming=${incomingRevision} current=${this.currentSourceRevision}`,
+                this.emitToIntelliJLog
+            );
+            return;
+        }
+        this.currentRawMarkdown = newMarkdown;
+        this.syncSourceRevision(Math.max(this.currentSourceRevision, incomingRevision));
+        markFlowStage(
+            "bridge:updateFromIntelliJ",
+            this.emitToIntelliJLog,
+            `${snapshot.leaseSessionId}:${snapshot.sourceRevision}:${newMarkdown.slice(0, 32)}`
+        );
         this.mermaidRenderer.setDocumentCharacterCount(newMarkdown.length);
         if (!this.isCrepeReady || !this.activeCrepe) {
             this.pendingMarkdownFromIntelliJ = newMarkdown;
+            this.pendingSourceRevisionFromIntelliJ = incomingRevision;
             return;
         }
 
@@ -235,7 +262,14 @@ export class MarkFlowEditorSession {
                 }
                 if (markdown !== prevMarkdown) {
                     this.mermaidRenderer.setDocumentCharacterCount(markdown.length);
-                    this.scheduleMarkdownSync(crepe, sessionId, markdown);
+                    const nextRawMarkdown = updateRawMarkdownFromSerialized(this.currentRawMarkdown, markdown);
+                    if (nextRawMarkdown === this.currentRawMarkdown) {
+                        return;
+                    }
+                    this.currentRawMarkdown = nextRawMarkdown;
+                    this.currentSourceRevision += 1;
+                    this.syncSourceRevision(this.currentSourceRevision);
+                    this.scheduleMarkdownSync(crepe, sessionId, nextRawMarkdown, this.currentSourceRevision);
                 }
             });
         });
@@ -300,7 +334,7 @@ export class MarkFlowEditorSession {
             }
 
             const fallbackMarkdown = this.pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
-            const markdown = safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`, this.emitToIntelliJLog);
+            const markdown = this.currentRawMarkdown || fallbackMarkdown || safeReadMarkdown(current, fallbackMarkdown, `recreate:${reason}`, this.emitToIntelliJLog);
             const uiState = captureEditorUiState(current, this.emitToIntelliJLog);
 
             this.removeMarkdownPasteHandler?.();
@@ -349,8 +383,17 @@ export class MarkFlowEditorSession {
 
         const pendingMarkdown = this.pendingMarkdownFromIntelliJ;
         this.pendingMarkdownFromIntelliJ = null;
+        const pendingSourceRevision = this.pendingSourceRevisionFromIntelliJ;
+        this.pendingSourceRevisionFromIntelliJ = null;
         if (pendingMarkdown !== null) {
             markFlowStage("bridge:updateFromIntelliJ:flush", this.emitToIntelliJLog, pendingMarkdown.slice(0, 32));
+            if (pendingSourceRevision !== null) {
+                const normalizedSourceRevision = Number.isFinite(pendingSourceRevision)
+                    ? pendingSourceRevision
+                    : this.currentSourceRevision;
+                this.syncSourceRevision(Math.max(this.currentSourceRevision, normalizedSourceRevision));
+            }
+            this.currentRawMarkdown = pendingMarkdown;
             this.beginExternalUpdateGuard();
             try {
                 replaceEditorMarkdown(crepe, pendingMarkdown, this.emitToIntelliJLog, true);
@@ -367,11 +410,12 @@ export class MarkFlowEditorSession {
         }
     }
 
-    private scheduleMarkdownSync(crepe: Crepe, sessionId: number, markdown: string) {
+    private scheduleMarkdownSync(crepe: Crepe, sessionId: number, markdown: string, sourceRevision: number) {
         this.pendingMarkdownSync = {
             crepe,
             sessionId,
-            markdown
+            markdown,
+            sourceRevision
         };
 
         if (this.markdownSyncTimerId !== null) {
@@ -401,9 +445,27 @@ export class MarkFlowEditorSession {
             return;
         }
 
+        if (pending.sourceRevision < this.currentSourceRevision) {
+            emitDiagnosticsLog(
+                `MARKFLOW_SAVE sendToIntelliJ:SKIP stalePending pending=${pending.sourceRevision} current=${this.currentSourceRevision}`,
+                this.emitToIntelliJLog
+            );
+            return;
+        }
+
         this.bridge.sendToIntelliJ(
             pending.markdown,
-            captureEditorUiState(pending.crepe, this.emitToIntelliJLog)
+            pending.sourceRevision,
+            captureEditorUiState(pending.crepe, this.emitToIntelliJLog),
+            (ack) => {
+                if (ack.ok) {
+                    this.syncSourceRevision(Math.max(this.currentSourceRevision, ack.sourceRevision));
+                    return;
+                }
+                this.emitToIntelliJLog(
+                    `MARKFLOW_SAVE sendToIntelliJ:reject sourceRevision=${pending.sourceRevision} reason=${ack.reason ?? "unknown"}`
+                );
+            }
         );
     }
 
@@ -415,7 +477,7 @@ export class MarkFlowEditorSession {
         if (!this.activeCrepe || !this.isCrepeReady) return;
 
         const fallbackMarkdown = this.pendingMarkdownFromIntelliJ ?? window.intelliJ_initialMarkdown ?? "";
-        const currentMarkdown = safeReadMarkdown(this.activeCrepe, fallbackMarkdown, "rerender", this.emitToIntelliJLog);
+        const currentMarkdown = this.currentRawMarkdown || fallbackMarkdown || safeReadMarkdown(this.activeCrepe, fallbackMarkdown, "rerender", this.emitToIntelliJLog);
 
         this.beginExternalUpdateGuard();
         try {
@@ -478,7 +540,7 @@ export class MarkFlowEditorSession {
     private async createCrepeInstance(initialText: string, crepeSessionId: number): Promise<Crepe> {
         const {Crepe} = await this.ensureCrepeModule();
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
-        return new Crepe({
+        const crepe = new Crepe({
             root: document.getElementById("app"),
             defaultValue: initialText,
             featureConfigs: {
@@ -486,6 +548,47 @@ export class MarkFlowEditorSession {
                 [Crepe.Feature.Latex]: {}
             }
         });
+        configureSourcePreservingMarkdown(crepe, initialText);
+        return crepe;
+    }
+
+    private syncSourceRevision(sourceRevision: number) {
+        const normalized = Number.isFinite(sourceRevision) ? Math.max(1, Math.floor(sourceRevision)) : this.currentSourceRevision;
+        this.currentSourceRevision = normalized;
+        window.__markflowSourceRevision = normalized;
+        window.intelliJ_sourceRevision = normalized;
+    }
+
+    private syncLeaseSession(leaseSessionId: string | undefined) {
+        const normalized = String(leaseSessionId ?? window.__markflowSessionId ?? "");
+        if (!normalized || normalized === this.currentLeaseSessionId) {
+            if (!this.currentLeaseSessionId && normalized) {
+                this.currentLeaseSessionId = normalized;
+            }
+            return;
+        }
+
+        this.currentLeaseSessionId = normalized;
+        this.clearPendingMarkdownSync();
+        this.pendingMarkdownFromIntelliJ = null;
+        this.pendingSourceRevisionFromIntelliJ = null;
+        this.pendingEditorStateFromIntelliJ = null;
+        this.externalUpdateGuardToken += 1;
+        this.isUpdatingFromIntelliJ = false;
+        this.syncSourceRevision(1);
+    }
+
+    private clearPendingMarkdownSync() {
+        if (this.markdownSyncTimerId !== null) {
+            window.clearTimeout(this.markdownSyncTimerId);
+            this.markdownSyncTimerId = null;
+        }
+        this.pendingMarkdownSync = null;
+    }
+
+    private readCurrentBootstrapSourceRevision(): number {
+        const sourceRevision = Number(window.intelliJ_sourceRevision ?? window.__markflowSourceRevision ?? 1);
+        return Number.isFinite(sourceRevision) ? Math.max(1, Math.floor(sourceRevision)) : 1;
     }
 }
 
@@ -498,5 +601,6 @@ const logEditorViewContextError = (reason: string, error: unknown, emitToIntelli
     emitToIntelliJLog(`MARKFLOW_UI ${reason} editorView context missing: ${String(error)}`);
 };
 
-const EXTERNAL_UPDATE_GUARD_MS = 50;
+// Milkdown listener debounces markdownUpdated, so the guard must outlive that window.
+const EXTERNAL_UPDATE_GUARD_MS = 1000;
 const BOOT_READY_TIMEOUT_MS = 5000;

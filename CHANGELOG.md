@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Changed
+- Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
 
 ### Added
