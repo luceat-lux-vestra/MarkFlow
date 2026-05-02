@@ -364,7 +364,7 @@ internal class MarkFlowBrowserLeasePool {
                 }
 
                 val action = json["action"]?.takeIf { it.isJsonPrimitive }?.asString
-                LOG.info("MARKFLOW_SAVE setupQueries:received action=$action lease=${lease.id} sessionId=$requestSession")
+                LOG.debug("MARKFLOW_SAVE setupQueries:received action=$action lease=${lease.id} sessionId=$requestSession")
                 when (action) {
                     "update" -> {
                         val targetEditor = lease.attachedEditor ?: run {
@@ -372,7 +372,7 @@ internal class MarkFlowBrowserLeasePool {
                             return@addHandler ignoredResponse()
                         }
                         val content = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
-                        LOG.info("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
+                        LOG.debug("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
                         targetEditor.applyWebUpdate(
                             content = content,
                             scrollTop = readJsonInt(json, "scrollTop", 0),

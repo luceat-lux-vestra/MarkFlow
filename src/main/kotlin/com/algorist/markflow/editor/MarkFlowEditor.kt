@@ -14,8 +14,11 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.util.concurrency.AppExecutorUtil
 import java.beans.PropertyChangeListener
 import java.awt.event.HierarchyEvent
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -34,6 +37,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownSelectionStart = -1
     private var lastKnownSelectionEnd = -1
     private var lastActivationSettingsPushAtMs = 0L
+    private val webContentLock = Any()
+    @Volatile
+    private var pendingWebContent: String? = null
+    private var pendingWebContentSaveFuture: ScheduledFuture<*>? = null
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
@@ -84,12 +91,35 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         selectionStart: Int,
         selectionEnd: Int
     ) {
-        LOG.info("MARKFLOW_SAVE applyWebUpdate: file=${file.path} contentLength=${content.length}")
         lastKnownScrollTop = scrollTop
         lastKnownCursorOffset = cursorOffset
         lastKnownSelectionStart = selectionStart
         lastKnownSelectionEnd = selectionEnd
-        saveContentToDocumentAndFile(content)
+        queueWebContentSave(content)
+    }
+
+    private fun queueWebContentSave(newContent: String) {
+        synchronized(webContentLock) {
+            pendingWebContent = newContent
+            pendingWebContentSaveFuture?.cancel(false)
+            pendingWebContentSaveFuture = AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                {
+                    flushPendingWebContent()
+                },
+                WEB_CONTENT_SAVE_COALESCE_MS,
+                TimeUnit.MILLISECONDS
+            )
+        }
+    }
+
+    private fun takePendingWebContent(): String? {
+        synchronized(webContentLock) {
+            pendingWebContentSaveFuture?.cancel(false)
+            pendingWebContentSaveFuture = null
+            return pendingWebContent.also {
+                pendingWebContent = null
+            }
+        }
     }
 
     private fun saveContentToDocumentAndFile(newContent: String) {
@@ -113,7 +143,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                     }
                 }
                 FileDocumentManager.getInstance().saveDocument(currentDocument)
-                LOG.info("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
+                LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
             } catch (e: Exception) {
                 LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: failed, file=${file.path}: ${e.message}", e)
             } finally {
@@ -124,14 +154,13 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         if (app.isDispatchThread) {
             saveAction()
         } else {
-            LOG.warn("MARKFLOW_SAVE saveContentToDocumentAndFile: non-EDT dispatch, file=${file.path} thread=${Thread.currentThread().name}")
+            LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: dispatching via EDT, file=${file.path} thread=${Thread.currentThread().name}")
             app.invokeAndWait(saveAction)
         }
     }
 
     private fun flushPendingWebContent() {
-        LOG.info("MARKFLOW_SAVE flushPendingWebContent: called for ${file.path}")
-        val markdown = sharedBrowserService.getCurrentMarkdown(this) ?: return
+        val markdown = takePendingWebContent() ?: sharedBrowserService.getCurrentMarkdown(this) ?: return
         saveContentToDocumentAndFile(markdown)
     }
 
@@ -263,5 +292,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
         private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
+        private const val WEB_CONTENT_SAVE_COALESCE_MS = 75L
     }
 }
