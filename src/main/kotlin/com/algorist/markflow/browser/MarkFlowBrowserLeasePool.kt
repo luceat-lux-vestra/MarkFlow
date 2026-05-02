@@ -179,9 +179,10 @@ internal class MarkFlowBrowserLeasePool {
 
         val seq = ++lease.intelliJToWebPushSequence
         val markdownLiteral = gson.toJson(markdown)
+        val sourceRevisionLiteral = gson.toJson(editor.currentSourceRevision())
         val sessionLiteral = gson.toJson(lease.sessionId)
         val script = """
-            (function syncIntelliJMarkdown(seq, payload) {
+            (function syncIntelliJMarkdown(seq, payload, sourceRevision) {
                 if (window.__markflowSessionId !== $sessionLiteral) {
                     return;
                 }
@@ -191,14 +192,14 @@ internal class MarkFlowBrowserLeasePool {
                         return;
                     }
                     if (typeof window.updateFromIntelliJ === 'function') {
-                        window.updateFromIntelliJ(payload);
+                        window.updateFromIntelliJ({ rawMarkdown: payload, sourceRevision: sourceRevision, leaseSessionId: $sessionLiteral });
                         return;
                     }
                     if (attempt < 20) {
                         setTimeout(function() { applyMarkdown(attempt + 1); }, 25);
                     }
                 })(0);
-            })($seq, $markdownLiteral);
+            })($seq, $markdownLiteral, $sourceRevisionLiteral);
         """.trimIndent()
         lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
     }
@@ -347,18 +348,39 @@ internal class MarkFlowBrowserLeasePool {
                             }
                             return@addHandler ignoredResponse()
                         }
-                        val content = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
+                        val content = json["rawMarkdown"]?.takeIf { it.isJsonPrimitive }?.asString
+                            ?: json["content"]?.takeIf { it.isJsonPrimitive }?.asString
+                            ?: ""
+                        val sourceRevision = readJsonLong(json, "sourceRevision", 0L)
                         if (MarkFlowDiagnostics.enabled) {
-                            LOG.debug("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
+                            LOG.debug(
+                                "MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length} sourceRevision=$sourceRevision"
+                            )
                         }
-                        targetEditor.applyWebUpdate(
+                        val accepted = targetEditor.applyWebUpdate(
                             content = content,
+                            sourceRevision = sourceRevision,
                             scrollTop = readJsonInt(json, "scrollTop", 0),
                             cursorOffset = readJsonInt(json, "cursorOffset", -1),
                             selectionStart = readJsonInt(json, "selectionStart", -1),
                             selectionEnd = readJsonInt(json, "selectionEnd", -1)
                         )
-                        successResponse()
+                        if (accepted) {
+                            jsonResponse(
+                                MarkdownUpdateAck(
+                                    ok = true,
+                                    sourceRevision = targetEditor.currentSourceRevision()
+                                )
+                            )
+                        } else {
+                            jsonResponse(
+                                MarkdownUpdateAck(
+                                    ok = false,
+                                    sourceRevision = targetEditor.currentSourceRevision(),
+                                    reason = "stale"
+                                )
+                            )
+                        }
                     }
 
                     "recovery:request" -> {
@@ -487,6 +509,7 @@ internal class MarkFlowBrowserLeasePool {
         }
         val editor = lease.attachedEditor
         val markdownLiteral = gson.toJson(editor?.currentMarkdownText().orEmpty())
+        val sourceRevisionLiteral = gson.toJson(editor?.currentSourceRevision() ?: 1L)
         val runtimeSettingsJson = buildRuntimeSettingsJson()
         val initialMarkdownSeq = ++lease.intelliJToWebPushSequence
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
@@ -503,6 +526,8 @@ internal class MarkFlowBrowserLeasePool {
         val injectJs = """
             window.__markflowDiagnosticsEnabled = $diagnosticsEnabledLiteral;
             window.intelliJ_initialMarkdown = $markdownLiteral;
+            window.intelliJ_sourceRevision = $sourceRevisionLiteral;
+            window.__markflowSourceRevision = $sourceRevisionLiteral;
             window.intelliJ_markFlowSettings = $runtimeSettingsJson;
             window.__markflowSessionId = $sessionLiteral;
             window.cefQuery = function(payload) {
@@ -552,7 +577,7 @@ internal class MarkFlowBrowserLeasePool {
                             setTimeout(function() { applyMarkdown(attempt + 1); }, 50);
                         }
                     })(0);
-                })($initialMarkdownSeq, $markdownLiteral);
+                })($initialMarkdownSeq, { rawMarkdown: $markdownLiteral, sourceRevision: $sourceRevisionLiteral, leaseSessionId: $sessionLiteral });
                 (function syncInitialSettings(seq, payload) {
                     window.__markflowRuntimeSettingsSeq = Math.max(window.__markflowRuntimeSettingsSeq || 0, seq);
                     (function applySettings(attempt) {
@@ -811,6 +836,14 @@ internal class MarkFlowBrowserLeasePool {
         return element.asInt
     }
 
+    private fun readJsonLong(json: JsonObject, key: String, fallback: Long): Long {
+        val element = json[key]
+        if (element == null || !element.isJsonPrimitive || !element.asJsonPrimitive.isNumber) {
+            return fallback
+        }
+        return element.asLong
+    }
+
     private companion object {
         private val LOG = Logger.getInstance(MarkFlowBrowserLeasePool::class.java)
         private val settingsPushSequence = AtomicInteger(0)
@@ -848,3 +881,9 @@ internal class MarkFlowBrowserLeasePool {
         )
     }
 }
+
+private data class MarkdownUpdateAck(
+    val ok: Boolean,
+    val sourceRevision: Long,
+    val reason: String? = null
+)

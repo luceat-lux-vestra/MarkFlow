@@ -5,6 +5,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jdom.Element
 import com.algorist.markflow.editor.DocumentContentDiff
 import com.algorist.markflow.editor.state.MarkFlowEditorState
+import com.algorist.markflow.editor.state.SourceRevisionGate
 import com.algorist.markflow.file.MarkFlowFileSupport
 
 class MarkFlowDomainTest : BasePlatformTestCase() {
@@ -57,5 +58,24 @@ class MarkFlowDomainTest : BasePlatformTestCase() {
 
     fun testDocumentContentDiffReturnsNullForIdenticalContent() {
         assertNull(DocumentContentDiff.compute("same", "same"))
+    }
+
+    fun testSourceRevisionGateRejectsStaleRevisions() {
+        val gate = SourceRevisionGate(initialRevision = 3)
+
+        assertEquals(3L, gate.current())
+        assertFalse(gate.acceptIncomingRevision(2))
+        assertTrue(gate.acceptIncomingRevision(5))
+        assertEquals(5L, gate.current())
+        assertFalse(gate.acceptIncomingRevision(5))
+    }
+
+    fun testSourceRevisionGateAdvancesForExternalChanges() {
+        val gate = SourceRevisionGate(initialRevision = 1)
+
+        assertEquals(2L, gate.advanceForExternalChange())
+        assertEquals(3L, gate.observeAtLeast(3))
+        assertEquals(3L, gate.current())
+        assertEquals(3L, gate.observeAtLeast(2))
     }
 }

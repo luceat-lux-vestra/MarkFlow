@@ -26,6 +26,7 @@ import java.awt.BorderLayout
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.editor.state.MarkFlowEditorState
+import com.algorist.markflow.editor.state.SourceRevisionGate
 
 class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
 
@@ -38,6 +39,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var lastKnownSelectionStart = -1
     private var lastKnownSelectionEnd = -1
     private var lastActivationSettingsPushAtMs = 0L
+    private val sourceRevisionGate = SourceRevisionGate()
     private val webContentLock = Any()
     @Volatile
     private var pendingWebContent: String? = null
@@ -47,6 +49,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var cachedFileText: String? = null
     @Volatile
     private var cachedFileTextStamp: Long = Long.MIN_VALUE
+    @Volatile
+    private var hasUnpersistedWebContent = false
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
@@ -61,6 +65,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         document?.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
                 if (isUpdatingFromWeb.get() || disposed) return
+                sourceRevisionGate.advanceForExternalChange()
             }
         }, this)
 
@@ -94,16 +99,27 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     internal fun applyWebUpdate(
         content: String,
+        sourceRevision: Long,
         scrollTop: Int,
         cursorOffset: Int,
         selectionStart: Int,
         selectionEnd: Int
-    ) {
+    ): Boolean {
+        if (!sourceRevisionGate.acceptIncomingRevision(sourceRevision)) {
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn(
+                    "MARKFLOW_SAVE applyWebUpdate: stale revision rejected file=${file.path} incoming=$sourceRevision current=${sourceRevisionGate.current()}"
+                )
+            }
+            return false
+        }
+
         lastKnownScrollTop = scrollTop
         lastKnownCursorOffset = cursorOffset
         lastKnownSelectionStart = selectionStart
         lastKnownSelectionEnd = selectionEnd
         queueWebContentSave(content)
+        return true
     }
 
     private fun queueWebContentSave(newContent: String) {
@@ -156,6 +172,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 FileDocumentManager.getInstance().saveDocument(currentDocument)
                 cachedFileText = currentDocument.text
                 cachedFileTextStamp = file.timeStamp
+                hasUnpersistedWebContent = false
                 if (MarkFlowDiagnostics.enabled) {
                     LOG.debug("MARKFLOW_SAVE persistDocument: saved, file=${file.path}")
                 }
@@ -231,6 +248,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                     }
                 }
                 if (applied) {
+                    hasUnpersistedWebContent = true
                     if (MarkFlowDiagnostics.enabled) {
                         LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
                     }
@@ -269,11 +287,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         }
 
         val currentDocument = document ?: return
-        if (!FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)) {
-            return
+        if (hasUnpersistedWebContent && FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)) {
+            persistDocument(currentDocument)
         }
-
-        persistDocument(currentDocument)
     }
 
     private fun flushQueuedWebContent() {
@@ -375,7 +391,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         // persisting, so the cefQuery has a chance to arrive before flushPendingWebContent().
         sharedBrowserService.executeForEditor(this, "window.markflowFlushNow?.()")
         // Synchronously flush and save current webview content BEFORE IntelliJ calls detach()
-        // This ensures content is saved even when the async cefQuery would be dropped by detach()
         flushPendingWebContent()
         sharedBrowserService.setEditorActive(this, false)
     }
@@ -403,6 +418,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     }
 
     internal fun isShowingInHost(): Boolean = hostPanel.isShowing
+
+    internal fun currentSourceRevision(): Long = sourceRevisionGate.current()
 
     companion object {
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
