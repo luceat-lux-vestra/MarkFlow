@@ -1,4 +1,4 @@
-import {Crepe} from "@milkdown/crepe";
+import type {Crepe} from "@milkdown/crepe";
 import type {EditorUiState, MarkFlowRuntimeSettings} from "./types";
 import {createEditorBridge, type EditorBridge} from "./bridge";
 import {installMarkdownPasteHandler} from "./clipboard";
@@ -8,6 +8,7 @@ import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
 
 const MARKDOWN_SYNC_DEBOUNCE_MS = 400;
+type CrepeModule = typeof import("@milkdown/crepe");
 
 export class MarkFlowEditorSession {
     private readonly emitToIntelliJLog = baseEmitToIntelliJLog;
@@ -30,6 +31,7 @@ export class MarkFlowEditorSession {
     private crepeSessionSequence = 0;
     private hasBootCompleted = false;
     private hasShownBootError = false;
+    private crepeModulePromise: Promise<CrepeModule> | null = null;
     private pendingMarkdownSync: {
         crepe: Crepe;
         sessionId: number;
@@ -118,7 +120,7 @@ export class MarkFlowEditorSession {
 
         // 3) Create the Crepe editor instance.
         const crepeSessionId = ++this.crepeSessionSequence;
-        const crepe = this.createCrepeInstance(initialText, crepeSessionId);
+        const crepe = await this.createCrepeInstance(initialText, crepeSessionId);
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         this.mermaidRenderer.setCrepeReady(false);
         this.activeCrepe = crepe;
@@ -314,7 +316,7 @@ export class MarkFlowEditorSession {
             this.mermaidRenderer.setCrepeReady(false);
             this.mermaidRenderer.invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
             const nextSessionId = ++this.crepeSessionSequence;
-            const next = this.createCrepeInstance(markdown, nextSessionId);
+            const next = await this.createCrepeInstance(markdown, nextSessionId);
             this.mermaidRenderer.setActiveCrepeSessionId(nextSessionId);
             this.activeCrepe = next;
             this.attachCrepeBridge(next, nextSessionId);
@@ -457,7 +459,16 @@ export class MarkFlowEditorSession {
         }, EXTERNAL_UPDATE_GUARD_MS);
     }
 
-    private createCrepeInstance(initialText: string, crepeSessionId: number): Crepe {
+    private async ensureCrepeModule(): Promise<CrepeModule> {
+        if (this.crepeModulePromise === null) {
+            this.crepeModulePromise = import("@milkdown/crepe");
+        }
+
+        return this.crepeModulePromise;
+    }
+
+    private async createCrepeInstance(initialText: string, crepeSessionId: number): Promise<Crepe> {
+        const {Crepe} = await this.ensureCrepeModule();
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         return new Crepe({
             root: document.getElementById("app"),
