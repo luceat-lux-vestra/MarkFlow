@@ -179,13 +179,23 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             return
         }
 
+        val edit = DocumentContentDiff.compute(currentDocument.text, newContent)
+        if (edit == null) {
+            LOG.debug("MARKFLOW_SAVE applyContentToDocument: diff resolved to no-op, file=${file.path}")
+            return
+        }
+
         val app = ApplicationManager.getApplication()
         val applyAction = {
             isUpdatingFromWeb.set(true)
             try {
                 CommandProcessor.getInstance().runUndoTransparentAction {
                     app.runWriteAction {
-                        currentDocument.setText(newContent)
+                        if (edit.startOffset == 0 && edit.endOffset == currentDocument.textLength) {
+                            currentDocument.setText(edit.replacement)
+                        } else {
+                            currentDocument.replaceString(edit.startOffset, edit.endOffset, edit.replacement)
+                        }
                     }
                 }
                 LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
