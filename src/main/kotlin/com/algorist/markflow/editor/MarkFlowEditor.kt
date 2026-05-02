@@ -40,7 +40,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private val webContentLock = Any()
     @Volatile
     private var pendingWebContent: String? = null
-    private var pendingWebContentSaveFuture: ScheduledFuture<*>? = null
+    private var pendingWebContentApplyFuture: ScheduledFuture<*>? = null
+    private var pendingDocumentSaveFuture: ScheduledFuture<*>? = null
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
@@ -101,10 +102,12 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private fun queueWebContentSave(newContent: String) {
         synchronized(webContentLock) {
             pendingWebContent = newContent
-            pendingWebContentSaveFuture?.cancel(false)
-            pendingWebContentSaveFuture = AppExecutorUtil.getAppScheduledExecutorService().schedule(
+            pendingDocumentSaveFuture?.cancel(false)
+            pendingDocumentSaveFuture = null
+            pendingWebContentApplyFuture?.cancel(false)
+            pendingWebContentApplyFuture = AppExecutorUtil.getAppScheduledExecutorService().schedule(
                 {
-                    flushPendingWebContent()
+                    flushQueuedWebContent()
                 },
                 WEB_CONTENT_SAVE_COALESCE_MS,
                 TimeUnit.MILLISECONDS
@@ -114,27 +117,70 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     private fun takePendingWebContent(): String? {
         synchronized(webContentLock) {
-            pendingWebContentSaveFuture?.cancel(false)
-            pendingWebContentSaveFuture = null
+            pendingWebContentApplyFuture?.cancel(false)
+            pendingWebContentApplyFuture = null
             return pendingWebContent.also {
                 pendingWebContent = null
             }
         }
     }
 
-    private fun saveContentToDocumentAndFile(newContent: String) {
+    private fun cancelPendingDocumentSave() {
+        synchronized(webContentLock) {
+            pendingDocumentSaveFuture?.cancel(false)
+            pendingDocumentSaveFuture = null
+        }
+    }
+
+    private fun persistDocument(currentDocument: Document) {
+        val app = ApplicationManager.getApplication()
+        val saveAction = {
+            try {
+                FileDocumentManager.getInstance().saveDocument(currentDocument)
+                LOG.debug("MARKFLOW_SAVE persistDocument: saved, file=${file.path}")
+            } catch (e: Exception) {
+                LOG.error("MARKFLOW_SAVE persistDocument: failed, file=${file.path}: ${e.message}", e)
+            }
+        }
+
+        if (app.isDispatchThread) {
+            saveAction()
+        } else {
+            app.invokeLater(saveAction)
+        }
+    }
+
+    private fun scheduleDocumentSave(currentDocument: Document) {
+        synchronized(webContentLock) {
+            pendingDocumentSaveFuture?.cancel(false)
+            pendingDocumentSaveFuture = AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                {
+                    val app = ApplicationManager.getApplication()
+                    app.invokeLater {
+                        if (!disposed && document === currentDocument) {
+                            persistDocument(currentDocument)
+                        }
+                    }
+                },
+                WEB_CONTENT_DISK_SAVE_DELAY_MS,
+                TimeUnit.MILLISECONDS
+            )
+        }
+    }
+
+    private fun applyContentToDocument(newContent: String, persistImmediately: Boolean) {
         val currentDocument = document ?: run {
-            LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: document is null, file=${file.path}")
+            LOG.error("MARKFLOW_SAVE applyContentToDocument: document is null, file=${file.path}")
             return
         }
 
         if (currentDocument.text == newContent) {
-            LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: no-op (text unchanged)")
+            LOG.debug("MARKFLOW_SAVE applyContentToDocument: no-op (text unchanged)")
             return
         }
 
         val app = ApplicationManager.getApplication()
-        val saveAction = {
+        val applyAction = {
             isUpdatingFromWeb.set(true)
             try {
                 CommandProcessor.getInstance().runUndoTransparentAction {
@@ -142,26 +188,37 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                         currentDocument.setText(newContent)
                     }
                 }
-                FileDocumentManager.getInstance().saveDocument(currentDocument)
-                LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: saved, file=${file.path} contentLength=${newContent.length}")
+                LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
+                if (persistImmediately) {
+                    cancelPendingDocumentSave()
+                    persistDocument(currentDocument)
+                } else {
+                    scheduleDocumentSave(currentDocument)
+                }
             } catch (e: Exception) {
-                LOG.error("MARKFLOW_SAVE saveContentToDocumentAndFile: failed, file=${file.path}: ${e.message}", e)
+                LOG.error("MARKFLOW_SAVE applyContentToDocument: failed, file=${file.path}: ${e.message}", e)
             } finally {
                 isUpdatingFromWeb.set(false)
             }
         }
 
         if (app.isDispatchThread) {
-            saveAction()
+            applyAction()
         } else {
-            LOG.debug("MARKFLOW_SAVE saveContentToDocumentAndFile: dispatching via EDT, file=${file.path} thread=${Thread.currentThread().name}")
-            app.invokeAndWait(saveAction)
+            LOG.debug("MARKFLOW_SAVE applyContentToDocument: dispatching via EDT, file=${file.path} thread=${Thread.currentThread().name}")
+            app.invokeAndWait(applyAction)
         }
     }
 
     private fun flushPendingWebContent() {
+        cancelPendingDocumentSave()
         val markdown = takePendingWebContent() ?: sharedBrowserService.getCurrentMarkdown(this) ?: return
-        saveContentToDocumentAndFile(markdown)
+        applyContentToDocument(markdown, persistImmediately = true)
+    }
+
+    private fun flushQueuedWebContent() {
+        val markdown = takePendingWebContent() ?: return
+        applyContentToDocument(markdown, persistImmediately = false)
     }
 
     internal fun currentMarkdownText(): String {
@@ -293,5 +350,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         private val LOG = Logger.getInstance(MarkFlowEditor::class.java)
         private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
         private const val WEB_CONTENT_SAVE_COALESCE_MS = 75L
+        private const val WEB_CONTENT_DISK_SAVE_DELAY_MS = 250L
     }
 }
