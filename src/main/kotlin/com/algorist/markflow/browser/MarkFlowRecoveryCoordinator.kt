@@ -1,6 +1,7 @@
 package com.algorist.markflow.browser
 
 import com.algorist.markflow.editor.MarkFlowEditor
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.intellij.openapi.diagnostic.Logger
 
 internal object MarkFlowRecoveryCoordinator {
@@ -18,7 +19,9 @@ internal object MarkFlowRecoveryCoordinator {
                 val nextEpoch = (current?.epoch ?: 0) + 1
                 val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
                 recoveryLeasesByFile[filePath] = updated
-                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason")
+                }
                 return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
             }
 
@@ -27,11 +30,15 @@ internal object MarkFlowRecoveryCoordinator {
                 val nextEpoch = active.epoch
                 val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
                 recoveryLeasesByFile[filePath] = updated
-                LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason (reused)")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.info("MARKFLOW_UI recovery:claim leader role=$leaseId epoch=$nextEpoch reason=$reason (reused)")
+                }
                 return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
             }
 
-            LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${active.epoch} reason=$reason")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${active.epoch} reason=$reason")
+            }
             return RecoveryBridgeResponse(role = "follower", epoch = active.epoch, reason = reason)
         }
     }
@@ -48,7 +55,9 @@ internal object MarkFlowRecoveryCoordinator {
             val current = recoveryLeasesByFile[filePath]
             if (current?.leader === editor && current.leaseId == leaseId && current.epoch == epoch) {
                 recoveryLeasesByFile.remove(filePath)
-                LOG.info("MARKFLOW_UI recovery:complete leaseId=$leaseId epoch=$epoch success=$success")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.info("MARKFLOW_UI recovery:complete leaseId=$leaseId epoch=$epoch success=$success")
+                }
                 return RecoveryBridgeResponse(role = reason, epoch = epoch, reason = reason)
             }
 
@@ -59,7 +68,9 @@ internal object MarkFlowRecoveryCoordinator {
                 current.epoch != epoch -> "epochMismatch"
                 else -> "unknown"
             }
-            LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$logStatus")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$logStatus")
+            }
         }
         return RecoveryBridgeResponse(role = "ignored", epoch = epoch, reason = reason)
     }
@@ -70,7 +81,9 @@ internal object MarkFlowRecoveryCoordinator {
             val current = recoveryLeasesByFile[filePath]
             if (current?.leader === editor && current.leaseId == leaseId) {
                 recoveryLeasesByFile.remove(filePath)
-                LOG.info("MARKFLOW_UI recovery:detach cleaned filePath=$filePath leaseId=$leaseId")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.info("MARKFLOW_UI recovery:detach cleaned filePath=$filePath leaseId=$leaseId")
+                }
             }
         }
     }

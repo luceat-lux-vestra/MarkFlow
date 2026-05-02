@@ -1,5 +1,6 @@
 package com.algorist.markflow.browser
 
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.intellij.openapi.diagnostic.Logger
 import com.sun.net.httpserver.HttpServer
 import java.io.IOException
@@ -120,7 +121,9 @@ internal object MarkFlowWebviewResourceManager {
             server.start()
             webviewHttpServer = server
             webviewServerPort = server.address.port
-            LOG.info("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.info("MARKFLOW_UI webview server started on 127.0.0.1:${server.address.port}")
+            }
             server.address.port
         } catch (ex: Exception) {
             LOG.error("MARKFLOW_UI failed to start webview server: ${ex.message}", ex)

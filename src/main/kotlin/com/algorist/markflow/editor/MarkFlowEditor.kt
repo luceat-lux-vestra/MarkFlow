@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import java.awt.BorderLayout
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.editor.state.MarkFlowEditorState
 
@@ -52,7 +53,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var disposed = false
 
     init {
-        LOG.info("MARKFLOW_UI editor init: ${file.path}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.info("MARKFLOW_UI editor init: ${file.path}")
+        }
         sharedBrowserService.registerEditor(this)
 
         document?.addDocumentListener(object : DocumentListener {
@@ -141,7 +144,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     private fun persistDocument(currentDocument: Document) {
         if (!FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)) {
-            LOG.debug("MARKFLOW_SAVE persistDocument: skipped (already saved), file=${file.path}")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.debug("MARKFLOW_SAVE persistDocument: skipped (already saved), file=${file.path}")
+            }
             return
         }
 
@@ -151,7 +156,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                 FileDocumentManager.getInstance().saveDocument(currentDocument)
                 cachedFileText = currentDocument.text
                 cachedFileTextStamp = file.timeStamp
-                LOG.debug("MARKFLOW_SAVE persistDocument: saved, file=${file.path}")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.debug("MARKFLOW_SAVE persistDocument: saved, file=${file.path}")
+                }
             } catch (e: Exception) {
                 LOG.error("MARKFLOW_SAVE persistDocument: failed, file=${file.path}: ${e.message}", e)
             }
@@ -190,13 +197,17 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
         val currentText = currentDocument.text
         if (currentText == newContent) {
-            LOG.debug("MARKFLOW_SAVE applyContentToDocument: no-op (text unchanged)")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.debug("MARKFLOW_SAVE applyContentToDocument: no-op (text unchanged)")
+            }
             return
         }
 
         val edit = DocumentContentDiff.compute(currentText, newContent)
         if (edit == null) {
-            LOG.debug("MARKFLOW_SAVE applyContentToDocument: diff resolved to no-op, file=${file.path}")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.debug("MARKFLOW_SAVE applyContentToDocument: diff resolved to no-op, file=${file.path}")
+            }
             return
         }
 
@@ -213,7 +224,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                         }
                     }
                 }
-                LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.debug("MARKFLOW_SAVE applyContentToDocument: applied, file=${file.path} contentLength=${newContent.length}")
+                }
                 if (persistImmediately) {
                     cancelPendingDocumentSave()
                     persistDocument(currentDocument)
@@ -230,7 +243,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         if (app.isDispatchThread) {
             applyAction()
         } else {
-            LOG.debug("MARKFLOW_SAVE applyContentToDocument: dispatching via EDT, file=${file.path} thread=${Thread.currentThread().name}")
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.debug("MARKFLOW_SAVE applyContentToDocument: dispatching via EDT, file=${file.path} thread=${Thread.currentThread().name}")
+            }
             app.invokeAndWait(applyAction)
         }
     }
@@ -362,7 +377,9 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             isAttachedToSharedBrowser = false
         }
         sharedBrowserService.unregisterEditor(this)
-        LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
+        }
     }
 
     internal fun onSharedBrowserDetachedByPool() {

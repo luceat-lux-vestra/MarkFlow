@@ -8,7 +8,6 @@ export const emitToIntelliJLog = (message: string) => {
     }
 };
 
-const DIAGNOSTICS_STORAGE_KEY = "markflow.diagnostics";
 let diagnosticsLoggingEnabled: boolean | null = null;
 
 const isDiagnosticsLoggingEnabled = () => {
@@ -16,12 +15,7 @@ const isDiagnosticsLoggingEnabled = () => {
         return diagnosticsLoggingEnabled;
     }
 
-    try {
-        const storageValue = window.localStorage.getItem(DIAGNOSTICS_STORAGE_KEY);
-        diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true || storageValue === "true";
-    } catch {
-        diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true;
-    }
+    diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true;
 
     return diagnosticsLoggingEnabled;
 };

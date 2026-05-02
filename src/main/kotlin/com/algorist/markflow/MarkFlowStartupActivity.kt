@@ -6,6 +6,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.file.MarkFlowFileSupport
 
@@ -38,7 +39,9 @@ class MarkFlowStartupActivity : ProjectActivity {
                         if (project.isDisposed) return@invokeLater
                         source.setSelectedEditor(file, MarkFlowFileSupport.EDITOR_TYPE_ID)
                     }
-                    LOG.debug("MARKFLOW_UI startup:forced editor for ${file.path}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.debug("MARKFLOW_UI startup:forced editor for ${file.path}")
+                    }
                 }
             }
         )

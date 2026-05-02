@@ -9,13 +9,14 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.jdom.Element
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.file.MarkFlowFileSupport
 import com.algorist.markflow.editor.state.MarkFlowEditorState
 
 class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean {
         val accepted = MarkFlowFileSupport.isMarkFlowTarget(file)
-        if (accepted) {
+        if (accepted && MarkFlowDiagnostics.enabled) {
             val ext = file.extension?.lowercase()
             LOG.info("MARKFLOW_UI accept: ${file.path} (type=${file.fileType.name}, ext=${ext ?: "<none>"})")
         }
@@ -23,7 +24,9 @@ class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     }
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor {
-        LOG.info("MARKFLOW_UI createEditor: ${file.path}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.info("MARKFLOW_UI createEditor: ${file.path}")
+        }
         return MarkFlowEditor(project, file)
     }
 

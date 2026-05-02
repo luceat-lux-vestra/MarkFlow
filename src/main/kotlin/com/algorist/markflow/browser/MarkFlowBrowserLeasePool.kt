@@ -3,6 +3,7 @@ package com.algorist.markflow.browser
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.editor.MarkFlowEditor
 import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.application.ApplicationManager
@@ -237,7 +238,9 @@ internal class MarkFlowBrowserLeasePool {
         if (disposed) return
         disposed = true
         evictionTask.cancel(false)
-        LOG.info("MARKFLOW_DIAG pool_dispose_start ${poolStats()}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.info("MARKFLOW_DIAG pool_dispose_start ${poolStats()}")
+        }
 
         val leases = synchronized(lifecycleLock) {
             val snapshot = leaseById.values.toList()
@@ -252,7 +255,9 @@ internal class MarkFlowBrowserLeasePool {
             lease.jsQuery.dispose()
             lease.browser.dispose()
         }
-        LOG.info("MARKFLOW_DIAG pool_dispose_done leases=${leases.size}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.info("MARKFLOW_DIAG pool_dispose_done leases=${leases.size}")
+        }
     }
 
     private fun leaseForEditor(editor: MarkFlowEditor): BrowserLease? {
@@ -307,33 +312,45 @@ internal class MarkFlowBrowserLeasePool {
             try {
                 val normalized = request.trim()
                 if (normalized.isEmpty() || normalized == "undefined" || normalized == "null") {
-                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED empty request, lease=${lease.id}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED empty request, lease=${lease.id}")
+                    }
                     return@addHandler ignoredResponse()
                 }
 
                 val parsed = JsonParser.parseString(normalized)
                 if (!parsed.isJsonObject) {
-                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED not JSON, lease=${lease.id}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED not JSON, lease=${lease.id}")
+                    }
                     return@addHandler ignoredResponse()
                 }
 
                 val json = parsed.asJsonObject
                 val requestSession = json["sessionId"]?.takeIf { it.isJsonPrimitive }?.asString
                 if (!requestSession.isNullOrBlank() && requestSession != lease.sessionId) {
-                    LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED session mismatch request=$requestSession lease=${lease.sessionId}, lease=${lease.id}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED session mismatch request=$requestSession lease=${lease.sessionId}, lease=${lease.id}")
+                    }
                     return@addHandler ignoredResponse()
                 }
 
                 val action = json["action"]?.takeIf { it.isJsonPrimitive }?.asString
-                LOG.debug("MARKFLOW_SAVE setupQueries:received action=$action lease=${lease.id} sessionId=$requestSession")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.debug("MARKFLOW_SAVE setupQueries:received action=$action lease=${lease.id} sessionId=$requestSession")
+                }
                 when (action) {
                     "update" -> {
                         val targetEditor = lease.attachedEditor ?: run {
-                            LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED no attachedEditor, lease=${lease.id}")
+                            if (MarkFlowDiagnostics.enabled) {
+                                LOG.warn("MARKFLOW_SAVE setupQueries:DROPPED no attachedEditor, lease=${lease.id}")
+                            }
                             return@addHandler ignoredResponse()
                         }
                         val content = json["content"]?.takeIf { it.isJsonPrimitive }?.asString ?: ""
-                        LOG.debug("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
+                        if (MarkFlowDiagnostics.enabled) {
+                            LOG.debug("MARKFLOW_SAVE setupQueries:DISPATCHING to applyWebUpdate editor=${targetEditor.file.path} contentLen=${content.length}")
+                        }
                         targetEditor.applyWebUpdate(
                             content = content,
                             scrollTop = readJsonInt(json, "scrollTop", 0),
@@ -394,7 +411,9 @@ internal class MarkFlowBrowserLeasePool {
         lease.debugQuery.addHandler { request: String ->
             val normalized = request.trim()
             if (normalized.isNotEmpty() && normalized != "undefined") {
-                LOG.warn("MARKFLOW_DIAG JS bridge: $normalized")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.warn("MARKFLOW_DIAG JS bridge: $normalized")
+                }
             }
             okResponse()
         }
@@ -412,10 +431,12 @@ internal class MarkFlowBrowserLeasePool {
                 val safeMessage = message?.trim().orEmpty()
                 if (safeMessage.isNotEmpty()) {
                     val safeSource = source ?: "<unknown>"
-                    if (safeMessage.contains("MARKFLOW_UI") || safeMessage.contains("MARKFLOW_DIAG") || safeMessage.contains("MARKFLOW_SAVE")) {
-                        LOG.warn("MARKFLOW_DIAG JS console[$level] $safeSource:$line $safeMessage")
-                    } else {
-                        LOG.debug("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
+                    if (MarkFlowDiagnostics.enabled || MarkFlowDiagnostics.shouldEmitCriticalBridgeMessage(safeMessage)) {
+                        if (safeMessage.contains("MARKFLOW_UI") || safeMessage.contains("MARKFLOW_DIAG") || safeMessage.contains("MARKFLOW_SAVE")) {
+                            LOG.warn("MARKFLOW_DIAG JS console[$level] $safeSource:$line $safeMessage")
+                        } else {
+                            LOG.debug("MARKFLOW_UI JS console[$level] $safeSource:$line $safeMessage")
+                        }
                     }
                 }
                 return false
@@ -424,17 +445,25 @@ internal class MarkFlowBrowserLeasePool {
 
         lease.browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadStart(cefBrowser: CefBrowser?, frame: CefFrame?, transitionType: CefRequest.TransitionType?) {
-                LOG.debug("MARKFLOW_UI lease=${lease.id} JCEF onLoadStart: url=${cefBrowser?.url ?: lease.browser.cefBrowser.url}")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.debug("MARKFLOW_UI lease=${lease.id} JCEF onLoadStart: url=${cefBrowser?.url ?: lease.browser.cefBrowser.url}")
+                }
             }
 
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                LOG.warn("MARKFLOW_SAVE onLoadEnd: lease=${lease.id} frame=${frame?.isMain} url=${cefBrowser?.url}")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.warn("MARKFLOW_SAVE onLoadEnd: lease=${lease.id} frame=${frame?.isMain} url=${cefBrowser?.url}")
+                }
                 if (frame != null && !frame.isMain) {
-                    LOG.warn("MARKFLOW_SAVE onLoadEnd: SKIPPED subframe, lease=${lease.id}")
+                    if (MarkFlowDiagnostics.enabled) {
+                        LOG.warn("MARKFLOW_SAVE onLoadEnd: SKIPPED subframe, lease=${lease.id}")
+                    }
                     return
                 }
                 lease.webViewLoaded = true
-                LOG.warn("MARKFLOW_SAVE onLoadEnd: calling injectBridgeAndBootstrap, lease=${lease.id}")
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.warn("MARKFLOW_SAVE onLoadEnd: calling injectBridgeAndBootstrap, lease=${lease.id}")
+                }
                 injectBridgeAndBootstrap(lease)
                 lease.attachedEditor?.onActivatedInSharedBrowser()
                 applyPendingRuntimeSettings(lease)
@@ -453,12 +482,15 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     private fun injectBridgeAndBootstrap(lease: BrowserLease) {
-        LOG.warn("MARKFLOW_SAVE injectBridgeAndBootstrap: START lease=${lease.id} editor=${lease.attachedEditor?.file?.path}")
+        if (MarkFlowDiagnostics.enabled) {
+            LOG.warn("MARKFLOW_SAVE injectBridgeAndBootstrap: START lease=${lease.id} editor=${lease.attachedEditor?.file?.path}")
+        }
         val editor = lease.attachedEditor
         val markdownLiteral = gson.toJson(editor?.currentMarkdownText().orEmpty())
         val runtimeSettingsJson = buildRuntimeSettingsJson()
         val initialMarkdownSeq = ++lease.intelliJToWebPushSequence
         val initialSettingsSeq = settingsPushSequence.incrementAndGet()
+        val diagnosticsEnabledLiteral = if (MarkFlowDiagnostics.enabled) "true" else "false"
         val activeLiteral = if (lease.isEditorActive) "true" else "false"
         val sessionLiteral = gson.toJson(lease.sessionId)
         val cefQueryBridgeCall = lease.jsQuery.inject(
@@ -469,6 +501,7 @@ internal class MarkFlowBrowserLeasePool {
         val debugBridgeCall = lease.debugQuery.inject("window.__markflowDebugRequest")
 
         val injectJs = """
+            window.__markflowDiagnosticsEnabled = $diagnosticsEnabledLiteral;
             window.intelliJ_initialMarkdown = $markdownLiteral;
             window.intelliJ_markFlowSettings = $runtimeSettingsJson;
             window.__markflowSessionId = $sessionLiteral;
@@ -480,7 +513,14 @@ internal class MarkFlowBrowserLeasePool {
                 $cefQueryBridgeCall
             };
             window.markflowLog = function(message) {
-                window.__markflowDebugRequest = String(message || "");
+                var normalized = String(message || "");
+                if (!window.__markflowDiagnosticsEnabled) {
+                    var critical = /bootError|window:error|window:unhandledrejection|failed|error|missing/i.test(normalized);
+                    if (!critical) {
+                        return;
+                    }
+                }
+                window.__markflowDebugRequest = normalized;
                 $debugBridgeCall
             };
             (function() {
@@ -649,6 +689,7 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     private fun logLeaseEvent(event: String, lease: BrowserLease, editor: MarkFlowEditor? = null, note: String = "") {
+        if (!MarkFlowDiagnostics.enabled) return
         val editorPath = editor?.getFile()?.path ?: "<none>"
         val session = lease.sessionId.ifBlank { "<none>" }
         val suffix = if (note.isBlank()) "" else " note=$note"
