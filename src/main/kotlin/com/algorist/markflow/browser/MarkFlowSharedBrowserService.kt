@@ -68,10 +68,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         return browserLeasePool.hasLease(editor)
     }
 
-    fun getCurrentMarkdown(editor: MarkFlowEditor): String? {
-        return browserLeasePool.getCurrentMarkdown(editor)
-    }
-
     internal fun reapplyRuntimeSettingsForAllAttachedLeases(forceReload: Boolean) {
         browserLeasePool.reapplyRuntimeSettingsForAllAttachedLeases(forceReload)
     }

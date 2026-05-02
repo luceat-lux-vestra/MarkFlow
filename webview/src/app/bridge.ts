@@ -5,7 +5,6 @@ type EditorBridgeCallbacks = {
     onEditorActive: (active: boolean) => void;
     onIntelliJMarkdownUpdate: (markdown: string) => void;
     onIntelliJEditorState: (state: EditorUiState) => void;
-    getMarkdown: () => string;
     emitToIntelliJLog: (message: string) => void;
 };
 
@@ -66,10 +65,6 @@ export const createEditorBridge = (callbacks: EditorBridgeCallbacks): EditorBrid
 
         window.setMarkFlowEditorActive = (active: boolean) => {
             callbacks.onEditorActive(active);
-        };
-
-        window.getMarkdown = () => {
-            return callbacks.getMarkdown();
         };
 
         window.sendToIntelliJ = (markdownText: string, uiState: EditorUiState) => {

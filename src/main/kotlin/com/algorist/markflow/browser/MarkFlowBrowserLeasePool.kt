@@ -19,7 +19,6 @@ import org.cef.handler.CefLoadHandler
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.network.CefRequest
 import java.util.LinkedHashSet
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -223,44 +222,6 @@ internal class MarkFlowBrowserLeasePool {
     fun setEditorActive(editor: MarkFlowEditor, active: Boolean) {
         val lease = leaseForEditor(editor) ?: return
         executeSetActiveFlag(lease, active, lease.sessionId)
-    }
-
-    fun getCurrentMarkdown(editor: MarkFlowEditor): String? {
-        val lease = leaseForEditor(editor) ?: return null
-        if (!lease.webViewLoaded) return null
-        val flushQuery = JBCefJSQuery.create(lease.browser as JBCefBrowserBase)
-        try {
-            val sessionLiteral = gson.toJson(lease.sessionId)
-            val latch = CountDownLatch(1)
-            var result: String? = null
-            flushQuery.addHandler { request: String ->
-                result = request
-                latch.countDown()
-                JBCefJSQuery.Response("ok")
-            }
-            val flushCallSnippet = flushQuery.inject("md")
-            val script = """
-                (function() {
-                    var md = "";
-                    if (window.__markflowSessionId === $sessionLiteral && typeof window.getMarkdown === 'function') {
-                        md = window.getMarkdown() || "";
-                    }
-                    $flushCallSnippet
-                })();
-            """.trimIndent()
-            lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
-            val completed = latch.await(2000, TimeUnit.MILLISECONDS)
-            if (!completed) {
-                LOG.warn("MARKFLOW_SAVE getCurrentMarkdown: timeout for ${editor.file.path}")
-                return null
-            }
-            return result?.takeIf { it.isNotEmpty() && it != "undefined" && it != "null" }
-        } catch (e: Exception) {
-            LOG.error("MARKFLOW_SAVE getCurrentMarkdown: failed for ${editor.file.path}: ${e.message}", e)
-            return null
-        } finally {
-            flushQuery.dispose()
-        }
     }
 
     fun reapplyRuntimeSettingsForAllAttachedLeases(forceReload: Boolean) {

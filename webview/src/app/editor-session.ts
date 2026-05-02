@@ -43,7 +43,6 @@ export class MarkFlowEditorSession {
             onEditorActive: this.handleEditorActive,
             onIntelliJMarkdownUpdate: this.handleIntelliJMarkdownUpdate,
             onIntelliJEditorState: this.handleIntelliJEditorState,
-            getMarkdown: this.getMarkdown,
             emitToIntelliJLog: this.emitToIntelliJLog
         });
     }
@@ -214,11 +213,6 @@ export class MarkFlowEditorSession {
             this.recovery.clearRecoveryState("follower:stateApplied");
             this.recovery.notifyRecoveryOutcome("complete", followerEpoch, "follower:stateApplied");
         }
-    };
-
-    private readonly getMarkdown = () => {
-        if (!this.activeCrepe || !this.isCrepeReady) return "";
-        return safeReadMarkdown(this.activeCrepe, "", "window.getMarkdown", this.emitToIntelliJLog);
     };
 
     private attachCrepeBridge(crepe: Crepe, sessionId: number) {
