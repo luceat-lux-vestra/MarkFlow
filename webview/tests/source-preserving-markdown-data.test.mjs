@@ -38,6 +38,29 @@ test("derives list and fence defaults from source markdown", () => {
     assert.equal(defaults.strong, "_");
 });
 
+test("derives alternate marker preferences from a source that uses plus bullets, parenthesized ordering, tildes, and underscore rules", () => {
+    const defaults = deriveMarkdownSourceDefaults([
+        "+ plus bullet",
+        "7) ordered",
+        "~~~js",
+        "___",
+        "# Heading #",
+        "Setext heading",
+        "========",
+        "This has _emphasis_ and __strong__"
+    ].join("\n"));
+
+    assert.equal(defaults.bullet, "+");
+    assert.equal(defaults.bulletOther, "*");
+    assert.equal(defaults.bulletOrdered, ")");
+    assert.equal(defaults.fence, "~");
+    assert.equal(defaults.rule, "_");
+    assert.equal(defaults.setext, true);
+    assert.equal(defaults.closeAtx, true);
+    assert.equal(defaults.emphasis, "_");
+    assert.equal(defaults.strong, "_");
+});
+
 test("falls back to defaults when syntax markers are absent", () => {
     const defaults = deriveMarkdownSourceDefaults("plain text only");
 

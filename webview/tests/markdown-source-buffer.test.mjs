@@ -37,6 +37,34 @@ test("preserves raw markdown when only serializer markers differ", () => {
     assert.equal(updateRawMarkdownFromSerialized(raw, serialized), raw);
 });
 
+test("preserves source markers across lists, headings, fences, and emphasis when the AST stays the same", () => {
+    const raw = [
+        "+ item one",
+        "3) item two",
+        "# Heading #",
+        "Setext heading",
+        "------",
+        "~~~ts",
+        "console.log(1)",
+        "~~~",
+        "This has _emphasis_ and __strong__"
+    ].join("\n");
+
+    const serialized = [
+        "* item one",
+        "3. item two",
+        "# Heading",
+        "Setext heading",
+        "------",
+        "```ts",
+        "console.log(1)",
+        "```",
+        "This has *emphasis* and **strong**"
+    ].join("\n");
+
+    assert.equal(updateRawMarkdownFromSerialized(raw, serialized), raw);
+});
+
 test("keeps untouched blocks byte-stable while updating changed blocks", () => {
     const raw = [
         "- item one",
@@ -58,6 +86,39 @@ test("keeps untouched blocks byte-stable while updating changed blocks", () => {
     assert.ok(next.includes("Paragraph text changed."));
     assert.ok(!next.includes("* item one"));
     assert.ok(!next.includes("* item two"));
+});
+
+test("preserves nested container formatting while changing nested content", () => {
+    const raw = [
+        "- parent",
+        "  - child one",
+        "  - child two",
+        "",
+        "Tail paragraph."
+    ].join("\n");
+
+    const serialized = [
+        "* parent",
+        "  * child one changed",
+        "  * child two",
+        "",
+        "Tail paragraph updated."
+    ].join("\n");
+
+    const next = updateRawMarkdownFromSerialized(raw, serialized);
+
+    assert.equal(next, [
+        "- parent",
+        "  - child one changed",
+        "  - child two",
+        "",
+        "Tail paragraph updated."
+    ].join("\n"));
+    assert.ok(next.includes("- parent"));
+    assert.ok(next.includes("  - child one changed"));
+    assert.ok(next.includes("Tail paragraph updated."));
+    assert.ok(!next.includes("* parent"));
+    assert.ok(!next.includes("  * child one changed"));
 });
 
 test("preserves original blank-line spacing around changed blocks", () => {

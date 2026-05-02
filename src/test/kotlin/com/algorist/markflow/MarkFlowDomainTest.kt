@@ -78,4 +78,42 @@ class MarkFlowDomainTest : BasePlatformTestCase() {
         assertEquals(3L, gate.current())
         assertEquals(3L, gate.observeAtLeast(2))
     }
+
+    fun testSourceRevisionGateNormalizesNonPositiveValues() {
+        val gate = SourceRevisionGate(initialRevision = 0)
+
+        assertEquals(1L, gate.current())
+        assertFalse(gate.acceptIncomingRevision(0))
+        assertFalse(gate.acceptIncomingRevision(-4))
+        assertEquals(1L, gate.current())
+    }
+
+    fun testSourceRevisionGateDoesNotRegressOnObserveAtLeast() {
+        val gate = SourceRevisionGate(initialRevision = 4)
+
+        assertEquals(9L, gate.observeAtLeast(9))
+        assertEquals(9L, gate.current())
+        assertEquals(9L, gate.observeAtLeast(3))
+        assertEquals(9L, gate.current())
+        assertFalse(gate.acceptIncomingRevision(9))
+        assertFalse(gate.acceptIncomingRevision(8))
+    }
+
+    fun testDocumentContentDiffComputesSuffixInsertion() {
+        val edit = DocumentContentDiff.compute("hello", "hello world")
+
+        assertNotNull(edit)
+        assertEquals(5, edit?.startOffset)
+        assertEquals(5, edit?.endOffset)
+        assertEquals(" world", edit?.replacement)
+    }
+
+    fun testDocumentContentDiffComputesWholeReplacement() {
+        val edit = DocumentContentDiff.compute("abc", "xyz")
+
+        assertNotNull(edit)
+        assertEquals(0, edit?.startOffset)
+        assertEquals(3, edit?.endOffset)
+        assertEquals("xyz", edit?.replacement)
+    }
 }
