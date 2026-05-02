@@ -19,7 +19,6 @@ export class MarkFlowMermaidRenderer {
     private hasAppliedRuntimeSettingsOnce = false;
     private lastAppliedPreviewOnlyByDefault = true;
     private activeCrepeSessionId = 0;
-    private isCrepeReady = false;
     private mermaidRenderQueues = new WeakMap<MermaidPreviewRenderer, Promise<void>>();
     private mermaidRenderRequestId = 0;
     private mermaidPreviewEpoch = 0;
@@ -50,10 +49,6 @@ export class MarkFlowMermaidRenderer {
 
     public setActiveCrepeSessionId(sessionId: number) {
         this.activeCrepeSessionId = sessionId;
-    }
-
-    public setCrepeReady(isReady: boolean) {
-        this.isCrepeReady = isReady;
     }
 
     public setDocumentCharacterCount(characterCount: number) {
@@ -119,7 +114,7 @@ export class MarkFlowMermaidRenderer {
                     const requestId = ++renderer.mermaidRenderRequestId;
                     const previewId = renderer.getOrCreateMermaidPreviewId(applyPreview);
                     const isRenderContextActive = () => {
-                        return renderer.isCrepeReady && renderEpoch === renderer.mermaidPreviewEpoch && crepeSessionId === renderer.activeCrepeSessionId;
+                        return renderEpoch === renderer.mermaidPreviewEpoch && crepeSessionId === renderer.activeCrepeSessionId;
                     };
 
                     if (!isRenderContextActive()) {
@@ -314,9 +309,6 @@ export class MarkFlowMermaidRenderer {
         const resolvedPreviewId = existingId ?? previewId;
         this.mermaidPreviewIdByRenderer.set(applyPreview, resolvedPreviewId);
         this.mermaidPreviewRenderers.set(resolvedPreviewId, () => {
-            if (!this.isCrepeReady || this.activeCrepeSessionId === 0) {
-                return;
-            }
             renderNow();
         });
     }

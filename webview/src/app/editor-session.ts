@@ -122,7 +122,6 @@ export class MarkFlowEditorSession {
         const crepeSessionId = ++this.crepeSessionSequence;
         const crepe = await this.createCrepeInstance(initialText, crepeSessionId);
         this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
-        this.mermaidRenderer.setCrepeReady(false);
         this.activeCrepe = crepe;
         this.attachCrepeBridge(crepe, crepeSessionId);
         markFlowStage("crepe:constructed", this.emitToIntelliJLog);
@@ -250,7 +249,6 @@ export class MarkFlowEditorSession {
         }
 
         this.isCrepeReady = true;
-        this.mermaidRenderer.setCrepeReady(true);
         markFlowStage("crepe:create:done", this.emitToIntelliJLog);
         this.removeMarkdownPasteHandler = installMarkdownPasteHandler(crepe, this.emitToIntelliJLog);
         if (restoreState) {
@@ -313,7 +311,6 @@ export class MarkFlowEditorSession {
             }
 
             this.isCrepeReady = false;
-            this.mermaidRenderer.setCrepeReady(false);
             this.mermaidRenderer.invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
             const nextSessionId = ++this.crepeSessionSequence;
             const next = await this.createCrepeInstance(markdown, nextSessionId);
