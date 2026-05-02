@@ -1,7 +1,7 @@
 package com.algorist.markflow
 
 internal object MarkFlowDiagnostics {
-    const val PROPERTY_NAME = "markflow.diagnostics"
+    private const val PROPERTY_NAME = "markflow.diagnostics"
     val enabled: Boolean = java.lang.Boolean.getBoolean(PROPERTY_NAME)
 
     fun shouldEmitCriticalBridgeMessage(message: String): Boolean {
