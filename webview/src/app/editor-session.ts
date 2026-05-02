@@ -465,7 +465,6 @@ export class MarkFlowEditorSession {
                 this.emitToIntelliJLog(
                     `MARKFLOW_SAVE sendToIntelliJ:reject sourceRevision=${pending.sourceRevision} reason=${ack.reason ?? "unknown"}`
                 );
-                this.syncSourceRevision(Math.max(this.currentSourceRevision, ack.sourceRevision));
             }
         );
     }

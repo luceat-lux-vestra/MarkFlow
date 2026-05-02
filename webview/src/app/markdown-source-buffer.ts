@@ -90,10 +90,11 @@ const patchContainerNode = (
     nextNode: MarkdownNode
 ): string | null => {
     const rawRange = getNodeRange(rawNode);
+    const nextRange = getNodeRange(nextNode);
     const rawChildren = rawNode.children ?? [];
     const nextChildren = nextNode.children ?? [];
 
-    if (!rawRange || rawChildren.length === 0 || rawChildren.length !== nextChildren.length) {
+    if (!rawRange || !nextRange || rawChildren.length === 0 || rawChildren.length !== nextChildren.length) {
         return null;
     }
 

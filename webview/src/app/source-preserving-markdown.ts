@@ -40,12 +40,12 @@ const sourceStyleRemarkPlugin: RemarkPlugin<{}> = {
 
             if (node.type === "list") {
                 if (node.ordered) {
-                    const orderedMatch = line.match(/^\s*\d+([.)])\s+/);
+                    const orderedMatch = line.match(/^\s{0,3}\d+([.)])\s+/);
                     if (orderedMatch) {
                         data.markflowOrderedDelimiter = orderedMatch[1] as "." | ")";
                     }
                 } else {
-                    const bulletMatch = line.match(/^\s*([*+\-])\s+/);
+                    const bulletMatch = line.match(/^\s{0,3}([*+\-])\s+/);
                     if (bulletMatch) {
                         data.markflowBullet = bulletMatch[1] as "-" | "+" | "*";
                     }
