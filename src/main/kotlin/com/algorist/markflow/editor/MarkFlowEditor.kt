@@ -136,6 +136,11 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     }
 
     private fun persistDocument(currentDocument: Document) {
+        if (!FileDocumentManager.getInstance().isDocumentUnsaved(currentDocument)) {
+            LOG.debug("MARKFLOW_SAVE persistDocument: skipped (already saved), file=${file.path}")
+            return
+        }
+
         val app = ApplicationManager.getApplication()
         val saveAction = {
             try {
