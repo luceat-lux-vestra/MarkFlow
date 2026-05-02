@@ -42,6 +42,10 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
     private var pendingWebContent: String? = null
     private var pendingWebContentApplyFuture: ScheduledFuture<*>? = null
     private var pendingDocumentSaveFuture: ScheduledFuture<*>? = null
+    @Volatile
+    private var cachedFileText: String? = null
+    @Volatile
+    private var cachedFileTextStamp: Long = Long.MIN_VALUE
     private var isAttachedToSharedBrowser = false
     private val isUpdatingFromWeb = AtomicBoolean(false)
     @Volatile
@@ -145,6 +149,8 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         val saveAction = {
             try {
                 FileDocumentManager.getInstance().saveDocument(currentDocument)
+                cachedFileText = currentDocument.text
+                cachedFileTextStamp = file.timeStamp
                 LOG.debug("MARKFLOW_SAVE persistDocument: saved, file=${file.path}")
             } catch (e: Exception) {
                 LOG.error("MARKFLOW_SAVE persistDocument: failed, file=${file.path}: ${e.message}", e)
@@ -252,12 +258,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     internal fun currentMarkdownText(): String {
         document?.text?.let { return it }
-        return try {
-            String(file.contentsToByteArray(), file.charset)
-        } catch (ex: Exception) {
-            LOG.warn("MARKFLOW_UI failed to read markdown for ${file.path}: ${ex.message}")
-            ""
-        }
+        return readFileTextCached()
     }
 
     internal fun applyPendingStateIfPossible() {
@@ -303,12 +304,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
 
     override fun isModified(): Boolean {
         val docText = document?.text ?: return false
-        val fileText = try {
-            String(file.contentsToByteArray(), file.charset)
-        } catch (ex: Exception) {
-            return false
-        }
-        return docText != fileText
+        return docText != readFileTextCached()
     }
 
     override fun isValid(): Boolean = !disposed
@@ -380,5 +376,26 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         private const val ACTIVATION_SETTINGS_REAPPLY_THROTTLE_MS = 300L
         private const val WEB_CONTENT_SAVE_COALESCE_MS = 75L
         private const val WEB_CONTENT_DISK_SAVE_DELAY_MS = 250L
+    }
+
+    private fun readFileTextCached(): String {
+        val stamp = file.timeStamp
+        val cachedStamp = cachedFileTextStamp
+        val cachedText = cachedFileText
+        if (cachedText != null && cachedStamp == stamp) {
+            return cachedText
+        }
+
+        return try {
+            val text = String(file.contentsToByteArray(), file.charset)
+            cachedFileText = text
+            cachedFileTextStamp = stamp
+            text
+        } catch (ex: Exception) {
+            LOG.warn("MARKFLOW_UI failed to read markdown for ${file.path}: ${ex.message}")
+            cachedFileText = null
+            cachedFileTextStamp = stamp
+            ""
+        }
     }
 }

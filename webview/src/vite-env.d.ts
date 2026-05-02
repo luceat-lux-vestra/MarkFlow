@@ -44,4 +44,5 @@ interface Window {
     setMarkFlowEditorActive?: (active: boolean) => void;
     getMarkdown?: () => string;
     sendToIntelliJ?: (markdownText: string, uiState: EditorUiState) => void;
+    __markflowDiagnosticsEnabled?: boolean;
 }

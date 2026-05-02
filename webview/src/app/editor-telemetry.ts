@@ -8,10 +8,30 @@ export const emitToIntelliJLog = (message: string) => {
     }
 };
 
+const DIAGNOSTICS_STORAGE_KEY = "markflow.diagnostics";
+let diagnosticsLoggingEnabled: boolean | null = null;
+
+const isDiagnosticsLoggingEnabled = () => {
+    if (diagnosticsLoggingEnabled !== null) {
+        return diagnosticsLoggingEnabled;
+    }
+
+    try {
+        const storageValue = window.localStorage.getItem(DIAGNOSTICS_STORAGE_KEY);
+        diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true || storageValue === "true";
+    } catch {
+        diagnosticsLoggingEnabled = window.__markflowDiagnosticsEnabled === true;
+    }
+
+    return diagnosticsLoggingEnabled;
+};
+
 export const markFlowStage = (stage: string, emit: (message: string) => void, detail = "") => {
     const message = detail ? `MARKFLOW_UI ${stage}: ${detail}` : `MARKFLOW_UI ${stage}`;
-    console.info(message);
-    emit(message);
+    console.debug(message);
+    if (isDiagnosticsLoggingEnabled()) {
+        emit(message);
+    }
     const app = document.getElementById("app");
     if (app) {
         app.setAttribute("data-markflow-stage", stage);
@@ -20,8 +40,10 @@ export const markFlowStage = (stage: string, emit: (message: string) => void, de
 
 export const logMermaidTrace = (detail: string, emit: (message: string) => void) => {
     const line = `MARKFLOW_UI mermaid:${detail}`;
-    console.info(line);
-    emit(line);
+    console.debug(line);
+    if (isDiagnosticsLoggingEnabled()) {
+        emit(line);
+    }
 };
 
 export const showBootError = (stage: string, detail: string, emit: (message: string) => void) => {

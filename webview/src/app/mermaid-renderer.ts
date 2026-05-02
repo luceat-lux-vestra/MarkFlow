@@ -1,9 +1,9 @@
-import mermaid from "mermaid";
 import {applyRuntimeUiSettings, createMermaidPreviewConfig, logThemeDiagnostics, resolveMermaidTheme, resolveRuntimeSettings} from "./runtime-settings";
 import type {MarkFlowRuntimeSettings} from "./types";
 import {logMermaidTrace} from "./editor-telemetry";
 
 type MermaidPreviewRenderer = (html: string) => void;
+type MermaidModule = typeof import("mermaid");
 
 export type MermaidSettingsApplyResult = {
     previewOnlyByDefaultChanged: boolean;
@@ -26,6 +26,15 @@ export class MarkFlowMermaidRenderer {
     private mermaidLoadingWatchdogTimers = new WeakMap<MermaidPreviewRenderer, number>();
     private mermaidPreviewRenderers = new Map<string, () => void>();
     private mermaidPreviewIdByRenderer = new WeakMap<MermaidPreviewRenderer, string>();
+    private mermaidPreviewVisibility = new Map<string, boolean>();
+    private mermaidPreviewRenderedOnce = new Set<string>();
+    private mermaidPendingPreviewRefreshIds = new Set<string>();
+    private mermaidPreviewObservedElements = new Map<string, Element>();
+    private mermaidPreviewRenderSignatures = new Map<string, string>();
+    private mermaidModulePromise: Promise<MermaidModule> | null = null;
+    private previewVisibilityObserver: IntersectionObserver | null = null;
+    private documentCharacterCount = 0;
+    private lastInitializedMermaidSettingsRevision = Number.NEGATIVE_INFINITY;
 
     public getRuntimeSettings() {
         return this.runtimeSettings;
@@ -45,6 +54,10 @@ export class MarkFlowMermaidRenderer {
 
     public setCrepeReady(isReady: boolean) {
         this.isCrepeReady = isReady;
+    }
+
+    public setDocumentCharacterCount(characterCount: number) {
+        this.documentCharacterCount = Math.max(0, characterCount);
     }
 
     public applyRuntimeSettingsFromHost(raw: MarkFlowRuntimeSettings | undefined): MermaidSettingsApplyResult {
@@ -68,16 +81,14 @@ export class MarkFlowMermaidRenderer {
             };
         }
 
-        console.info(
-            `MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${this.runtimeSettings.themeSource}`
-        );
+        console.debug(`MARKFLOW_UI settings:apply revision=${nextRevision} theme=${nextTheme} source=${this.runtimeSettings.themeSource}`);
         this.emitToIntelliJLog(
             `MARKFLOW_UI settings:resolved revision=${nextRevision} source=${this.runtimeSettings.themeSource} security=${this.runtimeSettings.diagramSecurityLevel}`
         );
         logThemeDiagnostics(raw, this.runtimeSettings, nextTheme, this.emitToIntelliJLog);
-        mermaid.initialize(createMermaidPreviewConfig(this.runtimeSettings));
         this.lastAppliedMermaidTheme = nextTheme;
         this.lastAppliedSettingsRevision = nextRevision;
+        this.applyMermaidRuntimeSettingsIfLoaded();
 
         const app = document.getElementById("app");
         if (app) {
@@ -106,6 +117,7 @@ export class MarkFlowMermaidRenderer {
                 if (isMermaidLanguage(language) && content.trim()) {
                     const renderEpoch = renderer.mermaidPreviewEpoch;
                     const requestId = ++renderer.mermaidRenderRequestId;
+                    const previewId = renderer.getOrCreateMermaidPreviewId(applyPreview);
                     const isRenderContextActive = () => {
                         return renderer.isCrepeReady && renderEpoch === renderer.mermaidPreviewEpoch && crepeSessionId === renderer.activeCrepeSessionId;
                     };
@@ -118,6 +130,9 @@ export class MarkFlowMermaidRenderer {
                         renderer.clearMermaidLoadingWatchdog(applyPreview);
                         if (isRenderContextActive()) {
                             applyPreview(html);
+                            renderer.observeMermaidPreview(previewId);
+                            renderer.mermaidPreviewRenderedOnce.add(previewId);
+                            renderer.mermaidPendingPreviewRefreshIds.delete(previewId);
                         }
                     };
                     logMermaidTrace(`renderPreview ${normalizePreviewSnippet(content, 32)}`, renderer.emitToIntelliJLog);
@@ -125,6 +140,18 @@ export class MarkFlowMermaidRenderer {
                         const scheduledRevision = renderer.lastAppliedSettingsRevision;
                         const scheduledTheme = renderer.lastAppliedMermaidTheme;
                         const svgId = `mermaid-svg-${uid()}`;
+                        const signature = `${scheduledRevision}:${scheduledTheme}:${hashPreviewContent(content)}`;
+
+                        if (renderer.mermaidPreviewRenderSignatures.get(previewId) === signature && renderer.mermaidRenderQueues.get(applyPreview)) {
+                            return;
+                        }
+                        renderer.mermaidPreviewRenderSignatures.set(previewId, signature);
+
+                        if (renderer.shouldDeferPreviewRefresh(previewId) && renderer.mermaidPreviewRenderedOnce.has(previewId)) {
+                            renderer.mermaidPendingPreviewRefreshIds.add(previewId);
+                            renderer.observeMermaidPreview(previewId);
+                            return;
+                        }
 
                         renderer.clearMermaidLoadingWatchdog(applyPreview);
                         const watchdogId = window.setTimeout(() => {
@@ -149,6 +176,7 @@ export class MarkFlowMermaidRenderer {
                             }
                             logMermaidTrace(`start id=${requestId} svg=${svgId}`, renderer.emitToIntelliJLog);
                             try {
+                                const mermaid = await renderer.ensureMermaid();
                                 const output = await renderer.withTimeout(mermaid.render(svgId, content), MERMAID_RENDER_TIMEOUT_MS);
                                 if (!isRenderContextActive()) {
                                     renderer.clearMermaidLoadingWatchdog(applyPreview);
@@ -170,7 +198,7 @@ export class MarkFlowMermaidRenderer {
                                 }
 
                                 logMermaidTrace(`success id=${requestId} theme=${renderer.lastAppliedMermaidTheme}`, renderer.emitToIntelliJLog);
-                                settlePreview(renderer.wrapMermaidSvg(output.svg));
+                                settlePreview(renderer.wrapMermaidSvg(output.svg, previewId));
                             } catch (error) {
                                 if (!isRenderContextActive()) {
                                     renderer.clearMermaidLoadingWatchdog(applyPreview);
@@ -198,7 +226,7 @@ export class MarkFlowMermaidRenderer {
                         });
                     };
 
-                    renderer.registerMermaidPreviewRenderer(applyPreview, renderNow);
+                    renderer.registerMermaidPreviewRenderer(applyPreview, previewId, renderNow);
                     renderer.scheduleMermaidRender(renderNow);
                     return;
                 }
@@ -214,11 +242,26 @@ export class MarkFlowMermaidRenderer {
         this.mermaidPreviewRenderers.clear();
         this.mermaidPreviewIdByRenderer = new WeakMap();
         this.mermaidRenderQueues = new WeakMap();
+        this.mermaidPreviewVisibility.clear();
+        this.mermaidPreviewRenderedOnce.clear();
+        this.mermaidPendingPreviewRefreshIds.clear();
+        this.mermaidPreviewObservedElements.forEach((element) => {
+            this.previewVisibilityObserver?.unobserve(element);
+        });
+        this.mermaidPreviewObservedElements.clear();
+        this.mermaidPreviewRenderSignatures.clear();
         logMermaidTrace(`lifecycleInvalidated reason=${reason} epoch=${this.mermaidPreviewEpoch}`, this.emitToIntelliJLog);
     }
 
     public renderAllRegisteredMermaidPreviews() {
-        Array.from(this.mermaidPreviewRenderers.values()).forEach((render) => render());
+        Array.from(this.mermaidPreviewRenderers.entries()).forEach(([previewId, render]) => {
+            if (this.shouldDeferPreviewRefresh(previewId) && this.mermaidPreviewRenderedOnce.has(previewId)) {
+                this.mermaidPendingPreviewRefreshIds.add(previewId);
+                this.observeMermaidPreview(previewId);
+                return;
+            }
+            render();
+        });
     }
 
     private readonly emitToIntelliJLog = (message: string) => {
@@ -231,11 +274,46 @@ export class MarkFlowMermaidRenderer {
         }
     };
 
-    private registerMermaidPreviewRenderer(applyPreview: MermaidPreviewRenderer, renderNow: () => void) {
+    private async ensureMermaid(): Promise<MermaidModule["default"]> {
+        if (!this.mermaidModulePromise) {
+            this.mermaidModulePromise = import("mermaid");
+        }
+        const module = await this.mermaidModulePromise;
+        const mermaid = module.default;
+        this.initializeMermaid(mermaid);
+        return mermaid;
+    }
+
+    private applyMermaidRuntimeSettingsIfLoaded() {
+        if (!this.mermaidModulePromise) {
+            return;
+        }
+
+        void this.mermaidModulePromise.then((module) => {
+            this.initializeMermaid(module.default);
+        });
+    }
+
+    private initializeMermaid(mermaid: MermaidModule["default"]) {
+        if (this.lastInitializedMermaidSettingsRevision === this.lastAppliedSettingsRevision) {
+            return;
+        }
+        mermaid.initialize(createMermaidPreviewConfig(this.runtimeSettings));
+        this.lastInitializedMermaidSettingsRevision = this.lastAppliedSettingsRevision;
+    }
+
+    private getOrCreateMermaidPreviewId(applyPreview: MermaidPreviewRenderer) {
         const existingId = this.mermaidPreviewIdByRenderer.get(applyPreview);
         const previewId = existingId ?? `mermaid-preview-${uid()}`;
         this.mermaidPreviewIdByRenderer.set(applyPreview, previewId);
-        this.mermaidPreviewRenderers.set(previewId, () => {
+        return previewId;
+    }
+
+    private registerMermaidPreviewRenderer(applyPreview: MermaidPreviewRenderer, previewId: string, renderNow: () => void) {
+        const existingId = this.mermaidPreviewIdByRenderer.get(applyPreview);
+        const resolvedPreviewId = existingId ?? previewId;
+        this.mermaidPreviewIdByRenderer.set(applyPreview, resolvedPreviewId);
+        this.mermaidPreviewRenderers.set(resolvedPreviewId, () => {
             if (!this.isCrepeReady || this.activeCrepeSessionId === 0) {
                 return;
             }
@@ -260,7 +338,7 @@ export class MarkFlowMermaidRenderer {
             .then(task)
             .catch((error) => {
                 const detail = error instanceof Error ? error.message : String(error);
-                console.warn(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
+                console.debug(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
                 this.emitToIntelliJLog(`MARKFLOW_UI mermaid:queueFailure ${detail}`);
             });
 
@@ -300,7 +378,58 @@ export class MarkFlowMermaidRenderer {
         renderNow();
     }
 
-    private wrapMermaidSvg(svg: string) {
+    private shouldPreferVisiblePreviews() {
+        return this.documentCharacterCount >= MERMAID_VISIBLE_ONLY_DOCUMENT_THRESHOLD;
+    }
+
+    private shouldDeferPreviewRefresh(previewId: string) {
+        return this.shouldPreferVisiblePreviews() && this.mermaidPreviewRenderedOnce.has(previewId) && this.mermaidPreviewVisibility.get(previewId) !== true;
+    }
+
+    private observeMermaidPreview(previewId: string) {
+        if (typeof IntersectionObserver !== "function") {
+            this.mermaidPreviewVisibility.set(previewId, true);
+            return;
+        }
+
+        const selector = `[data-markflow-mermaid-preview-id="${previewId}"]`;
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+
+        const previous = this.mermaidPreviewObservedElements.get(previewId);
+        if (previous && previous !== element) {
+            this.previewVisibilityObserver?.unobserve(previous);
+        }
+        this.mermaidPreviewObservedElements.set(previewId, element);
+        this.ensurePreviewVisibilityObserver().observe(element);
+    }
+
+    private ensurePreviewVisibilityObserver() {
+        if (this.previewVisibilityObserver) {
+            return this.previewVisibilityObserver;
+        }
+
+        this.previewVisibilityObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                const previewId = (entry.target as HTMLElement).dataset.markflowMermaidPreviewId;
+                if (!previewId) {
+                    continue;
+                }
+                const isVisible = entry.isIntersecting;
+                this.mermaidPreviewVisibility.set(previewId, isVisible);
+                if (isVisible && this.mermaidPendingPreviewRefreshIds.has(previewId)) {
+                    this.mermaidPendingPreviewRefreshIds.delete(previewId);
+                    this.mermaidPreviewRenderers.get(previewId)?.();
+                }
+            }
+        }, {root: null, threshold: 0.01});
+
+        return this.previewVisibilityObserver;
+    }
+
+    private wrapMermaidSvg(svg: string, previewId: string) {
         const isXyChartSvg = /xychart/i.test(svg);
         const sizeClassByMode: Record<string, string> = {
             FIT_TO_VIEWPORT: "fit-to-viewport",
@@ -310,7 +439,7 @@ export class MarkFlowMermaidRenderer {
         const sizeClass = sizeClassByMode[this.runtimeSettings.mermaidSizeMode] ?? "fit-to-viewport";
         const chartTypeClass = isXyChartSvg ? " markflow-mermaid-chart-xychart" : "";
         const zoomScale = this.runtimeSettings.mermaidZoomPercent / 100;
-        return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}${chartTypeClass}" style="transform: scale(${zoomScale}); transform-origin: top left;">${svg}</div>`;
+        return `<div class="markflow-mermaid-preview markflow-mermaid-size-${sizeClass}${chartTypeClass}" data-markflow-mermaid-preview-id="${previewId}" style="transform: scale(${zoomScale}); transform-origin: top left;">${svg}</div>`;
     }
 }
 
@@ -320,7 +449,17 @@ const normalizePreviewSnippet = (value: string, maxLength = 160) => value.replac
 
 const isMermaidLanguage = (language: string) => language.trim().toLowerCase() === "mermaid";
 
+const hashPreviewContent = (value: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+};
+
 const MERMAID_RENDER_TIMEOUT_MS = 8000;
 const MERMAID_RENDER_RETRY_DELAY_MS = 250;
 const MERMAID_RENDER_MAX_RETRIES = 1;
 const MERMAID_LOADING_WATCHDOG_MS = 12000;
+const MERMAID_VISIBLE_ONLY_DOCUMENT_THRESHOLD = 40_000;
