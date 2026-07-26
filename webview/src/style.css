@@ -355,6 +355,80 @@ html, body {
   gap: 8px;
 }
 
+.markflow-raw-html {
+  max-width: 100%;
+}
+
+.markflow-raw-html--inline {
+  display: inline;
+}
+
+.markflow-raw-html--block {
+  display: block;
+  margin: 0.75rem 0;
+}
+
+.markflow-raw-html--selected {
+  outline: 1px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.markflow-html {
+  position: relative;
+  max-width: 100%;
+}
+
+.markflow-html--inline {
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+.markflow-html--block {
+  display: block;
+  margin: 0.75rem 0;
+}
+
+.markflow-html--editing {
+  outline: 1px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+.markflow-html__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.25rem;
+}
+
+.markflow-html__button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #9ca3af;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.markflow-html__preview {
+  display: block;
+  min-width: 0;
+}
+
+.markflow-html__editor {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  box-sizing: border-box;
+  font: 13px/1.5 var(--mono);
+  color: #111827;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  resize: vertical;
+}
+
 .markflow-notice-icon {
   font-size: 16px;
   flex-shrink: 0;

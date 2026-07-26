@@ -173,3 +173,48 @@ test("preserves list spacing when an item changes", () => {
     assert.ok(!next.includes("* item one"));
     assert.ok(!next.includes("* item two changed"));
 });
+
+test("preserves raw html blocks and inline html while changing surrounding markdown", () => {
+    const raw = [
+        "Intro paragraph.",
+        "",
+        "<details>",
+        "<summary>Title</summary>",
+        "",
+        "<span>raw html body</span>",
+        "",
+        "</details>",
+        "",
+        "Outro paragraph."
+    ].join("\n");
+
+    const serialized = [
+        "Intro paragraph updated.",
+        "",
+        "<details>",
+        "<summary>Title</summary>",
+        "",
+        "<span>raw html body</span>",
+        "",
+        "</details>",
+        "",
+        "Outro paragraph updated."
+    ].join("\n");
+
+    const next = updateRawMarkdownFromSerialized(raw, serialized);
+
+    assert.equal(next, [
+        "Intro paragraph updated.",
+        "",
+        "<details>",
+        "<summary>Title</summary>",
+        "",
+        "<span>raw html body</span>",
+        "",
+        "</details>",
+        "",
+        "Outro paragraph updated."
+    ].join("\n"));
+    assert.ok(next.includes("<details>"));
+    assert.ok(next.includes("<span>raw html body</span>"));
+});

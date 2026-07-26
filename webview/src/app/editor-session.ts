@@ -8,6 +8,7 @@ import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
 import {updateRawMarkdownFromSerialized} from "./markdown-source-buffer";
 import {configureSourcePreservingMarkdown} from "./source-preserving-markdown";
+import {rawHtmlMarkdownFeature} from "./raw-html-support";
 
 const MARKDOWN_SYNC_DEBOUNCE_MS = 400;
 type CrepeModule = typeof import("@milkdown/crepe");
@@ -548,6 +549,7 @@ export class MarkFlowEditorSession {
                 [Crepe.Feature.Latex]: {}
             }
         });
+        crepe.addFeature(rawHtmlMarkdownFeature);
         configureSourcePreservingMarkdown(crepe, initialText);
         return crepe;
     }
