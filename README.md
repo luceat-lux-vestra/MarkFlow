@@ -13,8 +13,8 @@ MarkFlow is an IntelliJ IDEA plugin that provides a Typora-style Markdown editin
 - Editor UI state restore (scroll position, cursor, selection)
 - Mermaid live preview in code blocks
 - KaTeX rendering for inline and block math expressions
-- Markdown-aware clipboard paste (with safe fallback in code blocks)
-- Frontend build integrated into Gradle plugin tasks
+  - Raw HTML support (inline and block) with XSS-safe sanitization
+  - Markdown-aware clipboard paste (with safe fallback in code blocks)
 
 ## Options
 
@@ -32,14 +32,14 @@ You can configure these in `Settings > Tools > MarkFlow`.
 - The first Markdown tab still pre-warms one browser on startup, which keeps the single-editor workflow responsive.
 
 <!-- Plugin description -->
-( markdown, mermaid, latex-katex, wysiwyg )
+( markdown, mermaid, latex-katex, wysiwyg, raw-html )
 
 MarkFlow is a Typora-style WYSIWYG Markdown editor for IntelliJ-based IDEs.
 
 It opens supported Markdown files in a custom IntelliJ editor, keeps the document and JCEF webview synchronized in both
 directions, and restores editor state such as scroll position, caret, and selection when reopening files.
 
-MarkFlow supports Mermaid diagrams, KaTeX math, and Markdown-aware paste handling, with configurable rendering options
+MarkFlow supports Mermaid diagrams, KaTeX math, raw HTML, and Markdown-aware paste handling, with configurable rendering options
 for theme source, Mermaid sizing and zoom, error display, KaTeX density, and preview defaults.
 <!-- Plugin description end -->
 

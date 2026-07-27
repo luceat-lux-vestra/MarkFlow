@@ -15,9 +15,9 @@
 - Editor UI state persistence and restore (scroll position, cursor, and selection).
 - Mermaid diagram live preview support in Markdown code blocks.
 - KaTeX math rendering support for inline and block formulas.
-- Markdown clipboard paste now preserves Markdown structure, while code blocks keep the default paste behavior.
-- Packaged webview loading through classloader resources with shared local HTTP serving.
-- Configurable MarkFlow settings panel (theme source and preview defaults).
+  - Raw HTML support (inline and block) with XSS-safe sanitization
+  - Markdown clipboard paste now preserves Markdown structure, while code blocks keep the default paste behavior.
+  - Packaged webview loading through classloader resources with shared local HTTP serving.
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
 - Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
