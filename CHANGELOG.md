@@ -7,6 +7,8 @@
 ### Changed
 - Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
+- Bumped `pluginSinceBuild` from `252` to `253` in `gradle.properties`.
+- Added explicit `<depends>com.intellij.modules.jcef</depends>` to `plugin.xml`.
 
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
@@ -16,6 +18,7 @@
 - Mermaid diagram live preview support in Markdown code blocks.
 - KaTeX math rendering support for inline and block formulas.
 - Markdown clipboard paste now preserves Markdown structure, while code blocks keep the default paste behavior.
+- Raw HTML support for inline and block HTML with XSS sanitization via Milkdown integration.
 - Packaged webview loading through classloader resources with shared local HTTP serving.
 - Configurable MarkFlow settings panel (theme source and preview defaults).
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
