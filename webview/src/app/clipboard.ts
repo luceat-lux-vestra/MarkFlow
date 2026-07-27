@@ -14,10 +14,23 @@ export const hasMarkdownTableStructure = (lines: string[]) => {
     return lines.some((line) => /^\s*\|?\s*[:\-]{3,}(?:\s*\|\s*[:\-]{3,})+\s*\|?\s*$/.test(line));
 };
 
+export const looksLikeRawHtmlClipboard = (text: string) => {
+    if (!/<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?>/m.test(text)) {
+        return false;
+    }
+
+    if (/\bscript\b|\bstyle\b|\biframe\b|\bobject\b|\bembed\b/i.test(text)) {
+        return true;
+    }
+
+    return /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?>/m.test(text);
+};
+
 export const looksLikeMarkdownClipboard = (text: string) => {
     const normalized = normalizeClipboardMarkdown(text);
     const lines = normalized.split("\n");
 
+    if (looksLikeRawHtmlClipboard(normalized)) return true;
     if (/^#{1,6}\s+\S/m.test(normalized)) return true;
     if (/^\s*```/m.test(normalized)) return true;
     if (/^\s*\$\$/m.test(normalized)) return true;
