@@ -21,3 +21,7 @@
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
 - Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
+
+
+### Fixed
+- Fixed missing `com.intellij.modules.jcef` dependency that caused `ClassNotFoundException` for `JBCefBrowser` on plugin startup.

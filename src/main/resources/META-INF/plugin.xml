@@ -4,8 +4,8 @@
     <name>MarkFlow</name>
     <vendor>algorist</vendor>
 
+    <depends>com.intellij.modules.jcef</depends>
     <depends>com.intellij.modules.platform</depends>
-
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
