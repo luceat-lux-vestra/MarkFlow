@@ -32,7 +32,7 @@ You can configure these in `Settings > Tools > MarkFlow`.
 - The first Markdown tab still pre-warms one browser on startup, which keeps the single-editor workflow responsive.
 
 <!-- Plugin description -->
-( markdown, mermaid, latex-katex, wysiwyg, raw-html )
+( markdown, mermaid, latex-katex, raw-html, wysiwyg )
 
 MarkFlow is a Typora-style WYSIWYG Markdown editor for IntelliJ-based IDEs.
 
