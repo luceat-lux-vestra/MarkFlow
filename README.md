@@ -33,7 +33,8 @@ You can configure these in `Settings > Tools > MarkFlow`.
 - Split editors now allocate browsers on demand, so the first open on a new pane may incur a one-time JCEF startup cost.
 - The first Markdown tab still pre-warms one browser on startup, which keeps the single-editor workflow responsive.
 
-MarkFlow requires IntelliJ IDEA 2025.3+ (build 253+) with the JCEF module enabled.
+MarkFlow requires IntelliJ IDEA 2026.2+ (build 262+) with the bundled **Web Browser (JCEF)** plugin
+(`com.intellij.modules.jcef`) enabled, which is where the JCEF runtime lives since 2026.2.
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, raw-html, wysiwyg )
 
