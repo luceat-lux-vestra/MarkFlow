@@ -121,6 +121,8 @@ changelog {
     groups.empty()
     repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
     versionPrefix = ""
+    // Versions are `yy.MM.dd.HHmmss` timestamps, so the default SemVer header parser rejects patched entries.
+    headerParserRegex = """(\d+\.\d+\.\d+\.\d+)""".toRegex()
 }
 
 // Configure Kover coverage reporting.

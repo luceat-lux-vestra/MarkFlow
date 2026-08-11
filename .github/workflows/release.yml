@@ -16,6 +16,10 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    env:
+      # The release tag is the version produced by the release draft build; pin every Gradle invocation to it,
+      # otherwise each one regenerates a fresh timestamp version and the published plugin no longer matches the tag.
+      RELEASE_VERSION: ${{ github.event.release.tag_name }}
     steps:
 
       # Free GitHub Actions Environment Disk Space
@@ -54,7 +58,7 @@ jobs:
           mkdir -p "$(dirname "$RELEASE_NOTE")"
           echo "$CHANGELOG" > $RELEASE_NOTE
 
-          ./gradlew patchChangelog --release-note-file=$RELEASE_NOTE
+          ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file=$RELEASE_NOTE
 
       # Publish the plugin to JetBrains Marketplace
       - name: Publish Plugin
@@ -63,13 +67,13 @@ jobs:
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew publishPlugin
+        run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
 
       # Upload an artifact as a release asset
       - name: Upload Release Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.event.release.tag_name }} ./build/distributions/*
+        run: gh release upload "$RELEASE_VERSION" ./build/distributions/*
 
       # Create a pull request
       - name: Create Pull Request
@@ -77,7 +81,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="$RELEASE_VERSION"
           BRANCH="changelog-update-$VERSION"
           LABEL="release changelog"
 
