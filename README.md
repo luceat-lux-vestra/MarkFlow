@@ -15,7 +15,7 @@ MarkFlow is an IntelliJ IDEA plugin that provides a Typora-style Markdown editin
 - KaTeX rendering for inline and block math expressions
 - Markdown-aware clipboard paste (with safe fallback in code blocks)
 - Raw HTML support for inline and block HTML with XSS sanitization
-- JCEF dependency explicitly declared in plugin.xml
+- JCEF-based webview integration via IntelliJ's bundled browser APIs
 - Frontend build integrated into Gradle plugin tasks
 
 ## Options

@@ -8,7 +8,7 @@
 - Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
 - Bumped `pluginSinceBuild` from `252` to `253` in `gradle.properties`.
-- Added explicit `<depends>com.intellij.modules.jcef</depends>` to `plugin.xml`.
+- Removed the invalid JCEF module dependency from `plugin.xml` and aligned the platform target with IntelliJ IDEA 2025.3.
 
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
