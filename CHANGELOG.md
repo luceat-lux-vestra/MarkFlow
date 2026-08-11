@@ -7,8 +7,11 @@
 ### Changed
 - Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
-- Bumped `pluginSinceBuild` from `252` to `253` in `gradle.properties`.
-- Removed the invalid JCEF module dependency from `plugin.xml` and aligned the platform target with IntelliJ IDEA 2025.3.
+- Raised the minimum IDE to IntelliJ IDEA 2026.2 (`pluginSinceBuild` from `252` to `262`) and aligned the platform target and the Java toolchain (21 to 25) with it.
+
+### Fixed
+- Declared the `com.intellij.modules.jcef` dependency in `plugin.xml` so `com.intellij.ui.jcef.*` resolves on IntelliJ IDEA 2026.2+, where JCEF ships as a separate bundled plugin instead of core platform code (`ClassNotFoundException: com.intellij.ui.jcef.JBCefBrowser` on startup).
+- Skipped browser pre-warm and editor takeover when JCEF is unavailable in the IDE runtime instead of failing with an error.
 
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.

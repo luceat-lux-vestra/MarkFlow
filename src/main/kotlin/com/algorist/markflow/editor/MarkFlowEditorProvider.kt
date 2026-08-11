@@ -10,12 +10,14 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import org.jdom.Element
 import com.algorist.markflow.MarkFlowDiagnostics
+import com.algorist.markflow.browser.MarkFlowJcefSupport
 import com.algorist.markflow.file.MarkFlowFileSupport
 import com.algorist.markflow.editor.state.MarkFlowEditorState
 
 class MarkFlowEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean {
-        val accepted = MarkFlowFileSupport.isMarkFlowTarget(file)
+        // The provider hides the default editor, so never take over a file when no browser can be created.
+        val accepted = MarkFlowFileSupport.isMarkFlowTarget(file) && MarkFlowJcefSupport.isAvailable
         if (accepted && MarkFlowDiagnostics.enabled) {
             val ext = file.extension?.lowercase()
             LOG.info("MARKFLOW_UI accept: ${file.path} (type=${file.fileType.name}, ext=${ext ?: "<none>"})")

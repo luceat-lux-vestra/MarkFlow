@@ -57,7 +57,7 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     fun preWarm() {
-        if (disposed) return
+        if (disposed || !MarkFlowJcefSupport.isAvailable) return
         val lease = synchronized(lifecycleLock) {
             idleLeaseIds.firstOrNull()?.let { leaseById[it] } ?: createLeaseLocked().also { created ->
                 idleLeaseIds.add(created.id)
@@ -81,7 +81,7 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     fun attach(editor: MarkFlowEditor, host: JPanel): Boolean {
-        if (disposed || editor.isDisposedEditor()) return false
+        if (disposed || editor.isDisposedEditor() || !MarkFlowJcefSupport.isAvailable) return false
 
         val hadExistingLease = synchronized(lifecycleLock) {
             editorToLeaseId.containsKey(editor)

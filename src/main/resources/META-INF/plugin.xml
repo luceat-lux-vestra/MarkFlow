@@ -5,6 +5,9 @@
     <vendor>algorist</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <!-- Since 2026.2 JCEF ships as a separate bundled plugin; without this dependency com.intellij.ui.jcef.*
+         is not visible to the plugin classloader. -->
+    <depends>com.intellij.modules.jcef</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
