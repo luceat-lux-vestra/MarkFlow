@@ -1,3 +1,4 @@
+import {applyRuntimeAppearance} from "./crepe-theme";
 import {applyRuntimeUiSettings, createMermaidPreviewConfig, logThemeDiagnostics, resolveMermaidTheme, resolveRuntimeSettings} from "./runtime-settings";
 import type {MarkFlowRuntimeSettings} from "./types";
 import {emitDiagnosticsLog, logMermaidTrace} from "./editor-telemetry";
@@ -108,6 +109,8 @@ export class MarkFlowMermaidRenderer {
         }
 
         applyRuntimeUiSettings(this.runtimeSettings);
+        applyRuntimeAppearance(this.runtimeSettings);
+
         this.hasAppliedRuntimeSettingsOnce = true;
         this.lastAppliedPreviewOnlyByDefault = this.runtimeSettings.previewOnlyByDefault;
         this.renderAllRegisteredMermaidPreviews();
@@ -256,9 +259,15 @@ export class MarkFlowMermaidRenderer {
     }
 
     private createMermaidDiagramKey(contentHash: string) {
+        // For IDE_SYNC the Mermaid theme is palette-derived, but lastAppliedMermaidTheme
+        // is OS-based, so switching IDE themes on a constant OS must still change the key
+        // (otherwise a cached SVG from the previous palette would be reused).
+        const palette =
+            this.runtimeSettings.themeSource === "IDE_SYNC" ? hashIdePalette(this.runtimeSettings.ideColorScheme) : "none";
         return [
             contentHash,
             this.lastAppliedMermaidTheme,
+            palette,
             this.runtimeSettings.diagramSecurityLevel,
             this.runtimeSettings.mermaidSizeMode
         ].join(":");
@@ -603,6 +612,13 @@ const hashPreviewContent = (value: string) => {
         hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(36);
+};
+
+// Stable short hash of the IDE color palette. IDE_SYNC derives the Mermaid theme
+// from the palette, so include it in the diagram key (see createMermaidDiagramKey).
+const hashIdePalette = (ideColorScheme: Record<string, string>): string => {
+    const entries = Object.keys(ideColorScheme).sort().map((k) => `${k}=${ideColorScheme[k]}`);
+    return entries.length ? hashPreviewContent(entries.join("|")) : "empty";
 };
 
 const MERMAID_RENDER_TIMEOUT_MS = 8000;
