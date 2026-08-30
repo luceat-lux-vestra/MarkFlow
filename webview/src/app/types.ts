@@ -35,6 +35,11 @@ export type MarkFlowRuntimeSettings = {
     diagramSecurityLevel?: "STRICT" | "LOOSE";
     previewOnlyByDefault?: boolean;
     mermaidSyntaxErrorMessage?: string;
+    fontFamily?: string;
+    ideColorScheme?: Record<string, string>;
+    ideFontFamily?: string | null;
+    ideBaseFontSizePx?: number | null;
+    ideDark?: boolean;
     settingsRevision?: number;
 };
 

@@ -1,3 +1,4 @@
+import {applyRuntimeAppearance} from "./crepe-theme";
 import type {Crepe} from "@milkdown/crepe";
 import type {EditorUiState, MarkdownSourceSnapshot, MarkFlowRuntimeSettings} from "./types";
 import {createEditorBridge, type EditorBridge} from "./bridge";
@@ -139,6 +140,8 @@ export class MarkFlowEditorSession {
         markFlowStage("crepe:constructed", this.emitToIntelliJLog);
 
         await this.startCrepe(crepe, "create:done");
+
+        applyRuntimeAppearance(this.mermaidRenderer.getRuntimeSettings());
 
         if (this.pendingCrepeRecreate) {
             void this.recreateCrepeInstance("settings:queuedAfterCreate");

@@ -61,6 +61,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         normalize()
         val resolvedThemeSource = resolveThemeSourceForRuntime()
         val revision = settingsRevision.get()
+        val snapshot = MarkFlowIdeThemeService.getInstance().getSnapshot()
         if (MarkFlowDiagnostics.enabled) {
             LOG.warn(
                 "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
@@ -76,6 +77,11 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             diagramSecurityLevel = state.diagramSecurityLevel,
             previewOnlyByDefault = state.previewOnlyByDefault,
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
+            fontFamily = state.fontFamily,
+            ideColorScheme = snapshot.colors,
+            ideFontFamily = snapshot.fonts["codeFont"],
+            ideBaseFontSizePx = snapshot.fonts["baseFontSizePx"]?.toIntOrNull(),
+            ideDark = snapshot.dark,
             settingsRevision = revision
         )
     }
@@ -87,18 +93,35 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             }
             return state.themeSource
         }
-        val ideResolved = if (EditorColorsManager.getInstance().isDarkEditor) {
-            ThemeSource.DARK.name
-        } else {
-            ThemeSource.LIGHT.name
+        // IDE_SYNC without live palette sync: pick a fixed light/dark shell from the IDE.
+        if (!state.ideThemeSync) {
+            val ideResolved = if (EditorColorsManager.getInstance().isDarkEditor) {
+                ThemeSource.DARK.name
+            } else {
+                ThemeSource.LIGHT.name
+            }
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC->$ideResolved")
+            }
+            return ideResolved
         }
+        // IDE_SYNC with live palette sync: hand the palette to the webview (Approach C).
         if (MarkFlowDiagnostics.enabled) {
-            LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC->$ideResolved")
+            LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC(palette)")
         }
-        return ideResolved
+        return ThemeSource.IDE_SYNC.name
     }
 
     private fun normalize(target: MarkFlowSettingsState = state) {
+        normalizeState(target)
+    }
+
+    /**
+     * Coerce every enum field to a known value and every numeric field to its valid range,
+     * mutating [target] in place. Pure logic (no platform access) so it can be unit-tested
+     * against a hand-built [MarkFlowSettingsState].
+     */
+    fun normalizeState(target: MarkFlowSettingsState): MarkFlowSettingsState {
         target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
         target.themeSource = normalizeEnum(target.themeSource, ThemeSource.LIGHT)
         target.mermaidErrorDisplay = normalizeEnum(target.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
@@ -106,6 +129,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
         target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
+        return target
     }
 
     private inline fun <reified T : Enum<T>> normalizeEnum(raw: String, fallback: T): String {
@@ -123,6 +147,14 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
 
         fun getInstance(): MarkFlowSettingsService {
             return ApplicationManager.getApplication().getService(MarkFlowSettingsService::class.java)
+        }
+
+        /**
+         * Bumps the runtime-settings revision counter so open webviews re-fetch runtime settings.
+         * Used by the IDE theme service when the live IDE palette changes (IDE_SYNC).
+         */
+        fun bumpRuntimeSettingsRevision(): Int {
+            return settingsRevision.incrementAndGet()
         }
     }
 }
