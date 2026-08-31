@@ -1,35 +1,58 @@
 ---
-name: Bug Report
-about: Create a report to help us improve
-title: "[BUG] "
+name: Bug report
+about: Report a reproducible MarkFlow defect
 labels: bug
 assignees: ''
 ---
 
-## Describe the bug
+## Summary
 
-A clear and concise description of what the bug is.
+Describe the observed behavior and why it is incorrect.
 
-## To Reproduce
+## Reproduction
 
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+1.
+2.
+3.
+
+Attach or paste the smallest Markdown fixture that reproduces the problem when safe to do so.
 
 ## Expected behavior
 
-A clear and concise description of what you expected to happen.
+Describe the expected source, editor, lifecycle, or rendering behavior precisely.
 
-## Screenshots
+## Actual behavior
 
-If applicable, add screenshots to help explain your problem.
+Include whether the problem affects:
 
-## Environment (please complete the following information):
-- OS: [e.g. macOS]
-- Version [e.g. 1.0.0]
+- [ ] persisted Markdown source
+- [ ] WYSIWYG rendering
+- [ ] undo / redo
+- [ ] external file edits
+- [ ] save / close / reopen
+- [ ] multiple tabs / split editors
+- [ ] theme / settings
+- [ ] Mermaid / KaTeX / raw HTML
+- [ ] JCEF load / recovery
+- [ ] performance / memory / resource use
+
+## Environment
+
+- MarkFlow version / commit:
+- IntelliJ-based IDE + exact build:
+- OS + version:
+- JCEF available/enabled: yes / no / unknown
+- Relevant plugins/themes:
+
+## Diagnostics
+
+Include relevant MarkFlow/IDE logs. **Do not include secrets or private document content unnecessarily.** Redact paths/source text when they are not needed to reproduce the defect.
+
+## Regression information
+
+- Last known good version/commit, if known:
+- First known bad version/commit, if known:
 
 ## Additional context
 
-Add any other context about the problem here.
+Include frequency, document size, timing conditions, external edits, rapid tab switching, split-editor use, or other lifecycle details that may matter.
