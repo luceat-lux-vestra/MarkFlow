@@ -22,7 +22,7 @@ MarkFlow is an IntelliJ IDEA plugin that provides a Typora-style Markdown editin
 
 You can configure these in `Settings > Tools > MarkFlow`.
 
-- **General:** Theme source, Preview only by default
+- **General:** Theme source, Body font family, Base font size (px), Preview only by default
 - **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior
 - **KaTeX:** Display density
 - **Advanced:** Diagram security level (STRICT/LOOSE)

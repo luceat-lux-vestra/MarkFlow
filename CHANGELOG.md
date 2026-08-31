@@ -8,10 +8,13 @@
 - Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
 - Raised the minimum IDE to IntelliJ IDEA 2026.2 (`pluginSinceBuild` from `252` to `262`) and aligned the platform target and the Java toolchain (21 to 25) with it.
+- IDE_SYNC mermaid theme now resolves from the backend-captured IDE palette (`ideDark`) instead of the OS media query, which is not authoritative inside the JCEF webview.
 
 ### Fixed
-- Declared the `com.intellij.modules.jcef` dependency in `plugin.xml` so `com.intellij.ui.jcef.*` resolves on IntelliJ IDEA 2026.2+, where JCEF ships as a separate bundled plugin instead of core platform code (`ClassNotFoundException: com.intellij.ui.jcef.JBCefBrowser` on startup).
 - Skipped browser pre-warm and editor takeover when JCEF is unavailable in the IDE runtime instead of failing with an error.
+- The body font family is now a dropdown of installed families (single value); the webview still
+  quotes the family so a persisted value cannot break out of the CSS `font-family` value.
+- Propagated the configured base font size from settings into the webview and clamped it to a valid range (10–32 px).
 
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
@@ -27,3 +30,5 @@
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
 - Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
+- Body font family (dropdown of installed families + MarkFlow Default) and base font size (px)
+  controls in the MarkFlow General settings, applied through Crepe's `--crepe-base-font-size`.
