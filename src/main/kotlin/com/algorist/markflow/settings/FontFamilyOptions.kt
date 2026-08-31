@@ -17,21 +17,27 @@ data class FontFamilyOption(
 /**
  * Builds and resolves the ordered list of font-family dropdown options.
  *
- * The IDE default is always first and is displayed using its actual family name. It is followed by
- * the other installed families sorted alphabetically (case-insensitively), de-duplicated, with
- * blank names removed. The logic is pure and takes the installed families and IDE family as input
- * so it can be unit-tested without depending on the fonts present on the host machine.
+ * The IDE default is always first and is displayed as `IDE Default (<actual family>)`. It is
+ * followed by every installed family, including the IDE family itself so that an explicit choice
+ * such as `JetBrains Mono` remains distinguishable from inheritance. The installed families are
+ * sorted alphabetically (case-insensitively), de-duplicated, and blank names are removed. The
+ * logic is pure and takes the installed families and IDE family as input so it can be unit-tested
+ * without depending on the fonts present on the host machine.
  */
 object FontFamilyOptions {
 
     /** Builds the dropdown options from the host's installed families and active IDE font. */
     fun build(installedFamilies: List<String>, ideFontFamily: String): List<FontFamilyOption> {
         val defaultFamily = ideFontFamily.trim()
-        val options = mutableListOf(FontFamilyOption(value = "", displayName = defaultFamily))
+        val defaultDisplayName = if (defaultFamily.isEmpty()) {
+            "IDE Default"
+        } else {
+            "IDE Default ($defaultFamily)"
+        }
+        val options = mutableListOf(FontFamilyOption(value = "", displayName = defaultDisplayName))
         options += installedFamilies
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .filterNot { it.equals(defaultFamily, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.ROOT) }
             .sortedWith(String.CASE_INSENSITIVE_ORDER)
             .map { FontFamilyOption(value = it, displayName = it) }

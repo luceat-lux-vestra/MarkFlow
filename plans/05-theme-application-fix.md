@@ -157,8 +157,9 @@ and the limitation is explicit rather than silently claiming an invariant that c
   palette; derived link/code/error colors remain readable under the contrast guards.
 - **Contrast guard:** apply a theme whose foreground≈background; confirm body text stays readable
   (guard kicked in).
-- **Font mapping:** confirm the settings default shows the actual IDE family name, the empty
-  selection uses that family in the editor, and an installed selection changes body/title text.
+- **Font mapping:** confirm the first settings option shows `IDE Default (<actual IDE family>)`, the
+  empty selection uses that family in the editor, and an explicit selection of the same installed
+  family remains distinct and changes body/title text as expected.
 - **Font-size input:** type a valid size directly into the field and confirm Apply becomes enabled
   and the editor updates after applying.
 - **Live switch:** change IDE theme while the editor is open → preview updates without reload.

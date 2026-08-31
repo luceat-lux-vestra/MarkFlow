@@ -1,6 +1,9 @@
 package com.algorist.markflow.settings
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.algorist.markflow.settings.state.ThemeSource
+import java.awt.GraphicsEnvironment
+import javax.swing.JComboBox
 import javax.swing.JSpinner
 
 class MarkFlowSettingsConfigurableTest : BasePlatformTestCase() {
@@ -34,6 +37,46 @@ class MarkFlowSettingsConfigurableTest : BasePlatformTestCase() {
             assertEquals(max, (spinner.value as Number).toInt())
         } finally {
             configurable.disposeUIResources()
+        }
+    }
+
+    fun testApplyPreservesTypographyWhenOnlyAnotherOptionChanges() {
+        val service = MarkFlowSettingsService.getInstance()
+        val original = service.state.copy()
+        val configurable = MarkFlowSettingsConfigurable()
+        try {
+            val ideFontFamily = MarkFlowIdeThemeService.getInstance().getSnapshot().fonts["codeFont"].orEmpty()
+            val customFontFamily = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .availableFontFamilyNames
+                .firstOrNull { it.isNotBlank() && !it.equals(ideFontFamily, ignoreCase = true) }
+            assertNotNull("test requires an installed font distinct from the IDE default", customFontFamily)
+
+            val fontSize = (MarkFlowSettingsService.BASE_FONT_SIZE_MIN + 1)
+                .coerceAtMost(MarkFlowSettingsService.BASE_FONT_SIZE_MAX)
+            service.loadState(
+                original.copy(
+                    fontFamily = customFontFamily!!,
+                    baseFontSizePx = fontSize,
+                    themeSource = "IDE_SYNC"
+                )
+            )
+            configurable.createComponent()
+
+            val themeComboField = MarkFlowSettingsConfigurable::class.java
+                .getDeclaredField("themeSourceCombo")
+                .apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val themeCombo = themeComboField.get(configurable) as JComboBox<Any>
+            themeCombo.selectedItem = ThemeSource.DARK
+
+            configurable.apply()
+
+            assertEquals(customFontFamily, service.state.fontFamily)
+            assertEquals(fontSize, service.state.baseFontSizePx)
+            assertEquals("DARK", service.state.themeSource)
+        } finally {
+            configurable.disposeUIResources()
+            service.loadState(original)
         }
     }
 }

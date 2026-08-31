@@ -14,8 +14,9 @@
 ### Fixed
 - Skipped browser pre-warm and editor takeover when JCEF is unavailable in the IDE runtime instead of failing with an error.
 - The body font family is now a dropdown of installed families (single value); the IDE-configured
-  font is the default and is shown by its actual family name. The webview quotes the family so a
-  persisted value cannot break out of the CSS `font-family` value.
+  font is the default and is shown as `IDE Default (<actual family>)`; an explicit selection of
+  the same installed family remains distinct. The webview quotes the family so a persisted value
+  cannot break out of the CSS `font-family` value.
 - Ensured runtime font variables override Crepe's bundled declarations so changing the body font
   takes effect in the editor.
 - Propagated the configured base font size from settings into the webview and clamped it to the IntelliJ editor-supported range.

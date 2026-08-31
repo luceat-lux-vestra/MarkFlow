@@ -6,12 +6,11 @@
 // `.arrowMarkerPath`). If `lineColor` is `none`/`transparent`/`#000001` the
 // arrowhead becomes invisible (the reported "Mermaid arrows" regression).
 //
-// This test locks in that `createMermaidPreviewConfig` always emits a usable
-// `lineColor` (arrowhead fill) in the Mermaid themeVariables, for every theme
-// source: LIGHT, DARK and IDE_SYNC (palette-derived). It does NOT depend on a
-// DOM/jsdom (mermaid 11.17.2 needs adopted stylesheets + a DOMPurify window),
-// so it verifies the config that drives arrow rendering.
+// The config assertions below cover the palette contract, and the final test calls Mermaid's
+// actual `render()` in a small jsdom environment to verify the generated SVG marker wiring.
 
+import assert from "node:assert/strict";
+import {JSDOM} from "jsdom";
 import {readFileSync} from "node:fs";
 import {dirname, resolve} from "node:path";
 import {test} from "node:test";
@@ -46,6 +45,40 @@ const runtimeSettingsUrl = transpile("runtime-settings.ts", {
 });
 
 const {createMermaidPreviewConfig, resolveRuntimeSettings} = await import(runtimeSettingsUrl);
+
+// Mermaid 11.17.2 expects browser APIs that jsdom does not implement by default. These are the
+// smallest test-only shims needed for its flowchart layout and adopted stylesheet path.
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {url: "http://localhost"});
+for (const key of [
+    "window",
+    "document",
+    "navigator",
+    "DOMParser",
+    "Element",
+    "HTMLElement",
+    "SVGElement",
+    "Node",
+    "XMLSerializer",
+    "getComputedStyle"
+]) {
+    Object.defineProperty(globalThis, key, {value: dom.window[key], configurable: true});
+}
+class TestCSSStyleSheet {
+    cssRules = [];
+
+    insertRule(rule) {
+        this.cssRules.push(rule);
+    }
+
+    replaceSync(_css) {
+        this.cssRules = [];
+    }
+}
+Object.defineProperty(globalThis, "CSSStyleSheet", {value: TestCSSStyleSheet, configurable: true});
+Object.defineProperty(document, "adoptedStyleSheets", {value: [], writable: true, configurable: true});
+dom.window.SVGElement.prototype.getBBox = () => ({x: 0, y: 0, width: 100, height: 20});
+dom.window.SVGElement.prototype.getComputedTextLength = () => 100;
+const {default: mermaid} = await import("mermaid");
 
 const NONE_OR_TRANSPARENT = (v) => v == null || v === "none" || v === "transparent" || v === "#000001";
 
@@ -138,4 +171,36 @@ test("removeThemeVariables regression: with no themeVariables the arrowhead fill
     if (fill != null) {
         throw new Error(`expected brokenConfig (empty themeVariables) to have no arrowhead fill (got "${fill}")`);
     }
+});
+
+test("Mermaid render emits an edge marker that references a rendered arrowhead marker", async () => {
+    const palette = {
+        background: "#123456",
+        foreground: "#abcdef",
+        selectionBackground: "#654321",
+        selectionForeground: "#fedcba",
+        border: "#112233"
+    };
+    const config = createMermaidPreviewConfig(
+        resolveRuntimeSettings({themeSource: "IDE_SYNC", ideColorScheme: palette, ideDark: false})
+    );
+    const diagramId = `arrow-regression-${Date.now()}`;
+    mermaid.initialize(config);
+
+    const rendered = await mermaid.render(diagramId, "flowchart LR\n  A --> B");
+    const host = document.createElement("div");
+    host.innerHTML = rendered.svg;
+
+    const markers = [...host.querySelectorAll("marker")];
+    assert.ok(markers.length > 0, "rendered SVG must contain at least one marker");
+
+    const edge = host.querySelector("[marker-end]");
+    assert.ok(edge, "rendered edge must contain marker-end");
+    const markerEnd = edge.getAttribute("marker-end");
+    const reference = markerEnd?.match(/^url\([\"']?#([^\"')]+)[\"']?\)$/);
+    assert.ok(reference, `marker-end must be a URL reference, got ${markerEnd}`);
+
+    const referencedMarker = markers.find((marker) => marker.id === reference[1]);
+    assert.ok(referencedMarker, `marker-end target ${reference[1]} must exist in the SVG`);
+    assert.ok(referencedMarker.querySelector("path"), "referenced marker must contain an arrowhead path");
 });

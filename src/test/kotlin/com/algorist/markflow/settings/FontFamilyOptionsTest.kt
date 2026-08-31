@@ -13,7 +13,7 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
         val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
         assertEquals(
             listOf(
-                FontFamilyOption("", "JetBrains Mono"),
+                FontFamilyOption("", "IDE Default (JetBrains Mono)"),
                 FontFamilyOption("Arial", "Arial"),
                 FontFamilyOption("Inter", "Inter"),
                 FontFamilyOption("Roboto", "Roboto"),
@@ -27,12 +27,14 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
             listOf("Inter", "Inter", "  ", "Arial", "jetbrains mono"),
             "JetBrains Mono"
         )
-        // The IDE default is not repeated in the installed-font list; exact duplicates still collapse.
+        // The IDE default remains a separate inheritance option; exact installed-name duplicates
+        // still collapse while the explicit font choice stays available.
         assertEquals(
             listOf(
-                FontFamilyOption("", "JetBrains Mono"),
+                FontFamilyOption("", "IDE Default (JetBrains Mono)"),
                 FontFamilyOption("Arial", "Arial"),
                 FontFamilyOption("Inter", "Inter"),
+                FontFamilyOption("jetbrains mono", "jetbrains mono"),
             ),
             options
         )
@@ -40,7 +42,16 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
 
     fun testBuildWithEmptyInstalledListYieldsOnlyDefault() {
         val options = FontFamilyOptions.build(emptyList(), "JetBrains Mono")
-        assertEquals(listOf(FontFamilyOption("", "JetBrains Mono")), options)
+        assertEquals(listOf(FontFamilyOption("", "IDE Default (JetBrains Mono)")), options)
+    }
+
+    fun testExplicitIdeFontRemainsDistinctFromInheritanceOption() {
+        val options = FontFamilyOptions.build(listOf("JetBrains Mono"), "JetBrains Mono")
+
+        assertEquals(FontFamilyOption("", "IDE Default (JetBrains Mono)"), options.first())
+        assertEquals(FontFamilyOption("JetBrains Mono", "JetBrains Mono"), options[1])
+        assertEquals(FontFamilyOption("JetBrains Mono", "JetBrains Mono"), FontFamilyOptions.resolve(options, "JetBrains Mono"))
+        assertEquals(FontFamilyOption("", "IDE Default (JetBrains Mono)"), FontFamilyOptions.resolve(options, ""))
     }
 
     fun testResolveMatchesPersistedFamilyIgnoringCase() {
@@ -51,7 +62,7 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
 
     fun testResolveEmptyOrUnknownFallsBackToIdeDefault() {
         val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
-        val expected = FontFamilyOption("", "JetBrains Mono")
+        val expected = FontFamilyOption("", "IDE Default (JetBrains Mono)")
         assertEquals(expected, FontFamilyOptions.resolve(options, ""))
         assertEquals(expected, FontFamilyOptions.resolve(options, "  "))
         assertEquals(expected, FontFamilyOptions.resolve(options, "Nonexistent Font"))
