@@ -38,7 +38,7 @@ const transpile = (relPath, deps) => {
 
 const colorUrl = transpile("color.ts", {});
 const crepeThemeMappingUrl = transpile("crepe-theme-mapping.ts", {"./color": colorUrl});
-const crepeThemeUrl = transpile("crepe-theme.ts", {"./crepe-theme-mapping": crepeThemeMappingUrl});
+const crepeThemeUrl = transpile("crepe-theme.ts", {"./color": colorUrl, "./crepe-theme-mapping": crepeThemeMappingUrl});
 const runtimeSettingsUrl = transpile("runtime-settings.ts", {
     "./crepe-theme-mapping": crepeThemeMappingUrl,
     "./crepe-theme": crepeThemeUrl,
@@ -50,19 +50,8 @@ const NONE_OR_TRANSPARENT = (v) => v == null || v === "none" || v === "transpare
 
 const arrowheadFill = (config) => config?.themeVariables?.lineColor;
 
-// IDE_SYNC resolves the OS scheme via window.matchMedia. Provide a controllable
-// stub so the IDE_SYNC tests can simulate light/dark OS themes.
-let osDark = false;
-globalThis.window = {
-    matchMedia: (query) => ({
-        matches: query.includes("dark") ? osDark : false,
-        addEventListener() {},
-        removeEventListener() {},
-    }),
-};
-const setOsDark = (dark) => {
-    osDark = dark;
-};
+// IDE_SYNC resolves its appearance from the backend-resolved `ideDark` (the Kotlin
+// backend captures the IDE palette), so no OS matchMedia stub is needed here.
 
 test("createMermaidPreviewConfig emits a usable arrowhead fill (lineColor) for LIGHT", () => {
     const config = createMermaidPreviewConfig(resolveRuntimeSettings({themeSource: "LIGHT"}));
@@ -116,10 +105,8 @@ test("IDE_SYNC with a palette derives arrowhead fill from the IDE palette (contr
     }
 });
 
-test("IDE_SYNC without a palette falls back to the OS-based light/dark defaults", () => {
-    setOsDark(false);
+test("IDE_SYNC without a palette falls back to light/dark defaults from ideDark", () => {
     const light = createMermaidPreviewConfig(resolveRuntimeSettings({themeSource: "IDE_SYNC", ideDark: false}));
-    setOsDark(true);
     const dark = createMermaidPreviewConfig(resolveRuntimeSettings({themeSource: "IDE_SYNC", ideDark: true}));
     const lightFill = arrowheadFill(light);
     const darkFill = arrowheadFill(dark);

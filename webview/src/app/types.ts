@@ -36,9 +36,9 @@ export type MarkFlowRuntimeSettings = {
     previewOnlyByDefault?: boolean;
     mermaidSyntaxErrorMessage?: string;
     fontFamily?: string;
+    baseFontSizePx?: number;
     ideColorScheme?: Record<string, string>;
     ideFontFamily?: string | null;
-    ideBaseFontSizePx?: number | null;
     ideDark?: boolean;
     settingsRevision?: number;
 };

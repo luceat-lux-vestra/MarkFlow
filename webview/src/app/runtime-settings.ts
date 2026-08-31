@@ -1,6 +1,5 @@
 import {buildIdeThemeVariables} from "./crepe-theme-mapping";
-import {DEFAULT_FONT_FAMILY} from "./crepe-theme";
- import type {MarkFlowRuntimeSettings} from "./types";
+import type {MarkFlowRuntimeSettings} from "./types";
 export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
     mermaidZoomPercent: 100,
@@ -10,10 +9,10 @@ export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     diagramSecurityLevel: "STRICT",
     previewOnlyByDefault: true,
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
-    fontFamily: DEFAULT_FONT_FAMILY,
+    fontFamily: "",
+    baseFontSizePx: 16,
     ideColorScheme: {},
     ideFontFamily: null,
-    ideBaseFontSizePx: 16,
     ideDark: false,
     settingsRevision: 1
 };
@@ -30,7 +29,9 @@ export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined)
 export const resolveMermaidTheme = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "default" | "dark" => {
     if (runtimeSettings.themeSource === "LIGHT") return "default";
     if (runtimeSettings.themeSource === "DARK") return "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+    // IDE_SYNC: the backend already resolved the IDE theme, so trust ideDark rather than the
+    // OS media query (which is not authoritative inside the JCEF webview).
+    return runtimeSettings.ideDark ? "dark" : "default";
 };
 
 export const resolveDiagramSecurityLevel = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" => {

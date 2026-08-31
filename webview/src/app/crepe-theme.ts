@@ -1,3 +1,4 @@
+import {adjustForContrast, mix} from "./color";
 import {mapIdeColorsToCrepeVars} from "./crepe-theme-mapping";
 import type {MarkFlowRuntimeSettings} from "./types";
 
@@ -16,13 +17,30 @@ import type {MarkFlowRuntimeSettings} from "./types";
  * resolves before sending.
  */
 
-export const DEFAULT_FONT_FAMILY =
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 export const DEFAULT_BASE_FONT_SIZE_PX = 16;
+export const BASE_FONT_SIZE_MIN = 10;
+export const BASE_FONT_SIZE_MAX = 32;
 
-const ROOT_FONT_FAMILY_VAR = "--markflow-font-family";
-const ROOT_BASE_FONT_SIZE_VAR = "--markflow-base-font-size";
 const CREPE_THEME_STYLE_ID = "markflow-crepe-theme";
+
+/** Generic CSS family keywords accepted verbatim (case-insensitive). */
+const GENERIC_FAMILIES = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui"]);
+
+/**
+ * Quote a single font family for use in a CSS `font-family` value. Generic families stay bare;
+ * named families with spaces or non-identifier characters are wrapped in double quotes. Any embedded
+ * quotes are stripped so a persisted family name can never break out of the value.
+ */
+const quoteFontFamily = (family: string): string => {
+    const trimmed = family.trim();
+    if (!trimmed) {
+        return trimmed;
+    }
+    if (GENERIC_FAMILIES.has(trimmed.toLowerCase())) {
+        return trimmed;
+    }
+    return /[^\w-]/.test(trimmed) ? `"${trimmed.replace(/["']/g, "")}"` : trimmed;
+};
 
 /**
  * The 22 Crepe design-system variables, per bundled theme. Source of truth is the
@@ -90,18 +108,35 @@ export const resolveCrepeThemeKind = (settings: MarkFlowRuntimeSettings): CrepeT
     }
     return settings.themeSource === "DARK" ? "dark" : "light";
 };
-
+export const resolveResolvedDark = (settings: MarkFlowRuntimeSettings): boolean => {
+    // Logical source -> resolved appearance. LIGHT/DARK are explicit; IDE_SYNC is resolved from
+    // the IDE palette the backend already captured (ideDark), never from the OS media query.
+    if (settings.themeSource === "DARK") return true;
+    if (settings.themeSource === "LIGHT") return false;
+    return settings.ideDark ?? false;
+};
 export const normalizeBaseFontSizePx = (settings: MarkFlowRuntimeSettings): number => {
-    const raw = settings.ideBaseFontSizePx;
+    // The user's MarkFlow base font size is the single source of truth. Old payloads that omit it
+    // (or pass a non-finite value) resolve to the default so the setting never silently breaks.
+    const raw = settings.baseFontSizePx;
     if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-        return Math.round(raw);
+        return Math.min(Math.max(Math.round(raw), BASE_FONT_SIZE_MIN), BASE_FONT_SIZE_MAX);
     }
     return DEFAULT_BASE_FONT_SIZE_PX;
 };
 
-export const resolveFontFamily = (settings: MarkFlowRuntimeSettings): string => {
-    const family = settings.fontFamily;
-    return family && family.trim().length > 0 ? family.trim() : DEFAULT_FONT_FAMILY;
+/**
+ * Resolve the document font family to publish on `--crepe-font-default` / `--crepe-font-title`.
+ * An empty persisted value ("MarkFlow Default") falls back to the active IDE editor font so
+ * MarkFlow matches the IDE by default; an empty IDE font leaves Crepe's bundled default untouched.
+ */
+export const resolveDocumentFontFamily = (settings: MarkFlowRuntimeSettings): string => {
+    const selected = settings.fontFamily?.trim();
+    if (selected) {
+        return `${quoteFontFamily(selected)}, system-ui, sans-serif`;
+    }
+    const ide = settings.ideFontFamily?.trim();
+    return ide ? `${quoteFontFamily(ide)}, system-ui, sans-serif` : "";
 };
 
 /**
@@ -118,23 +153,101 @@ export const buildCrepeThemeVars = (settings: MarkFlowRuntimeSettings): Record<s
     return kind === "dark" ? DARK_CREPE_VARS : LIGHT_CREPE_VARS;
 };
 
-const buildCrepeStyleBlock = (settings: MarkFlowRuntimeSettings): string => {
+export const buildCrepeStyleBlock = (settings: MarkFlowRuntimeSettings): string => {
     const vars = buildCrepeThemeVars(settings);
-    const fontFamily = resolveFontFamily(settings);
     const baseSizePx = normalizeBaseFontSizePx(settings);
 
     const crepeLines = Object.entries(vars).map(
         ([name, value]) => `  ${name}: ${value} !important;`
     );
-    // Override the default body font so the user's family takes effect on editor text.
-    crepeLines.push(`  --crepe-font-default: ${JSON.stringify(fontFamily)};`);
+    // Primary mechanism: Crepe's base font size variable (spec #7 / #22).
+    crepeLines.push(`  --crepe-base-font-size: ${baseSizePx}px;`);
+    // Document font. Applied to --crepe-font-default (paragraphs) and --crepe-font-title
+    // (headings). Empty when neither a family nor the IDE font is available, leaving Crepe's
+    // bundled default untouched.
+    const family = resolveDocumentFontFamily(settings);
+    if (family) {
+        crepeLines.push(`  --crepe-font-default: ${family};`);
+        crepeLines.push(`  --crepe-font-title: ${family};`);
+    }
 
-    const selectorLines = [
-        `#app, #app .milkdown, .milkdown { font-family: var(${ROOT_FONT_FAMILY_VAR}, ${JSON.stringify(fontFamily)}); }`,
-        `#app, #app .milkdown, .milkdown, body { font-size: var(${ROOT_BASE_FONT_SIZE_VAR}, ${baseSizePx}px); }`
+    // Working override for Crepe 7.x, which hardcodes font-sizes and does not read
+    // --crepe-base-font-size. Scale body text + headings relative to the base size so the
+    // whole document changes coherently at each setting (spec #21). Multipliers derive from
+    // Crepe's hardcoded 16px base (h1=42, h2=36, h3=32, h4=28, h5=24, h6=18).
+    const baseVar = "var(--crepe-base-font-size)";
+    const sizeLines = [
+        `  .milkdown .ProseMirror p { font-size: ${baseVar} !important; }`,
+        `  .milkdown .ProseMirror h1 { font-size: calc(${baseVar} * 2.625) !important; }`,
+        `  .milkdown .ProseMirror h2 { font-size: calc(${baseVar} * 2.25) !important; }`,
+        `  .milkdown .ProseMirror h3 { font-size: calc(${baseVar} * 2.0) !important; }`,
+        `  .milkdown .ProseMirror h4 { font-size: calc(${baseVar} * 1.75) !important; }`,
+        `  .milkdown .ProseMirror h5 { font-size: calc(${baseVar} * 1.5) !important; }`,
+        `  .milkdown .ProseMirror h6 { font-size: calc(${baseVar} * 1.125) !important; }`
     ];
 
-    return `.milkdown {\n${crepeLines.join("\n")}\n}\n${selectorLines.join("\n")}`;
+    return `.milkdown {\n${crepeLines.join("\n")}\n}\n${sizeLines.join("\n")}`;
+};
+/**
+ * MarkFlow-owned control palette, per resolved appearance. These CSS custom properties are set on
+ * `#app` at runtime so MarkFlow controls (buttons, notices, editors) stay coherent across LIGHT /
+ * DARK / IDE_SYNC without duplicating dark-theme rulesheets.
+ */
+const MARKFLOW_LIGHT_VARS: Record<string, string> = {
+    "--markflow-background": "#ffffff",
+    "--markflow-foreground": "#111827",
+    "--markflow-surface": "#f9fafb",
+    "--markflow-border": "#e5e7eb",
+    "--markflow-muted": "#6b7280",
+    "--markflow-accent": "#2563eb",
+    "--markflow-warning-background": "#fef3c7",
+    "--markflow-warning-border": "#fcd34d",
+    "--markflow-warning-foreground": "#92400e"
+};
+
+const MARKFLOW_dark_VARS: Record<string, string> = {
+    "--markflow-background": "#111827",
+    "--markflow-foreground": "#e5e7eb",
+    "--markflow-surface": "#1f2937",
+    "--markflow-border": "#374151",
+    "--markflow-muted": "#9ca3af",
+    "--markflow-accent": "#60a5fa",
+    "--markflow-warning-background": "#422006",
+    "--markflow-warning-border": "#b45309",
+    "--markflow-warning-foreground": "#fcd34d"
+};
+
+/**
+ * Build MarkFlow-level CSS custom properties from the same resolved appearance source as the Crepe
+ * palette. IDE_SYNC derives control colors from the live IDE palette; LIGHT/DARK use the bundled
+ * maps. Warning colors are semantic (amber) and tied to the resolved light/dark appearance.
+ */
+export const buildMarkFlowAppearanceVars = (settings: MarkFlowRuntimeSettings): Record<string, string> => {
+    const dark = resolveResolvedDark(settings);
+    const ideColors = settings.ideColorScheme;
+    const hasIdeColors =
+        settings.themeSource === "IDE_SYNC" && ideColors && Object.keys(ideColors).length > 0;
+
+    const base = dark ? MARKFLOW_dark_VARS : MARKFLOW_LIGHT_VARS;
+    if (!hasIdeColors) {
+        return base;
+    }
+
+    const bg = ideColors?.background ?? base["--markflow-background"];
+    const fg = ideColors?.foreground ?? base["--markflow-foreground"];
+    const border = ideColors?.border ?? base["--markflow-border"];
+    const accent = ideColors?.textLink ?? base["--markflow-accent"];
+    return {
+        "--markflow-background": bg,
+        "--markflow-foreground": fg,
+        "--markflow-surface": mix(bg, dark ? "#000000" : "#ffffff", dark ? 0.12 : 0.05),
+        "--markflow-border": border,
+        "--markflow-muted": adjustForContrast(fg, bg, 3.0),
+        "--markflow-accent": accent,
+        "--markflow-warning-background": base["--markflow-warning-background"],
+        "--markflow-warning-border": base["--markflow-warning-border"],
+        "--markflow-warning-foreground": base["--markflow-warning-foreground"]
+    };
 };
 
 /**
@@ -150,6 +263,9 @@ export const applyRuntimeAppearance = (settings: MarkFlowRuntimeSettings): void 
     const app = document.getElementById("app");
     if (app) {
         app.setAttribute("data-markflow-theme", settings.themeSource ?? "IDE_SYNC");
+        for (const [name, value] of Object.entries(buildMarkFlowAppearanceVars(settings))) {
+            app.style.setProperty(name, value);
+        }
     }
 
 
