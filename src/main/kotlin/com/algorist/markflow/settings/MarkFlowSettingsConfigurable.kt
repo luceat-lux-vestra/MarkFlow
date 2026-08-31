@@ -1,5 +1,6 @@
 package com.algorist.markflow.settings
 
+import com.intellij.application.options.EditorFontsConstants
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.diagnostic.Logger
@@ -90,7 +91,7 @@ class MarkFlowSettingsConfigurable : Configurable {
             row,
             MyBundle.message("settings.markflow.baseFontSize"),
             baseFontSizeSpinner,
-            MyBundle.message("settings.markflow.baseFontSize.tooltip")
+            baseFontSizeTooltip()
         )
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
@@ -272,11 +273,24 @@ class MarkFlowSettingsConfigurable : Configurable {
         try {
             spinner.commitEdit()
         } catch (_: ParseException) {
-            // Keep the last valid model value while the user is entering an incomplete/invalid number.
+            // Keep the last valid model value for incomplete input; numeric text is clamped below.
+            clampTypedSpinnerValue(spinner)
         } catch (_: IllegalArgumentException) {
-            // SpinnerNumberModel rejects values outside its configured range.
+            // SpinnerNumberModel rejects values outside its configured range. Clamp the typed
+            // value back into the model so Apply still persists the platform boundary.
+            clampTypedSpinnerValue(spinner)
         }
         return (spinner.value as? Number)?.toInt() ?: 0
+    }
+
+    private fun clampTypedSpinnerValue(spinner: JSpinner) {
+        val typed = (spinner.editor as? JSpinner.DefaultEditor)?.textField?.text?.trim()?.toIntOrNull()
+        val model = spinner.model as? SpinnerNumberModel
+        val minimum = (model?.minimum as? Number)?.toInt()
+        val maximum = (model?.maximum as? Number)?.toInt()
+        if (typed != null && minimum != null && maximum != null) {
+            spinner.value = typed.coerceIn(minimum, maximum)
+        }
     }
 
     private fun <T : Enum<T>> selectedName(comboBox: ComboBox<T>): String {
@@ -285,6 +299,11 @@ class MarkFlowSettingsConfigurable : Configurable {
 
     private fun selectedValue(comboBox: ComboBox<FontFamilyOption>): String {
         return (comboBox.selectedItem as? FontFamilyOption)?.value.orEmpty()
+    }
+
+    private fun baseFontSizeTooltip(): String {
+        return MyBundle.message("settings.markflow.baseFontSize.tooltip") +
+            " (${EditorFontsConstants.getMinEditorFontSize()}–${EditorFontsConstants.getMaxEditorFontSize()})"
     }
 
     private fun <T : Enum<T>> setSelectedByName(comboBox: ComboBox<T>, raw: String, fallback: T) {
@@ -316,8 +335,10 @@ class MarkFlowSettingsConfigurable : Configurable {
         private const val ZOOM_STEP = 10
 
         private const val DEFAULT_BASE_FONT_SIZE_PX = MarkFlowSettingsService.DEFAULT_BASE_FONT_SIZE_PX
-        private const val BASE_FONT_SIZE_MIN = MarkFlowSettingsService.BASE_FONT_SIZE_MIN
-        private const val BASE_FONT_SIZE_MAX = MarkFlowSettingsService.BASE_FONT_SIZE_MAX
+        private val BASE_FONT_SIZE_MIN: Int
+            get() = EditorFontsConstants.getMinEditorFontSize()
+        private val BASE_FONT_SIZE_MAX: Int
+            get() = EditorFontsConstants.getMaxEditorFontSize()
 
         private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS
         private const val IDLE_EVICT_MIN = 10_000

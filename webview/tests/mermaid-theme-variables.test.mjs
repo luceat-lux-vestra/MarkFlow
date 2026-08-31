@@ -42,6 +42,7 @@ const crepeThemeUrl = transpile("crepe-theme.ts", {"./color": colorUrl, "./crepe
 const runtimeSettingsUrl = transpile("runtime-settings.ts", {
     "./crepe-theme-mapping": crepeThemeMappingUrl,
     "./crepe-theme": crepeThemeUrl,
+    "./color": colorUrl,
 });
 
 const {createMermaidPreviewConfig, resolveRuntimeSettings} = await import(runtimeSettingsUrl);
@@ -79,11 +80,11 @@ test("createMermaidPreviewConfig emits a usable arrowhead fill (lineColor) for D
 
 test("IDE_SYNC with a palette derives arrowhead fill from the IDE palette (contrast-guarded)", () => {
     const palette = {
-        "editor.foreground": "#f9fafb",
-        "editor.background": "#111827",
-        "editor.selectionBackground": "#3b82f6",
-        "editorIndentGuide.background1": "#374151",
-        "editorLineNumber.foreground": "#9ca3af",
+        background: "#123456",
+        foreground: "#abcdef",
+        selectionBackground: "#654321",
+        selectionForeground: "#fedcba",
+        border: "#112233"
     };
     const config = createMermaidPreviewConfig(
         resolveRuntimeSettings({themeSource: "IDE_SYNC", ideColorScheme: palette, ideDark: false})
@@ -96,11 +97,20 @@ test("IDE_SYNC with a palette derives arrowhead fill from the IDE palette (contr
     if (NONE_OR_TRANSPARENT(fill)) {
         throw new Error(`IDE_SYNC arrowhead fill must not be none/transparent (got "${fill}")`);
     }
-    // IDE-derived: the arrowhead fill must track the palette foreground, not a
-    // hardcoded Mermaid default.
-    if (fill === "#111827" || fill === "#f9fafb") {
+    if (config.themeVariables.background !== palette.background) {
+        throw new Error("Mermaid background did not use the actual IDE wire key");
+    }
+    if (config.themeVariables.nodeBorder !== palette.border || config.themeVariables.borderColor !== palette.border) {
+        throw new Error("Mermaid border did not use the actual IDE wire key");
+    }
+    if (config.themeVariables.textColor !== fill || config.themeVariables.primaryTextColor == null) {
+        throw new Error("Mermaid labels must use readable palette-derived text colors");
+    }
+    // IDE-derived: the arrowhead fill must track the palette foreground, not a hardcoded Mermaid
+    // default. This fixture is already readable, so no contrast adjustment should obscure the wire value.
+    if (fill !== palette.foreground) {
         throw new Error(
-            `IDE_SYNC arrowhead fill should be contrast-adjusted, not a raw palette value (got "${fill}")`
+            `IDE_SYNC arrowhead fill should use the palette foreground (got "${fill}")`
         );
     }
 });

@@ -1,11 +1,13 @@
 package com.algorist.markflow.settings
 
+import com.intellij.application.options.EditorFontsConstants
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.xmlb.XmlSerializerUtil
+import java.awt.GraphicsEnvironment
 import java.util.concurrent.atomic.AtomicInteger
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.MyBundle
@@ -67,6 +69,16 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
                     "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
             )
         }
+        return runtimeSettingsFromSnapshot(snapshot, resolvedThemeSource, revision)
+    }
+
+    /** Builds the host payload from a captured snapshot; kept separate for contract regression tests. */
+    internal fun runtimeSettingsFromSnapshot(
+        snapshot: MarkFlowIdeThemeService.Snapshot,
+        resolvedThemeSource: String = resolveThemeSourceForRuntime(),
+        revision: Int = settingsRevision.get()
+    ): MarkFlowRuntimeSettings {
+        normalize()
         return MarkFlowRuntimeSettings(
             mermaidSizeMode = state.mermaidSizeMode,
             mermaidZoomPercent = state.mermaidZoomPercent,
@@ -76,8 +88,9 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             diagramSecurityLevel = state.diagramSecurityLevel,
             previewOnlyByDefault = state.previewOnlyByDefault,
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
-            fontFamily = state.fontFamily,
+            fontFamily = resolveRuntimeFontFamily(state.fontFamily, snapshot.fonts["codeFont"].orEmpty()),
             baseFontSizePx = state.baseFontSizePx,
+            ideColorScheme = snapshot.colors,
             ideFontFamily = snapshot.fonts["codeFont"],
             ideDark = snapshot.dark,
             settingsRevision = revision
@@ -130,6 +143,20 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         return raw.trim()
     }
 
+    /**
+     * Do not send an unavailable persisted family to CSS. A setting synced from another machine
+     * must immediately fall back to the active IDE editor family, without requiring the user to
+     * open and re-apply this configurable.
+     */
+    private fun resolveRuntimeFontFamily(persisted: String, ideFontFamily: String): String {
+        if (persisted.isBlank()) return ""
+        return FontFamilyOptions.resolvePersistedValue(
+            GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList(),
+            ideFontFamily,
+            persisted
+        )
+    }
+
     private inline fun <reified T : Enum<T>> normalizeEnum(raw: String, fallback: T): String {
         return enumValues<T>().firstOrNull { it.name == raw }?.name ?: fallback.name
     }
@@ -143,8 +170,11 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         private const val MIN_IDLE_EVICT_AFTER_MS = 10_000
         private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000
 
-        const val BASE_FONT_SIZE_MIN = 10
-        const val BASE_FONT_SIZE_MAX = 32
+        val BASE_FONT_SIZE_MIN: Int
+            get() = EditorFontsConstants.getMinEditorFontSize()
+
+        val BASE_FONT_SIZE_MAX: Int
+            get() = EditorFontsConstants.getMaxEditorFontSize()
         const val DEFAULT_BASE_FONT_SIZE_PX = MarkFlowSettingsState.DEFAULT_BASE_FONT_SIZE_PX
 
         fun getInstance(): MarkFlowSettingsService {

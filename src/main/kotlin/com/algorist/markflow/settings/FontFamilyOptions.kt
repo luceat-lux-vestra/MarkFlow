@@ -1,5 +1,7 @@
 package com.algorist.markflow.settings
 
+import java.util.Locale
+
 /**
  * A single selectable entry in the font-family dropdown.
  *
@@ -30,7 +32,7 @@ object FontFamilyOptions {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .filterNot { it.equals(defaultFamily, ignoreCase = true) }
-            .distinct()
+            .distinctBy { it.lowercase(Locale.ROOT) }
             .sortedWith(String.CASE_INSENSITIVE_ORDER)
             .map { FontFamilyOption(value = it, displayName = it) }
         return options
@@ -43,8 +45,17 @@ object FontFamilyOptions {
      */
     fun resolve(options: List<FontFamilyOption>, persisted: String): FontFamilyOption {
         val trimmed = persisted.trim()
-        return options.firstOrNull { it.value == trimmed }
+        return options.firstOrNull { it.value.equals(trimmed, ignoreCase = true) }
             ?: options.firstOrNull { it.value.isEmpty() }
             ?: FontFamilyOption(value = "", displayName = "")
+    }
+
+    /** Resolves a persisted family to a safe single-family value for the runtime payload. */
+    fun resolvePersistedValue(
+        installedFamilies: List<String>,
+        ideFontFamily: String,
+        persisted: String
+    ): String {
+        return resolve(build(installedFamilies, ideFontFamily), persisted).value
     }
 }

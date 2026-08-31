@@ -1,4 +1,4 @@
-import {adjustForContrast, mix} from "./color";
+import {adjustForContrast, mix, readableTextColor} from "./color";
 import {mapIdeColorsToCrepeVars} from "./crepe-theme-mapping";
 import type {MarkFlowRuntimeSettings} from "./types";
 
@@ -18,8 +18,6 @@ import type {MarkFlowRuntimeSettings} from "./types";
  */
 
 export const DEFAULT_BASE_FONT_SIZE_PX = 16;
-export const BASE_FONT_SIZE_MIN = 10;
-export const BASE_FONT_SIZE_MAX = 32;
 
 const CREPE_THEME_STYLE_ID = "markflow-crepe-theme";
 
@@ -28,8 +26,8 @@ const GENERIC_FAMILIES = new Set(["serif", "sans-serif", "monospace", "cursive",
 
 /**
  * Quote a single font family for use in a CSS `font-family` value. Generic families stay bare;
- * named families with spaces or non-identifier characters are wrapped in double quotes. Any embedded
- * quotes are stripped so a persisted family name can never break out of the value.
+ * named families with spaces or non-identifier characters are wrapped in double quotes. CSS
+ * delimiters and controls are stripped so a persisted family name cannot break out of the value.
  */
 const quoteFontFamily = (family: string): string => {
     const trimmed = family.trim();
@@ -39,7 +37,8 @@ const quoteFontFamily = (family: string): string => {
     if (GENERIC_FAMILIES.has(trimmed.toLowerCase())) {
         return trimmed;
     }
-    return /[^\w-]/.test(trimmed) ? `"${trimmed.replace(/["']/g, "")}"` : trimmed;
+    const safe = trimmed.replace(/["'\\]/g, "").replace(/[\u0000-\u001f\u007f]/g, "");
+    return /[^\w-]/.test(safe) ? `"${safe}"` : safe;
 };
 
 /**
@@ -116,11 +115,12 @@ export const resolveResolvedDark = (settings: MarkFlowRuntimeSettings): boolean 
     return settings.ideDark ?? false;
 };
 export const normalizeBaseFontSizePx = (settings: MarkFlowRuntimeSettings): number => {
-    // The user's MarkFlow base font size is the single source of truth. Old payloads that omit it
-    // (or pass a non-finite value) resolve to the default so the setting never silently breaks.
+    // The backend normalizes this value with IntelliJ's EditorFontsConstants before serialization.
+    // The webview only guards malformed legacy/hand-written payloads and deliberately does not
+    // duplicate a MarkFlow-specific min/max policy here.
     const raw = settings.baseFontSizePx;
     if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-        return Math.min(Math.max(Math.round(raw), BASE_FONT_SIZE_MIN), BASE_FONT_SIZE_MAX);
+        return Math.round(raw);
     }
     return DEFAULT_BASE_FONT_SIZE_PX;
 };
@@ -133,10 +133,12 @@ export const normalizeBaseFontSizePx = (settings: MarkFlowRuntimeSettings): numb
 export const resolveDocumentFontFamily = (settings: MarkFlowRuntimeSettings): string => {
     const selected = settings.fontFamily?.trim();
     if (selected) {
-        return `${quoteFontFamily(selected)}, system-ui, sans-serif`;
+        const safeSelected = quoteFontFamily(selected);
+        return safeSelected ? `${safeSelected}, system-ui, sans-serif` : "";
     }
     const ide = settings.ideFontFamily?.trim();
-    return ide ? `${quoteFontFamily(ide)}, system-ui, sans-serif` : "";
+    const safeIde = ide ? quoteFontFamily(ide) : "";
+    return safeIde ? `${safeIde}, system-ui, sans-serif` : "";
 };
 
 /**
@@ -173,6 +175,16 @@ export const buildCrepeStyleBlock = (settings: MarkFlowRuntimeSettings): string 
         crepeLines.push(`  --crepe-font-title: ${family} !important;`);
     }
 
+    const selectedBackground = vars["--crepe-color-selected"];
+    const selectedForeground = settings.themeSource === "IDE_SYNC"
+        ? settings.ideColorScheme?.selectionForeground
+        : undefined;
+    const resolvedSelectionForeground = adjustForContrast(
+        selectedForeground ?? readableTextColor(selectedBackground),
+        selectedBackground,
+        4.5
+    );
+
     // Working override for Crepe 7.x, which hardcodes font-sizes and does not read
     // --crepe-base-font-size. Scale body text + headings relative to the base size so the
     // whole document changes coherently at each setting (spec #21). Multipliers derive from
@@ -188,7 +200,10 @@ export const buildCrepeStyleBlock = (settings: MarkFlowRuntimeSettings): string 
         `  .milkdown .ProseMirror h6 { font-size: calc(${baseVar} * 1.125) !important; }`
     ];
 
-    return `.milkdown {\n${crepeLines.join("\n")}\n}\n${sizeLines.join("\n")}`;
+    const selectionLines = [
+        `.milkdown .ProseMirror::selection { color: ${resolvedSelectionForeground} !important; background-color: ${selectedBackground} !important; }`
+    ];
+    return `.milkdown {\n${crepeLines.join("\n")}\n}\n${sizeLines.concat(selectionLines).join("\n")}`;
 };
 /**
  * MarkFlow-owned control palette, per resolved appearance. These CSS custom properties are set on
@@ -236,9 +251,17 @@ export const buildMarkFlowAppearanceVars = (settings: MarkFlowRuntimeSettings): 
     }
 
     const bg = ideColors?.background ?? base["--markflow-background"];
-    const fg = ideColors?.foreground ?? base["--markflow-foreground"];
+    const fg = adjustForContrast(
+        ideColors?.foreground ?? base["--markflow-foreground"],
+        bg,
+        4.5
+    );
     const border = ideColors?.border ?? base["--markflow-border"];
-    const accent = ideColors?.textLink ?? base["--markflow-accent"];
+    const accent = adjustForContrast(
+        mix(fg, dark ? "#ffffff" : "#000000", 0.25),
+        bg,
+        4.5
+    );
     return {
         "--markflow-background": bg,
         "--markflow-foreground": fg,

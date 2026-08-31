@@ -10,7 +10,6 @@ import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.Disposable
-import com.intellij.util.messages.MessageBusConnection
 import java.awt.Color
 import java.util.concurrent.atomic.AtomicReference
 
@@ -40,29 +39,25 @@ class MarkFlowIdeThemeService : Disposable {
     private val LOG = Logger.getInstance(MarkFlowIdeThemeService::class.java)
     private val current = AtomicReference<Snapshot>(Snapshot.EMPTY)
 
-
-    private var editorColorsListener: EditorColorsListener? = null
-
-    private var messageBusConnection: MessageBusConnection? = null
-
     init {
         val listener = object : EditorColorsListener {
             override fun globalSchemeChange(scheme: EditorColorsScheme?) {
                 refresh()
             }
         }
-        editorColorsListener = listener
-        val connection = ApplicationManager.getApplication().messageBus.connect()
-        messageBusConnection = connection
+        val connection = ApplicationManager.getApplication().messageBus.connect(this)
         connection.subscribe(EditorColorsManager.TOPIC, listener)
-        refresh()
+        // Initial capture establishes the source of truth. There are no open MarkFlow editors to
+        // notify yet, so initialization must not trigger a runtime-settings push.
+        val snapshot = captureFromCurrentScheme()
+        current.set(snapshot)
+        LOG.info(
+            "MARKFLOW_THEME initial capture dark=${snapshot.dark} colors=${snapshot.colors.keys.sorted()} " +
+                "fonts=${snapshot.fonts.keys.sorted()}"
+        )
     }
 
-    override fun dispose() {
-        messageBusConnection?.disconnect()
-        messageBusConnection = null
-        editorColorsListener = null
-    }
+    override fun dispose() = Unit
 
     fun getSnapshot(): Snapshot = current.get()
 
@@ -98,7 +93,6 @@ class MarkFlowIdeThemeService : Disposable {
         put("foreground", scheme.getDefaultForeground())
         put("selectionBackground", scheme.getColor(EditorColors.SELECTION_BACKGROUND_COLOR))
         put("selectionForeground", scheme.getColor(EditorColors.SELECTION_FOREGROUND_COLOR))
-        put("currentLineHighlight", scheme.getColor(EditorColors.CARET_ROW_COLOR))
         put("border", scheme.getColor(EditorColors.BORDER_LINES_COLOR))
         // EditorFontType.PLAIN is the regular editor font the user configures in Settings >
         // Editor > Font. Surface it as the webview's default body font.

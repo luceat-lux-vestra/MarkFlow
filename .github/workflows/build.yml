@@ -111,6 +111,19 @@ jobs:
       - name: Run Tests
         run: ./gradlew check
 
+      # Keep the source-level webview contract tests as an explicit PR gate. Gradle's build task
+      # runs the TypeScript/Vite production build, but it does not execute tests/*.test.mjs.
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webview/package-lock.json
+
+      - name: Run webview source tests
+        working-directory: webview
+        run: npm ci --no-audit --no-fund && npm run test:source
+
       # Collect Tests Result of failed tests
       - name: Collect Tests Result
         if: ${{ failure() }}

@@ -26,6 +26,15 @@ export type MarkdownUpdateAck = {
     reason?: string;
 };
 
+/** Stable host/webview palette contract; keys mirror MarkFlowIdeThemeService.capture(). */
+export type IdeColors = {
+    background?: string;
+    foreground?: string;
+    selectionBackground?: string;
+    selectionForeground?: string;
+    border?: string;
+};
+
 export type MarkFlowRuntimeSettings = {
     mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;
@@ -37,7 +46,7 @@ export type MarkFlowRuntimeSettings = {
     mermaidSyntaxErrorMessage?: string;
     fontFamily?: string;
     baseFontSizePx?: number;
-    ideColorScheme?: Record<string, string>;
+    ideColorScheme?: IdeColors;
     ideFontFamily?: string | null;
     ideDark?: boolean;
     settingsRevision?: number;

@@ -43,9 +43,9 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
         assertEquals(listOf(FontFamilyOption("", "JetBrains Mono")), options)
     }
 
-    fun testResolveMatchesPersistedFamilyCaseSensitively() {
+    fun testResolveMatchesPersistedFamilyIgnoringCase() {
         val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
-        val resolved = FontFamilyOptions.resolve(options, "Inter")
+        val resolved = FontFamilyOptions.resolve(options, "inter")
         assertEquals(FontFamilyOption("Inter", "Inter"), resolved)
     }
 

@@ -12,14 +12,27 @@ export type Rgb = {
     b: number;
 };
 
-/** Parse a `#RRGGBB` string into RGB components. Returns null for unparseable input. */
+/** Parse a hex or rgba color string into RGB components. Returns null for unparseable input. */
 export const parseHex = (hex: string): Rgb | null => {
     const value = String(hex).trim().replace(/^#/, "");
-    if (/^[0-9a-fA-F]{6}$/.test(value)) {
+    if (/^[0-9a-fA-F]{3}$/.test(value) || /^[0-9a-fA-F]{6}$/.test(value)) {
+        const expanded = value.length === 3
+            ? value.split("").map((channel) => channel + channel).join("")
+            : value;
         return {
-            r: parseInt(value.slice(0, 2), 16),
-            g: parseInt(value.slice(2, 4), 16),
-            b: parseInt(value.slice(4, 6), 16)
+            r: parseInt(expanded.slice(0, 2), 16),
+            g: parseInt(expanded.slice(2, 4), 16),
+            b: parseInt(expanded.slice(4, 6), 16)
+        };
+    }
+    const rgba = String(hex).trim().match(
+        /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i
+    );
+    if (rgba) {
+        return {
+            r: Math.min(255, Number(rgba[1])),
+            g: Math.min(255, Number(rgba[2])),
+            b: Math.min(255, Number(rgba[3]))
         };
     }
     return null;
@@ -58,7 +71,9 @@ export const meetsAA = (ratio: number, largeText: boolean): boolean =>
 export const readableTextColor = (bgHex: string): string => {
     const bg = parseHex(bgHex);
     if (!bg) return "#000000";
-    return relativeLuminance(bg) > 0.5 ? "#000000" : "#ffffff";
+    const black: Rgb = {r: 0, g: 0, b: 0};
+    const white: Rgb = {r: 255, g: 255, b: 255};
+    return contrastRatio(black, bg) >= contrastRatio(white, bg) ? "#000000" : "#ffffff";
 };
 
 /** Linearly blend two colors. weight=0 returns c1, weight=1 returns c2. */
@@ -89,9 +104,20 @@ export const adjustForContrast = (fgHex: string, bgHex: string, minRatio = 4.5):
     const fg = parseHex(fgHex);
     const bg = parseHex(bgHex);
     if (!fg || !bg) return fgHex;
-    if (contrastRatio(fg, bg) >= minRatio) return fgHex;
+    const requestedRatio = Number.isFinite(minRatio) ? Math.max(1, minRatio) : 4.5;
+    if (contrastRatio(fg, bg) >= requestedRatio) return fgHex;
 
-    const target: Rgb = relativeLuminance(bg) > 0.5 ? {r: 0, g: 0, b: 0} : {r: 255, g: 255, b: 255};
+    const black: Rgb = {r: 0, g: 0, b: 0};
+    const white: Rgb = {r: 255, g: 255, b: 255};
+    // Choose the endpoint that actually maximizes WCAG contrast. A luminance midpoint is not
+    // sufficient: for mid-gray backgrounds, black can beat white even when luminance is below 0.5.
+    const target = contrastRatio(black, bg) >= contrastRatio(white, bg) ? black : white;
+    if (contrastRatio(target, bg) < requestedRatio) {
+        // The requested ratio is not reachable against this background. Return the best possible
+        // endpoint rather than claiming an invariant that the color space cannot satisfy.
+        return toHex(target);
+    }
+
     let lo = 0;
     let hi = 1;
     for (let i = 0; i < 24; i += 1) {
@@ -101,17 +127,22 @@ export const adjustForContrast = (fgHex: string, bgHex: string, minRatio = 4.5):
             g: fg.g + (target.g - fg.g) * mid,
             b: fg.b + (target.b - fg.b) * mid
         };
-        if (contrastRatio(candidate, bg) >= minRatio) {
+        if (contrastRatio(candidate, bg) >= requestedRatio) {
             hi = mid;
         } else {
             lo = mid;
         }
     }
-    return toHex({
+    const result = toHex({
         r: fg.r + (target.r - fg.r) * hi,
         g: fg.g + (target.g - fg.g) * hi,
         b: fg.b + (target.b - fg.b) * hi
     });
+    // Rounding to CSS's integer RGB representation can move the result just below the threshold.
+    // Verify the emitted value, and use the already-verified endpoint if necessary.
+    return parseHex(result) && contrastRatio(parseHex(result)!, bg) >= requestedRatio
+        ? result
+        : toHex(target);
 };
 
 /** Build a hex string from raw RGB components (used by tests and callers). */

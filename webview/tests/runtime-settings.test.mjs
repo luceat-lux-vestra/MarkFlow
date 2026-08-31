@@ -44,7 +44,9 @@ const crepeThemeUrl = transpileToTemp("crepe-theme.ts");
 
 const {
     DEFAULT_RUNTIME_SETTINGS,
+    normalizeIdeColorScheme,
     resolveRuntimeSettings,
+    runtimeSettingsIdentity,
     resolveMermaidTheme,
     resolveDiagramSecurityLevel,
 } = await import(runtimeSettingsUrl);
@@ -57,8 +59,6 @@ const {
     buildCrepeThemeVars,
     LIGHT_CREPE_VARS,
     DARK_CREPE_VARS,
-    BASE_FONT_SIZE_MIN,
-    BASE_FONT_SIZE_MAX,
     resolveResolvedDark,
     buildMarkFlowAppearanceVars,
 } = await import(crepeThemeUrl);
@@ -87,7 +87,6 @@ test("DEFAULT_RUNTIME_SETTINGS carries every runtime key with sensible defaults"
     // Theme defaults to LIGHT; IDE_SYNC is opt-in via settings.
     if (DEFAULT_RUNTIME_SETTINGS.themeSource !== "LIGHT") {
         throw new Error(`expected default themeSource LIGHT, got ${DEFAULT_RUNTIME_SETTINGS.themeSource}`);
-        throw new Error(`expected default themeSource IDE_SYNC, got ${DEFAULT_RUNTIME_SETTINGS.themeSource}`);
     }
     if (DEFAULT_RUNTIME_SETTINGS.mermaidZoomPercent !== 100) {
         throw new Error(`expected default mermaidZoomPercent 100, got ${DEFAULT_RUNTIME_SETTINGS.mermaidZoomPercent}`);
@@ -107,6 +106,35 @@ test("resolveRuntimeSettings fills missing fields from defaults", () => {
     }
     if (resolved.diagramSecurityLevel !== DEFAULT_RUNTIME_SETTINGS.diagramSecurityLevel) {
         throw new Error("resolveRuntimeSettings did not backfill diagramSecurityLevel from defaults");
+    }
+});
+
+test("runtime settings accept only the stable five-key IDE palette contract", () => {
+    const palette = normalizeIdeColorScheme({
+        background: "#123456",
+        foreground: "#abcdef",
+        selectionBackground: "#654321",
+        selectionForeground: "#fedcba",
+        border: "#112233",
+        legacyBackground: "#ffffff",
+        invalid: "not-a-color"
+    });
+    if (JSON.stringify(palette) !== JSON.stringify({
+        background: "#123456",
+        foreground: "#abcdef",
+        selectionBackground: "#654321",
+        selectionForeground: "#fedcba",
+        border: "#112233"
+    })) {
+        throw new Error(`unexpected normalized IDE palette: ${JSON.stringify(palette)}`);
+    }
+
+    const legacy = resolveRuntimeSettings({
+        themeSource: "IDE_SYNC",
+        ideColorScheme: {legacyBackground: "#123456", legacyForeground: "#abcdef"}
+    });
+    if (Object.keys(legacy.ideColorScheme).length !== 0 || resolveCrepeThemeKind(legacy) !== "light") {
+        throw new Error("legacy palette keys must not activate the IDE palette path");
     }
 });
 
@@ -132,21 +160,41 @@ test("resolveRuntimeSettings(undefined) returns the defaults unchanged", () => {
     }
 });
 
-test("normalizeBaseFontSizePx rounds, clamps to [MIN, MAX], and falls back otherwise", () => {
+test("runtime settings identity tracks IDE_SYNC palette changes but ignores them for LIGHT/DARK", () => {
+    const ideA = resolveRuntimeSettings({
+        themeSource: "IDE_SYNC",
+        ideColorScheme: {background: "#123456", foreground: "#abcdef"},
+        ideDark: false,
+        settingsRevision: 10
+    });
+    const ideB = resolveRuntimeSettings({
+        ...ideA,
+        ideColorScheme: {background: "#654321", foreground: "#abcdef"},
+        settingsRevision: 11
+    });
+    if (runtimeSettingsIdentity(ideA) === runtimeSettingsIdentity(ideB)) {
+        throw new Error("IDE_SYNC palette changes must not be suppressed as duplicates");
+    }
+
+    const lightA = resolveRuntimeSettings({...ideA, themeSource: "LIGHT", settingsRevision: 10});
+    const lightB = resolveRuntimeSettings({...lightA, ideColorScheme: {background: "#654321"}, settingsRevision: 11});
+    if (runtimeSettingsIdentity(lightA) !== runtimeSettingsIdentity(lightB)) {
+        throw new Error("LIGHT must ignore IDE palette-only changes");
+    }
+});
+
+test("normalizeBaseFontSizePx only sanitizes the backend-normalized logical size", () => {
     if (normalizeBaseFontSizePx({baseFontSizePx: 13.7}) !== 14) {
         throw new Error("expected 13.7 to round to 14");
     }
-    if (normalizeBaseFontSizePx({baseFontSizePx: 10}) !== BASE_FONT_SIZE_MIN) {
-        throw new Error("expected min boundary to be preserved");
+    if (normalizeBaseFontSizePx({baseFontSizePx: 4}) !== 4) {
+        throw new Error("expected IntelliJ-supported low size to pass through");
     }
-    if (normalizeBaseFontSizePx({baseFontSizePx: 32}) !== BASE_FONT_SIZE_MAX) {
-        throw new Error("expected max boundary to be preserved");
+    if (normalizeBaseFontSizePx({baseFontSizePx: 40}) !== 40) {
+        throw new Error("expected IntelliJ-supported high size to pass through");
     }
-    if (normalizeBaseFontSizePx({baseFontSizePx: 5}) !== BASE_FONT_SIZE_MIN) {
-        throw new Error("expected below-min to clamp to MIN");
-    }
-    if (normalizeBaseFontSizePx({baseFontSizePx: 999}) !== BASE_FONT_SIZE_MAX) {
-        throw new Error("expected above-max to clamp to MAX");
+    if (normalizeBaseFontSizePx({baseFontSizePx: 999}) !== 999) {
+        throw new Error("expected the webview not to duplicate a MarkFlow range policy");
     }
     if (normalizeBaseFontSizePx({baseFontSizePx: 0}) !== DEFAULT_BASE_FONT_SIZE_PX) {
         throw new Error("expected 0 to fall back to default");
@@ -174,6 +222,10 @@ test("resolveDocumentFontFamily quotes named families and appends the fallback s
     // Generic keyword stays unquoted and is trimmed.
     if (resolveDocumentFontFamily({fontFamily: "  monospace  "}) !== "monospace, system-ui, sans-serif") {
         throw new Error(`expected generic family unquoted, got ${resolveDocumentFontFamily({fontFamily: "  monospace  "})}`);
+    }
+    if (resolveDocumentFontFamily({fontFamily: "Unsafe; color: red\\\""}) !==
+        `"Unsafe; color: red", system-ui, sans-serif`) {
+        throw new Error("font-family escaping must remove CSS string delimiters and controls");
     }
 });
 
@@ -261,7 +313,7 @@ test("resolveCrepeThemeKind returns ide only for IDE_SYNC with a populated palet
     if (resolveCrepeThemeKind({themeSource: "IDE_SYNC", ideColorScheme: {}}) !== "light") {
         throw new Error("expected IDE_SYNC with empty palette -> light");
     }
-    if (resolveCrepeThemeKind({themeSource: "IDE_SYNC", ideColorScheme: {"editor.background": "#fff"}}) !== "ide") {
+    if (resolveCrepeThemeKind({themeSource: "IDE_SYNC", ideColorScheme: {background: "#fff"}}) !== "ide") {
         throw new Error("expected IDE_SYNC with palette -> ide");
     }
 });
@@ -275,19 +327,52 @@ test("buildCrepeThemeVars returns the bundled palettes for LIGHT/DARK", () => {
     if (JSON.stringify(darkVars) !== JSON.stringify(DARK_CREPE_VARS)) {
         throw new Error("expected DARK vars to equal DARK_CREPE_VARS");
     }
+    const idePalette = {background: "#123456", foreground: "#abcdef"};
+    if (JSON.stringify(buildCrepeThemeVars({themeSource: "LIGHT", ideColorScheme: idePalette})) !==
+        JSON.stringify(LIGHT_CREPE_VARS)) {
+        throw new Error("LIGHT must ignore the IDE palette");
+    }
+    if (JSON.stringify(buildCrepeThemeVars({themeSource: "DARK", ideColorScheme: idePalette})) !==
+        JSON.stringify(DARK_CREPE_VARS)) {
+        throw new Error("DARK must ignore the IDE palette");
+    }
 });
 
-test("IDE_SYNC palette vars differ from both bundled palettes (real IDE mapping)", () => {
+test("IDE_SYNC palette vars use the actual wire keys and derive the rest", () => {
+    const palette = {
+        background: "#123456",
+        foreground: "#abcdef",
+        selectionBackground: "#654321",
+        selectionForeground: "#fedcba",
+        border: "#112233"
+    };
     const ideVars = buildCrepeThemeVars({
         themeSource: "IDE_SYNC",
-        ideColorScheme: {"editor.background": "#1e1e1e", "editor.foreground": "#d4d4d4"},
+        ideColorScheme: palette,
         ideDark: true,
     });
-    if (JSON.stringify(ideVars) === JSON.stringify(LIGHT_CREPE_VARS)) {
-        throw new Error("IDE_SYNC palette must not equal the bundled LIGHT palette");
+    if (ideVars["--crepe-color-background"] !== palette.background) {
+        throw new Error("IDE_SYNC background did not cross the wire into Crepe");
     }
-    if (JSON.stringify(ideVars) === JSON.stringify(DARK_CREPE_VARS)) {
-        throw new Error("IDE_SYNC palette must not equal the bundled DARK palette (palette is the source of truth)");
+    if (ideVars["--crepe-color-on-background"] !== palette.foreground) {
+        throw new Error("IDE_SYNC foreground did not cross the wire into Crepe");
+    }
+    if (ideVars["--crepe-color-selected"] !== palette.selectionBackground) {
+        throw new Error("IDE_SYNC selection background did not cross the wire into Crepe");
+    }
+    if (ideVars["--crepe-color-outline"] !== palette.border) {
+        throw new Error("IDE_SYNC border did not cross the wire into Crepe");
+    }
+    if (ideVars["--crepe-color-primary"] === LIGHT_CREPE_VARS["--crepe-color-primary"] ||
+        ideVars["--crepe-color-primary"] === DARK_CREPE_VARS["--crepe-color-primary"]) {
+        throw new Error("IDE_SYNC derived accent unexpectedly used a bundled palette value");
+    }
+    const block = buildCrepeStyleBlock({themeSource: "IDE_SYNC", ideColorScheme: palette, ideDark: true});
+    if (!block.includes(`background-color: ${palette.selectionBackground}`)) {
+        throw new Error("IDE_SYNC selection background was not applied to text selection");
+    }
+    if (!block.includes("color: #fedcba")) {
+        throw new Error("IDE_SYNC selection foreground was not applied to text selection");
     }
 });
 
@@ -370,24 +455,25 @@ test("buildMarkFlowAppearanceVars derives IDE colors from the palette for IDE_SY
     const vars = buildMarkFlowAppearanceVars({
         themeSource: "IDE_SYNC",
         ideColorScheme: {
-            background: "#1e1e1e",
-            foreground: "#d4d4d4",
-            border: "#333333",
-            textLink: "#4da3ff"
+            background: "#123456",
+            foreground: "#abcdef",
+            selectionBackground: "#654321",
+            selectionForeground: "#fedcba",
+            border: "#112233"
         },
         ideDark: true
     });
-    if (vars["--markflow-background"] !== "#1e1e1e") {
+    if (vars["--markflow-background"] !== "#123456") {
         throw new Error("expected IDE_SYNC background to track the IDE background");
     }
-    if (vars["--markflow-foreground"] !== "#d4d4d4") {
+    if (vars["--markflow-foreground"] !== "#abcdef") {
         throw new Error("expected IDE_SYNC foreground to track the IDE foreground");
     }
-    if (vars["--markflow-border"] !== "#333333") {
+    if (vars["--markflow-border"] !== "#112233") {
         throw new Error("expected IDE_SYNC border to track the IDE border");
     }
-    if (vars["--markflow-accent"] !== "#4da3ff") {
-        throw new Error("expected IDE_SYNC accent to track the IDE textLink");
+    if (vars["--markflow-accent"] === "#2563eb" || vars["--markflow-accent"] === "#60a5fa") {
+        throw new Error("expected IDE_SYNC accent to derive from the wire palette");
     }
     // Warning colors stay semantic (amber) regardless of the IDE palette.
     if (vars["--markflow-warning-foreground"] !== "#fcd34d") {

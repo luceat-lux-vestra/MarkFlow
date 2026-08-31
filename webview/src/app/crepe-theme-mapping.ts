@@ -1,21 +1,20 @@
 /**
  * Maps the IDE's solid colors into Crepe's CSS variables and Mermaid's theme variables.
  *
- * The Kotlin backend provides an opaque color provider (background/foreground/border/...). This
+ * The Kotlin backend provides an opaque color provider (background/foreground/selection/border). This
  * module derives a coherent light/dark palette so that text always meets WCAG AA against its
  * background, and wires those colors into both the Crepe editor and Mermaid diagrams.
  */
 
 import {adjustForContrast, mix, readableTextColor} from "./color";
+import type {IdeColors} from "./types";
 
-/** IDE color keys captured by the Kotlin backend (subset used here). */
-export type IdeColors = {
-    background?: string;
-    foreground?: string;
-    border?: string;
-    textLink?: string;
-    selectionBackground?: string;
-    selectionForeground?: string;
+type ResolvedIdeColors = {
+    background: string;
+    foreground: string;
+    border: string;
+    selectionBackground: string;
+    selectionForeground: string;
 };
 
 /** Fallback palette when the backend snapshot is empty (keeps the webview usable pre-first-sync). */
@@ -24,25 +23,22 @@ const FALLBACK = {
         background: "#ffffff",
         foreground: "#1e1e1e",
         border: "#d4d4d4",
-        textLink: "#1565c0",
         selectionBackground: "#add8e6"
     },
     dark: {
         background: "#1e1e1e",
         foreground: "#d4d4d4",
         border: "#3f3f3f",
-        textLink: "#6cb6ff",
         selectionBackground: "#264f7a"
     }
 } as const;
 
-const resolve = (ideColors: IdeColors, dark: boolean): Required<IdeColors> => {
+const resolve = (ideColors: IdeColors, dark: boolean): ResolvedIdeColors => {
     const palette = FALLBACK[dark ? "dark" : "light"];
     return {
         background: ideColors.background ?? palette.background,
         foreground: ideColors.foreground ?? palette.foreground,
         border: ideColors.border ?? palette.border,
-        textLink: ideColors.textLink ?? palette.textLink,
         selectionBackground: ideColors.selectionBackground ?? palette.selectionBackground,
         selectionForeground: ideColors.selectionForeground ?? (dark ? "#ffffff" : "#1e1e1e")
     };
@@ -52,12 +48,11 @@ const resolve = (ideColors: IdeColors, dark: boolean): Required<IdeColors> => {
  * Direct IDE color -> Crepe variable mappings. Everything else is derived from these anchors so the
  * whole palette stays consistent.
  */
-const DIRECT_MAPPINGS: ReadonlyArray<[keyof Required<IdeColors>, string]> = [
+const DIRECT_MAPPINGS: ReadonlyArray<[keyof ResolvedIdeColors, string]> = [
     ["background", "--crepe-color-background"],
     ["foreground", "--crepe-color-on-background"],
     ["selectionBackground", "--crepe-color-selected"],
-    ["border", "--crepe-color-outline"],
-    ["textLink", "--crepe-color-primary"]
+    ["border", "--crepe-color-outline"]
 ];
 
 /**
@@ -66,12 +61,15 @@ const DIRECT_MAPPINGS: ReadonlyArray<[keyof Required<IdeColors>, string]> = [
  */
 export const mapIdeColorsToCrepeVars = (ideColors: IdeColors, dark: boolean): Record<string, string> => {
     const c = resolve(ideColors, dark);
-    const {background: bg, foreground: fg, textLink: accent} = c;
+    const {background: bg, foreground: fg} = c;
 
     const vars: Record<string, string> = {};
     for (const [key, cssVar] of DIRECT_MAPPINGS) {
         vars[cssVar] = c[key];
     }
+    // Keep the captured foreground when it is already usable, but protect body text when an IDE
+    // scheme supplies nearly identical foreground/background values.
+    vars["--crepe-color-on-background"] = adjustForContrast(fg, bg, 4.5);
 
     // Surfaces are subtly shifted from the background so cards read as distinct planes.
     const surface = mix(bg, dark ? "#000000" : "#ffffff", dark ? 0.08 : 0.05);
@@ -90,12 +88,16 @@ export const mapIdeColorsToCrepeVars = (ideColors: IdeColors, dark: boolean): Re
 
     // Inverse surface: text on inverted background.
     vars["--crepe-color-inverse"] = fg;
-    vars["--crepe-color-on-inverse"] = bg;
+    vars["--crepe-color-on-inverse"] = adjustForContrast(bg, fg, 4.5);
 
-    // Secondary accent derived from the primary accent, with readable text.
+    // Secondary/link accents are derived from the captured foreground and background. There is no
+    // extra backend color key because the current MarkFlow UI does not need the entire IDE scheme.
+    const accentSeed = mix(fg, dark ? "#ffffff" : "#000000", 0.25);
+    const accent = adjustForContrast(accentSeed, bg, 4.5);
+    vars["--crepe-color-primary"] = accent;
     const secondary = mix(accent, dark ? "#ffffff" : "#000000", 0.25);
     vars["--crepe-color-secondary"] = secondary;
-    vars["--crepe-color-on-secondary"] = readableTextColor(secondary);
+    vars["--crepe-color-on-secondary"] = adjustForContrast(readableTextColor(secondary), secondary, 4.5);
 
     return vars;
 };

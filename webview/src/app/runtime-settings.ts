@@ -1,5 +1,6 @@
 import {buildIdeThemeVariables} from "./crepe-theme-mapping";
-import type {MarkFlowRuntimeSettings} from "./types";
+import {parseHex} from "./color";
+import type {IdeColors, MarkFlowRuntimeSettings} from "./types";
 export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
     mermaidZoomPercent: 100,
@@ -17,13 +18,49 @@ export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     settingsRevision: 1
 };
 
+const IDE_COLOR_KEYS = [
+    "background",
+    "foreground",
+    "selectionBackground",
+    "selectionForeground",
+    "border"
+] as const;
+
+/** Accept only the stable host/webview palette contract; legacy editor.* keys are not palette data. */
+export const normalizeIdeColorScheme = (
+    raw: IdeColors | null | undefined
+): IdeColors => {
+    if (!raw) return {};
+    return Object.fromEntries(
+        IDE_COLOR_KEYS
+            .filter((key) => typeof raw[key] === "string" && parseHex(raw[key]) !== null)
+            .map((key) => [key, raw[key]])
+    );
+};
+
 export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
     const overrides: MarkFlowRuntimeSettings = raw ?? {};
     const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
     return {
         ...merged,
+        ideColorScheme: normalizeIdeColorScheme(merged.ideColorScheme),
         mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200)
     };
+};
+
+/**
+ * Identity of values that can change the active webview appearance or behavior. The revision is
+ * deliberately excluded because the host also bumps it for IDE scheme changes that LIGHT/DARK
+ * intentionally ignore. IDE_SYNC keeps its palette and resolved dark flag in the identity so a
+ * palette change cannot be mistaken for a duplicate apply.
+ */
+export const runtimeSettingsIdentity = (settings: Required<MarkFlowRuntimeSettings>): string => {
+    const {settingsRevision: _settingsRevision, ideColorScheme, ideDark, ...stableSettings} = settings;
+    return JSON.stringify({
+        ...stableSettings,
+        ideColorScheme: settings.themeSource === "IDE_SYNC" ? normalizeIdeColorScheme(ideColorScheme) : {},
+        ideDark: settings.themeSource === "IDE_SYNC" ? Boolean(ideDark) : false
+    });
 };
 
 export const resolveMermaidTheme = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "default" | "dark" => {

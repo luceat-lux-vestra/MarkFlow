@@ -1,5 +1,7 @@
 package com.algorist.markflow.settings
 
+import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.algorist.markflow.settings.state.MarkFlowSettingsState
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
@@ -27,25 +29,27 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
     }
     fun testNormalizeBaseFontSizeClampsToRange() {
         val service = newService()
-        val below = MarkFlowSettingsState(baseFontSizePx = 1)
+        val min = MarkFlowSettingsService.BASE_FONT_SIZE_MIN
+        val max = MarkFlowSettingsService.BASE_FONT_SIZE_MAX
+        val below = MarkFlowSettingsState(baseFontSizePx = min - 1)
         service.normalizeState(below)
-        assertEquals(10, below.baseFontSizePx)
+        assertEquals(min, below.baseFontSizePx)
 
-        val above = MarkFlowSettingsState(baseFontSizePx = 999)
+        val above = MarkFlowSettingsState(baseFontSizePx = max + 1)
         service.normalizeState(above)
-        assertEquals(32, above.baseFontSizePx)
+        assertEquals(max, above.baseFontSizePx)
 
         val within = MarkFlowSettingsState(baseFontSizePx = 16)
         service.normalizeState(within)
         assertEquals(16, within.baseFontSizePx)
 
-        val edgeLow = MarkFlowSettingsState(baseFontSizePx = 10)
+        val edgeLow = MarkFlowSettingsState(baseFontSizePx = min)
         service.normalizeState(edgeLow)
-        assertEquals(10, edgeLow.baseFontSizePx)
+        assertEquals(min, edgeLow.baseFontSizePx)
 
-        val edgeHigh = MarkFlowSettingsState(baseFontSizePx = 32)
+        val edgeHigh = MarkFlowSettingsState(baseFontSizePx = max)
         service.normalizeState(edgeHigh)
-        assertEquals(32, edgeHigh.baseFontSizePx)
+        assertEquals(max, edgeHigh.baseFontSizePx)
     }
 
     fun testNormalizeFontFamilyTrimsAndKeepsEmptyAsDefault() {
@@ -129,5 +133,62 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
         assertEquals("Inter", state.fontFamily)
         assertEquals(20, state.baseFontSizePx)
         assertEquals("DARK", state.themeSource)
+    }
+
+    fun testRuntimePayloadIncludesCapturedPaletteAndFont() {
+        val service = newService()
+        val snapshot = MarkFlowIdeThemeService.Snapshot(
+            dark = true,
+            colors = linkedMapOf(
+                "background" to "#123456",
+                "foreground" to "#abcdef",
+                "selectionBackground" to "#654321",
+                "selectionForeground" to "#fedcba",
+                "border" to "#112233"
+            ),
+            fonts = mapOf("codeFont" to "JetBrains Mono")
+        )
+
+        val payload = service.runtimeSettingsFromSnapshot(snapshot, "IDE_SYNC", revision = 42)
+
+        assertEquals(snapshot.colors, payload.ideColorScheme)
+        val wirePayload = JsonParser.parseString(Gson().toJson(payload)).asJsonObject
+            .getAsJsonObject("ideColorScheme")
+        assertEquals("#123456", wirePayload.get("background").asString)
+        assertEquals("JetBrains Mono", payload.ideFontFamily)
+        assertTrue(payload.ideDark)
+        assertEquals(42, payload.settingsRevision)
+    }
+
+    fun testRuntimePayloadFallsBackWhenPersistedFontIsUnavailable() {
+        val service = newService()
+        service.loadState(MarkFlowSettingsState(fontFamily = "Font That Is Not Installed"))
+        val snapshot = MarkFlowIdeThemeService.Snapshot(
+            dark = false,
+            colors = emptyMap(),
+            fonts = mapOf("codeFont" to "JetBrains Mono")
+        )
+
+        assertEquals("", service.runtimeSettingsFromSnapshot(snapshot).fontFamily)
+        assertEquals("JetBrains Mono", service.runtimeSettingsFromSnapshot(snapshot).ideFontFamily)
+    }
+
+    fun testRuntimeSettingsReadsTheLiveSnapshotIntoThePayload() {
+        val service = newService()
+        val snapshot = MarkFlowIdeThemeService.getInstance().getSnapshot()
+
+        val payload = service.runtimeSettings()
+
+        assertEquals(snapshot.colors, payload.ideColorScheme)
+        assertEquals(snapshot.fonts["codeFont"], payload.ideFontFamily)
+        assertEquals(snapshot.dark, payload.ideDark)
+    }
+
+    fun testLoadStatePreservesTypographyAcrossPersistence() {
+        val service = newService()
+        service.loadState(MarkFlowSettingsState(fontFamily = "Inter", baseFontSizePx = 20))
+
+        assertEquals("Inter", service.state.fontFamily)
+        assertEquals(20, service.state.baseFontSizePx)
     }
 }
