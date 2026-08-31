@@ -1,18 +1,16 @@
-# Project Context
-You are an expert developer building an IntelliJ IDEA Plugin that provides a WYSIWYG Markdown editor (like Typora).
-The project uses a Hybrid Architecture:
-1.  **Backend (IntelliJ Plugin):** Kotlin + IntelliJ Platform SDK + JCEF (Chromium Embedded Framework).
-2.  **Frontend (Webview):** Pure TypeScript + Vite + Milkdown (Markdown editor framework). NO React, NO Vue.
+# MarkFlow Copilot Instructions
 
-# Architectural Rules
--   **Separation of Concerns:** The Frontend ONLY handles UI, text rendering, and Markdown parsing. The Backend ONLY handles IDE integration, Virtual File System (VFS) operations, and file saving/loading.
--   **Communication:** Use `JSQuery` (IntelliJ API) to send/receive messages between Kotlin and the JCEF JavaScript environment.
--   **Performance:** The Frontend must be as lightweight as possible to avoid lagging the IDE.
+Follow the repository root `AGENTS.md` as the authoritative engineering and review policy.
 
-# Coding Style
--   **Kotlin:** Use standard JetBrains conventions. Use Coroutines for background tasks.
--   **TypeScript:** Use strict typing. Avoid heavy external libraries unless necessary.
--   **Responses:** Provide direct, ready-to-use code snippets. Do not explain basic concepts unless asked.
+Key constraints:
 
-# Ignore File Rules
--   All specified in `.gitignore` should be followed. Do not include any generated files, build artifacts, or IDE-specific files in the repository.
+- Preserve proven product behavior, not the current implementation structure.
+- Treat IntelliJ `Document`/VFS/FileEditor lifecycle, JCEF resource ownership, Markdown source fidelity, and host↔webview synchronization as correctness-critical contracts.
+- Do not assume existing browser pooling, `window.*` globals, `cefQuery` message formats, source-preserving helpers, timers, boolean guards, or Milkdown/Crepe integration are permanent architecture.
+- Prefer explicit ownership, a versioned/validated bridge protocol, and deterministic revision/session state over timing-dependent fixes.
+- Treat Markdown, raw HTML, links/resources, and webview messages as untrusted input.
+- Do not log full document content by default.
+- CI green is necessary but insufficient. Changes require strict review of the exact final PR HEAD as described in `AGENTS.md`.
+- Release/publication is a separate explicit gate.
+
+For architecture work, use GitHub issue #52 and its child issues/ADRs as the current direction. Historical `plans/00`–`04` are non-authoritative context only.
