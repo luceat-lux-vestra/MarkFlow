@@ -123,7 +123,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
 
     /**
      * Normalize the user's MarkFlow body-font preference. The UI is a dropdown of installed fonts,
-     * so the persisted value is a single family name (or empty for "MarkFlow Default"). Trim only;
+     * so the persisted value is a single family name (or empty for the IDE default). Trim only;
      * no CSS parsing is needed because the UI never emits a font stack.
      */
     private fun normalizeFontFamily(raw: String): String {

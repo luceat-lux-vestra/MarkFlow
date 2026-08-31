@@ -41,9 +41,8 @@ data class MarkFlowSettingsState(
 ) {
     companion object {
         /**
-         * Default MarkFlow body font. An empty string means "MarkFlow Default": the webview keeps
-         * Crepe's bundled typography and is not asked to override the font family. The persisted
-         * value is a single installed font family name (e.g. "Inter"), never a CSS font stack.
+         * Default body font. An empty string means the active IDE editor font. The persisted value
+         * is a single installed font family name (e.g. "Inter"), never a CSS font stack.
          */
         const val DEFAULT_FONT_FAMILY = ""
 

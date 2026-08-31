@@ -127,8 +127,8 @@ export const normalizeBaseFontSizePx = (settings: MarkFlowRuntimeSettings): numb
 
 /**
  * Resolve the document font family to publish on `--crepe-font-default` / `--crepe-font-title`.
- * An empty persisted value ("MarkFlow Default") falls back to the active IDE editor font so
- * MarkFlow matches the IDE by default; an empty IDE font leaves Crepe's bundled default untouched.
+ * An empty persisted value falls back to the active IDE editor font so MarkFlow matches the IDE by
+ * default; an empty IDE font leaves Crepe's bundled default untouched.
  */
 export const resolveDocumentFontFamily = (settings: MarkFlowRuntimeSettings): string => {
     const selected = settings.fontFamily?.trim();
@@ -160,15 +160,17 @@ export const buildCrepeStyleBlock = (settings: MarkFlowRuntimeSettings): string 
     const crepeLines = Object.entries(vars).map(
         ([name, value]) => `  ${name}: ${value} !important;`
     );
-    // Primary mechanism: Crepe's base font size variable (spec #7 / #22).
-    crepeLines.push(`  --crepe-base-font-size: ${baseSizePx}px;`);
+    // Primary mechanism: Crepe's base font size variable (spec #7 / #22). `!important` is
+    // required because Crepe declares its own design-system vars on `.milkdown` at the same
+    // specificity; without it Crepe's bundled value wins on source-order ties.
+    crepeLines.push(`  --crepe-base-font-size: ${baseSizePx}px !important;`);
     // Document font. Applied to --crepe-font-default (paragraphs) and --crepe-font-title
     // (headings). Empty when neither a family nor the IDE font is available, leaving Crepe's
     // bundled default untouched.
     const family = resolveDocumentFontFamily(settings);
     if (family) {
-        crepeLines.push(`  --crepe-font-default: ${family};`);
-        crepeLines.push(`  --crepe-font-title: ${family};`);
+        crepeLines.push(`  --crepe-font-default: ${family} !important;`);
+        crepeLines.push(`  --crepe-font-title: ${family} !important;`);
     }
 
     // Working override for Crepe 7.x, which hardcodes font-sizes and does not read

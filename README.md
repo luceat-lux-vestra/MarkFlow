@@ -22,7 +22,7 @@ MarkFlow is an IntelliJ IDEA plugin that provides a Typora-style Markdown editin
 
 You can configure these in `Settings > Tools > MarkFlow`.
 
-- **General:** Theme source, Body font family, Base font size (px), Preview only by default
+- **General:** Theme source, body font family (IDE font by default or an installed family), base font size (10–32 px), Preview only by default
 - **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior
 - **KaTeX:** Display density
 - **Advanced:** Diagram security level (STRICT/LOOSE)
@@ -44,7 +44,7 @@ It opens supported Markdown files in a custom IntelliJ editor, keeps the documen
 directions, and restores editor state such as scroll position, caret, and selection when reopening files.
 
 MarkFlow supports Mermaid diagrams, KaTeX math, Markdown-aware paste, and raw HTML rendering with XSS sanitization, with configurable rendering options
-for theme source, Mermaid sizing and zoom, error display, KaTeX density, and preview defaults.
+for theme source, body font family and size, Mermaid sizing and zoom, error display, KaTeX density, and preview defaults.
 <!-- Plugin description end -->
 
 [template]: https://github.com/JetBrains/intellij-platform-plugin-template

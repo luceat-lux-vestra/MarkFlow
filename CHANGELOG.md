@@ -12,9 +12,13 @@
 
 ### Fixed
 - Skipped browser pre-warm and editor takeover when JCEF is unavailable in the IDE runtime instead of failing with an error.
-- The body font family is now a dropdown of installed families (single value); the webview still
-  quotes the family so a persisted value cannot break out of the CSS `font-family` value.
+- The body font family is now a dropdown of installed families (single value); the IDE-configured
+  font is the default and is shown by its actual family name. The webview quotes the family so a
+  persisted value cannot break out of the CSS `font-family` value.
+- Ensured runtime font variables override Crepe's bundled declarations so changing the body font
+  takes effect in the editor.
 - Propagated the configured base font size from settings into the webview and clamped it to a valid range (10–32 px).
+- Direct font-size input now marks the settings panel as modified so Apply becomes available.
 
 ### Added
 - Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
@@ -30,5 +34,5 @@
 - Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
 - Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
 - Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
-- Body font family (dropdown of installed families + MarkFlow Default) and base font size (px)
+- Body font family (IDE default shown by its actual family name, plus installed families) and base font size (px)
   controls in the MarkFlow General settings, applied through Crepe's `--crepe-base-font-size`.

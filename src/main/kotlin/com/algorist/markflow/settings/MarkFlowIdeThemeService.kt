@@ -100,8 +100,8 @@ class MarkFlowIdeThemeService : Disposable {
         put("selectionForeground", scheme.getColor(EditorColors.SELECTION_FOREGROUND_COLOR))
         put("currentLineHighlight", scheme.getColor(EditorColors.CARET_ROW_COLOR))
         put("border", scheme.getColor(EditorColors.BORDER_LINES_COLOR))
-        // EditorFontType.PLAIN is the regular editor font; surface it as the webview's default
-        // body font so MarkFlow matches the IDE when the user picks "MarkFlow Default".
+        // EditorFontType.PLAIN is the regular editor font the user configures in Settings >
+        // Editor > Font. Surface it as the webview's default body font.
         val fonts = LinkedHashMap<String, String>()
         fonts["codeFont"] = scheme.getFont(EditorFontType.PLAIN).family
 

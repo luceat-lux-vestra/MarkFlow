@@ -16,7 +16,7 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
 
     fun testStateAppliesTypographyDefaults() {
         val state = MarkFlowSettingsState()
-        // Empty font family means "MarkFlow Default" (the IDE font), never a CSS stack.
+        // Empty font family means the active IDE font, never a CSS stack.
         assertEquals("", state.fontFamily)
         assertEquals(16, state.baseFontSizePx)
     }
@@ -55,7 +55,7 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
         service.normalizeState(trimmed)
         assertEquals("Inter", trimmed.fontFamily)
 
-        // Blank / whitespace-only stays empty, which the webview reads as "MarkFlow Default".
+        // Blank / whitespace-only stays empty, which the webview reads as the IDE font.
         val blank = MarkFlowSettingsState(fontFamily = "   ")
         service.normalizeState(blank)
         assertEquals("", blank.fontFamily)
@@ -66,7 +66,7 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
         val service = newService()
         val state = MarkFlowSettingsState()
         service.normalizeState(state)
-        // Empty family = MarkFlow Default; size stays at the default.
+        // Empty family = IDE default; size stays at the default.
         assertEquals("", state.fontFamily)
         assertEquals(16, state.baseFontSizePx)
     }

@@ -9,6 +9,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Font
+import java.text.ParseException
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -61,7 +62,8 @@ class MarkFlowSettingsConfigurable : Configurable {
         )
         fontFamilyCombo = fontCombo(
             FontFamilyOptions.build(
-                GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList()
+                GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList(),
+                MarkFlowIdeThemeService.getInstance().getSnapshot().fonts["codeFont"].orEmpty()
             )
         )
         baseFontSizeSpinner = JSpinner(
@@ -264,7 +266,18 @@ class MarkFlowSettingsConfigurable : Configurable {
         return row + 1
     }
 
-    private fun spinnerInt(spinner: JSpinner): Int = (spinner.value as? Int) ?: 0
+    private fun spinnerInt(spinner: JSpinner): Int {
+        // JSpinner keeps direct text edits in its editor until the editor is committed. Without
+        // this, isModified() sees the old model value and the Settings dialog leaves Apply disabled.
+        try {
+            spinner.commitEdit()
+        } catch (_: ParseException) {
+            // Keep the last valid model value while the user is entering an incomplete/invalid number.
+        } catch (_: IllegalArgumentException) {
+            // SpinnerNumberModel rejects values outside its configured range.
+        }
+        return (spinner.value as? Number)?.toInt() ?: 0
+    }
 
     private fun <T : Enum<T>> selectedName(comboBox: ComboBox<T>): String {
         return (comboBox.selectedItem as? Enum<*>)?.name.orEmpty()

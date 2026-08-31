@@ -215,6 +215,14 @@ test("buildCrepeStyleBlock emits --crepe-base-font-size and scales body + headin
     if (!/--crepe-font-title:\s*"Fira Code",\s*system-ui,\s*sans-serif/.test(block)) {
         throw new Error(`expected quoted title family, got:\n${block}`);
     }
+    // The font vars must carry !important so they win over Crepe's own .milkdown
+    // definitions (same specificity, source-order tie) — the reason the family did not apply.
+    if (!/--crepe-font-default:[^;]*!important/.test(block)) {
+        throw new Error("expected --crepe-font-default to carry !important");
+    }
+    if (!/--crepe-font-title:[^;]*!important/.test(block)) {
+        throw new Error("expected --crepe-font-title to carry !important");
+    }
     // Spec #21: body + headings scale via calc() against the base-size variable.
     if (!/\.milkdown\s+\.ProseMirror\s+p\s*\{\s*font-size:\s*var\(--crepe-base-font-size\)\s*!important/.test(block)) {
         throw new Error("expected p font-size override");

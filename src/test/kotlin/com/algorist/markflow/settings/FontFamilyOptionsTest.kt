@@ -9,11 +9,11 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
  */
 class FontFamilyOptionsTest : BasePlatformTestCase() {
 
-    fun testBuildPutsDefaultFirstThenSortsAlphabeticallyCaseInsensitively() {
-        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"))
+    fun testBuildPutsIdeFontFirstUsingItsActualName() {
+        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
         assertEquals(
             listOf(
-                FontFamilyOption.DEFAULT,
+                FontFamilyOption("", "JetBrains Mono"),
                 FontFamilyOption("Arial", "Arial"),
                 FontFamilyOption("Inter", "Inter"),
                 FontFamilyOption("Roboto", "Roboto"),
@@ -23,11 +23,14 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
     }
 
     fun testBuildRemovesDuplicatesAndBlankNames() {
-        val options = FontFamilyOptions.build(listOf("Inter", "Inter", "  ", "Arial"))
-        // Exact duplicates collapse to one; blank names are dropped; result is sorted.
+        val options = FontFamilyOptions.build(
+            listOf("Inter", "Inter", "  ", "Arial", "jetbrains mono"),
+            "JetBrains Mono"
+        )
+        // The IDE default is not repeated in the installed-font list; exact duplicates still collapse.
         assertEquals(
             listOf(
-                FontFamilyOption.DEFAULT,
+                FontFamilyOption("", "JetBrains Mono"),
                 FontFamilyOption("Arial", "Arial"),
                 FontFamilyOption("Inter", "Inter"),
             ),
@@ -36,21 +39,21 @@ class FontFamilyOptionsTest : BasePlatformTestCase() {
     }
 
     fun testBuildWithEmptyInstalledListYieldsOnlyDefault() {
-        val options = FontFamilyOptions.build(emptyList())
-        assertEquals(listOf(FontFamilyOption.DEFAULT), options)
+        val options = FontFamilyOptions.build(emptyList(), "JetBrains Mono")
+        assertEquals(listOf(FontFamilyOption("", "JetBrains Mono")), options)
     }
 
     fun testResolveMatchesPersistedFamilyCaseSensitively() {
-        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"))
+        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
         val resolved = FontFamilyOptions.resolve(options, "Inter")
         assertEquals(FontFamilyOption("Inter", "Inter"), resolved)
     }
 
-    fun testResolveEmptyOrUnknownFallsBackToDefault() {
-        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"))
-        // Empty (MarkFlow Default) and an installed-but-unavailable family both resolve to the default.
-        assertEquals(FontFamilyOption.DEFAULT, FontFamilyOptions.resolve(options, ""))
-        assertEquals(FontFamilyOption.DEFAULT, FontFamilyOptions.resolve(options, "  "))
-        assertEquals(FontFamilyOption.DEFAULT, FontFamilyOptions.resolve(options, "Nonexistent Font"))
+    fun testResolveEmptyOrUnknownFallsBackToIdeDefault() {
+        val options = FontFamilyOptions.build(listOf("Roboto", "Arial", "Inter"), "JetBrains Mono")
+        val expected = FontFamilyOption("", "JetBrains Mono")
+        assertEquals(expected, FontFamilyOptions.resolve(options, ""))
+        assertEquals(expected, FontFamilyOptions.resolve(options, "  "))
+        assertEquals(expected, FontFamilyOptions.resolve(options, "Nonexistent Font"))
     }
 }
