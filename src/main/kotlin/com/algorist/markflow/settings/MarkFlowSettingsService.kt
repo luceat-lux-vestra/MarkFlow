@@ -98,18 +98,25 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     }
 
     private fun resolveThemeSourceForRuntime(): String {
-        if (state.themeSource != ThemeSource.IDE_SYNC.name) {
-            if (MarkFlowDiagnostics.enabled) {
-                LOG.warn("MARKFLOW_SETTINGS resolveTheme explicit=${state.themeSource}")
+        return when (state.themeSource) {
+            ThemeSource.IDE_SYNC.name -> {
+                // IDE_SYNC = live IDE palette sync (Approach C): the IDE is the color source of
+                // truth and the palette is always resolved on the backend side.
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC(palette)")
+                }
+                ThemeSource.IDE_SYNC.name
             }
-            return state.themeSource
+
+            ThemeSource.LIGHT.name, ThemeSource.DARK.name -> {
+                if (MarkFlowDiagnostics.enabled) {
+                    LOG.warn("MARKFLOW_SETTINGS resolveTheme explicit=${state.themeSource}")
+                }
+                state.themeSource
+            }
+
+            else -> ThemeSource.LIGHT.name
         }
-        // IDE_SYNC = live IDE palette sync (Approach C): the IDE is the color source of
-        // truth and the palette is always resolved on the backend side.
-        if (MarkFlowDiagnostics.enabled) {
-            LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC(palette)")
-        }
-        return ThemeSource.IDE_SYNC.name
     }
 
     private fun normalize(target: MarkFlowSettingsState = state) {
@@ -119,7 +126,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     /**
      * Coerce every enum field to a known value and every numeric field to its valid range,
      * mutating [target] in place. Pure logic (no platform access) so it can be unit-tested
-        * against a hand-built [MarkFlowSettingsState].
+     * against a hand-built [MarkFlowSettingsState].
      */
     fun normalizeState(target: MarkFlowSettingsState): MarkFlowSettingsState {
         target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)

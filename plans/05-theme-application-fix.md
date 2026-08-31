@@ -165,6 +165,9 @@ and the limitation is explicit rather than silently claiming an invariant that c
 - **Unit test** `color.ts`: contrast thresholds, `adjustForContrast` direction/clamp, `lighten`
   monotonicity. Deterministic, no IDE needed.
 - `./gradlew check`, `npm run test:source`, and `npm run build` inside `webview/`.
+- **Qodana gate:** the workflow pins the Qodana 2026.2 JVM Community image, disables restored
+  analysis caches for reproducibility, uploads the report, and fails the `Inspect code` job when a
+  new High-severity problem is present. The Gradle Qodana plugin and action remain on 2026.2.x.
 
 ## Scope decisions (for the reader)
 - **In scope:** palette sync for colors + fonts, with contrast guards.

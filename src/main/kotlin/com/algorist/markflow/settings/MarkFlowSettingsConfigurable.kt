@@ -24,7 +24,6 @@ import com.algorist.markflow.MyBundle
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.settings.state.DiagramSecurityLevel
 import com.algorist.markflow.settings.state.KatexDisplayDensity
-import com.algorist.markflow.settings.state.MarkFlowSettingsState
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
 import com.algorist.markflow.settings.state.ThemeSource
@@ -284,13 +283,12 @@ class MarkFlowSettingsConfigurable : Configurable {
     }
 
     private fun clampTypedSpinnerValue(spinner: JSpinner) {
-        val typed = (spinner.editor as? JSpinner.DefaultEditor)?.textField?.text?.trim()?.toIntOrNull()
-        val model = spinner.model as? SpinnerNumberModel
-        val minimum = (model?.minimum as? Number)?.toInt()
-        val maximum = (model?.maximum as? Number)?.toInt()
-        if (typed != null && minimum != null && maximum != null) {
-            spinner.value = typed.coerceIn(minimum, maximum)
-        }
+        val textField = (spinner.editor as? JSpinner.DefaultEditor)?.textField ?: return
+        val model = spinner.model as? SpinnerNumberModel ?: return
+        val typed = textField.text.trim().toIntOrNull() ?: return
+        val minimum = (model.minimum as? Number)?.toInt() ?: return
+        val maximum = (model.maximum as? Number)?.toInt() ?: return
+        spinner.value = typed.coerceIn(minimum, maximum)
     }
 
     private fun <T : Enum<T>> selectedName(comboBox: ComboBox<T>): String {
