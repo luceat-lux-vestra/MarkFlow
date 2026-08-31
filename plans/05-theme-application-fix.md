@@ -167,7 +167,8 @@ and the limitation is explicit rather than silently claiming an invariant that c
 - `./gradlew check`, `npm run test:source`, and `npm run build` inside `webview/`.
 - **Qodana gate:** the workflow pins the Qodana 2026.2 JVM Community image, disables restored
   analysis caches for reproducibility, uploads the report, and fails the `Inspect code` job when a
-  new High-severity problem is present. The Gradle Qodana plugin and action remain on 2026.2.x.
+  new High/Critical-severity problem is present. It also fails closed when Qodana produces no SARIF
+  report. The Gradle Qodana plugin and action remain on 2026.2.x.
 
 ## Scope decisions (for the reader)
 - **In scope:** palette sync for colors + fonts, with contrast guards.

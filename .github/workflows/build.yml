@@ -176,9 +176,29 @@ jobs:
         uses: JetBrains/qodana-action@v2026.2.0
         with:
           args: --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
-          cache-default-branch-only: true
           use-caches: false
           upload-result: true
+
+      # Qodana publishes its own neutral/annotation check for non-gating findings. Keep the
+      # workflow job authoritative by enforcing the severity recorded in the generated SARIF.
+      - name: Enforce Qodana High severity gate
+        if: ${{ always() }}
+        env:
+          QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
+        run: |
+          set -euo pipefail
+          report="$QODANA_RESULTS_DIR/qodana.sarif.json"
+          if [[ ! -s "$report" ]]; then
+            echo "::error::Qodana did not produce qodana.sarif.json; treating the scan as failed."
+            exit 1
+          fi
+
+          high_count="$(jq '[.runs[]?.results[]? | select(.properties.qodanaSeverity == "High" or .properties.qodanaSeverity == "Critical")] | length' "$report")"
+          if (( high_count > 0 )); then
+            echo "::error::Qodana reported $high_count High/Critical problem(s)."
+            exit 1
+          fi
+          echo "Qodana High severity gate passed (High/Critical findings: 0)."
 
   # Run plugin structure verification along with IntelliJ Plugin Verifier
   verify:
