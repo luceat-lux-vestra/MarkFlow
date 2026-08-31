@@ -8,7 +8,6 @@ import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.colors.EditorFontType
-import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.Disposable
 import com.intellij.util.messages.MessageBusConnection
@@ -21,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
  * sync): the IDE is an opaque color/font provider and the webview owns the design system (mapping,
  * contrast guards, typography).
  *
- * The editor colors are read from stable `EditorColors` [ColorKey]s (the plan's `SchemeColor` /
+ * The editor colors are read from stable `EditorColors` color keys (the plan's `SchemeColor` /
  * `schemeColors` API does not exist on platform 2026.2), so the map keys are ours and version-stable.
  */
 @Service(Service.Level.APP)
@@ -101,11 +100,10 @@ class MarkFlowIdeThemeService : Disposable {
         put("selectionForeground", scheme.getColor(EditorColors.SELECTION_FOREGROUND_COLOR))
         put("currentLineHighlight", scheme.getColor(EditorColors.CARET_ROW_COLOR))
         put("border", scheme.getColor(EditorColors.BORDER_LINES_COLOR))
-        // The editor font is monospace in practice; map it to the webview's code font. Body/title
-        // fonts are left to the webview's bundled defaults.
+        // EditorFontType.PLAIN is the regular editor font; surface it as the webview's default
+        // body font so MarkFlow matches the IDE when the user picks "MarkFlow Default".
         val fonts = LinkedHashMap<String, String>()
         fonts["codeFont"] = scheme.getFont(EditorFontType.PLAIN).family
-        fonts["baseFontSizePx"] = scheme.getEditorFontSize().toString()
 
         return Snapshot(dark = dark, colors = colors, fonts = fonts)
     }
@@ -116,7 +114,7 @@ class MarkFlowIdeThemeService : Disposable {
     }
 
     companion object {
-        fun getInstance(): MarkFlowIdeThemeService =
+        internal fun getInstance(): MarkFlowIdeThemeService =
             ApplicationManager.getApplication().getService(MarkFlowIdeThemeService::class.java)
     }
 }

@@ -5,7 +5,6 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.util.xmlb.XmlSerializerUtil
 import java.util.concurrent.atomic.AtomicInteger
 import com.algorist.markflow.MarkFlowDiagnostics
@@ -78,9 +77,8 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             previewOnlyByDefault = state.previewOnlyByDefault,
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
             fontFamily = state.fontFamily,
-            ideColorScheme = snapshot.colors,
+            baseFontSizePx = state.baseFontSizePx,
             ideFontFamily = snapshot.fonts["codeFont"],
-            ideBaseFontSizePx = snapshot.fonts["baseFontSizePx"]?.toIntOrNull(),
             ideDark = snapshot.dark,
             settingsRevision = revision
         )
@@ -93,19 +91,8 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             }
             return state.themeSource
         }
-        // IDE_SYNC without live palette sync: pick a fixed light/dark shell from the IDE.
-        if (!state.ideThemeSync) {
-            val ideResolved = if (EditorColorsManager.getInstance().isDarkEditor) {
-                ThemeSource.DARK.name
-            } else {
-                ThemeSource.LIGHT.name
-            }
-            if (MarkFlowDiagnostics.enabled) {
-                LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC->$ideResolved")
-            }
-            return ideResolved
-        }
-        // IDE_SYNC with live palette sync: hand the palette to the webview (Approach C).
+        // IDE_SYNC = live IDE palette sync (Approach C): the IDE is the color source of
+        // truth and the palette is always resolved on the backend side.
         if (MarkFlowDiagnostics.enabled) {
             LOG.warn("MARKFLOW_SETTINGS resolveTheme IDE_SYNC(palette)")
         }
@@ -119,7 +106,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
     /**
      * Coerce every enum field to a known value and every numeric field to its valid range,
      * mutating [target] in place. Pure logic (no platform access) so it can be unit-tested
-     * against a hand-built [MarkFlowSettingsState].
+        * against a hand-built [MarkFlowSettingsState].
      */
     fun normalizeState(target: MarkFlowSettingsState): MarkFlowSettingsState {
         target.mermaidSizeMode = normalizeEnum(target.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
@@ -129,7 +116,18 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
         target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
+        target.baseFontSizePx = target.baseFontSizePx.coerceIn(BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX)
+        target.fontFamily = normalizeFontFamily(target.fontFamily)
         return target
+    }
+
+    /**
+     * Normalize the user's MarkFlow body-font preference. The UI is a dropdown of installed fonts,
+     * so the persisted value is a single family name (or empty for "MarkFlow Default"). Trim only;
+     * no CSS parsing is needed because the UI never emits a font stack.
+     */
+    private fun normalizeFontFamily(raw: String): String {
+        return raw.trim()
     }
 
     private inline fun <reified T : Enum<T>> normalizeEnum(raw: String, fallback: T): String {
@@ -144,6 +142,10 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
 
         private const val MIN_IDLE_EVICT_AFTER_MS = 10_000
         private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000
+
+        const val BASE_FONT_SIZE_MIN = 10
+        const val BASE_FONT_SIZE_MAX = 32
+        const val DEFAULT_BASE_FONT_SIZE_PX = MarkFlowSettingsState.DEFAULT_BASE_FONT_SIZE_PX
 
         fun getInstance(): MarkFlowSettingsService {
             return ApplicationManager.getApplication().getService(MarkFlowSettingsService::class.java)

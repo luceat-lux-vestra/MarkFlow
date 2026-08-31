@@ -4,6 +4,8 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.ui.JBUI
+import java.awt.Component
+import java.awt.GraphicsEnvironment
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Font
@@ -14,6 +16,8 @@ import javax.swing.JPanel
 import javax.swing.JSeparator
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
+import javax.swing.JList
+import javax.swing.DefaultListCellRenderer
 import com.algorist.markflow.MyBundle
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.settings.state.DiagramSecurityLevel
@@ -35,6 +39,8 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
     private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
     private lateinit var idleEvictAfterMsSpinner: JSpinner
+    private lateinit var fontFamilyCombo: ComboBox<FontFamilyOption>
+    private lateinit var baseFontSizeSpinner: JSpinner
 
     override fun getDisplayName(): String = MyBundle.message("settings.markflow.displayName")
 
@@ -53,18 +59,36 @@ class MarkFlowSettingsConfigurable : Configurable {
         idleEvictAfterMsSpinner = JSpinner(
             SpinnerNumberModel(DEFAULT_IDLE_EVICT_AFTER_MS, IDLE_EVICT_MIN, IDLE_EVICT_MAX, IDLE_EVICT_STEP)
         )
+        fontFamilyCombo = fontCombo(
+            FontFamilyOptions.build(
+                GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList()
+            )
+        )
+        baseFontSizeSpinner = JSpinner(
+            SpinnerNumberModel(DEFAULT_BASE_FONT_SIZE_PX, BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX, 1)
+        )
 
         val root = JPanel(GridBagLayout())
         root.border = JBUI.Borders.empty(PANEL_PADDING)
         var row = 0
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.general"))
-        row = addRow(root, row, MyBundle.message("settings.markflow.themeSource"), themeSourceCombo)
         row = addRow(
             root,
             row,
             MyBundle.message("settings.markflow.previewOnlyByDefault"),
             previewOnlyByDefaultCheckBox
+        )
+
+        row = addSection(root, row, MyBundle.message("settings.markflow.section.appearance"))
+        row = addRow(root, row, MyBundle.message("settings.markflow.themeSource"), themeSourceCombo)
+        row = addRow(root, row, MyBundle.message("settings.markflow.fontFamily"), fontFamilyCombo)
+        row = addRow(
+            root,
+            row,
+            MyBundle.message("settings.markflow.baseFontSize"),
+            baseFontSizeSpinner,
+            MyBundle.message("settings.markflow.baseFontSize.tooltip")
         )
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.mermaid"))
@@ -104,6 +128,8 @@ class MarkFlowSettingsConfigurable : Configurable {
         return state.mermaidSizeMode != selectedName(mermaidSizeModeCombo)
             || state.mermaidZoomPercent != spinnerInt(mermaidZoomSpinner)
             || state.themeSource != selectedName(themeSourceCombo)
+            || state.fontFamily != selectedValue(fontFamilyCombo)
+            || state.baseFontSizePx != spinnerInt(baseFontSizeSpinner)
             || state.mermaidErrorDisplay != selectedName(mermaidErrorDisplayCombo)
             || state.katexDisplayDensity != selectedName(katexDensityCombo)
             || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
@@ -112,10 +138,15 @@ class MarkFlowSettingsConfigurable : Configurable {
     }
 
     override fun apply() {
-        val updated = MarkFlowSettingsState(
+        val service = MarkFlowSettingsService.getInstance()
+        // Copy the existing state and override only the fields shown here. Starting from the live
+        // state guarantees no field (including typography) is silently reset to a constructor default.
+        val updated = service.state.copy(
             mermaidSizeMode = selectedName(mermaidSizeModeCombo),
             mermaidZoomPercent = spinnerInt(mermaidZoomSpinner),
             themeSource = selectedName(themeSourceCombo),
+            fontFamily = selectedValue(fontFamilyCombo),
+            baseFontSizePx = spinnerInt(baseFontSizeSpinner),
             mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),
             katexDisplayDensity = selectedName(katexDensityCombo),
             diagramSecurityLevel = selectedName(diagramSecurityCombo),
@@ -126,10 +157,11 @@ class MarkFlowSettingsConfigurable : Configurable {
             LOG.warn(
                 "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
                     "security=${updated.diagramSecurityLevel}, " +
+                    "fontFamily=${updated.fontFamily}, baseFontSizePx=${updated.baseFontSizePx}, " +
                     "idleEvictAfterMs=${updated.idleEvictAfterMs}"
             )
         }
-        MarkFlowSettingsService.getInstance().updateFromUi(updated)
+        service.updateFromUi(updated)
     }
 
     override fun reset() {
@@ -137,6 +169,8 @@ class MarkFlowSettingsConfigurable : Configurable {
         setSelectedByName(mermaidSizeModeCombo, state.mermaidSizeMode, MermaidSizeMode.FIT_TO_VIEWPORT)
         mermaidZoomSpinner.value = state.mermaidZoomPercent.coerceIn(ZOOM_MIN, ZOOM_MAX)
         setSelectedByName(themeSourceCombo, state.themeSource, ThemeSource.LIGHT)
+        fontFamilyCombo.selectedItem = resolveFontFamily(state.fontFamily)
+        baseFontSizeSpinner.value = state.baseFontSizePx.coerceIn(BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX)
         setSelectedByName(mermaidErrorDisplayCombo, state.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
         setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
@@ -146,6 +180,30 @@ class MarkFlowSettingsConfigurable : Configurable {
 
     override fun disposeUIResources() {
         panel = null
+    }
+
+    private fun fontCombo(options: List<FontFamilyOption>): ComboBox<FontFamilyOption> {
+        return ComboBox(options.toTypedArray()).apply {
+            renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<out Any>?,
+                    value: Any?,
+                    index: Int,
+                    isSelected: Boolean,
+                    hasFocus: Boolean
+                ): Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, hasFocus)
+                    if (value is FontFamilyOption) setText(value.displayName)
+                    return this
+                }
+            }
+        }
+    }
+
+    /** Resolves a persisted family name against the dropdown's current options, defaulting when absent. */
+    private fun resolveFontFamily(persisted: String): FontFamilyOption {
+        val items = (0 until fontFamilyCombo.itemCount).map { fontFamilyCombo.getItemAt(it) }
+        return FontFamilyOptions.resolve(items, persisted)
     }
 
     private fun addSection(root: JPanel, row: Int, title: String): Int {
@@ -212,6 +270,10 @@ class MarkFlowSettingsConfigurable : Configurable {
         return (comboBox.selectedItem as? Enum<*>)?.name.orEmpty()
     }
 
+    private fun selectedValue(comboBox: ComboBox<FontFamilyOption>): String {
+        return (comboBox.selectedItem as? FontFamilyOption)?.value.orEmpty()
+    }
+
     private fun <T : Enum<T>> setSelectedByName(comboBox: ComboBox<T>, raw: String, fallback: T) {
         val match = (0 until comboBox.itemCount)
             .asSequence()
@@ -239,6 +301,10 @@ class MarkFlowSettingsConfigurable : Configurable {
         private const val ZOOM_MIN = 50
         private const val ZOOM_MAX = 200
         private const val ZOOM_STEP = 10
+
+        private const val DEFAULT_BASE_FONT_SIZE_PX = MarkFlowSettingsService.DEFAULT_BASE_FONT_SIZE_PX
+        private const val BASE_FONT_SIZE_MIN = MarkFlowSettingsService.BASE_FONT_SIZE_MIN
+        private const val BASE_FONT_SIZE_MAX = MarkFlowSettingsService.BASE_FONT_SIZE_MAX
 
         private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS
         private const val IDLE_EVICT_MIN = 10_000
