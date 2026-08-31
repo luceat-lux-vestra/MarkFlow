@@ -1,0 +1,78 @@
+changed-files-labels-limit: 30
+max-files-changed: 1000
+
+area:host:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main/kotlin/**"
+          - "src/test/kotlin/**"
+
+area:webview:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "webview/**"
+
+area:protocol:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main/kotlin/**/*Bridge*"
+          - "src/main/kotlin/**/*Protocol*"
+          - "src/main/kotlin/**/*Message*"
+          - "webview/src/**/*bridge*"
+          - "webview/src/**/*protocol*"
+          - "webview/src/**/*message*"
+
+area:lifecycle:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main/kotlin/**/*Browser*"
+          - "src/main/kotlin/**/*Editor*"
+          - "src/main/kotlin/**/*Session*"
+          - "src/main/kotlin/**/*Service*"
+          - "webview/src/**/*session*"
+
+area:settings:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main/kotlin/**/settings/**"
+          - "src/test/kotlin/**/settings/**"
+          - "webview/src/**/*settings*"
+          - "webview/src/**/*theme*"
+
+area:ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - "qodana.yml"
+          - "build.gradle.kts"
+          - "gradle/**"
+          - "gradle.properties"
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+
+area:governance:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "AGENTS.md"
+          - "CONTRIBUTING.md"
+          - "GOVERNANCE.md"
+          - "SECURITY.md"
+          - ".github/CODEOWNERS"
+          - ".github/*template*"
+          - ".github/ISSUE_TEMPLATE/**"
+          - ".github/ai-review-prompt.md"
+          - "docs/architecture/**"
+          - "docs/engineering/**"
+          - "docs/release/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "gradle/libs.versions.toml"
+          - "gradle/wrapper/gradle-wrapper.properties"
+          - "webview/package.json"
+          - "webview/package-lock.json"
+          - ".github/dependabot.yml"
