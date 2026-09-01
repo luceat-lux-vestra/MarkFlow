@@ -7,6 +7,8 @@ import com.sun.net.httpserver.HttpServer
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.JarURLConnection
+import java.net.URI
+import java.net.URL
 import java.net.URLConnection
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
@@ -247,16 +249,9 @@ internal object MarkFlowWebviewResourceManager {
             return null
         }
 
-        val connection = resource.openConnection() as? JarURLConnection
-        if (connection == null) {
-            LOG.error("MARKFLOW_UI failed to open jar connection for resource: $resource")
-            return null
-        }
-
-        val pluginJarPath = try {
-            Path.of(connection.jarFileURL.toURI())
-        } catch (ex: Exception) {
-            LOG.error("MARKFLOW_UI failed to resolve jar path for webview resource: ${ex.message}", ex)
+        val pluginJarPath = resolveJarFilePath(resource)
+        if (pluginJarPath == null) {
+            LOG.error("MARKFLOW_UI failed to resolve jar path for webview resource: $resource")
             return null
         }
 
@@ -280,6 +275,29 @@ internal object MarkFlowWebviewResourceManager {
             tempRoot
         } catch (ex: Exception) {
             LOG.error("MARKFLOW_UI failed to extract webview resources: ${ex.message}", ex)
+            null
+        }
+    }
+
+    private fun resolveJarFilePath(resource: URL): Path? {
+        return try {
+            val connection = resource.openConnection()
+            val jarFileUrl = (connection as? JarURLConnection)?.jarFileURL
+            if (jarFileUrl != null) {
+                return Path.of(jarFileUrl.toURI())
+            }
+
+            val externalForm = resource.toExternalForm()
+            val separator = externalForm.indexOf("!/")
+            if (!externalForm.startsWith("jar:") || separator <= "jar:".length) {
+                return null
+            }
+
+            Path.of(URI.create(externalForm.substring("jar:".length, separator)))
+        } catch (ex: Exception) {
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.debug("MARKFLOW_UI failed to resolve jar file path from $resource: ${ex.message}")
+            }
             null
         }
     }
