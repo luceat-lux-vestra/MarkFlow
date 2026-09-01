@@ -1,5 +1,6 @@
 package com.algorist.markflow.browser
 
+import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.editor.MarkFlowEditor
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
@@ -93,7 +94,7 @@ class MarkFlowSharedBrowserService(private val project: Project) : Disposable {
     private fun createLocalDocumentBinding(editor: MarkFlowEditor): LocalDocumentBinding {
         clearLocalDocumentBinding(editor)
         val registration = MarkFlowWebviewResourceManager.registerLocalDocument(
-            documentPath = editor.file.path,
+            documentPath = editor.getFile().path,
             projectBasePath = project.basePath
         )
         val binding = LocalDocumentBinding(
@@ -132,7 +133,7 @@ class MarkFlowSharedBrowserService(private val project: Project) : Disposable {
         )
         if (applied || attempt >= LOCAL_DOCUMENT_BASE_MAX_RETRIES) {
             if (!applied && MarkFlowDiagnostics.enabled) {
-                LOG.warn("MARKFLOW_UI local image base injection timed out for ${editor.file.path}")
+                LOG.warn("MARKFLOW_UI local image base injection timed out for ${editor.getFile().path}")
             }
             return
         }
