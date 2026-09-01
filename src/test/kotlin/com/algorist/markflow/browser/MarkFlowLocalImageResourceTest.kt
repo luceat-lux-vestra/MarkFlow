@@ -27,63 +27,59 @@ class MarkFlowLocalImageResourceTest : BasePlatformTestCase() {
     }
 
     fun testResolvesImageRelativeToMarkdownDocument() {
-        val projectRoot = Files.createDirectories(tempRoot.resolve("project"))
-        val documentDirectory = Files.createDirectories(projectRoot.resolve("docs"))
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
         val image = Files.createDirectories(documentDirectory.resolve("img")).resolve("file.png")
         Files.write(image, byteArrayOf(1, 2, 3))
 
         val resolved = MarkFlowWebviewResourceManager.resolveLocalResourcePath(
             documentDirectory = documentDirectory.toRealPath(),
-            allowedRoot = projectRoot.toRealPath(),
             relativePath = "./img/file.png"
         )
 
         assertEquals(image.toRealPath(), resolved)
     }
 
-    fun testAllowsParentRelativeImageInsideProjectRoot() {
-        val projectRoot = Files.createDirectories(tempRoot.resolve("project"))
-        val documentDirectory = Files.createDirectories(projectRoot.resolve("docs"))
-        val image = Files.createDirectories(projectRoot.resolve("assets")).resolve("shared.png")
-        Files.write(image, byteArrayOf(4, 5, 6))
-
-        val resolved = MarkFlowWebviewResourceManager.resolveLocalResourcePath(
-            documentDirectory = documentDirectory.toRealPath(),
-            allowedRoot = projectRoot.toRealPath(),
-            relativePath = "../assets/shared.png"
-        )
-
-        assertEquals(image.toRealPath(), resolved)
-    }
-
-    fun testRejectsTraversalOutsideProjectRoot() {
-        val projectRoot = Files.createDirectories(tempRoot.resolve("project"))
-        val documentDirectory = Files.createDirectories(projectRoot.resolve("docs"))
+    fun testRejectsParentRelativeImageOutsideDocumentDirectory() {
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
         val outsideImage = tempRoot.resolve("outside.png")
         Files.write(outsideImage, byteArrayOf(7, 8, 9))
 
         val resolved = MarkFlowWebviewResourceManager.resolveLocalResourcePath(
             documentDirectory = documentDirectory.toRealPath(),
-            allowedRoot = projectRoot.toRealPath(),
-            relativePath = "../../outside.png"
+            relativePath = "../outside.png"
+        )
+
+        assertNull(resolved)
+    }
+
+    fun testRejectsSymlinkEscapeOutsideDocumentDirectory() {
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
+        val outsideImage = tempRoot.resolve("outside.png")
+        Files.write(outsideImage, byteArrayOf(9, 8, 7))
+        val link = documentDirectory.resolve("linked.png")
+        try {
+            Files.createSymbolicLink(link, outsideImage)
+        } catch (_: UnsupportedOperationException) {
+            return
+        }
+
+        val resolved = MarkFlowWebviewResourceManager.resolveLocalResourcePath(
+            documentDirectory = documentDirectory.toRealPath(),
+            relativePath = "linked.png"
         )
 
         assertNull(resolved)
     }
 
     fun testLocalImageEndpointServesRelativeImageBytes() {
-        val projectRoot = Files.createDirectories(tempRoot.resolve("project"))
-        val documentDirectory = Files.createDirectories(projectRoot.resolve("docs"))
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
         val document = documentDirectory.resolve("readme.md")
         Files.writeString(document, "![local](./img/file.png)")
         val imageBytes = byteArrayOf(10, 20, 30, 40)
         val image = Files.createDirectories(documentDirectory.resolve("img")).resolve("file.png")
         Files.write(image, imageBytes)
 
-        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(
-            documentPath = document.toString(),
-            projectBasePath = projectRoot.toString()
-        )
+        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(document.toString())
         assertNotNull(registration)
 
         try {
@@ -99,22 +95,39 @@ class MarkFlowLocalImageResourceTest : BasePlatformTestCase() {
     }
 
     fun testLocalImageEndpointDoesNotServeNonImageFiles() {
-        val projectRoot = Files.createDirectories(tempRoot.resolve("project"))
-        val documentDirectory = Files.createDirectories(projectRoot.resolve("docs"))
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
         val document = documentDirectory.resolve("readme.md")
         Files.writeString(document, "test")
         Files.writeString(documentDirectory.resolve("secret.txt"), "not an image")
 
-        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(
-            documentPath = document.toString(),
-            projectBasePath = projectRoot.toString()
-        )
+        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(document.toString())
         assertNotNull(registration)
 
         try {
             val request = HttpRequest.newBuilder(URI.create(registration!!.baseUrl + "secret.txt")).GET().build()
             val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding())
 
+            assertEquals(404, response.statusCode())
+        } finally {
+            MarkFlowWebviewResourceManager.unregisterLocalDocument(registration?.token)
+        }
+    }
+
+    fun testBrowserResolvedParentPathCannotReuseDocumentToken() {
+        val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
+        val document = documentDirectory.resolve("readme.md")
+        Files.writeString(document, "test")
+        Files.write(tempRoot.resolve("outside.png"), byteArrayOf(1, 2, 3))
+
+        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(document.toString())
+        assertNotNull(registration)
+
+        try {
+            val escapedUrl = URI.create(registration!!.baseUrl).resolve("../outside.png")
+            assertFalse(escapedUrl.toString().contains("/${registration.token}/"))
+
+            val request = HttpRequest.newBuilder(escapedUrl).GET().build()
+            val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding())
             assertEquals(404, response.statusCode())
         } finally {
             MarkFlowWebviewResourceManager.unregisterLocalDocument(registration?.token)
