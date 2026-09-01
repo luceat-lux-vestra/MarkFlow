@@ -1,5 +1,7 @@
-# Read-only repository hardening gate.  The job is always present on ordinary
-# pull requests; the live settings report runs only on a scheduled dispatch.
+# Repository hardening gate. The always-present PR job is fully offline.
+# Scheduled/manual runs perform live ruleset readback only when a deliberately
+# provisioned repository-administration credential is available; absence of that
+# credential is explicit and must never be reported as a successful live audit.
 
 name: Hardening audit
 
@@ -32,11 +34,17 @@ jobs:
       - name: Run merge-gate audit
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ github.token }}
+          HARDENING_AUDIT_TOKEN: ${{ secrets.HARDENING_AUDIT_TOKEN }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            bash .github/scripts/hardening-audit.sh --mode report
+            if [ -n "${HARDENING_AUDIT_TOKEN:-}" ]; then
+              export GH_TOKEN="$HARDENING_AUDIT_TOKEN"
+              bash .github/scripts/hardening-audit.sh --mode report
+            else
+              echo "::warning::HARDENING_AUDIT_TOKEN is not provisioned; live ruleset/label readback is explicitly skipped."
+              bash .github/scripts/hardening-audit.sh --mode report --no-network
+            fi
           else
             bash .github/scripts/hardening-audit.sh --mode gate --no-network
           fi
