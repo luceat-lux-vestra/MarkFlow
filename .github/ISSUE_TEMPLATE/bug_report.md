@@ -1,7 +1,7 @@
 ---
 name: Bug report
 about: Report a reproducible MarkFlow defect
-labels: bug
+labels: ''
 assignees: ''
 ---
 
