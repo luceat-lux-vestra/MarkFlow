@@ -5,16 +5,25 @@
 #
 # Please check https://github.com/JetBrains/intellij-ui-test-robot for information about UI tests with IntelliJ Platform.
 #
-# Workflow is triggered manually.
+# Workflow is triggered manually. It is deliberately not part of the pull request merge gate; see
+# .github/merge-gate-policy.json for the contexts that are.
 
 name: Run UI Tests
 on:
-  workflow_dispatch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: run-ui-tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
 
   testUI:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -33,28 +42,32 @@ jobs:
 
       # Check out the current repository
       - name: Fetch Sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # Set up the Java environment for the next steps
       - name: Setup Java
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
         with:
           distribution: zulu
           java-version: 25
 
       # Setup Gradle
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
-      # Run IDEA prepared for UI testing
+      # Run IDEA prepared for UI testing.
+      # The command is a static value from the matrix above (it is per-OS shell syntax, so it must
+      # stay in `run:`); no event-controlled or otherwise untrusted context is expanded here.
       - name: Run IDE
         run: ${{ matrix.runIde }}
 
       # Wait for IDEA to be started
       - name: Health Check
-        uses: jtalk/url-health-check-action@v5
+        uses: jtalk/url-health-check-action@e7d5ebdc9027fbf494d2d034f3e8fc78f8b7a2b9 # v5
         with:
           url: http://127.0.0.1:8082
           max-attempts: 15

@@ -1,11 +1,23 @@
 # GitHub Actions Workflow created for handling the release process based on the draft release prepared with the Build workflow.
 # Running the publishPlugin task requires all the following secrets to be provided: PUBLISH_TOKEN, PRIVATE_KEY, PRIVATE_KEY_PASSWORD, CERTIFICATE_CHAIN.
 # See https://plugins.jetbrains.com/docs/intellij/plugin-signing.html for more information.
+#
+# This workflow is the publication boundary. It never runs for pull requests, and it refuses to do
+# partial work: if the signing/publishing secrets are absent, or the released tag does not point at
+# reviewed `main` history, it fails before anything is published or uploaded.
 
 name: Release
 on:
   release:
     types: [ prereleased, released ]
+
+# Least privilege by default; the single job below widens only what it demonstrably needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
 
 jobs:
 
@@ -13,9 +25,10 @@ jobs:
   release:
     name: Publish Plugin
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write        # upload release assets and push the changelog branch
+      pull-requests: write   # open the changelog pull request
     env:
       # The release tag is the version produced by the release draft build; pin every Gradle invocation to it,
       # otherwise each one regenerates a fresh timestamp version and the published plugin no longer matches the tag.
@@ -24,41 +37,84 @@ jobs:
 
       # Free GitHub Actions Environment Disk Space
       - name: Maximize Build Space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           large-packages: false
 
-      # Check out the current repository
+      # Check out the released tag. Credentials are not persisted: the Gradle/plugin toolchain that
+      # runs later in this job must not inherit push access to the repository.
       - name: Fetch Sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      # Fail closed before any publication side effect: the release must be signable/publishable and
+      # its tag must be reviewed `main` history, otherwise the published artifact identity is unclear.
+      - name: Verify release preconditions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          [ -n "${PUBLISH_TOKEN:-}" ] || missing+=("PUBLISH_TOKEN")
+          [ -n "${CERTIFICATE_CHAIN:-}" ] || missing+=("CERTIFICATE_CHAIN")
+          [ -n "${PRIVATE_KEY:-}" ] || missing+=("PRIVATE_KEY")
+          [ -n "${PRIVATE_KEY_PASSWORD:-}" ] || missing+=("PRIVATE_KEY_PASSWORD")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Release aborted before publishing: missing repository secrets: ${missing[*]}"
+            exit 1
+          fi
+
+          if [ -z "${RELEASE_VERSION:-}" ]; then
+            echo "::error::Release aborted: the release has no tag name."
+            exit 1
+          fi
+
+          # `behind` or `identical` means the tag commit is reachable from main, i.e. reviewed history.
+          # Compared through the API so that the checkout above can keep persist-credentials: false.
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_VERSION}" --jq '.status')"
+          case "$status" in
+            identical|behind)
+              echo "Release tag ${RELEASE_VERSION} is reachable from main (compare status: ${status})." ;;
+            *)
+              echo "::error::Release aborted: tag ${RELEASE_VERSION} is not reachable from main (compare status: ${status})."
+              exit 1 ;;
+          esac
 
       # Set up the Java environment for the next steps
       - name: Setup Java
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
         with:
           distribution: zulu
           java-version: 25
 
       # Setup Gradle
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
-      # Update the Unreleased section with the current release note
+      # Update the Unreleased section with the current release note.
+      # The release body is attacker-influenced only by users who can publish a release; it is still
+      # bound through the environment rather than interpolated into the shell program text.
       - name: Patch Changelog
         if: ${{ github.event.release.body != '' }}
         env:
           CHANGELOG: ${{ github.event.release.body }}
         run: |
+          set -euo pipefail
           RELEASE_NOTE="./build/tmp/release_note.txt"
           mkdir -p "$(dirname "$RELEASE_NOTE")"
-          echo "$CHANGELOG" > $RELEASE_NOTE
+          printf '%s\n' "$CHANGELOG" > "$RELEASE_NOTE"
 
-          ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file=$RELEASE_NOTE
+          ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file="$RELEASE_NOTE"
 
       # Publish the plugin to JetBrains Marketplace
       - name: Publish Plugin
@@ -69,36 +125,62 @@ jobs:
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
         run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
 
+      # Bind the artifact that is about to be attached to the release to the released tag/version.
+      - name: Verify artifact identity
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=(./build/distributions/*.zip)
+          if [ "${#artifacts[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one plugin distribution, found ${#artifacts[@]}."
+            exit 1
+          fi
+          name="$(basename "${artifacts[0]}")"
+          case "$name" in
+            *"$RELEASE_VERSION"*)
+              echo "Distribution ${name} matches release tag ${RELEASE_VERSION}." ;;
+            *)
+              echo "::error::Distribution ${name} does not carry the released version ${RELEASE_VERSION}."
+              exit 1 ;;
+          esac
+
       # Upload an artifact as a release asset
       - name: Upload Release Asset
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_VERSION" ./build/distributions/*
 
-      # Create a pull request
+      # Open the changelog-update pull request.
+      # Note: this push and PR are made with GITHUB_TOKEN, so GitHub deliberately does not trigger
+      # workflows for them. The required merge-gate checks will not run until a maintainer pushes to
+      # or reopens the branch; see .github/merge-gate-policy.json.
       - name: Create Pull Request
         if: ${{ github.event.release.body != '' }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="$RELEASE_VERSION"
-          BRANCH="changelog-update-$VERSION"
-          LABEL="release changelog"
+          set -euo pipefail
+          BRANCH="changelog-update-$RELEASE_VERSION"
 
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
 
-          git checkout -b $BRANCH
-          git commit -am "Changelog update - $VERSION"
-          git push --set-upstream origin $BRANCH
+          if git diff --quiet; then
+            echo "Changelog already up to date for $RELEASE_VERSION; nothing to propose."
+            exit 0
+          fi
 
-          gh label create "$LABEL" \
-            --description "Pull requests with release changelog update" \
-            --force \
-            || true
+          git checkout -b "$BRANCH"
+          git commit -am "docs: changelog update - $RELEASE_VERSION"
+          # Credentials are not persisted in the checkout, so scope them to this single push.
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/$BRANCH"
 
           gh pr create \
-            --title "Changelog update - \`$VERSION\`" \
-            --body "Current pull request contains patched \`CHANGELOG.md\` file for the \`$VERSION\` version." \
-            --label "$LABEL" \
-            --head $BRANCH
+            --title "docs: changelog update - $RELEASE_VERSION" \
+            --body "Patched \`CHANGELOG.md\` for the \`$RELEASE_VERSION\` release." \
+            --label "type:docs" \
+            --label "area:docs" \
+            --base main \
+            --head "$BRANCH"

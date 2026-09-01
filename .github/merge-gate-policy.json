@@ -1,0 +1,119 @@
+{
+  "$comment": [
+    "Canonical, machine-checkable merge-gate policy for MarkFlow-private.",
+    "This file is the single source of truth for which pull request checks are required,",
+    "which are advisory, and which are release-only. .github/scripts/hardening-audit.sh",
+    "compares it against the workflows that actually produce the contexts and against the",
+    "live branch ruleset, so a renamed, removed, or conditionally skipped required check",
+    "fails closed instead of silently disappearing.",
+    "Keep this file in sync in the same pull request that changes a workflow job name."
+  ],
+  "version": 1,
+  "repository": "luceat-lux-vestra/MarkFlow-private",
+  "protected_branch": "main",
+  "ruleset_name": "main protection",
+  "actions_integration_id": 15368,
+
+  "required": [
+    {
+      "context": "Build",
+      "workflow": ".github/workflows/build.yml",
+      "job": "build",
+      "covers": "Kotlin/Gradle compile, webview TypeScript production build, plugin packaging"
+    },
+    {
+      "context": "Test",
+      "workflow": ".github/workflows/build.yml",
+      "job": "test",
+      "covers": "Gradle check (Kotlin unit tests) and the webview source test suite"
+    },
+    {
+      "context": "Inspect code",
+      "workflow": ".github/workflows/build.yml",
+      "job": "inspectCode",
+      "covers": "Qodana static analysis; this job, not the Qodana annotation check, is authoritative"
+    },
+    {
+      "context": "Verify plugin",
+      "workflow": ".github/workflows/build.yml",
+      "job": "verify",
+      "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
+    },
+    {
+      "context": "Hardening audit",
+      "workflow": ".github/workflows/hardening-audit.yml",
+      "job": "audit",
+      "covers": "This policy vs. its workflow producers, plus the audit's own fail-closed negative tests"
+    }
+  ],
+
+  "advisory": [
+    {
+      "context": "Qodana Community for JVM",
+      "reason": "Posted by the Qodana action itself and renamed with the linter edition (it has already appeared as both 'Qodana Community for JVM' and 'Qodana for JVM'). An unstable context name must never be a required check; the 'Inspect code' job is the authoritative gate."
+    }
+  ],
+
+  "release_only": [
+    {
+      "context": "Release draft",
+      "workflow": ".github/workflows/build.yml",
+      "job": "releaseDraft",
+      "reason": "Guarded by `if: github.event_name != 'pull_request'`, so it reports as skipped on every pull request and must never be required."
+    }
+  ],
+
+  "checks": {
+    "$comment": [
+      "Checks the audit runs. `gate` checks run on every pull request and fail the build.",
+      "`report` checks run in the scheduled drift audit only, and are staged this way when the",
+      "repository cannot pass them yet. Promoting a check is a one-word change here."
+    ],
+    "policy_producers": "gate",
+    "negative_tests": "gate",
+    "ruleset_sync": "report",
+    "action_pinning": "report",
+    "workflow_permissions": "report",
+    "privileged_workflows": "report",
+    "label_references": "report"
+  },
+
+  "staged": [
+    {
+      "check": "action_pinning",
+      "blocked_by": "PR #50 owns .github/workflows/build.yml and cannot be edited from this branch without conflicting.",
+      "promote_to": "gate",
+      "when": "after PR #50 and PR #53 land and every `uses:` in .github/workflows is pinned to a full 40-character commit SHA"
+    },
+    {
+      "check": "workflow_permissions",
+      "blocked_by": "build.yml declares no workflow-level `permissions:` block and is owned by PR #50.",
+      "promote_to": "gate",
+      "when": "after build.yml declares an explicit least-privilege `permissions:` block"
+    },
+    {
+      "check": "privileged_workflows",
+      "blocked_by": ".github/workflows/pr-labeler.yml is introduced by PR #53 and is not on main yet.",
+      "promote_to": "gate",
+      "when": "after PR #53 lands"
+    },
+    {
+      "check": "label_references",
+      "blocked_by": ".github/labeler.yml and the issue forms are introduced by PR #53 and are not on main yet.",
+      "promote_to": "gate",
+      "when": "after PR #53 lands"
+    },
+    {
+      "check": "ruleset_sync",
+      "blocked_by": "Requires a repository-admin token; GITHUB_TOKEN cannot read repository rulesets.",
+      "promote_to": "gate",
+      "when": "only if a scoped admin token is provisioned; otherwise it stays a scheduled report"
+    },
+    {
+      "check": "required_context_promotion",
+      "blocked_by": "'Hardening audit' is introduced by this pull request, so it is not yet produced on existing branches.",
+      "promote_to": "ruleset",
+      "when": "add 'Hardening audit' to the 'main protection' ruleset once this pull request has merged and the context is produced on every pull request"
+    }
+  ]
+}
