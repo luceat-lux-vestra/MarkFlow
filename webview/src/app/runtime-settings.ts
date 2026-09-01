@@ -1,5 +1,6 @@
-import type {MarkFlowRuntimeSettings} from "./types";
-
+import {buildIdeThemeVariables} from "./crepe-theme-mapping";
+import {parseHex} from "./color";
+import type {IdeColors, MarkFlowRuntimeSettings} from "./types";
 export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
     mermaidZoomPercent: 100,
@@ -9,7 +10,32 @@ export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     diagramSecurityLevel: "STRICT",
     previewOnlyByDefault: true,
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
+    fontFamily: "",
+    baseFontSizePx: 16,
+    ideColorScheme: {},
+    ideFontFamily: null,
+    ideDark: false,
     settingsRevision: 1
+};
+
+const IDE_COLOR_KEYS = [
+    "background",
+    "foreground",
+    "selectionBackground",
+    "selectionForeground",
+    "border"
+] as const;
+
+/** Accept only the stable host/webview palette contract; legacy editor.* keys are not palette data. */
+export const normalizeIdeColorScheme = (
+    raw: IdeColors | null | undefined
+): IdeColors => {
+    if (!raw) return {};
+    return Object.fromEntries(
+        IDE_COLOR_KEYS
+            .filter((key) => typeof raw[key] === "string" && parseHex(raw[key]) !== null)
+            .map((key) => [key, raw[key]])
+    );
 };
 
 export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
@@ -17,23 +43,53 @@ export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined)
     const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
     return {
         ...merged,
+        ideColorScheme: normalizeIdeColorScheme(merged.ideColorScheme),
         mermaidZoomPercent: Math.min(Math.max(merged.mermaidZoomPercent, 50), 200)
     };
+};
+
+/**
+ * Identity of values that can change the active webview appearance or behavior. The revision is
+ * deliberately excluded because the host also bumps it for IDE scheme changes that LIGHT/DARK
+ * intentionally ignore. IDE_SYNC keeps its palette and resolved dark flag in the identity so a
+ * palette change cannot be mistaken for a duplicate apply.
+ */
+export const runtimeSettingsIdentity = (settings: Required<MarkFlowRuntimeSettings>): string => {
+    const {settingsRevision: _settingsRevision, ideColorScheme, ideDark, ...stableSettings} = settings;
+    return JSON.stringify({
+        ...stableSettings,
+        ideColorScheme: settings.themeSource === "IDE_SYNC" ? normalizeIdeColorScheme(ideColorScheme) : {},
+        ideDark: settings.themeSource === "IDE_SYNC" ? Boolean(ideDark) : false
+    });
 };
 
 export const resolveMermaidTheme = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "default" | "dark" => {
     if (runtimeSettings.themeSource === "LIGHT") return "default";
     if (runtimeSettings.themeSource === "DARK") return "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+    // IDE_SYNC: the backend already resolved the IDE theme, so trust ideDark rather than the
+    // OS media query (which is not authoritative inside the JCEF webview).
+    return runtimeSettings.ideDark ? "dark" : "default";
 };
 
 export const resolveDiagramSecurityLevel = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" => {
     return runtimeSettings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
 };
 
-export const createMermaidPreviewConfig = (runtimeSettings: Required<MarkFlowRuntimeSettings>) => {
-    const theme = resolveMermaidTheme(runtimeSettings);
-    const themeVariables = theme === "dark"
+/**
+ * Mermaid flowchart theme variables. For IDE_SYNC with a populated palette, derive them from the
+ * live IDE colors so arrows/nodes track the editor; otherwise fall back to the bundled
+ * light/dark defaults. Arrowheads take their fill from `lineColor`, so the IDEA-derived palette
+ * keeps arrows visible against the IDE background.
+ */
+const buildMermaidThemeVariables = (
+    runtimeSettings: Required<MarkFlowRuntimeSettings>,
+    theme: "default" | "dark"
+): Record<string, string> => {
+    const ideColors = runtimeSettings.ideColorScheme;
+    if (runtimeSettings.themeSource === "IDE_SYNC" && ideColors && Object.keys(ideColors).length > 0) {
+        return buildIdeThemeVariables(ideColors, runtimeSettings.ideDark ?? false);
+    }
+    return theme === "dark"
         ? {
             primaryColor: "#1f2937",
             primaryTextColor: "#f9fafb",
@@ -48,6 +104,10 @@ export const createMermaidPreviewConfig = (runtimeSettings: Required<MarkFlowRun
             textColor: "#111827",
             background: "#ffffff"
         };
+};
+export const createMermaidPreviewConfig = (runtimeSettings: Required<MarkFlowRuntimeSettings>) => {
+    const theme = resolveMermaidTheme(runtimeSettings);
+    const themeVariables = buildMermaidThemeVariables(runtimeSettings, theme);
 
     const useMaxWidth = runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT";
 

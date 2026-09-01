@@ -111,6 +111,19 @@ jobs:
       - name: Run Tests
         run: ./gradlew check
 
+      # Keep the source-level webview contract tests as an explicit PR gate. Gradle's build task
+      # runs the TypeScript/Vite production build, but it does not execute tests/*.test.mjs.
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: webview/package-lock.json
+
+      - name: Run webview source tests
+        working-directory: webview
+        run: npm ci --no-audit --no-fund && npm run test:source
+
       # Collect Tests Result of failed tests
       - name: Collect Tests Result
         if: ${{ failure() }}
@@ -162,7 +175,30 @@ jobs:
       - name: Qodana - Code Inspection
         uses: JetBrains/qodana-action@v2026.2.0
         with:
-          cache-default-branch-only: true
+          args: --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
+          use-caches: false
+          upload-result: true
+
+      # Qodana publishes its own neutral/annotation check for non-gating findings. Keep the
+      # workflow job authoritative by enforcing the severity recorded in the generated SARIF.
+      - name: Enforce Qodana High severity gate
+        if: ${{ always() }}
+        env:
+          QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
+        run: |
+          set -euo pipefail
+          report="$QODANA_RESULTS_DIR/qodana.sarif.json"
+          if [[ ! -s "$report" ]]; then
+            echo "::error::Qodana did not produce qodana.sarif.json; treating the scan as failed."
+            exit 1
+          fi
+
+          high_count="$(jq '[.runs[]?.results[]? | select(.properties.qodanaSeverity == "High" or .properties.qodanaSeverity == "Critical")] | length' "$report")"
+          if (( high_count > 0 )); then
+            echo "::error::Qodana reported $high_count High/Critical problem(s)."
+            exit 1
+          fi
+          echo "Qodana High severity gate passed (High/Critical findings: 0)."
 
   # Run plugin structure verification along with IntelliJ Plugin Verifier
   verify:

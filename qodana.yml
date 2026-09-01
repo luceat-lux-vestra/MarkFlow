@@ -2,10 +2,13 @@
 # https://www.jetbrains.com/help/qodana/qodana-yaml.html
 
 version: "1.0"
-linter: jetbrains/qodana-jvm-community:2024.3
-projectJDK: "21"
+linter: qodana-jvm-community
+projectJDK: "25"
 profile:
   name: qodana.recommended
+failureConditions:
+  severityThresholds:
+    high: 0
 exclude:
   - name: All
     paths:

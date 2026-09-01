@@ -11,12 +11,13 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "jsdom": "^30.0.1",
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
   },
   "dependencies": {
     "@milkdown/crepe": "^7.20.0",
     "katex": "^0.16.44",
-    "mermaid": "11.14.0"
+    "mermaid": "11.17.2"
   }
 }

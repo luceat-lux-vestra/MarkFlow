@@ -1,4 +1,6 @@
-import {applyRuntimeUiSettings, createMermaidPreviewConfig, logThemeDiagnostics, resolveMermaidTheme, resolveRuntimeSettings} from "./runtime-settings";
+import {applyRuntimeAppearance} from "./crepe-theme";
+import {hashMermaidPaletteIdentity} from "./mermaid-cache-key";
+import {applyRuntimeUiSettings, createMermaidPreviewConfig, logThemeDiagnostics, resolveMermaidTheme, resolveRuntimeSettings, runtimeSettingsIdentity} from "./runtime-settings";
 import type {MarkFlowRuntimeSettings} from "./types";
 import {emitDiagnosticsLog, logMermaidTrace} from "./editor-telemetry";
 
@@ -27,6 +29,7 @@ export class MarkFlowMermaidRenderer {
     private runtimeSettings = resolveRuntimeSettings(window.intelliJ_markFlowSettings);
     private lastAppliedMermaidTheme: "default" | "dark" = resolveMermaidTheme(this.runtimeSettings);
     private lastAppliedSettingsRevision = -1;
+    private lastAppliedRuntimeIdentity = "";
     private hasAppliedRuntimeSettingsOnce = false;
     private lastAppliedPreviewOnlyByDefault = true;
     private activeCrepeSessionId = 0;
@@ -81,8 +84,9 @@ export class MarkFlowMermaidRenderer {
             ? Number(this.runtimeSettings.settingsRevision)
             : -1;
         const nextTheme = resolveMermaidTheme(this.runtimeSettings);
+        const nextRuntimeIdentity = runtimeSettingsIdentity(this.runtimeSettings);
 
-        if (!previewOnlyByDefaultChanged && nextRevision === this.lastAppliedSettingsRevision && nextTheme === this.lastAppliedMermaidTheme) {
+        if (!previewOnlyByDefaultChanged && nextRuntimeIdentity === this.lastAppliedRuntimeIdentity) {
             logMermaidTrace(`settings:skipDuplicate revision=${nextRevision} theme=${nextTheme}`, this.emitToIntelliJLog);
             return {
                 previewOnlyByDefaultChanged,
@@ -99,6 +103,7 @@ export class MarkFlowMermaidRenderer {
         logThemeDiagnostics(raw, this.runtimeSettings, nextTheme, this.emitToIntelliJLog);
         this.lastAppliedMermaidTheme = nextTheme;
         this.lastAppliedSettingsRevision = nextRevision;
+        this.lastAppliedRuntimeIdentity = nextRuntimeIdentity;
         this.applyMermaidRuntimeSettingsIfLoaded();
 
         const app = document.getElementById("app");
@@ -108,6 +113,8 @@ export class MarkFlowMermaidRenderer {
         }
 
         applyRuntimeUiSettings(this.runtimeSettings);
+        applyRuntimeAppearance(this.runtimeSettings);
+
         this.hasAppliedRuntimeSettingsOnce = true;
         this.lastAppliedPreviewOnlyByDefault = this.runtimeSettings.previewOnlyByDefault;
         this.renderAllRegisteredMermaidPreviews();
@@ -256,9 +263,16 @@ export class MarkFlowMermaidRenderer {
     }
 
     private createMermaidDiagramKey(contentHash: string) {
+        // For IDE_SYNC the Mermaid theme is palette-derived, but lastAppliedMermaidTheme
+        // is OS-based, so switching IDE themes on a constant OS must still change the key
+        // (otherwise a cached SVG from the previous palette would be reused).
+        const palette = this.runtimeSettings.themeSource === "IDE_SYNC"
+            ? hashMermaidPaletteIdentity(this.runtimeSettings.ideColorScheme)
+            : "none";
         return [
             contentHash,
             this.lastAppliedMermaidTheme,
+            palette,
             this.runtimeSettings.diagramSecurityLevel,
             this.runtimeSettings.mermaidSizeMode
         ].join(":");
