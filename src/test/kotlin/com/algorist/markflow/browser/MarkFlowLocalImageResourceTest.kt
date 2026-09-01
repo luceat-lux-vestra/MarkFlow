@@ -1,6 +1,7 @@
 package com.algorist.markflow.browser
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -60,6 +61,10 @@ class MarkFlowLocalImageResourceTest : BasePlatformTestCase() {
         try {
             Files.createSymbolicLink(link, outsideImage)
         } catch (_: UnsupportedOperationException) {
+            return
+        } catch (_: IOException) {
+            return
+        } catch (_: SecurityException) {
             return
         }
 
