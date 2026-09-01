@@ -51,13 +51,11 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     }
 
     fun attach(editor: MarkFlowEditor, host: JPanel): Boolean {
-        val binding = createLocalDocumentBinding(editor)
-        val attached = browserLeasePool.attach(editor, host)
-        if (!attached) {
-            clearLocalDocumentBinding(editor, binding.generation)
+        if (disposed || !browserLeasePool.attach(editor, host)) {
             return false
         }
 
+        val binding = createLocalDocumentBinding(editor)
         applyLocalDocumentBaseWhenReady(editor, binding)
         return true
     }
@@ -211,8 +209,8 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
         private val serviceLock = Any()
         private val activeServices = mutableSetOf<MarkFlowSharedBrowserService>()
 
-        private const val LOCAL_DOCUMENT_BASE_RETRY_MS = 50L
-        private const val LOCAL_DOCUMENT_BASE_MAX_RETRIES = 200
+        private const val LOCAL_DOCUMENT_BASE_RETRY_MS = 100L
+        private const val LOCAL_DOCUMENT_BASE_MAX_RETRIES = 100
 
         fun notifyRuntimeSettingsChanged(forceReload: Boolean = false) {
             val snapshot = synchronized(serviceLock) {
