@@ -11,7 +11,6 @@ on:
   release:
     types: [ prereleased, released ]
 
-# Least privilege by default; the single job below widens only what it demonstrably needs.
 permissions:
   contents: read
 
@@ -20,8 +19,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
-  # Prepare and publish the plugin to JetBrains Marketplace repository
   release:
     name: Publish Plugin
     runs-on: ubuntu-latest
@@ -30,28 +27,20 @@ jobs:
       contents: write        # upload release assets and push the changelog branch
       pull-requests: write   # open the changelog pull request
     env:
-      # The release tag is the version produced by the release draft build; pin every Gradle invocation to it,
-      # otherwise each one regenerates a fresh timestamp version and the published plugin no longer matches the tag.
       RELEASE_VERSION: ${{ github.event.release.tag_name }}
     steps:
-
-      # Free GitHub Actions Environment Disk Space
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           large-packages: false
 
-      # Check out the released tag. Credentials are not persisted: the Gradle/plugin toolchain that
-      # runs later in this job must not inherit push access to the repository.
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
-      # Fail closed before any publication side effect: the release must be signable/publishable and
-      # its tag must be reviewed `main` history, otherwise the published artifact identity is unclear.
       - name: Verify release preconditions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -77,8 +66,6 @@ jobs:
             exit 1
           fi
 
-          # `behind` or `identical` means the tag commit is reachable from main, i.e. reviewed history.
-          # Compared through the API so that the checkout above can keep persist-credentials: false.
           status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_VERSION}" --jq '.status')"
           case "$status" in
             identical|behind)
@@ -88,22 +75,17 @@ jobs:
               exit 1 ;;
           esac
 
-      # Set up the Java environment for the next steps
       - name: Setup Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
         with:
           distribution: zulu
           java-version: 25
 
-      # Setup Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
-      # Update the Unreleased section with the current release note.
-      # The release body is attacker-influenced only by users who can publish a release; it is still
-      # bound through the environment rather than interpolated into the shell program text.
       - name: Patch Changelog
         if: ${{ github.event.release.body != '' }}
         env:
@@ -113,22 +95,14 @@ jobs:
           RELEASE_NOTE="./build/tmp/release_note.txt"
           mkdir -p "$(dirname "$RELEASE_NOTE")"
           printf '%s\n' "$CHANGELOG" > "$RELEASE_NOTE"
-
           ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file="$RELEASE_NOTE"
 
-      # Publish the plugin to JetBrains Marketplace
-      - name: Publish Plugin
-        env:
-          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
-
-      # Bind the artifact that is about to be attached to the release to the released tag/version.
-      - name: Verify artifact identity
+      # Build the exact version first. Publication is irreversible, so version/artifact
+      # identity must be proven before publishPlugin is allowed to use Marketplace credentials.
+      - name: Build and verify release artifact
         run: |
           set -euo pipefail
+          ./gradlew buildPlugin -PbuildVersion="$RELEASE_VERSION"
           shopt -s nullglob
           artifacts=(./build/distributions/*.zip)
           if [ "${#artifacts[@]}" -ne 1 ]; then
@@ -144,16 +118,19 @@ jobs:
               exit 1 ;;
           esac
 
-      # Upload an artifact as a release asset
+      - name: Publish Plugin
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
+
       - name: Upload Release Asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_VERSION" ./build/distributions/*
 
-      # Open the changelog-update pull request.
-      # Note: this push and PR are made with GITHUB_TOKEN, so GitHub deliberately does not trigger
-      # workflows for them. The required merge-gate checks will not run until a maintainer pushes to
-      # or reopens the branch; see .github/merge-gate-policy.json.
       - name: Create Pull Request
         if: ${{ github.event.release.body != '' }}
         env:
@@ -173,7 +150,6 @@ jobs:
 
           git checkout -b "$BRANCH"
           git commit -am "docs: changelog update - $RELEASE_VERSION"
-          # Credentials are not persisted in the checkout, so scope them to this single push.
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/$BRANCH"
 
