@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JPanel
 
 @Service(Service.Level.PROJECT)
-class MarkFlowSharedBrowserService(private val project: Project) : Disposable {
+class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Project) : Disposable {
 
     private val browserLeasePool = MarkFlowBrowserLeasePool()
     private val gson = Gson()
@@ -93,10 +93,7 @@ class MarkFlowSharedBrowserService(private val project: Project) : Disposable {
 
     private fun createLocalDocumentBinding(editor: MarkFlowEditor): LocalDocumentBinding {
         clearLocalDocumentBinding(editor)
-        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(
-            documentPath = editor.getFile().path,
-            projectBasePath = project.basePath
-        )
+        val registration = MarkFlowWebviewResourceManager.registerLocalDocument(editor.getFile().path)
         val binding = LocalDocumentBinding(
             generation = localDocumentBindingSequence.incrementAndGet(),
             registration = registration
