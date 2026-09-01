@@ -49,9 +49,9 @@ internal object MarkFlowWebviewResourceManager {
         return "http://127.0.0.1:$port/index.html"
     }
 
-    fun registerLocalDocument(documentPath: String, projectBasePath: String?): LocalDocumentRegistration? {
+    fun registerLocalDocument(documentPath: String): LocalDocumentRegistration? {
         val port = ensurePort() ?: return null
-        val resource = createLocalDocumentResource(documentPath, projectBasePath) ?: return null
+        val resource = createLocalDocumentResource(documentPath) ?: return null
         val token = UUID.randomUUID().toString()
         localDocumentResources[token] = resource
         return LocalDocumentRegistration(
@@ -161,11 +161,7 @@ internal object MarkFlowWebviewResourceManager {
             return
         }
 
-        val target = resolveLocalResourcePath(
-            documentDirectory = resource.documentDirectory,
-            allowedRoot = resource.allowedRoot,
-            relativePath = relativePath
-        )
+        val target = resolveLocalResourcePath(resource.documentDirectory, relativePath)
         if (target == null) {
             sendStatus(exchange, 404)
             return
@@ -195,7 +191,11 @@ internal object MarkFlowWebviewResourceManager {
             }
         } catch (ioe: IOException) {
             LOG.warn("MARKFLOW_UI webview server read failed for $target: ${ioe.message}")
-            sendStatus(exchange, 500)
+            try {
+                sendStatus(exchange, 500)
+            } catch (_: IOException) {
+                exchange.close()
+            }
         }
     }
 
@@ -207,20 +207,11 @@ internal object MarkFlowWebviewResourceManager {
         }
     }
 
-    private fun createLocalDocumentResource(documentPath: String, projectBasePath: String?): LocalDocumentResource? {
+    private fun createLocalDocumentResource(documentPath: String): LocalDocumentResource? {
         return try {
             val document = Path.of(documentPath).toAbsolutePath().normalize().toRealPath()
-            val documentDirectory = document.parent ?: return null
-            val projectRoot = projectBasePath
-                ?.takeIf { it.isNotBlank() }
-                ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?.takeIf { Files.isDirectory(it) }
-                ?.toRealPath()
-                ?.takeIf { document.startsWith(it) }
-            LocalDocumentResource(
-                documentDirectory = documentDirectory,
-                allowedRoot = projectRoot ?: documentDirectory
-            )
+            val documentDirectory = document.parent?.toRealPath() ?: return null
+            LocalDocumentResource(documentDirectory)
         } catch (ex: Exception) {
             if (MarkFlowDiagnostics.enabled) {
                 LOG.debug("MARKFLOW_UI local image root unavailable for $documentPath: ${ex.message}")
@@ -293,24 +284,20 @@ internal object MarkFlowWebviewResourceManager {
         }
     }
 
-    internal fun resolveLocalResourcePath(
-        documentDirectory: Path,
-        allowedRoot: Path,
-        relativePath: String
-    ): Path? {
+    internal fun resolveLocalResourcePath(documentDirectory: Path, relativePath: String): Path? {
         if (relativePath.isBlank()) return null
 
         return try {
             val relative = Path.of(relativePath)
             if (relative.isAbsolute) return null
 
-            val normalizedAllowedRoot = allowedRoot.toAbsolutePath().normalize().toRealPath()
-            val candidate = documentDirectory.resolve(relative).normalize()
-            if (!candidate.startsWith(normalizedAllowedRoot) || !Files.isRegularFile(candidate)) {
+            val root = documentDirectory.toAbsolutePath().normalize().toRealPath()
+            val candidate = root.resolve(relative).normalize()
+            if (!candidate.startsWith(root) || !Files.isRegularFile(candidate)) {
                 return null
             }
 
-            candidate.toRealPath().takeIf { it.startsWith(normalizedAllowedRoot) }
+            candidate.toRealPath().takeIf { it.startsWith(root) }
         } catch (_: InvalidPathException) {
             null
         } catch (_: IOException) {
@@ -321,8 +308,7 @@ internal object MarkFlowWebviewResourceManager {
     }
 
     private data class LocalDocumentResource(
-        val documentDirectory: Path,
-        val allowedRoot: Path
+        val documentDirectory: Path
     )
 
     private const val WEBVIEW_ENTRY_RESOURCE = "webview/index.html"
