@@ -2,10 +2,11 @@
   "$comment": [
     "Canonical, machine-checkable merge-gate policy for MarkFlow-private.",
     "This file is the single source of truth for which pull request checks are required,",
-    "which are advisory, and which are release-only. .github/scripts/hardening-audit.sh",
-    "compares it against the workflows that actually produce the contexts and against the",
-    "live branch ruleset, so a renamed, removed, or conditionally skipped required check",
-    "fails closed instead of silently disappearing.",
+    "which are staged for later promotion, which are advisory, and which are release-only.",
+    ".github/scripts/hardening-audit.sh compares the required set against the workflows that",
+    "actually produce those contexts and, when authenticated for repository administration,",
+    "against the live branch ruleset. A staged context is deliberately not claimed as required",
+    "until the live ruleset has been safely promoted in the same control change.",
     "Keep this file in sync in the same pull request that changes a workflow job name."
   ],
   "version": 1,
@@ -38,12 +39,16 @@
       "workflow": ".github/workflows/build.yml",
       "job": "verify",
       "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
-    },
+    }
+  ],
+
+  "staged_required": [
     {
       "context": "Hardening audit",
       "workflow": ".github/workflows/hardening-audit.yml",
       "job": "audit",
-      "covers": "This policy vs. its workflow producers, plus the audit's own fail-closed negative tests"
+      "covers": "This policy vs. its workflow producers, plus the audit's own fail-closed negative tests",
+      "promotion": "After this workflow is merged and observed on main and ordinary pull requests, add this exact context to the live ruleset and move this entry to required in the same change."
     }
   ],
 
@@ -105,15 +110,15 @@
     },
     {
       "check": "ruleset_sync",
-      "blocked_by": "Requires a repository-admin token; GITHUB_TOKEN cannot read repository rulesets.",
+      "blocked_by": "Requires repository-administration read access; the ordinary GITHUB_TOKEN cannot read every accepted live setting.",
       "promote_to": "gate",
-      "when": "only if a scoped admin token is provisioned; otherwise it stays a scheduled report"
+      "when": "only if a least-privilege HARDENING_AUDIT_TOKEN or equivalent GitHub App credential is provisioned; without it scheduled runs explicitly skip live readback rather than claiming success"
     },
     {
       "check": "required_context_promotion",
-      "blocked_by": "'Hardening audit' is introduced by this pull request, so it is not yet produced on existing branches.",
+      "blocked_by": "'Hardening audit' is introduced by this pull request, so it is not yet required by the live ruleset.",
       "promote_to": "ruleset",
-      "when": "add 'Hardening audit' to the 'main protection' ruleset once this pull request has merged and the context is produced on every pull request"
+      "when": "after the context is observed on main and ordinary pull requests, move it from staged_required to required while adding it to the 'main protection' ruleset"
     }
   ]
 }
