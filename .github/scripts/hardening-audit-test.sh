@@ -36,7 +36,7 @@ expect_fail() {
 expect_live_fail() {
   local root="$1" check="$2" needle="$3"
   local output status=0
-  output="$(env -u HARDENING_AUDIT_TOKEN -u GH_TOKEN GITHUB_REPOSITORY=fixture bash "$AUDIT" --root "$root" --only "$check" 2>&1)" || status=$?
+  output="$(env -u HARDENING_AUDIT_TOKEN GH_TOKEN=ordinary-token GITHUB_REPOSITORY=fixture bash "$AUDIT" --root "$root" --only "$check" 2>&1)" || status=$?
   [ "$status" -ne 0 ] || { echo "live fixture unexpectedly passed: $check" >&2; return 1; }
   case "$output" in *"$needle"*) ;; *) echo "live fixture failed for the wrong reason: $needle" >&2; printf '%s\n' "$output" >&2; return 1 ;; esac
 }
@@ -44,6 +44,12 @@ expect_live_fail() {
 baseline="$TMP/baseline"
 copy_root "$baseline"
 expect_pass "$baseline"
+expect_pass "$baseline" live_readback_boundary
+
+caller_selected_ref="$TMP/caller-selected-ref"
+copy_root "$caller_selected_ref"
+perl -0pi -e 's/ref: \$\{\{ github\.event\.repository\.default_branch \}\}/ref: \$\{\{ github\.ref_name \}\}/' "$caller_selected_ref/.github/workflows/hardening-audit.yml"
+expect_fail "$caller_selected_ref" live_readback_boundary "does not checkout the default branch"
 
 renamed="$TMP/renamed"
 copy_root "$renamed"
@@ -109,6 +115,7 @@ ruleset_fixture="$TMP/rulesets.json"
 jq -n '{
   main: {
     name: "main protection", enforcement: "active", bypass_actors: [],
+    target: "branch",
     conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
     rules: [{type: "required_status_checks", parameters: {
       strict_required_status_checks_policy: true,
@@ -117,11 +124,57 @@ jq -n '{
   },
   release_tag: {
     name: "release tag immutability", enforcement: "active", bypass_actors: [],
+    target: "tag",
     conditions: {ref_name: {include: ["~ALL"], exclude: []}},
     rules: [{type: "deletion"}, {type: "non_fast_forward"}]
   }
 }' > "$ruleset_fixture"
 expect_fail "$baseline" ruleset_sync "policy requires context 'Build'" "$ruleset_fixture"
+
+semantic_drift_fixture="$TMP/semantic-drift-rulesets.json"
+jq -n '{
+  main: {
+    name: "main protection", enforcement: "active", bypass_actors: [],
+    target: "branch",
+    conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+    rules: [
+      {type: "deletion"}, {type: "non_fast_forward"}, {type: "required_linear_history"},
+      {type: "pull_request", parameters: {
+        required_approving_review_count: 0,
+        dismiss_stale_reviews_on_push: false,
+        required_review_thread_resolution: true,
+        require_code_owner_review: false,
+        require_last_push_approval: false,
+        require_extra_approval_for_unattributed_changes: true,
+        allowed_merge_methods: ["squash"]
+      }},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: true,
+        required_status_checks: [
+          {context: "Build", integration_id: 15368},
+          {context: "Test", integration_id: 15368},
+          {context: "Inspect code", integration_id: 15368},
+          {context: "Verify plugin", integration_id: 15368}
+        ]
+      }}
+    ]
+  },
+  release_tag: {
+    name: "release tag immutability", enforcement: "active", bypass_actors: [],
+    target: "tag",
+    conditions: {ref_name: {include: ["~ALL"], exclude: []}},
+    rules: [{type: "deletion"}, {type: "non_fast_forward"}]
+  }
+}' > "$semantic_drift_fixture"
+expect_fail "$baseline" ruleset_sync "review or squash-only parameters drifted" "$semantic_drift_fixture"
+
+scope_exclude_fixture="$TMP/scope-exclude-rulesets.json"
+jq '.main.conditions.ref_name.exclude = ["refs/heads/feature"] | .main.rules |= map(if .type == "pull_request" then .parameters.dismiss_stale_reviews_on_push = true else . end)' "$semantic_drift_fixture" > "$scope_exclude_fixture"
+expect_fail "$baseline" ruleset_sync "exclude scope is not empty" "$scope_exclude_fixture"
+
+scope_target_fixture="$TMP/scope-target-rulesets.json"
+jq '.main.target = "tag" | .main.conditions.ref_name.exclude = [] | .main.rules |= map(if .type == "pull_request" then .parameters.dismiss_stale_reviews_on_push = true else . end)' "$semantic_drift_fixture" > "$scope_target_fixture"
+expect_fail "$baseline" ruleset_sync "target is not 'branch'" "$scope_target_fixture"
 
 incomplete_ruleset="$TMP/incomplete-ruleset.json"
 jq -n '{main: {name: "main protection"}, release_tag: {name: "release tag immutability"}}' > "$incomplete_ruleset"
@@ -130,5 +183,34 @@ expect_fail "$baseline" ruleset_sync "omitted an authoritative field" "$incomple
 live_without_credential="$TMP/live-without-credential"
 copy_root "$live_without_credential"
 expect_live_fail "$live_without_credential" ruleset_sync "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+
+token_wrapper="$TMP/token-wrapper"
+copy_root "$token_wrapper"
+mock_bin="$TMP/mock-bin"
+mkdir -p "$mock_bin"
+cat > "$mock_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${GH_TOKEN:-}" = designated-token ] || { echo "unexpected credential selected" >&2; exit 91; }
+if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; then
+  if [ "${MOCK_DUPLICATE:-}" = 1 ]; then
+    printf '%s\n' '[{"id":1,"name":"main protection"},{"id":2,"name":"main protection"}]'
+  else
+    printf '%s\n' '[{"id":1,"name":"main protection"}]'
+  fi
+elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368}]}}]}'
+else
+  echo "unexpected gh invocation" >&2
+  exit 92
+fi
+EOF
+chmod +x "$mock_bin/gh"
+output="$(PATH="$mock_bin:$PATH" GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only ruleset_sync 2>&1)" || status=$?
+[ "${status:-0}" -eq 0 ] || { echo "explicit credential wrapper fixture failed" >&2; printf '%s\n' "$output" >&2; exit 1; }
+
+output="$(PATH="$mock_bin:$PATH" MOCK_DUPLICATE=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only ruleset_sync 2>&1)" || status=$?
+[ "${status:-0}" -ne 0 ] || { echo "duplicate ruleset identity fixture unexpectedly passed" >&2; exit 1; }
+case "$output" in *"ruleset name 'main protection' is ambiguous"*) ;; *) echo "duplicate identity fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
 
 echo "hardening-audit negative fixtures passed"

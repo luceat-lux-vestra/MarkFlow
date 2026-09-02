@@ -13,6 +13,13 @@
   "ruleset_name": "main protection",
   "release_ruleset_name": "release tag immutability",
   "actions_integration_id": 15368,
+  "repository_settings": {
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_auto_merge": false,
+    "delete_branch_on_merge": true
+  },
 
   "required": [
     {
@@ -80,11 +87,13 @@
     "workflow_permissions": "gate",
     "workflow_security": "gate",
     "privileged_workflows": "gate",
+    "live_readback_boundary": "gate",
     "workflow_static_analysis": "gate",
     "release_preflight": "gate",
     "ruleset_sync": "report",
     "release_tag_ruleset": "report",
-    "label_references": "report"
+    "label_references": "report",
+    "repository_settings": "report"
   },
 
   "staged": [
