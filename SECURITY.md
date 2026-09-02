@@ -42,7 +42,7 @@ Do not weaken trust boundaries merely to make rendering or integration easier.
 
 ## Repository control boundaries
 
-Live repository settings are evidence, not assumptions. The current repository exposes Dependabot alerts and has automated security fixes enabled. GitHub default code scanning is not enabled, and secret scanning/push protection are not enabled; these controls must not be described as active until live readback proves otherwise. The private-vulnerability-reporting endpoint is not currently exposed to the repository credential, so reporters must use a private maintainer channel and must not post exploit details in a public issue.
+Live repository settings are evidence, not assumptions. Dependabot alerts are enabled. The automated-security-fixes endpoint returned `404 Not Found` during the current readback, so this policy does not claim that automated security fixes are enabled. GitHub default code scanning is not enabled, and secret scanning/push protection are not enabled; these controls must not be described as active until live readback proves otherwise. The private-vulnerability-reporting endpoint is not currently exposed to the repository credential, so reporters must use a private maintainer channel and must not post exploit details in a public issue.
 
 The repository-level Actions setting allows all actions and does not enforce SHA pinning at the platform setting level. Workflow permissions, immutable action references, untrusted-PR boundaries, and drift checks are delivery controls owned by Track #60; this policy does not treat their intended state as already live.
 
