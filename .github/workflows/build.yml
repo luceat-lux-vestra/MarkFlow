@@ -114,7 +114,7 @@ jobs:
       # Keep the source-level webview contract tests as an explicit PR gate. Gradle's build task
       # runs the TypeScript/Vite production build, but it does not execute tests/*.test.mjs.
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
