@@ -1,0 +1,68 @@
+name: Architecture / behavior change
+description: Propose a contract, architecture, lifecycle, compatibility, or security change
+title: "architecture: "
+labels:
+  - type:research
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when a change may alter a contract, ownership boundary, lifecycle, compatibility policy, security boundary, or release behavior. Do not prescribe classes before the contract is clear.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the concrete problem, failure mode, or architectural constraint.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior and ownership
+      description: Describe the current data flow and resource/state owners, including accidental coupling or unclear ownership.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_contract
+    attributes:
+      label: Proposed contract
+      description: Define the desired observable behavior and ownership precisely enough to test.
+      placeholder: |
+        Cover applicable areas such as Markdown/source fidelity, IntelliJ Document/VFS/undo-redo, host-webview protocol and revision/order semantics, JCEF/editor/project lifecycle, failure/recovery, security, compatibility, and resource bounds.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include the simplest viable alternative and why it is insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: migration
+    attributes:
+      label: Migration and deletion plan
+      description: Identify implementation that may be deleted and behavior, tests, or evidence that must be retained.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence required before acceptance
+      description: List tests, fixtures, measurements, compatibility checks, or bounded spikes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: exit_criteria
+    attributes:
+      label: Exit criteria
+      description: Define conditions that can be verified on merged main.
+    validations:
+      required: true

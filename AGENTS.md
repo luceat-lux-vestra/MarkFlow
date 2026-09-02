@@ -15,7 +15,15 @@ For non-trivial work, read:
 3. the focused issue/ADR for the subsystem being changed;
 4. relevant tests and compatibility evidence.
 
-The historical `plans/00`–`04` documents are context only. They do not override issue #52 or later accepted architecture decisions.
+The historical `plans/*` documents are context only. They do not override issue #52 or later accepted architecture decisions.
+
+## Repository governance
+
+Repository and delivery hardening is owned by Epic #54. Track #51 owns repository policy and live settings, Track #60 owns the canonical CI/workflow and drift controls, and Track #61 owns release/publication provenance. Issue #52 is a separate runtime architecture Epic; do not create its execution issue hierarchy or begin that architecture leap as part of repository hardening.
+
+The current repository merge contract is enforced by the live configuration: `main` is protected and pull-request-only, history is linear, deletion and non-fast-forward updates are blocked, review conversations must be resolved, required checks use strict status freshness, and the solo-maintainer-safe approval count is zero. The repository permits squash merges only; merge commits and rebase merges are disabled, branch-update support is enabled, auto-merge is disabled, and there are no routine bypass actors. `CODEOWNERS` routes review ownership but is not itself a code-owner approval requirement under the current ruleset.
+
+CI green never replaces exact-final-HEAD review. A review PASS belongs only to the reviewed SHA; any new commit requires review again. The reviewer, not the implementing agent, decides PASS and authorizes a squash merge with `expected_head_sha=<reviewed SHA>`. Release/publication remains a separate irreversible gate. The exact required-context classification and producer reconciliation belong to #60, and release provenance/recovery belongs to #61; do not duplicate either implementation contract here.
 
 ## Core contracts
 

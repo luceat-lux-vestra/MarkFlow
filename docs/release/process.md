@@ -2,6 +2,8 @@
 
 Release/publication is a separate irreversible gate from implementation merge.
 
+This document defines the repository-level release boundary and authorization discipline. Track #61 owns the active publication path's immutable-tag, version/artifact identity, signing, provenance, and recovery implementation. Until that Track's exit criteria are proven against merged `main` and live settings, this document must not be read as evidence that publication is safe.
+
 ## Principles
 
 - A merged PR is not release authorization.

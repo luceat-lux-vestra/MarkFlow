@@ -21,6 +21,8 @@ MarkFlow is currently maintained as a private repository, but changes should fol
 7. Re-review the exact final PR HEAD before merge.
 8. Squash-merge only the reviewed HEAD SHA.
 
+The live `main` policy is squash-only with merge commits and rebase merges disabled, branch-update support enabled, auto-merge disabled, strict required checks, resolved review conversations, linear history, and no routine bypass. The current solo-maintainer ruleset requires zero approvals; `CODEOWNERS` routes review ownership without adding a code-owner approval gate. Any new commit invalidates the previous review PASS.
+
 Recommended branch names:
 
 ```text
@@ -69,4 +71,4 @@ Any HEAD change invalidates a prior PASS.
 
 ## Release boundary
 
-Merging implementation does not authorize publication. Marketplace/release publication is a separate irreversible gate governed by `docs/release/process.md`.
+Merging implementation does not authorize publication. Marketplace/release publication is a separate irreversible gate governed by `docs/release/process.md` and Track #61. Do not infer release authorization from CI, a draft release, or issue/PR closure.

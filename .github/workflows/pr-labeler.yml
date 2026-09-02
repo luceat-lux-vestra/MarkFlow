@@ -68,10 +68,12 @@ jobs:
             type ||= 'type:task';
 
             const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: pr.number, per_page: 100 });
-            for (const name of labels.map(x => x.name).filter(x => x.startsWith('type:'))) {
-              if (name !== type) await github.rest.issues.removeLabel({ ...context.repo, issue_number: pr.number, name });
+            const existingType = labels.map(x => x.name).find(name => name.startsWith('type:'));
+            if (existingType) {
+              core.info(`Preserving maintainer-selected type label: ${existingType}`);
+            } else {
+              await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: [type] });
             }
-            await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: [type] });
 
       - name: Label changed areas
         uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0

@@ -14,6 +14,8 @@ MarkFlow's architecture is intentionally being re-established. Existing implemen
 
 GitHub issue #52 is the active architecture-leap plan until its decisions are decomposed into accepted ADRs and implementation issues.
 
+Repository hardening is a separate concern owned by Epic #54 and Tracks #51, #60, and #61. Completing those tracks does not authorize runtime redesign; the architecture owner must first perform the fresh-`main` audit required by #52.
+
 ## When an ADR is required
 
 Write an ADR before implementation when a change affects any of:

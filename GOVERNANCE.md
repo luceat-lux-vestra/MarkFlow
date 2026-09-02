@@ -22,9 +22,23 @@ The maintainer is responsible for:
 
 ## Merge governance
 
-`main` should be changed through pull requests only. Squash merge is the intended merge method. Force-push and deletion of `main` are forbidden. Required checks and review conversations must be satisfied before merge.
+The live repository configuration currently enforces the following contract for `main`:
+
+- changes require a pull request;
+- squash is the only allowed merge method; merge commits and rebase merges are disabled;
+- branch-update support is enabled, while auto-merge is disabled;
+- history is linear, force-push/non-fast-forward updates and deletion are blocked;
+- strict required checks must be fresh and review conversations must be resolved;
+- zero approvals are required for the current solo-maintainer model, stale approvals are dismissed on push, and no bypass actors are configured;
+- `CODEOWNERS` routes ownership but does not impose a separate code-owner approval requirement.
+
+The exact required-check classification, workflow producers, and live-context reconciliation are owned by Track #60. This document does not claim staged CI controls are already required.
 
 A review PASS belongs to one exact PR HEAD SHA. If HEAD changes, review again. Merge only the reviewed SHA and verify resulting `main` movement after merge.
+
+Repository hardening is owned by Epic #54: #51 owns governance/live settings, #60 owns CI/workflow/drift controls, and #61 owns release/publication provenance and recovery. Issue #52 is a separate runtime architecture Epic and must not be pulled into this hardening work.
+
+Release/publication is a separate irreversible decision. Merging a pull request, passing CI, creating a draft release, or closing a hardening issue does not authorize Marketplace publication. Detailed tag, version, artifact, signing, and recovery provenance belongs to Track #61.
 
 ## Evolution
 

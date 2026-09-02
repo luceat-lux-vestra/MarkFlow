@@ -13,4 +13,4 @@ Key constraints:
 - CI green is necessary but insufficient. Changes require strict review of the exact final PR HEAD as described in `AGENTS.md`.
 - Release/publication is a separate explicit gate.
 
-For architecture work, use GitHub issue #52 and its child issues/ADRs as the current direction. Historical `plans/00`–`04` are non-authoritative context only.
+For architecture work, use GitHub issue #52 and its child issues/ADRs as the current direction. Historical `plans/*` are non-authoritative context only.

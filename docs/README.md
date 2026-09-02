@@ -30,6 +30,8 @@ Bootstrap-era files under `plans/` are historical context unless an active issue
 - `../GOVERNANCE.md` — decision-making and maintainer responsibilities
 - `.github/pull_request_template.md` — PR evidence contract
 - `.github/ai-review-prompt.md` — strict exact-final-HEAD review prompt
+- GitHub issue #54 — repository-hardening Epic; #51, #60, and #61 own governance, CI, and release tracks
+- GitHub issue #52 — separate runtime architecture Epic, pending a fresh-main audit
 
 ## Documentation rule
 

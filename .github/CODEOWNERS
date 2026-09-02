@@ -1,3 +1,5 @@
+# CODEOWNERS is review-routing metadata; it does not make historical plans authoritative
+# or create a code-owner approval requirement by itself.
 # Default owner
 * @luceat-lux-vestra
 
