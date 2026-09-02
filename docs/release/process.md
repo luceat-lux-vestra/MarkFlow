@@ -7,7 +7,7 @@ This document defines the repository-level release boundary and authorization di
 ## Principles
 
 - A merged PR is not release authorization.
-- Agent completion, CI success, or a draft release is not publication authorization.
+- Agent completion or CI success is not publication authorization. A release must be created explicitly by an authorized maintainer.
 - Marketplace/signing credentials must only be exercised after an explicit release decision.
 - Release evidence must refer to the exact commit/artifact being published.
 
@@ -23,6 +23,20 @@ Before publication, record and verify:
 6. security-sensitive changes and dependency updates reviewed;
 7. generated release artifact identity/checksum retained where practical;
 8. rollback/withdrawal plan understood.
+
+The release workflow accepts only the repository's timestamp version format
+`yy.MM.dd.HHmmss` as an immutable tag/version identity. It resolves the tag to a
+commit, requires that commit to be reachable from reviewed `main`, builds with
+that exact version, and verifies the archive's `META-INF/plugin.xml` version and
+SHA-256 before any Marketplace credential is used.
+
+The workflow records a pending release-identity asset before publication. A
+rerun with a pending identity stops for manual recovery instead of guessing
+whether Marketplace publication completed. A completed identity may be replayed
+only when the tag, source commit, artifact name, and artifact digest all match;
+an existing tag/version is never rewritten or repointed automatically. The
+preflight helper and its fixtures are non-publishing and do not require
+Marketplace credentials.
 
 ## Publication authorization
 

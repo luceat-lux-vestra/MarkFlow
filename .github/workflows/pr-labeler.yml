@@ -1,7 +1,9 @@
 name: Pull request labels
 
 on:
-  pull_request_target:
+  # Labels are advisory metadata. Use the unprivileged PR event so a fork cannot
+  # cause privileged workflow execution; fork PR tokens may simply skip writes.
+  pull_request:
     types:
       - opened
       - edited
@@ -45,15 +47,27 @@ jobs:
               ['dependencies', '0366D6', 'Dependency updates'],
             ];
 
+            async function bestEffortWrite(operation) {
+              try {
+                await operation();
+              } catch (error) {
+                if (error.status === 403) {
+                  core.warning('The pull_request token cannot write labels (typically a fork PR); leaving metadata unchanged.');
+                  return;
+                }
+                throw error;
+              }
+            }
+
             for (const [name, color, description] of managed) {
               try {
                 const { data } = await github.rest.issues.getLabel({ ...context.repo, name });
                 if ((data.description || '') !== description) {
-                  await github.rest.issues.updateLabel({ ...context.repo, name, description });
+                  await bestEffortWrite(() => github.rest.issues.updateLabel({ ...context.repo, name, description }));
                 }
               } catch (error) {
                 if (error.status !== 404) throw error;
-                await github.rest.issues.createLabel({ ...context.repo, name, color, description });
+                await bestEffortWrite(() => github.rest.issues.createLabel({ ...context.repo, name, color, description }));
               }
             }
 
@@ -72,10 +86,11 @@ jobs:
             if (existingType) {
               core.info(`Preserving maintainer-selected type label: ${existingType}`);
             } else {
-              await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: [type] });
+              await bestEffortWrite(() => github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: [type] }));
             }
 
       - name: Label changed areas
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
         with:
           sync-labels: true
