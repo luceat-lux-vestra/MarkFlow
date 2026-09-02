@@ -24,6 +24,7 @@ Bootstrap-era files under `plans/` are historical context unless an active issue
 ## Release
 
 - `release/process.md` — separate release/publication gate
+- `release/recovery.md` — fail-closed manual recovery for ambiguous/partial Marketplace publication
 
 ## Project governance
 
