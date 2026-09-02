@@ -10,6 +10,11 @@ Bootstrap-era files under `plans/` are historical context unless an active issue
 - `architecture/adr-template.md` — ADR template for significant decisions
 - GitHub issue #52 — architecture-leap process, fresh-main audit, and target-architecture design gate
 
+## Product contract
+
+- `product/leap-capability-fidelity-contract.md` — authoritative Leap capability, source-fidelity, fallback, state, and compatibility contract
+- `../fixtures/markdown-fidelity/` — shared machine-readable baseline corpus; its validator checks fixture integrity only, not runtime conformance
+
 ## Engineering
 
 - `engineering/development-process.md` — definition of ready/done, PR and review workflow
