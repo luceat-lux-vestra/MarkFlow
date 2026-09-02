@@ -13,6 +13,13 @@ default branch explicitly. It reads the live `main protection` ruleset, the
 automation, plus the repository merge settings, then compares them with
 `.github/merge-gate-policy.json`.
 
+Ruleset identity is fail-closed: the live ruleset list must contain exactly
+one entry for each canonical name. Zero matches, duplicate names, or a
+matched entry without an id stop the readback. The main ruleset must have
+`target=branch` and exactly `include=["~DEFAULT_BRANCH"]`, while the release
+ruleset must have `target=tag` and exactly `include=["~ALL"]`; both must have
+`exclude=[]`.
+
 ## Credential contract
 
 The live job requires the repository secret `HARDENING_AUDIT_TOKEN`. It is a

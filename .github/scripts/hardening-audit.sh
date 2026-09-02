@@ -243,24 +243,48 @@ authoritative_gh() {
   GH_TOKEN="$HARDENING_AUDIT_TOKEN" gh "$@"
 }
 read_ruleset_detail() {
-  local kind="$1" live id name
+  local kind="$1" live matching_rulesets match_count id name
   if [ -n "$RULESET_FIXTURE" ]; then jq -c --arg kind "$kind" '.[$kind] // empty' "$RULESET_FIXTURE"; return; fi
   if [ "$kind" = main ]; then name="$(jq -r '.ruleset_name' "$POLICY")"; else name="$(jq -r '.release_ruleset_name' "$POLICY")"; fi
   live="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=false" 2>/dev/null)" || return 1
   printf '%s' "$live" | jq -e 'type == "array"' >/dev/null || return 2
-  id="$(printf '%s' "$live" | jq -r --arg name "$name" '.[] | select(.name == $name and .id != null) | .id' | head -n1)"; [ -n "$id" ] || return 3
+  matching_rulesets="$(printf '%s' "$live" | jq -c --arg name "$name" '[.[] | select(.name == $name)]')"
+  match_count="$(jq 'length' <<< "$matching_rulesets")"
+  if [ "$match_count" -eq 0 ]; then
+    echo "hardening-audit: no ruleset named '$name' was found" >&2
+    return 3
+  fi
+  if [ "$match_count" -ne 1 ]; then
+    echo "hardening-audit: ruleset name '$name' is ambiguous ($match_count matches)" >&2
+    return 3
+  fi
+  id="$(jq -r '.[0].id // empty' <<< "$matching_rulesets")"
+  if [ -z "$id" ]; then
+    echo "hardening-audit: the unique '$name' ruleset has no id" >&2
+    return 3
+  fi
   authoritative_gh api "repos/${GITHUB_REPOSITORY}/rulesets/$id" 2>/dev/null
 }
 validate_ruleset_common() {
-  local kind="$1" detail="$2" expected_name
-  if [ "$kind" = main ]; then expected_name="$(jq -r '.ruleset_name' "$POLICY")"; else expected_name="$(jq -r '.release_ruleset_name' "$POLICY")"; fi
-  if ! jq -e 'type == "object" and (.name | type == "string") and (.enforcement | type == "string") and (.bypass_actors | type == "array") and (.conditions.ref_name.include | type == "array") and (.rules | type == "array")' <<< "$detail" >/dev/null; then
+  local kind="$1" detail="$2" expected_name expected_target expected_include
+  if [ "$kind" = main ]; then
+    expected_name="$(jq -r '.ruleset_name' "$POLICY")"
+    expected_target=branch
+    expected_include='~DEFAULT_BRANCH'
+  else
+    expected_name="$(jq -r '.release_ruleset_name' "$POLICY")"
+    expected_target=tag
+    expected_include='~ALL'
+  fi
+  if ! jq -e 'type == "object" and (.name | type == "string") and (.target | type == "string") and (.enforcement | type == "string") and (.bypass_actors | type == "array") and (.conditions.ref_name.include | type == "array") and (.conditions.ref_name.exclude | type == "array") and (.rules | type == "array")' <<< "$detail" >/dev/null; then
     finding "$kind" "live ruleset omitted an authoritative field; refusing to infer a safe default"; return 1
   fi
   [ "$(jq -r '.name' <<< "$detail")" = "$expected_name" ] || finding "$kind" "live ruleset name does not match policy"
+  [ "$(jq -r '.target' <<< "$detail")" = "$expected_target" ] || finding "$kind" "live $kind ruleset target is not '$expected_target'"
   [ "$(jq -r '.enforcement' <<< "$detail")" = active ] || finding "$kind" "live ruleset is not active"
   [ "$(jq '.bypass_actors | length' <<< "$detail")" -eq 0 ] || finding "$kind" "live ruleset has bypass actors"
-  if [ "$kind" = main ]; then jq -e '.conditions.ref_name.include | index("~DEFAULT_BRANCH") != null' <<< "$detail" >/dev/null || finding "$kind" "live main ruleset does not target ~DEFAULT_BRANCH"; else jq -e '.conditions.ref_name.include | index("~ALL") != null' <<< "$detail" >/dev/null || finding "$kind" "live release-tag ruleset does not target ~ALL"; fi
+  jq -e --arg expected "$expected_include" '.conditions.ref_name.include == [$expected]' <<< "$detail" >/dev/null || finding "$kind" "live $kind ruleset include scope is not exactly '$expected_include'"
+  jq -e '.conditions.ref_name.exclude == []' <<< "$detail" >/dev/null || finding "$kind" "live $kind ruleset exclude scope is not empty"
   return 0
 }
 
