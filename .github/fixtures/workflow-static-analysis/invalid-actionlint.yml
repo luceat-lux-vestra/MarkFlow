@@ -1,0 +1,11 @@
+name: Invalid actionlint fixture
+
+on: push
+
+jobs:
+  invalid:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invalid expression
+        if: ${{ github.ref == }}
+        run: echo never

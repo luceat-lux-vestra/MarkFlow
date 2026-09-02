@@ -30,6 +30,7 @@ jobs:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Go
@@ -60,8 +61,49 @@ jobs:
           version: v1.30.0
           inputs: .github/workflows
 
+      - name: Verify actionlint rejects invalid fixture
+        id: actionlint-negative
+        continue-on-error: true
+        run: actionlint .github/fixtures/workflow-static-analysis/invalid-actionlint.yml
+
+      - name: Enforce actionlint negative control
+        if: ${{ always() }}
+        env:
+          ACTIONLINT_NEGATIVE_OUTCOME: ${{ steps.actionlint-negative.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTIONLINT_NEGATIVE_OUTCOME" != failure ]; then
+            echo "::error::actionlint unexpectedly accepted the invalid workflow fixture."
+            exit 1
+          fi
+
+      - name: Verify zizmor rejects unsafe fixture
+        id: zizmor-negative
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        with:
+          advanced-security: false
+          online-audits: false
+          token: ${{ github.token }}
+          version: v1.30.0
+          inputs: .github/fixtures/workflow-static-analysis/unsafe-zizmor.yml
+
+      - name: Enforce zizmor negative control
+        if: ${{ always() }}
+        env:
+          ZIZMOR_NEGATIVE_OUTCOME: ${{ steps.zizmor-negative.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$ZIZMOR_NEGATIVE_OUTCOME" != failure ]; then
+            echo "::error::zizmor unexpectedly accepted the unsafe workflow fixture."
+            exit 1
+          fi
+
       - name: Run offline merge-gate audit
         run: bash .github/scripts/hardening-audit.sh --mode gate --no-network
+
+      - name: Run release preflight fixtures
+        run: bash .github/scripts/release-preflight-test.sh
 
   # Live readback is isolated from PR code and has an explicit manual/admin
   # credential requirement. Missing credentials fail this scheduled/manual job;

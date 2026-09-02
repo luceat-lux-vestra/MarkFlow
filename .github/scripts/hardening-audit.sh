@@ -183,7 +183,22 @@ check_workflow_static_analysis() {
   grep -qE 'version:[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+' "$audit" || { finding workflow_static_analysis "zizmor version is not pinned"; clean=0; }
   grep -qE 'inputs:[[:space:]]+\.github/workflows' "$audit" || { finding workflow_static_analysis "zizmor does not cover all workflows"; clean=0; }
   grep -qE 'advanced-security:[[:space:]]+false' "$audit" || { finding workflow_static_analysis "zizmor upload mode is not explicit"; clean=0; }
+  for fixture in invalid-actionlint.yml unsafe-zizmor.yml; do
+    [ -f "$ROOT/.github/fixtures/workflow-static-analysis/$fixture" ] || { finding workflow_static_analysis "static-analysis negative fixture is missing: $fixture"; clean=0; }
+  done
+  grep -qE 'Verify actionlint rejects invalid fixture' "$audit" || { finding workflow_static_analysis "actionlint negative control is not executed"; clean=0; }
+  grep -qE 'Enforce actionlint negative control' "$audit" || { finding workflow_static_analysis "actionlint negative control is not enforced"; clean=0; }
+  grep -qE 'Verify zizmor rejects unsafe fixture' "$audit" || { finding workflow_static_analysis "zizmor negative control is not executed"; clean=0; }
+  grep -qE 'Enforce zizmor negative control' "$audit" || { finding workflow_static_analysis "zizmor negative control is not enforced"; clean=0; }
   [ "$clean" -eq 1 ] && info workflow_static_analysis "actionlint and pinned zizmor cover the complete workflow tree"; return 0
+}
+
+check_release_preflight() {
+  local audit="$WORKFLOW_DIR/hardening-audit.yml" clean=1
+  [ -f "$ROOT/.github/scripts/release-preflight-test.sh" ] || { finding release_preflight "release preflight fixture script is missing"; clean=0; }
+  grep -qE 'Run release preflight fixtures' "$audit" || { finding release_preflight "release preflight fixtures are not named in the hardening workflow"; clean=0; }
+  grep -qE 'bash \.github/scripts/release-preflight-test\.sh' "$audit" || { finding release_preflight "release preflight fixtures are not executed by the hardening workflow"; clean=0; }
+  [ "$clean" -eq 1 ] && info release_preflight "non-publishing release preflight fixtures are wired into the hardening gate"; return 0
 }
 
 authoritative_live_credential() { [ -n "$RULESET_FIXTURE" ] || [ -n "${HARDENING_AUDIT_TOKEN:-}" ]; }
@@ -253,7 +268,7 @@ check_negative_tests() {
   return 0
 }
 
-ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows workflow_static_analysis ruleset_sync release_tag_ruleset label_references"
+ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows workflow_static_analysis release_preflight ruleset_sync release_tag_ruleset label_references"
 should_run() {
   local name="$1" configured
   if [ -n "$ONLY" ]; then [ "$ONLY" = "$name" ]; return; fi
@@ -275,6 +290,7 @@ for check in $ALL_CHECKS; do
     workflow_security) check_workflow_security ;;
     privileged_workflows) check_privileged_workflows ;;
     workflow_static_analysis) check_workflow_static_analysis ;;
+    release_preflight) check_release_preflight ;;
     ruleset_sync) check_ruleset_sync ;;
     release_tag_ruleset) check_release_tag_ruleset ;;
     label_references) check_label_references ;;

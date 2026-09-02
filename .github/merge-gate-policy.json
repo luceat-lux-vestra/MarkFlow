@@ -81,6 +81,7 @@
     "workflow_security": "gate",
     "privileged_workflows": "gate",
     "workflow_static_analysis": "gate",
+    "release_preflight": "gate",
     "ruleset_sync": "report",
     "release_tag_ruleset": "report",
     "label_references": "report"
