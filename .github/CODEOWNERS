@@ -1,0 +1,17 @@
+# CODEOWNERS is review-routing metadata; it does not make historical plans authoritative
+# or create a code-owner approval requirement by itself.
+# Default owner
+* @luceat-lux-vestra
+
+# Repository policy and automation
+/.github/ @luceat-lux-vestra
+/AGENTS.md @luceat-lux-vestra
+
+# IntelliJ host
+/src/ @luceat-lux-vestra
+
+# JCEF webview
+/webview/ @luceat-lux-vestra
+
+# Architecture and planning evidence
+/plans/ @luceat-lux-vestra

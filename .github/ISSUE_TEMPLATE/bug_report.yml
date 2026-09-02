@@ -1,0 +1,102 @@
+name: Bug report
+description: Report a reproducible MarkFlow defect
+title: "bug: "
+labels:
+  - type:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report one reproducible defect. Do not include secrets or private document content unless it is essential and safe to share.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the observed behavior and why it is incorrect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give the smallest reproducible steps and Markdown fixture, if safe.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the expected source, editor, lifecycle, or rendering behavior precisely.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the observable result and relevant error messages.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: affected_areas
+    attributes:
+      label: Affected areas
+      options:
+        - label: Persisted Markdown source
+        - label: WYSIWYG rendering
+        - label: Undo / redo
+        - label: External file edits
+        - label: Save / close / reopen
+        - label: Multiple tabs / split editors
+        - label: Theme / settings
+        - label: Mermaid / KaTeX / raw HTML
+        - label: JCEF load / recovery
+        - label: Performance / memory / resource use
+
+  - type: input
+    id: markflow_version
+    attributes:
+      label: MarkFlow version or commit
+      placeholder: e.g. main SHA or release version
+
+  - type: input
+    id: ide
+    attributes:
+      label: IntelliJ-based IDE and exact build
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+
+  - type: input
+    id: jcef
+    attributes:
+      label: JCEF available or enabled
+      placeholder: yes / no / unknown
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Include relevant MarkFlow or IDE logs. Redact secrets, paths, and private source text when not needed.
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression information
+      description: State the last known good and first known bad version or commit, if known.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include frequency, document size, timing, external edits, rapid tab switching, split-editor use, or other relevant lifecycle details.

@@ -1,15 +1,47 @@
-# Dependabot configuration:
-# https://docs.github.com/en/free-pro-team@latest/github/administering-a-repository/configuration-options-for-dependency-updates
-
 version: 2
 updates:
-  # Maintain dependencies for Gradle dependencies
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
-      interval: "daily"
-  # Maintain dependencies for GitHub Actions
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "build"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/webview"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "build"
+    labels:
+      - "dependencies"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"

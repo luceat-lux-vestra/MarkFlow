@@ -1,0 +1,81 @@
+name: Pull request labels
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: label
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Ensure managed labels and classify PR type
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const managed = [
+              ['type:bug', 'B60205', 'A defect in existing functionality'],
+              ['type:feature', '1F6FEB', 'A new user-facing capability'],
+              ['type:security', 'B60205', 'Security hardening or vulnerability work'],
+              ['type:docs', 'D4F4DD', 'Documentation-only work'],
+              ['type:research', 'BFDADC', 'Research, ADR, or design work'],
+              ['type:task', '0E8A16', 'Implementation, maintenance, test, CI, or release task'],
+              ['area:host', '0E8A16', 'IntelliJ/Kotlin host integration'],
+              ['area:webview', '1D76DB', 'TypeScript/JCEF webview implementation'],
+              ['area:protocol', '5319E7', 'Host-webview protocol and message contracts'],
+              ['area:lifecycle', '006B75', 'Editor/browser/session ownership and disposal'],
+              ['area:settings', '0052CC', 'Settings, theme, and runtime configuration'],
+              ['area:ci', 'BFDADC', 'Continuous integration and build automation'],
+              ['area:docs', 'D4F4DD', 'Documentation system and content'],
+              ['area:governance', 'F2D600', 'Project policy, architecture decisions, and release process'],
+              ['dependencies', '0366D6', 'Dependency updates'],
+            ];
+
+            for (const [name, color, description] of managed) {
+              try {
+                const { data } = await github.rest.issues.getLabel({ ...context.repo, name });
+                if ((data.description || '') !== description) {
+                  await github.rest.issues.updateLabel({ ...context.repo, name, description });
+                }
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ ...context.repo, name, color, description });
+              }
+            }
+
+            const pr = context.payload.pull_request;
+            const title = pr.title.trim().toLowerCase();
+            let type = null;
+            if (/^(fix|bug)(\([^)]*\))?:/.test(title)) type = 'type:bug';
+            else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) type = 'type:feature';
+            else if (/^security(\([^)]*\))?:/.test(title)) type = 'type:security';
+            else if (/^docs(\([^)]*\))?:/.test(title)) type = 'type:docs';
+            else if (/^(research|rfc|adr|audit|design|spike)(\([^)]*\))?:/.test(title)) type = 'type:research';
+            type ||= 'type:task';
+
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: pr.number, per_page: 100 });
+            const existingType = labels.map(x => x.name).find(name => name.startsWith('type:'));
+            if (existingType) {
+              core.info(`Preserving maintainer-selected type label: ${existingType}`);
+            } else {
+              await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: [type] });
+            }
+
+      - name: Label changed areas
+        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: true
