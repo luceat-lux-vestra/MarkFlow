@@ -4,12 +4,16 @@ Release/publication is a separate irreversible gate from implementation merge.
 
 This document defines the repository-level release boundary and authorization discipline. Track #61 owns the active publication path's immutable-tag, version/artifact identity, signing, provenance, and recovery implementation. Until that Track's exit criteria are proven against merged `main` and live settings, this document must not be read as evidence that publication is safe.
 
+The operational recovery procedure for an ambiguous or partial Marketplace publication is maintained in [`recovery.md`](./recovery.md).
+
 ## Principles
 
 - A merged PR is not release authorization.
 - Agent completion or CI success is not publication authorization. A release must be created explicitly by an authorized maintainer.
 - Marketplace/signing credentials must only be exercised after an explicit release decision.
 - Release evidence must refer to the exact commit/artifact being published.
+- A pending publication identity is a fail-closed lock, not evidence that Marketplace publication failed.
+- An existing release version/tag must never be rewritten or reused for different source during recovery.
 
 ## Release candidate checklist
 
@@ -42,14 +46,19 @@ Marketplace credentials.
 
 Publication requires an explicit maintainer decision after reviewing the release candidate evidence. Do not infer authorization from issue/PR closure.
 
+Recovery of an already-started release also requires explicit maintainer authorization before any Marketplace retry, release-asset mutation, published-marker upload, or Marketplace withdrawal. See [`recovery.md`](./recovery.md).
+
 ## Post-publication verification
 
 After publishing:
 
-- verify the expected version/artifact is visible at the intended distribution channel;
+- verify the expected version is present at the intended Marketplace distribution path/state;
+- verify the GitHub Release artifact and recorded release identity agree;
 - verify release metadata and notes;
 - perform a clean-install smoke test when practical;
 - record any incident or unexpected incompatibility as a new issue rather than silently patching release history.
+
+If workflow execution fails after the pending identity is uploaded, do not infer publication failure from workflow failure or from delayed public visibility. Follow [`recovery.md`](./recovery.md) and classify the Marketplace state as `Exists`, `Absent`, or `Unknown`; `Unknown` fails closed.
 
 ## Hotfixes
 
