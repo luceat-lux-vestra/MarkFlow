@@ -27,11 +27,11 @@ Why it was considered and why it was not selected.
 
 ### Positive
 
-- 
+- Add the expected benefits.
 
 ### Negative / trade-offs
 
-- 
+- Add the important trade-offs.
 
 ## Compatibility and migration
 
