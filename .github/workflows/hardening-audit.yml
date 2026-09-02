@@ -49,14 +49,14 @@ jobs:
       - name: Run actionlint across all workflows
         run: actionlint -color
 
-      # This action runs without Advanced Security upload and without a token. The
-      # exact zizmor release is supplied explicitly so the scanner itself cannot drift.
+      # The action has no Advanced Security upload or online audits. Its read-only
+      # workflow token is only for the scanner invocation, never live administration.
       - name: Run zizmor across all workflows
         uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
         with:
           advanced-security: false
           online-audits: false
-          token: ''
+          token: ${{ github.token }}
           version: v1.30.0
           inputs: .github/workflows
 
