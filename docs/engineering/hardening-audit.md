@@ -26,9 +26,9 @@ scoped `HARDENING_AUDIT_TOKEN` secret is separately provisioned. MarkFlow does
 not require either the variable or the secret for normal PR, push, scheduled,
 or manual hardening audits.
 
-When authoritative live readback is performed, it checks the live `main
-protection` ruleset, the `release tag immutability` ruleset, repository labels
-referenced by automation, and repository merge settings against
+When authoritative live readback is performed, it checks the live
+`main protection` ruleset, the `release tag immutability` ruleset, repository
+labels referenced by automation, and repository merge settings against
 `.github/merge-gate-policy.json`.
 
 Ruleset identity is fail-closed: the live ruleset list must contain exactly
