@@ -1,6 +1,8 @@
 # Repository hardening checks. The required-context candidate stays staged until
 # this job has been observed reliably on merged main and ordinary pull requests.
-# Release/publication and privileged live administration are separate boundaries.
+# Scheduled/manual audit is credential-less by default. Privileged live GitHub
+# administration readback is an explicit opt-in boundary and is never inferred
+# from a successful offline audit.
 
 name: Hardening audit
 
@@ -21,7 +23,8 @@ concurrency:
 
 jobs:
   # This is the staged candidate context. It never receives a repository-admin
-  # secret and therefore safely analyzes pull-request merge commits.
+  # secret, so it is safe on pull requests and remains the default scheduled/
+  # manual drift check for repository-owned policy and workflow state.
   audit:
     name: Hardening audit
     runs-on: ubuntu-latest
@@ -105,12 +108,13 @@ jobs:
       - name: Run release preflight fixtures
         run: bash .github/scripts/release-preflight-test.sh
 
-  # Live readback is isolated from PR code and has an explicit manual/admin
-  # credential requirement. Missing credentials fail this scheduled/manual job;
-  # inaccessible settings are never represented as safe or empty state.
+  # Optional privileged readback. It is disabled unless a maintainer deliberately
+  # opts in with repository variable HARDENING_LIVE_READBACK_ENABLED=true and
+  # separately provisions the scoped credential. The repository does not require
+  # either setting for normal PR, push, scheduled, or manual hardening audits.
   live-readback:
     name: Live hardening readback
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) }}
+    if: ${{ vars.HARDENING_LIVE_READBACK_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -129,8 +133,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${HARDENING_AUDIT_TOKEN:-}" ]; then
-            echo "::error::HARDENING_AUDIT_TOKEN is not provisioned; live ruleset/settings evidence is unavailable."
-            echo "::error::Provision a least-privilege repository-administration token or equivalent GitHub App credential, then rerun this audit."
+            echo "::error::Privileged live readback was explicitly enabled but HARDENING_AUDIT_TOKEN is not provisioned."
+            echo "::error::Disable HARDENING_LIVE_READBACK_ENABLED or provision a least-privilege repository-administration credential."
             exit 1
           fi
           bash .github/scripts/hardening-audit.sh --mode report
