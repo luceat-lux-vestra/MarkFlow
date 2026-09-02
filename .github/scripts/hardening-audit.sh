@@ -52,7 +52,7 @@ job_block() {
 }
 job_exists() { [ -n "$(job_block "$1" "$2")" ]; }
 job_field() {
-  job_block "$1" "$2" | awk -v field="$3" '$0 ~ ("^    " field ":[[:space:]]*") { line=$0; sub("^    " field ":[[:space:]]*", "", line); print line; exit }'
+  job_block "$1" "$2" | awk -v field="$3" '$0 ~ ("^    " field ":[[:space:]]*") { line=$0; sub("^    " field ":[[:space:]]*", "", line) } END { if (line != "") print line }'
 }
 unquote() {
   local value="$1"
