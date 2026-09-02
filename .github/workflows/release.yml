@@ -155,7 +155,9 @@ jobs:
             --output-manifest "$RUNNER_TEMP/markflow-release-identity.json"
             --github-output "$GITHUB_OUTPUT"
           )
-          [ -s "$existing" ] && args+=(--existing-identity "$existing") || true
+          if [ -s "$existing" ]; then
+            args+=(--existing-identity "$existing")
+          fi
           bash .github/scripts/release-preflight.sh "${args[@]}"
 
       - name: Verify publication credentials
