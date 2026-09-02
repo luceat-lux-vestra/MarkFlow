@@ -3,13 +3,13 @@
 ![Build](https://github.com/luceat-lux-vestra/MarkFlow/workflows/Build/badge.svg)
 [![Version](https://img.shields.io/badge/Marketplace-pending-lightgrey)](https://plugins.jetbrains.com/)
 
-MarkFlow is an IntelliJ IDEA plugin that provides a WYSIWYG-first Markdown editing experience when its supported JCEF surface is available, while preserving access to IntelliJ's native/source editor.
+MarkFlow is an IntelliJ IDEA plugin that provides a WYSIWYG Markdown editing experience for supported Markdown files through a JCEF-based custom editor.
 
 ## Features
 
 - Typora-style WYSIWYG Markdown editing in a custom IntelliJ `FileEditor`
-- Preferred WYSIWYG editing for supported Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) with native/source editor coexistence
-- Two-way IntelliJ <-> Webview synchronization with document/source fidelity requirements
+- Automatic custom-editor handling for supported Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) when JCEF is available
+- Two-way IntelliJ <-> Webview synchronization
 - Editor UI state restore (scroll position, cursor, selection)
 - Mermaid live preview in code blocks
 - KaTeX rendering for inline and block math expressions
@@ -28,18 +28,21 @@ You can configure these in `Settings > Tools > MarkFlow`.
 - **Advanced:** Diagram security level (STRICT/LOOSE)
 
 MarkFlow targets IntelliJ IDEA 2026.2+ (build 262+) with the bundled **Web Browser (JCEF)** plugin
-(`com.intellij.modules.jcef`) for the WYSIWYG surface. If JCEF is unavailable or fails to initialize safely,
-the native/source editor remains the fallback.
+(`com.intellij.modules.jcef`) for the WYSIWYG surface. When JCEF is unavailable before editor selection,
+MarkFlow does not take over the file and IntelliJ's native editor remains available.
+
+The Leap architecture tracked in #52/#78 defines a stronger target contract: WYSIWYG-first operation with native/source-editor coexistence and a safe native-editor fallback for JCEF initialization/runtime failure. Those behaviors are target requirements and are not claimed as fully implemented by the current runtime yet.
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, raw-html, wysiwyg )
 
-MarkFlow is a WYSIWYG-first Markdown editor for IntelliJ-based IDEs.
+MarkFlow is a WYSIWYG Markdown editor for IntelliJ-based IDEs.
 
-It offers a preferred WYSIWYG surface for supported Markdown files while retaining access to IntelliJ's native/source editor,
-keeps the authoritative document and webview synchronized, and restores editor state such as scroll position, caret, and selection when reopening files.
+For supported Markdown files and a supported JCEF runtime, it opens a custom editor, keeps the IntelliJ document and webview synchronized, and restores editor state such as scroll position, caret, and selection when reopening files.
 
 MarkFlow supports Mermaid diagrams, KaTeX math, Markdown-aware paste, and raw HTML rendering with XSS sanitization, with configurable rendering options
 for theme source, body font family and size, Mermaid sizing and zoom, error display, KaTeX density, and preview defaults.
+
+The Leap product contract under #52/#78 additionally requires native/source-editor coexistence and safe fallback from JCEF failures; those requirements are not presented here as completed current-runtime behavior.
 <!-- Plugin description end -->
 
 [template]: https://github.com/JetBrains/intellij-platform-plugin-template
