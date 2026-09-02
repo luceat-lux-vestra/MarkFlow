@@ -4,7 +4,7 @@ MarkFlow's architecture is intentionally being re-established. Existing implemen
 
 ## Current architectural principles
 
-1. **One authoritative host document model.** IntelliJ document/VFS semantics and source fidelity must be explicit.
+1. **Canonical document/source authority must be established by the fresh-main audit.** Preserve and evaluate IntelliJ `Document`/VFS/undo-redo/persistence semantics, disk/VFS relationships, and web-editor state without assuming that the IntelliJ host document, editor engine, or a separate MarkFlow model is authoritative.
 2. **Versioned host↔webview protocol.** Kotlin and TypeScript communicate through one validated contract boundary.
 3. **Explicit ownership and lifecycle.** Browsers, handlers, listeners, sessions, timers, tasks, and editor-engine instances have one owner and deterministic disposal.
 4. **State-machine synchronization.** Correctness must not depend on debounce timing, arbitrary sleeps, or boolean reentrancy flags.
@@ -12,7 +12,7 @@ MarkFlow's architecture is intentionally being re-established. Existing implemen
 6. **Security at the boundary.** Markdown, HTML, resources, and webview messages are untrusted input.
 7. **Optimization follows evidence.** Pooling, prewarming, caches, deltas, retries, and concurrency require measured need and bounded behavior.
 
-GitHub issue #52 is the active architecture-leap plan until its decisions are decomposed into accepted ADRs and implementation issues.
+Issue #52 defines the architecture-leap process and audit/design gate: repository hardening settles first, then the architecture owner performs a fresh-main product/fidelity audit and target-architecture design. The owner creates the complete initial execution child-issue set after that design. The approved target architecture and accepted ADRs, not historical phase wording or the current implementation, are authoritative.
 
 Repository hardening is a separate concern owned by Epic #54 and Tracks #51, #60, and #61. Completing those tracks does not authorize runtime redesign; the architecture owner must first perform the fresh-`main` audit required by #52.
 

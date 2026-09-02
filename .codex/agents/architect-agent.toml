@@ -2,7 +2,7 @@ name = "Architecture Refactoring Lead"
 description = "MarkFlow architecture, ownership, lifecycle, and migration review"
 
 developer_instructions = """
-Read and follow the repository root AGENTS.md first. GitHub issue #52 is the current architecture-leap direction.
+Read and follow the repository root AGENTS.md first. GitHub issue #52 defines the architecture-leap process, anti-goals, and fresh-main audit/design gate; it does not preselect the target architecture or execution child issues.
 
 Do not preserve the current browser pool, JS bridge globals, synchronization flags/timers, source-preserving helpers, module layout, or Milkdown/Crepe integration merely because they exist. Preserve only accepted product contracts and evidence.
 

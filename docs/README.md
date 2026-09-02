@@ -2,13 +2,13 @@
 
 This directory contains the maintained engineering documentation for MarkFlow.
 
-Bootstrap-era files under `plans/` are historical context unless an active issue or accepted decision explicitly promotes them. Current architecture authority lives in accepted ADRs, active architecture issues, and the code/tests that implement those contracts.
+Bootstrap-era files under `plans/` are historical context unless an active issue or accepted decision explicitly promotes them. Before the #52 audit/design gate, current code and tests are evidence rather than target-architecture authority; authority is established by the approved target architecture, accepted ADRs, and the code/tests that implement those contracts.
 
 ## Architecture
 
 - `architecture/README.md` — architecture boundaries and decision process
 - `architecture/adr-template.md` — ADR template for significant decisions
-- GitHub issue #52 — current architecture-leap direction until superseded by accepted ADRs
+- GitHub issue #52 — architecture-leap process, fresh-main audit, and target-architecture design gate
 
 ## Engineering
 
@@ -31,7 +31,7 @@ Bootstrap-era files under `plans/` are historical context unless an active issue
 - `.github/pull_request_template.md` — PR evidence contract
 - `.github/ai-review-prompt.md` — strict exact-final-HEAD review prompt
 - GitHub issue #54 — repository-hardening Epic; #51, #60, and #61 own governance, CI, and release tracks
-- GitHub issue #52 — separate runtime architecture Epic, pending a fresh-main audit
+- GitHub issue #52 — separate runtime architecture Epic; its initial execution child issues are intentionally created only after the fresh-main audit and target-architecture design
 
 ## Documentation rule
 

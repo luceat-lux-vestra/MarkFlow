@@ -11,11 +11,11 @@ The repository began with local-model-driven bootstrap code. Existing classes, m
 For non-trivial work, read:
 
 1. `README.md` for current product behavior;
-2. GitHub issue #52 for the architecture leap direction;
+2. GitHub issue #52 for the architecture-leap process, anti-goals, and fresh-main audit/design gate;
 3. the focused issue/ADR for the subsystem being changed;
 4. relevant tests and compatibility evidence.
 
-The historical `plans/*` documents are context only. They do not override issue #52 or later accepted architecture decisions.
+The historical `plans/*` documents are context only. They do not define the target architecture or override #52's process/anti-goals or the later approved target architecture and accepted ADRs.
 
 ## Repository governance
 

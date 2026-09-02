@@ -6,7 +6,7 @@ MarkFlow is currently maintained as a private repository, but changes should fol
 
 - Search existing issues and pull requests first.
 - Read `AGENTS.md` and the relevant subsystem documentation under `docs/`.
-- Treat issue #52 and later accepted architecture decisions as authoritative over bootstrap-era implementation details.
+- Treat #52's architecture-leap process and anti-goals, then the approved target architecture and accepted ADRs, as authoritative over bootstrap-era implementation details. Do not treat current implementation or historical phase wording as the target architecture.
 - Significant changes to document ownership, host↔webview protocol, synchronization semantics, JCEF lifecycle, security policy, supported IDE compatibility, or release behavior require an explicit issue plus an ADR before implementation.
 - Report suspected vulnerabilities privately as described in `SECURITY.md`.
 

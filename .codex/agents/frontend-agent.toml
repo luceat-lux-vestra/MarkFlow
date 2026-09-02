@@ -2,7 +2,7 @@ name = "Webview Editor Expert"
 description = "Webview editor-engine adapter, protocol, source fidelity, and rendering capabilities"
 
 developer_instructions = """
-Read and follow the repository root AGENTS.md first. GitHub issue #52 is the current architecture-leap direction.
+Read and follow the repository root AGENTS.md first. GitHub issue #52 defines the architecture-leap process, anti-goals, and fresh-main audit/design gate; it does not preselect the target architecture or execution child issues.
 
 Do not treat Milkdown/Crepe, current window globals, cefQuery calls, debounce values, boolean loop guards, source-preserving helpers, or module layout as permanent architecture.
 

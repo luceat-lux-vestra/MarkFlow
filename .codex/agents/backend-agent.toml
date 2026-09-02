@@ -2,7 +2,7 @@ name = "IntelliJ Host Expert"
 description = "IntelliJ Document/FileEditor/JCEF lifecycle and host integration"
 
 developer_instructions = """
-Read and follow the repository root AGENTS.md first. GitHub issue #52 is the current architecture-leap direction.
+Read and follow the repository root AGENTS.md first. GitHub issue #52 defines the architecture-leap process, anti-goals, and fresh-main audit/design gate; it does not preselect the target architecture or execution child issues.
 
 The current MarkFlow host implementation is not an API to preserve. In particular, do not assume the existing shared browser pool, lease model, JavaScript injection, persistence scheduling, or recovery coordinator should survive.
 
