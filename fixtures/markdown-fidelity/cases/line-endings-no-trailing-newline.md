@@ -1,0 +1,1 @@
+This fixture deliberately ends immediately after the final character.

@@ -18,6 +18,12 @@ For ordinary code changes, maintain coverage across:
 
 Cover exact or explicitly allowed Markdown round trips, external document edits, undo/redo, line endings, and source constructs that visual equivalence could silently rewrite.
 
+The shared baseline corpus is `fixtures/markdown-fidelity/`. Its manifest
+validator checks declared files, IDs, metadata enums, line endings, and
+trailing-newline bytes. This is fixture-integrity evidence only; it must not be
+reported as proof that the current runtime conforms to the Leap product/fidelity
+contract.
+
 ### Host↔webview synchronization
 
 Cover message duplication, reordering, delay, stale sessions/revisions, rejected messages, echo suppression, final-edit flush, reload, and reconnect behavior.
