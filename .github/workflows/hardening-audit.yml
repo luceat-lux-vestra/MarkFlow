@@ -1,7 +1,6 @@
-# Repository hardening gate. The always-present PR job is fully offline.
-# Scheduled/manual runs perform live ruleset readback only when a deliberately
-# provisioned repository-administration credential is available; absence of that
-# credential is explicit and must never be reported as a successful live audit.
+# Repository hardening checks. The required-context candidate stays staged until
+# this job has been observed reliably on merged main and ordinary pull requests.
+# Release/publication and privileged live administration are separate boundaries.
 
 name: Hardening audit
 
@@ -21,30 +20,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # This is the staged candidate context. It never receives a repository-admin
+  # secret and therefore safely analyzes pull-request merge commits.
   audit:
     name: Hardening audit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Run merge-gate audit
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.26.3
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: v1.7.12
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Run actionlint across all workflows
+        run: actionlint -color
+
+      # This action runs without Advanced Security upload and without a token. The
+      # exact zizmor release is supplied explicitly so the scanner itself cannot drift.
+      - name: Run zizmor across all workflows
+        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        with:
+          advanced-security: false
+          online-audits: false
+          token: ''
+          version: v1.30.0
+          inputs: .github/workflows
+
+      - name: Run offline merge-gate audit
+        run: bash .github/scripts/hardening-audit.sh --mode gate --no-network
+
+  # Live readback is isolated from PR code and has an explicit manual/admin
+  # credential requirement. Missing credentials fail this scheduled/manual job;
+  # inaccessible settings are never represented as safe or empty state.
+  live-readback:
+    name: Live hardening readback
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run authoritative live readback
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           HARDENING_AUDIT_TOKEN: ${{ secrets.HARDENING_AUDIT_TOKEN }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ -n "${HARDENING_AUDIT_TOKEN:-}" ]; then
-              export GH_TOKEN="$HARDENING_AUDIT_TOKEN"
-              bash .github/scripts/hardening-audit.sh --mode report
-            else
-              echo "::warning::HARDENING_AUDIT_TOKEN is not provisioned; live ruleset/label readback is explicitly skipped."
-              bash .github/scripts/hardening-audit.sh --mode report --no-network
-            fi
-          else
-            bash .github/scripts/hardening-audit.sh --mode gate --no-network
+          if [ -z "${HARDENING_AUDIT_TOKEN:-}" ]; then
+            echo "::error::HARDENING_AUDIT_TOKEN is not provisioned; live ruleset/settings evidence is unavailable."
+            echo "::error::Provision a least-privilege repository-administration token or equivalent GitHub App credential, then rerun this audit."
+            exit 1
           fi
+          export GH_TOKEN="$HARDENING_AUDIT_TOKEN"
+          bash .github/scripts/hardening-audit.sh --mode report

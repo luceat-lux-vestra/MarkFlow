@@ -1,22 +1,7 @@
 #!/usr/bin/env bash
-#
-# Repository hardening / merge-gate drift audit.
-#
-# Detection is read-only: this script never mutates the repository, its settings, or the tracker.
-# It compares .github/merge-gate-policy.json against the workflows that actually produce the
-# contexts and, when a token is available, against the live branch ruleset.
-#
-# Usage:
-#   hardening-audit.sh [--root DIR] [--policy FILE] [--mode gate|report] [--only CHECK] [--no-network]
-#
-#   --mode gate     run only the checks the policy marks "gate" (the pull request merge gate)
-#   --mode report   run every check the policy knows about (the scheduled drift audit)
-#   --only CHECK    run a single named check regardless of its policy mode
-#   --no-network    skip checks that need the GitHub API, instead of failing them
-#
-# Exit status: 0 when no finding was produced, 1 when at least one finding was produced,
-# 2 when the audit itself could not run (which is also a failure, never a silent pass).
-
+# Read-only repository hardening and merge-gate drift audit.
+# Live checks require an explicitly designated repository-administration credential;
+# omitted privileged fields are unavailable state, never safe defaults.
 set -euo pipefail
 
 ROOT="."
@@ -24,9 +9,9 @@ POLICY=""
 MODE="report"
 ONLY=""
 NETWORK=1
+RULESET_FIXTURE=""
 
 die() { echo "hardening-audit: $*" >&2; exit 2; }
-
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) ROOT="${2:-}"; shift 2 ;;
@@ -34,394 +19,270 @@ while [ $# -gt 0 ]; do
     --mode) MODE="${2:-}"; shift 2 ;;
     --only) ONLY="${2:-}"; shift 2 ;;
     --no-network) NETWORK=0; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --ruleset-fixture) RULESET_FIXTURE="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
-
 case "$MODE" in gate|report) ;; *) die "invalid --mode: $MODE" ;; esac
 [ -d "$ROOT" ] || die "root directory not found: $ROOT"
 [ -n "$POLICY" ] || POLICY="$ROOT/.github/merge-gate-policy.json"
 [ -f "$POLICY" ] || die "merge gate policy not found: $POLICY"
+[ -z "$RULESET_FIXTURE" ] || [ -f "$RULESET_FIXTURE" ] || die "ruleset fixture not found: $RULESET_FIXTURE"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 jq -e . "$POLICY" >/dev/null 2>&1 || die "merge gate policy is not valid JSON: $POLICY"
-
 WORKFLOW_DIR="$ROOT/.github/workflows"
+[ -d "$WORKFLOW_DIR" ] || die "workflow directory not found: $WORKFLOW_DIR"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 FINDINGS=0
-finding() {
-  FINDINGS=$((FINDINGS + 1))
-  echo "FINDING [$1] $2"
-}
+finding() { FINDINGS=$((FINDINGS + 1)); echo "FINDING [$1] $2"; }
 info() { echo "  ok    [$1] $2"; }
+workflow_files() { find "$WORKFLOW_DIR" -type f \( -name '*.yml' -o -name '*.yaml' \) -print | sort; }
 
-# ---------------------------------------------------------------------------
-# Small, portable YAML probes.
-#
-# These deliberately do not implement YAML. They read the specific, conventional
-# constructs GitHub workflow files use, and they fail closed: a construct they
-# cannot find is reported as a finding rather than assumed to be fine.
-# ---------------------------------------------------------------------------
-
-# job_field <file> <job-id> <field>  ->  prints the scalar value, empty if absent
-job_field() {
-  awk -v job="$2" -v field="$3" '
-    /^jobs:[ \t]*$/ { injobs = 1; next }
-    injobs == 1 && $0 ~ /^[^ \t#]/ { injobs = 0 }
-    injobs == 1 && $0 ~ /^  [A-Za-z0-9_-]+:[ \t]*$/ {
-      line = $0; sub(/^  /, "", line); sub(/:[ \t]*$/, "", line); cur = line; next
-    }
-    injobs == 1 && cur == job && $0 ~ ("^    " field ":") {
-      line = $0; sub("^    " field ":[ \t]*", "", line); print line; exit
-    }
-  ' "$1"
-}
-
-# job_exists <file> <job-id>
-job_exists() {
+# These probes cover the conventional workflow syntax used by this repository and fail closed.
+job_block() {
   awk -v job="$2" '
-    /^jobs:[ \t]*$/ { injobs = 1; next }
-    injobs == 1 && $0 ~ /^[^ \t#]/ { injobs = 0 }
-    injobs == 1 && $0 ~ ("^  " job ":[ \t]*$") { found = 1; exit }
-    END { exit(found ? 0 : 1) }
+    /^jobs:[[:space:]]*$/ { in_jobs=1; next }
+    in_jobs && $0 ~ /^[^[:space:]#]/ { exit }
+    in_jobs && $0 ~ ("^  " job ":[[:space:]]*$") { capture=1; print; next }
+    capture && $0 ~ /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit }
+    capture { print }
   ' "$1"
 }
-
-# on_block <file>  ->  prints the workflow trigger block
-on_block() {
-  awk '
-    /^on:/ { inon = 1; print; next }
-    inon == 1 && $0 ~ /^[^ \t#]/ { inon = 0 }
-    inon == 1 { print }
-  ' "$1"
+job_exists() { [ -n "$(job_block "$1" "$2")" ]; }
+job_field() {
+  job_block "$1" "$2" | awk -v field="$3" '$0 ~ ("^    " field ":[[:space:]]*") { line=$0; sub("^    " field ":[[:space:]]*", "", line); print line; exit }'
 }
-
 unquote() {
-  local v="$1"
-  v="${v%\"}"; v="${v#\"}"
-  v="${v%\'}"; v="${v#\'}"
-  printf '%s' "$v"
+  local value="$1"
+  value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
+on_block() {
+  awk '/^on:[[:space:]]*$/ { in_on=1; print; next } in_on && $0 ~ /^[^[:space:]#]/ { exit } in_on { print }' "$1"
 }
 
-# ---------------------------------------------------------------------------
-# Checks
-# ---------------------------------------------------------------------------
+policy_array_has_unique_contexts() {
+  jq -e --arg path "$1" '((getpath(($path | split("."))) // []) | map(.context) | length) == ((getpath(($path | split("."))) // []) | map(.context) | unique | length)' "$POLICY" >/dev/null
+}
 
-# Every required context must be produced by a real job, on every pull request:
-# the producing workflow must be triggered by pull_request, must not sit behind a
-# top-level path filter, and the producing job must not be conditionally skipped.
-check_policy_producers() {
-  local n i context workflow job wf jobname cond ontext clean
-
-  n="$(jq '.required | length' "$POLICY")"
-  if [ "$n" -eq 0 ]; then
-    finding policy_producers "the policy declares no required contexts"
-    return 0
-  fi
-
-  for i in $(seq 0 $((n - 1))); do
-    context="$(jq -r ".required[$i].context" "$POLICY")"
-    workflow="$(jq -r ".required[$i].workflow" "$POLICY")"
-    job="$(jq -r ".required[$i].job" "$POLICY")"
+check_policy_shape() {
+  local clean=1 class other context workflow job wf jobname staged_count
+  for class in required staged_required advisory release_only; do
+    if ! jq -e --arg class "$class" '.[$class] | type == "array"' "$POLICY" >/dev/null; then
+      finding policy_shape "policy field '$class' is not an array"; clean=0
+    elif ! policy_array_has_unique_contexts "$class"; then
+      finding policy_shape "policy field '$class' contains duplicate contexts"; clean=0
+    fi
+  done
+  for class in required staged_required advisory release_only; do
+    while IFS= read -r context; do
+      [ -n "$context" ] || continue
+      for other in required staged_required advisory release_only; do
+        [ "$class" = "$other" ] && continue
+        if jq -e --arg other "$other" --arg context "$context" '.[$other][]?.context == $context' "$POLICY" >/dev/null; then
+          finding policy_shape "context '$context' appears in both '$class' and '$other' classifications"; clean=0
+        fi
+      done
+    done < <(jq -r --arg class "$class" '.[$class][]?.context // empty' "$POLICY")
+  done
+  staged_count="$(jq '.staged_required | map(select(.context == "Hardening audit")) | length' "$POLICY")"
+  [ "$staged_count" -eq 1 ] || { finding policy_shape "Hardening audit must remain exactly one staged_required context"; clean=0; }
+  while IFS=$'\t' read -r context workflow job; do
+    [ -n "$context" ] || continue
     wf="$ROOT/$workflow"
-    clean=1
-
-    if [ ! -f "$wf" ]; then
-      finding policy_producers "required context '$context' names a missing workflow: $workflow"
-      continue
-    fi
-    if ! job_exists "$wf" "$job"; then
-      finding policy_producers "required context '$context' names job '$job', which does not exist in $workflow"
-      continue
-    fi
-
+    if [ ! -f "$wf" ]; then finding policy_shape "staged context '$context' names missing workflow '$workflow'"; clean=0; continue; fi
+    if ! job_exists "$wf" "$job"; then finding policy_shape "staged context '$context' names missing job '$job'"; clean=0; continue; fi
     jobname="$(unquote "$(job_field "$wf" "$job" name)")"
-    if [ -z "$jobname" ]; then
-      finding policy_producers "job '$job' in $workflow has no explicit 'name:', so its check context is not stable"
-      clean=0
-    elif [ "$jobname" != "$context" ]; then
-      finding policy_producers "required context '$context' does not match the name of job '$job' in $workflow (found: '$jobname')"
-      clean=0
-    fi
+    [ "$jobname" = "$context" ] || { finding policy_shape "staged context '$context' does not match job name '$jobname'"; clean=0; }
+  done < <(jq -r '.staged_required[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+  [ "$clean" -eq 1 ] && info policy_shape "policy classifications are unique and internally consistent"
+  return 0
+}
 
-    cond="$(job_field "$wf" "$job" if)"
-    if [ -n "$cond" ]; then
-      finding policy_producers "required context '$context' is produced by job '$job' guarded by 'if: $cond'; a required check must never be skippable"
-      clean=0
-    fi
+job_is_substantive() {
+  local block="$1"
+  printf '%s\n' "$block" | grep -qE '^    steps:[[:space:]]*$' || return 1
+  printf '%s\n' "$block" | grep -qE '^        uses:[[:space:]]*[^[:space:]#]+' && return 0
+  printf '%s\n' "$block" | grep -E '^        run:[[:space:]]*' | sed -E 's/^        run:[[:space:]]*//' | grep -qvE '^(echo|printf)([[:space:]]|$)|^true$|^exit[[:space:]]+0$|^:$'
+}
 
+check_policy_producers() {
+  local n i context workflow job wf jobname block cond ontext clean
+  n="$(jq '.required | length' "$POLICY")"
+  [ "$n" -gt 0 ] || { finding policy_producers "the policy declares no required contexts"; return 0; }
+  for i in $(seq 0 $((n - 1))); do
+    context="$(jq -r ".required[$i].context" "$POLICY")"; workflow="$(jq -r ".required[$i].workflow" "$POLICY")"; job="$(jq -r ".required[$i].job" "$POLICY")"; wf="$ROOT/$workflow"; clean=1
+    if [ ! -f "$wf" ]; then finding policy_producers "required context '$context' names missing workflow '$workflow'"; continue; fi
+    if ! job_exists "$wf" "$job"; then finding policy_producers "required context '$context' names missing job '$job'"; continue; fi
+    block="$(job_block "$wf" "$job")"; jobname="$(unquote "$(job_field "$wf" "$job" name)")"
+    if [ -z "$jobname" ]; then finding policy_producers "job '$job' has no explicit name"; clean=0; elif [ "$jobname" != "$context" ]; then finding policy_producers "required context '$context' does not match job '$job' name '$jobname'"; clean=0; fi
+    if printf '%s\n' "$block" | grep -qE '^    if:'; then cond="$(printf '%s\n' "$block" | grep -m1 -E '^    if:')"; finding policy_producers "required context '$context' is conditionally skipped ($cond)"; clean=0; fi
+    if ! job_is_substantive "$block"; then finding policy_producers "required context '$context' is produced by a fake or no-op job"; clean=0; fi
     ontext="$(on_block "$wf")"
-    if ! printf '%s\n' "$ontext" | grep -qE '^[[:space:]]*pull_request:?[[:space:]]*$'; then
-      finding policy_producers "required context '$context' lives in $workflow, which is not triggered by pull_request"
-      clean=0
-    fi
-    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]*paths(-ignore)?:'; then
-      finding policy_producers "$workflow filters triggers by path; a required context must be emitted on every pull request"
-      clean=0
-    fi
-
-    if [ "$clean" -eq 1 ]; then
-      info policy_producers "'$context' <- $workflow:$job"
-    fi
+    if ! printf '%s\n' "$ontext" | grep -qE '^[[:space:]]*pull_request:?[[:space:]]*$'; then finding policy_producers "required context '$context' workflow is not triggered by pull_request"; clean=0; fi
+    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters pull_request by path"; clean=0; fi
+    [ "$clean" -eq 1 ] && info policy_producers "'$context' <- $workflow:$job"
   done
   return 0
 }
 
-# Every action must be pinned to an immutable full-length commit SHA.
 check_action_pinning() {
   local clean=1 line file ref
   while IFS= read -r line; do
-    file="${line%%:*}"
-    ref="$(printf '%s' "${line#*uses:}" | sed 's/#.*$//' | tr -d ' \t\r')"
-    case "$ref" in
-      ./*|"") continue ;;
-    esac
-    if ! printf '%s' "$ref" | grep -qE '@[0-9a-f]{40}$'; then
-      finding action_pinning "$(basename "$file") uses a mutable action ref: $ref"
-      clean=0
-    fi
-  done < <(grep -rn '^[[:space:]]*-\?[[:space:]]*uses:' "$WORKFLOW_DIR" 2>/dev/null || true)
-
-  if [ "$clean" -eq 1 ]; then
-    info action_pinning "every 'uses:' in .github/workflows is pinned to a commit SHA"
-  fi
-  return 0
+    file="${line%%:*}"; ref="$(printf '%s' "${line#*uses:}" | sed 's/#.*$//' | tr -d ' \t\r')"
+    case "$ref" in ./*|"") continue ;; esac
+    if ! printf '%s' "$ref" | grep -qE '@[0-9a-f]{40}$'; then finding action_pinning "$(basename "$file") uses mutable action ref '$ref'"; clean=0; fi
+  done < <(grep -R -nE '^[[:space:]]*(-[[:space:]]+)?uses:' "$WORKFLOW_DIR" 2>/dev/null || true)
+  [ "$clean" -eq 1 ] && info action_pinning "every workflow action uses a full immutable commit SHA"; return 0
 }
 
-# Every workflow must declare an explicit, least-privilege permissions block.
 check_workflow_permissions() {
   local clean=1 wf
-  for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
-    [ -f "$wf" ] || continue
-    if ! grep -qE '^permissions:' "$wf"; then
-      finding workflow_permissions "$(basename "$wf") declares no workflow-level 'permissions:' block"
-      clean=0
-      continue
-    fi
-    if grep -qE '^permissions:[[:space:]]*write-all' "$wf"; then
-      finding workflow_permissions "$(basename "$wf") grants 'write-all' at the workflow level"
-      clean=0
-    fi
-  done
-
-  if [ "$clean" -eq 1 ]; then
-    info workflow_permissions "every workflow declares an explicit permissions block"
-  fi
-  return 0
+  while IFS= read -r wf; do
+    if ! grep -qE '^permissions:' "$wf"; then finding workflow_permissions "$(basename "$wf") has no workflow-level permissions block"; clean=0; fi
+    if grep -qE '(^|[[:space:]])write-all([[:space:]]|$)' "$wf"; then finding workflow_permissions "$(basename "$wf") grants write-all"; clean=0; fi
+  done < <(workflow_files)
+  [ "$clean" -eq 1 ] && info workflow_permissions "every workflow has explicit non-write-all permissions"; return 0
 }
 
-# A privileged workflow must never check out or execute pull request head code.
+check_workflow_security() {
+  local clean=1 wf jobs job timeout checkout_count persist_count
+  while IFS= read -r wf; do
+    if ! grep -qE '^concurrency:' "$wf"; then finding workflow_security "$(basename "$wf") has no concurrency policy"; clean=0; fi
+    checkout_count="$(grep -cE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*actions/checkout@' "$wf" || true)"; persist_count="$(grep -cE '^[[:space:]]*persist-credentials:[[:space:]]*false[[:space:]]*$' "$wf" || true)"
+    if [ "$checkout_count" -ne "$persist_count" ]; then finding workflow_security "$(basename "$wf") does not set persist-credentials:false for every checkout"; clean=0; fi
+    jobs="$(awk '/^jobs:[[:space:]]*$/{in_jobs=1; next} in_jobs && /^[^[:space:]#]/{exit} in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/{line=$0; sub(/^  /,"",line); sub(/:[[:space:]]*$/, "", line); print line}' "$wf")"
+    while IFS= read -r job; do
+      [ -n "$job" ] || continue; timeout="$(job_field "$wf" "$job" timeout-minutes)"
+      if ! printf '%s' "$timeout" | grep -qE '^[0-9]+$' || [ "$timeout" -le 0 ]; then finding workflow_security "$(basename "$wf") job '$job' has no positive timeout-minutes"; clean=0; fi
+    done <<< "$jobs"
+  done < <(workflow_files)
+  [ "$clean" -eq 1 ] && info workflow_security "checkout credentials, timeouts, and concurrency are bounded"; return 0
+}
+
 check_privileged_workflows() {
-  local clean=1 wf
-  for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
-    [ -f "$wf" ] || continue
-    grep -qE '^[[:space:]]*pull_request_target:?' "$wf" || continue
-    if grep -qE 'ref:[[:space:]]*\$\{\{[[:space:]]*github\.(event\.pull_request\.head|head_ref)' "$wf"; then
-      finding privileged_workflows "$(basename "$wf") is a pull_request_target workflow that checks out pull request head code"
-      clean=0
-    fi
-    if grep -qE '\$\{\{[[:space:]]*secrets\.' "$wf"; then
-      finding privileged_workflows "$(basename "$wf") is a pull_request_target workflow that hands secrets to its steps"
-      clean=0
-    fi
-  done
+  local clean=1 wf ontext
+  while IFS= read -r wf; do
+    ontext="$(on_block "$wf")"; printf '%s\n' "$ontext" | grep -qE '^[[:space:]]*pull_request_target:?[[:space:]]*$' || continue
+    if grep -qE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*actions/checkout@' "$wf"; then finding privileged_workflows "$(basename "$wf") checks out code in pull_request_target"; clean=0; fi
+    if grep -qE '\$\{\{[[:space:]]*secrets\.[A-Za-z0-9_]+' "$wf"; then finding privileged_workflows "$(basename "$wf") exposes secrets in pull_request_target"; clean=0; fi
+    if grep -qE '^        run:.*\$\{\{[[:space:]]*github\.event\.pull_request\.' "$wf"; then finding privileged_workflows "$(basename "$wf") interpolates PR metadata into a privileged shell"; clean=0; fi
+  done < <(workflow_files)
+  [ "$clean" -eq 1 ] && info privileged_workflows "privileged workflows do not checkout PR code or expose secrets"; return 0
+}
 
-  if [ "$clean" -eq 1 ]; then
-    info privileged_workflows "no privileged workflow checks out pull request head code or exposes secrets"
+check_workflow_static_analysis() {
+  local audit="$WORKFLOW_DIR/hardening-audit.yml" clean=1
+  if [ ! -f "$audit" ]; then finding workflow_static_analysis "hardening-audit.yml is missing"; return 0; fi
+  grep -qE 'ACTIONLINT_VERSION:[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+' "$audit" || { finding workflow_static_analysis "actionlint release is not pinned"; clean=0; }
+  grep -qE 'go install .*github\.com/rhysd/actionlint/cmd/actionlint@\$\{ACTIONLINT_VERSION\}' "$audit" || { finding workflow_static_analysis "actionlint is not installed from the pinned release"; clean=0; }
+  grep -qE 'Run actionlint across all workflows' "$audit" || { finding workflow_static_analysis "actionlint does not cover all workflows"; clean=0; }
+  grep -qE 'zizmorcore/zizmor-action@[0-9a-f]{40}' "$audit" || { finding workflow_static_analysis "zizmor action is not pinned"; clean=0; }
+  grep -qE 'version:[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+' "$audit" || { finding workflow_static_analysis "zizmor version is not pinned"; clean=0; }
+  grep -qE 'inputs:[[:space:]]+\.github/workflows' "$audit" || { finding workflow_static_analysis "zizmor does not cover all workflows"; clean=0; }
+  grep -qE 'advanced-security:[[:space:]]+false' "$audit" || { finding workflow_static_analysis "zizmor upload mode is not explicit"; clean=0; }
+  [ "$clean" -eq 1 ] && info workflow_static_analysis "actionlint and pinned zizmor cover the complete workflow tree"; return 0
+}
+
+authoritative_live_credential() { [ -n "$RULESET_FIXTURE" ] || [ -n "${HARDENING_AUDIT_TOKEN:-}" ]; }
+read_ruleset_detail() {
+  local kind="$1" live id name
+  if [ -n "$RULESET_FIXTURE" ]; then jq -c --arg kind "$kind" '.[$kind] // empty' "$RULESET_FIXTURE"; return; fi
+  if [ "$kind" = main ]; then name="$(jq -r '.ruleset_name' "$POLICY")"; else name="$(jq -r '.release_ruleset_name' "$POLICY")"; fi
+  live="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=false" 2>/dev/null)" || return 1
+  printf '%s' "$live" | jq -e 'type == "array"' >/dev/null || return 2
+  id="$(printf '%s' "$live" | jq -r --arg name "$name" '.[] | select(.name == $name and .id != null) | .id' | head -n1)"; [ -n "$id" ] || return 3
+  gh api "repos/${GITHUB_REPOSITORY}/rulesets/$id" 2>/dev/null
+}
+validate_ruleset_common() {
+  local kind="$1" detail="$2" expected_name
+  if [ "$kind" = main ]; then expected_name="$(jq -r '.ruleset_name' "$POLICY")"; else expected_name="$(jq -r '.release_ruleset_name' "$POLICY")"; fi
+  if ! jq -e 'type == "object" and (.name | type == "string") and (.enforcement | type == "string") and (.bypass_actors | type == "array") and (.conditions.ref_name.include | type == "array") and (.rules | type == "array")' <<< "$detail" >/dev/null; then
+    finding "$kind" "live ruleset omitted an authoritative field; refusing to infer a safe default"; return 1
   fi
+  [ "$(jq -r '.name' <<< "$detail")" = "$expected_name" ] || finding "$kind" "live ruleset name does not match policy"
+  [ "$(jq -r '.enforcement' <<< "$detail")" = active ] || finding "$kind" "live ruleset is not active"
+  [ "$(jq '.bypass_actors | length' <<< "$detail")" -eq 0 ] || finding "$kind" "live ruleset has bypass actors"
+  if [ "$kind" = main ]; then jq -e '.conditions.ref_name.include | index("~DEFAULT_BRANCH") != null' <<< "$detail" >/dev/null || finding "$kind" "live main ruleset does not target ~DEFAULT_BRANCH"; else jq -e '.conditions.ref_name.include | index("~ALL") != null' <<< "$detail" >/dev/null || finding "$kind" "live release-tag ruleset does not target ~ALL"; fi
   return 0
 }
 
-# The live ruleset must require exactly the contexts the policy declares required.
 check_ruleset_sync() {
-  local branch ruleset_name live id detail want got ctx clean=1
-
-  if [ "$NETWORK" -eq 0 ]; then
-    info ruleset_sync "skipped (--no-network)"
-    return 0
-  fi
-  if ! command -v gh >/dev/null 2>&1; then
-    finding ruleset_sync "gh is required to read the live ruleset"
-    return 0
-  fi
-  if [ -z "${GITHUB_REPOSITORY:-}" ]; then
-    finding ruleset_sync "GITHUB_REPOSITORY is not set, so the live ruleset cannot be read"
-    return 0
-  fi
-
-  branch="$(jq -r '.protected_branch' "$POLICY")"
-  ruleset_name="$(jq -r '.ruleset_name' "$POLICY")"
-
-  if ! live="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=false" 2>/dev/null)"; then
-    finding ruleset_sync "could not read repository rulesets (a repository-admin token is required)"
-    return 0
-  fi
-
-  id="$(printf '%s' "$live" | jq -r --arg n "$ruleset_name" '.[] | select(.name == $n) | .id' | head -n1)"
-  if [ -z "$id" ]; then
-    finding ruleset_sync "no ruleset named '$ruleset_name' protects '$branch'"
-    return 0
-  fi
-  if ! detail="$(gh api "repos/${GITHUB_REPOSITORY}/rulesets/$id" 2>/dev/null)"; then
-    finding ruleset_sync "could not read ruleset '$ruleset_name' ($id)"
-    return 0
-  fi
-
-  if [ "$(printf '%s' "$detail" | jq -r '.enforcement')" != "active" ]; then
-    finding ruleset_sync "ruleset '$ruleset_name' is not actively enforced"
-    clean=0
-  fi
-  if [ "$(printf '%s' "$detail" | jq -r '.bypass_actors | length')" != "0" ]; then
-    finding ruleset_sync "ruleset '$ruleset_name' has bypass actors configured"
-    clean=0
-  fi
-
-  want="$(jq -r '.required[].context' "$POLICY" | sort)"
-  got="$(printf '%s' "$detail" |
-    jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' |
-    sort)"
-
-  while IFS= read -r ctx; do
-    [ -n "$ctx" ] || continue
-    if ! printf '%s\n' "$got" | grep -qxF "$ctx"; then
-      finding ruleset_sync "policy requires context '$ctx' but the live ruleset does not"
-      clean=0
-    fi
-  done <<< "$want"
-
-  while IFS= read -r ctx; do
-    [ -n "$ctx" ] || continue
-    if ! printf '%s\n' "$want" | grep -qxF "$ctx"; then
-      finding ruleset_sync "the live ruleset requires context '$ctx', which the policy does not declare"
-      clean=0
-    fi
-  done <<< "$got"
-
-  while IFS= read -r ctx; do
-    [ -n "$ctx" ] || continue
-    if printf '%s\n' "$got" | grep -qxF "$ctx"; then
-      finding ruleset_sync "advisory context '$ctx' must not be a required check"
-      clean=0
-    fi
-  done < <(jq -r '.advisory[]?.context // empty' "$POLICY")
-
-  if [ "$clean" -eq 1 ]; then
-    info ruleset_sync "live ruleset matches the policy exactly"
-  fi
-  return 0
+  local detail want got ctx clean=1
+  if [ "$NETWORK" -eq 0 ]; then info ruleset_sync "skipped (--no-network)"; return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then finding ruleset_sync "gh and GITHUB_REPOSITORY are required for live readback"; return 0; fi
+  if ! authoritative_live_credential; then finding ruleset_sync "authoritative HARDENING_AUDIT_TOKEN is unavailable; ordinary token/auth cannot prove ruleset state"; return 0; fi
+  if ! detail="$(read_ruleset_detail main)"; then finding ruleset_sync "could not read complete main ruleset"; return 0; fi
+  if ! validate_ruleset_common main "$detail"; then return 0; fi
+  jq -e '.rules | map(select(.type == "required_status_checks")) | length == 1' <<< "$detail" >/dev/null || { finding ruleset_sync "main ruleset lacks exactly one required_status_checks rule"; clean=0; }
+  jq -e '.rules[] | select(.type == "required_status_checks") | (.parameters.strict_required_status_checks_policy == true and (.parameters.required_status_checks | type == "array"))' <<< "$detail" >/dev/null || { finding ruleset_sync "main required-status-check rule is missing or not strict"; clean=0; }
+  want="$(jq -r '.required[].context' "$POLICY" | sort)"; got="$(jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context // empty' <<< "$detail" | sort)"
+  while IFS= read -r ctx; do [ -n "$ctx" ] || continue; printf '%s\n' "$got" | grep -qxF "$ctx" || { finding ruleset_sync "policy requires context '$ctx' but live main does not"; clean=0; }; done <<< "$want"
+  while IFS= read -r ctx; do [ -n "$ctx" ] || continue; printf '%s\n' "$want" | grep -qxF "$ctx" || { finding ruleset_sync "live main requires undeclared context '$ctx'"; clean=0; }; done <<< "$got"
+  [ "$clean" -eq 1 ] && info ruleset_sync "authoritative live main ruleset matches canonical policy"; return 0
 }
 
-# Every label referenced by repository automation must actually exist.
+check_release_tag_ruleset() {
+  local detail clean=1 required_type
+  if [ "$NETWORK" -eq 0 ]; then info release_tag_ruleset "skipped (--no-network)"; return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then finding release_tag_ruleset "gh and GITHUB_REPOSITORY are required for release-tag readback"; return 0; fi
+  if ! authoritative_live_credential; then finding release_tag_ruleset "authoritative HARDENING_AUDIT_TOKEN is unavailable; release-tag safety is unverified"; return 0; fi
+  if ! detail="$(read_ruleset_detail release_tag)"; then finding release_tag_ruleset "could not read complete release-tag ruleset"; return 0; fi
+  if ! validate_ruleset_common release_tag "$detail"; then return 0; fi
+  for required_type in deletion non_fast_forward; do jq -e --arg type "$required_type" '.rules | any(.type == $type)' <<< "$detail" >/dev/null || { finding release_tag_ruleset "release-tag ruleset lacks '$required_type' protection"; clean=0; }; done
+  [ "$clean" -eq 1 ] && info release_tag_ruleset "authoritative release-tag ruleset is active, immutable, and bypass-free"; return 0
+}
+
 check_label_references() {
   local refs="" existing clean=1 label
-
-  if [ "$NETWORK" -eq 0 ]; then
-    info label_references "skipped (--no-network)"
-    return 0
-  fi
-  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then
-    finding label_references "gh and GITHUB_REPOSITORY are required to list labels"
-    return 0
-  fi
-
-  if [ -f "$ROOT/.github/labeler.yml" ]; then
-    refs="$refs
-$(grep -E '^[A-Za-z][A-Za-z0-9:_-]*:[[:space:]]*$' "$ROOT/.github/labeler.yml" |
-      sed 's/:[[:space:]]*$//' |
-      grep -vE '^(changed-files-labels-limit|max-files-changed|version)$' || true)"
-  fi
-  if [ -f "$ROOT/.github/dependabot.yml" ]; then
-    refs="$refs
-$(awk '
-      /^[[:space:]]*labels:[[:space:]]*$/ { inl = 1; next }
-      inl == 1 && $0 ~ /^[[:space:]]*-[[:space:]]*/ {
-        line = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", line); print line; next
-      }
-      { inl = 0 }
-    ' "$ROOT/.github/dependabot.yml" | tr -d "\"'" || true)"
-  fi
-  if [ -d "$ROOT/.github/ISSUE_TEMPLATE" ]; then
-    refs="$refs
-$(grep -hE '^labels:' "$ROOT"/.github/ISSUE_TEMPLATE/* 2>/dev/null |
-      sed 's/^labels:[[:space:]]*//; s/[][]//g' | tr ',' '\n' | tr -d "\"'" || true)"
-  fi
-
-  refs="$(printf '%s\n' "$refs" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | sort -u || true)"
-  if [ -z "$refs" ]; then
-    info label_references "no repository automation references labels yet"
-    return 0
-  fi
-
-  if ! existing="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name --jq '.[].name' 2>/dev/null)"; then
-    finding label_references "could not list repository labels"
-    return 0
-  fi
-
-  while IFS= read -r label; do
-    [ -n "$label" ] || continue
-    if ! printf '%s\n' "$existing" | grep -qxF "$label"; then
-      finding label_references "automation references label '$label', which does not exist in the repository"
-      clean=0
-    fi
-  done <<< "$refs"
-
-  if [ "$clean" -eq 1 ]; then
-    info label_references "every label referenced by repository automation exists"
-  fi
-  return 0
+  if [ "$NETWORK" -eq 0 ]; then info label_references "skipped (--no-network)"; return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ] || ! authoritative_live_credential; then finding label_references "authoritative credential is required to verify live automation labels"; return 0; fi
+  if [ -f "$ROOT/.github/labeler.yml" ]; then refs="$refs\n$(grep -E '^[A-Za-z][A-Za-z0-9:_-]*:[[:space:]]*$' "$ROOT/.github/labeler.yml" | sed 's/:[[:space:]]*$//' | grep -vE '^(changed-files-labels-limit|max-files-changed|version)$' || true)"; fi
+  if [ -f "$ROOT/.github/dependabot.yml" ]; then refs="$refs\n$(awk '/^[[:space:]]*labels:[[:space:]]*$/ { in_labels=1; next } in_labels && $0 ~ /^[[:space:]]*-[[:space:]]*/ { line=$0; sub(/^[[:space:]]*-[[:space:]]*/, "", line); print line; next } { in_labels=0 }' "$ROOT/.github/dependabot.yml" | tr -d "\"'" || true)"; fi
+  if [ -d "$ROOT/.github/ISSUE_TEMPLATE" ]; then refs="$refs\n$(grep -hE '^labels:' "$ROOT"/.github/ISSUE_TEMPLATE/* 2>/dev/null | sed 's/^labels:[[:space:]]*//; s/[][]//g' | tr ',' '\n' | tr -d "\"'" || true)"; fi
+  refs="$(printf '%b\n' "$refs" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | sort -u || true)"
+  if ! existing="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name --jq '.[].name' 2>/dev/null)"; then finding label_references "could not read complete live label set"; return 0; fi
+  while IFS= read -r label; do [ -n "$label" ] || continue; printf '%s\n' "$existing" | grep -qxF "$label" || { finding label_references "automation references missing label '$label'"; clean=0; }; done <<< "$refs"
+  [ "$clean" -eq 1 ] && info label_references "all automation-referenced labels exist in the live repository"; return 0
 }
 
-# The negative tests live beside this script and prove the audit fails closed.
 check_negative_tests() {
-  if bash "$SCRIPT_DIR/hardening-audit-test.sh"; then
-    info negative_tests "the audit fails closed on every negative fixture"
-  else
-    finding negative_tests "the audit did not fail closed on at least one negative fixture"
-  fi
+  if bash "$SCRIPT_DIR/hardening-audit-test.sh"; then info negative_tests "all negative fixtures fail closed"; else finding negative_tests "at least one negative fixture did not fail closed"; fi
   return 0
 }
 
-# ---------------------------------------------------------------------------
-# Dispatch
-# ---------------------------------------------------------------------------
-
-ALL_CHECKS="policy_producers negative_tests ruleset_sync action_pinning workflow_permissions privileged_workflows label_references"
-
+ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows workflow_static_analysis ruleset_sync release_tag_ruleset label_references"
 should_run() {
   local name="$1" configured
-  if [ -n "$ONLY" ]; then
-    [ "$ONLY" = "$name" ]
-    return
-  fi
-  configured="$(jq -r --arg n "$name" '.checks[$n] // "report"' "$POLICY")"
-  case "$MODE" in
-    gate) [ "$configured" = "gate" ] ;;
-    report) true ;;
-  esac
+  if [ -n "$ONLY" ]; then [ "$ONLY" = "$name" ]; return; fi
+  configured="$(jq -r --arg name "$name" '.checks[$name] // "report"' "$POLICY")"
+  [ "$MODE" = report ] || [ "$configured" = gate ]
 }
-
-if [ -n "$ONLY" ]; then
-  case " $ALL_CHECKS " in
-    *" $ONLY "*) ;;
-    *) die "unknown check: $ONLY" ;;
-  esac
-fi
-
+if [ -n "$ONLY" ]; then case " $ALL_CHECKS " in *" $ONLY "*) ;; *) die "unknown check: $ONLY" ;; esac; fi
 echo "hardening-audit: root=$ROOT mode=$MODE${ONLY:+ only=$ONLY}"
 RAN=0
 for check in $ALL_CHECKS; do
   should_run "$check" || continue
   RAN=$((RAN + 1))
-  "check_$check"
+  case "$check" in
+    policy_shape) check_policy_shape ;;
+    policy_producers) check_policy_producers ;;
+    negative_tests) check_negative_tests ;;
+    action_pinning) check_action_pinning ;;
+    workflow_permissions) check_workflow_permissions ;;
+    workflow_security) check_workflow_security ;;
+    privileged_workflows) check_privileged_workflows ;;
+    workflow_static_analysis) check_workflow_static_analysis ;;
+    ruleset_sync) check_ruleset_sync ;;
+    release_tag_ruleset) check_release_tag_ruleset ;;
+    label_references) check_label_references ;;
+    *) die "internal error: unsupported check '$check'" ;;
+  esac
 done
-
 [ "$RAN" -gt 0 ] || die "no checks selected; refusing to report a pass"
-
 echo
-if [ "$FINDINGS" -eq 0 ]; then
-  echo "hardening-audit: $RAN check(s) ran, no findings."
-  exit 0
-fi
+if [ "$FINDINGS" -eq 0 ]; then echo "hardening-audit: $RAN check(s) ran, no findings."; exit 0; fi
 echo "hardening-audit: $RAN check(s) ran, $FINDINGS finding(s)."
 exit 1

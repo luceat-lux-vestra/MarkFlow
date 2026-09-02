@@ -1,18 +1,17 @@
 {
   "$comment": [
     "Canonical, machine-checkable merge-gate policy for MarkFlow-private.",
-    "This file is the single source of truth for which pull request checks are required,",
-    "which are staged for later promotion, which are advisory, and which are release-only.",
-    ".github/scripts/hardening-audit.sh compares the required set against the workflows that",
-    "actually produce those contexts and, when authenticated for repository administration,",
-    "against the live branch ruleset. A staged context is deliberately not claimed as required",
-    "until the live ruleset has been safely promoted in the same control change.",
-    "Keep this file in sync in the same pull request that changes a workflow job name."
+    "The required/advisory/staged/release-only arrays are the only policy classification.",
+    "The audit compares the required producer definitions with workflow files and, when an",
+    "explicit repository-administration credential is supplied, with the live rulesets.",
+    "A staged control is not claimed to be live or required until the corresponding evidence",
+    "and live settings change have both been completed."
   ],
-  "version": 1,
+  "version": 2,
   "repository": "luceat-lux-vestra/MarkFlow-private",
   "protected_branch": "main",
   "ruleset_name": "main protection",
+  "release_ruleset_name": "release tag immutability",
   "actions_integration_id": 15368,
 
   "required": [
@@ -32,7 +31,7 @@
       "context": "Inspect code",
       "workflow": ".github/workflows/build.yml",
       "job": "inspectCode",
-      "covers": "Qodana static analysis; this job, not the Qodana annotation check, is authoritative"
+      "covers": "Authoritative Qodana static-analysis job, including its fail-closed SARIF threshold"
     },
     {
       "context": "Verify plugin",
@@ -47,78 +46,64 @@
       "context": "Hardening audit",
       "workflow": ".github/workflows/hardening-audit.yml",
       "job": "audit",
-      "covers": "This policy vs. its workflow producers, plus the audit's own fail-closed negative tests",
-      "promotion": "After this workflow is merged and observed on main and ordinary pull requests, add this exact context to the live ruleset and move this entry to required in the same change."
+      "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
+      "promotion": "Only after this context is observed on merged main and ordinary pull requests, promote this exact context in this policy and the live main ruleset together."
     }
   ],
 
   "advisory": [
     {
       "context": "Qodana Community for JVM",
-      "reason": "Posted by the Qodana action itself and renamed with the linter edition (it has already appeared as both 'Qodana Community for JVM' and 'Qodana for JVM'). An unstable context name must never be a required check; the 'Inspect code' job is the authoritative gate."
+      "reason": "Posted by Qodana itself and not stable across linter editions; Inspect code is the authoritative required job."
     }
   ],
 
   "release_only": [
     {
-      "context": "Release draft",
-      "workflow": ".github/workflows/build.yml",
-      "job": "releaseDraft",
-      "reason": "Guarded by `if: github.event_name != 'pull_request'`, so it reports as skipped on every pull request and must never be required."
+      "context": "Publish Plugin",
+      "workflow": ".github/workflows/release.yml",
+      "job": "release",
+      "reason": "Runs only from an explicit GitHub Release event after tag/source/version/artifact preflight; it is never a pull-request merge check."
     }
   ],
 
   "checks": {
     "$comment": [
-      "Checks the audit runs. `gate` checks run on every pull request and fail the build.",
-      "`report` checks run in the scheduled drift audit only, and are staged this way when the",
-      "repository cannot pass them yet. Promoting a check is a one-word change here."
+      "gate checks are offline and run in the staged Hardening audit PR job.",
+      "report checks require authoritative live GitHub readback and run only in the scheduled/manual job.",
+      "The Hardening audit context itself remains staged_required until live promotion evidence exists."
     ],
+    "policy_shape": "gate",
     "policy_producers": "gate",
     "negative_tests": "gate",
+    "action_pinning": "gate",
+    "workflow_permissions": "gate",
+    "workflow_security": "gate",
+    "privileged_workflows": "gate",
+    "workflow_static_analysis": "gate",
     "ruleset_sync": "report",
-    "action_pinning": "report",
-    "workflow_permissions": "report",
-    "privileged_workflows": "report",
+    "release_tag_ruleset": "report",
     "label_references": "report"
   },
 
   "staged": [
     {
-      "check": "action_pinning",
-      "blocked_by": "PR #50 owns .github/workflows/build.yml and cannot be edited from this branch without conflicting.",
-      "promote_to": "gate",
-      "when": "after PR #50 and PR #53 land and every `uses:` in .github/workflows is pinned to a full 40-character commit SHA"
-    },
-    {
-      "check": "workflow_permissions",
-      "blocked_by": "build.yml declares no workflow-level `permissions:` block and is owned by PR #50.",
-      "promote_to": "gate",
-      "when": "after build.yml declares an explicit least-privilege `permissions:` block"
-    },
-    {
-      "check": "privileged_workflows",
-      "blocked_by": ".github/workflows/pr-labeler.yml is introduced by PR #53 and is not on main yet.",
-      "promote_to": "gate",
-      "when": "after PR #53 lands"
-    },
-    {
-      "check": "label_references",
-      "blocked_by": ".github/labeler.yml and the issue forms are introduced by PR #53 and are not on main yet.",
-      "promote_to": "gate",
-      "when": "after PR #53 lands"
-    },
-    {
       "check": "ruleset_sync",
-      "blocked_by": "Requires repository-administration read access; the ordinary GITHUB_TOKEN cannot read every accepted live setting.",
+      "blocked_by": "Authoritative repository-administration readback requires the explicitly provisioned HARDENING_AUDIT_TOKEN or equivalent GitHub App credential.",
       "promote_to": "gate",
-      "when": "only if a least-privilege HARDENING_AUDIT_TOKEN or equivalent GitHub App credential is provisioned; without it scheduled runs explicitly skip live readback rather than claiming success"
+      "when": "after the credential is provisioned and scheduled/manual readback proves the policy and live main ruleset agree"
+    },
+    {
+      "check": "release_tag_ruleset",
+      "blocked_by": "Release-tag protection is verified by privileged live readback and is not a pull-request merge context.",
+      "promote_to": "report",
+      "when": "on every scheduled/manual release-provenance audit"
     },
     {
       "check": "required_context_promotion",
-      "blocked_by": "'Hardening audit' is introduced by this pull request, so it is not yet required by the live ruleset.",
+      "blocked_by": "Hardening audit is intentionally staged until ordinary PR and merged-main reliability evidence exists.",
       "promote_to": "ruleset",
-      "when": "after the context is observed on main and ordinary pull requests, move it from staged_required to required while adding it to the 'main protection' ruleset"
+      "when": "after the context is observed on merged main and ordinary pull requests, add it to required and the live main ruleset in one reviewed change"
     }
   ]
 }

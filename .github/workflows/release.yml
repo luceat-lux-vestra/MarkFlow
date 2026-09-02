@@ -1,10 +1,7 @@
-# GitHub Actions Workflow created for handling the release process based on the draft release prepared with the Build workflow.
-# Running the publishPlugin task requires all the following secrets to be provided: PUBLISH_TOKEN, PRIVATE_KEY, PRIVATE_KEY_PASSWORD, CERTIFICATE_CHAIN.
-# See https://plugins.jetbrains.com/docs/intellij/plugin-signing.html for more information.
-#
-# This workflow is the publication boundary. It never runs for pull requests, and it refuses to do
-# partial work: if the signing/publishing secrets are absent, or the released tag does not point at
-# reviewed `main` history, it fails before anything is published or uploaded.
+# Explicit release/publication boundary for a manually created GitHub Release.
+# Ordinary pull-request and main validation is entirely in build.yml and never mutates
+# release or Marketplace state. This workflow fails closed on provenance ambiguity.
+# Marketplace/signing secrets are scoped only to the publication step.
 
 name: Release
 on:
@@ -24,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write        # upload release assets and push the changelog branch
-      pull-requests: write   # open the changelog pull request
+      contents: write
+      pull-requests: write
     env:
       RELEASE_VERSION: ${{ github.event.release.tag_name }}
     steps:
@@ -39,41 +36,55 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify release preconditions
+      # All API failures are fatal. In particular, an unavailable release/tag lookup
+      # must not be interpreted as an absent release or as permission to continue.
+      - name: Resolve reviewed release source
+        id: source
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-
-          missing=()
-          [ -n "${PUBLISH_TOKEN:-}" ] || missing+=("PUBLISH_TOKEN")
-          [ -n "${CERTIFICATE_CHAIN:-}" ] || missing+=("CERTIFICATE_CHAIN")
-          [ -n "${PRIVATE_KEY:-}" ] || missing+=("PRIVATE_KEY")
-          [ -n "${PRIVATE_KEY_PASSWORD:-}" ] || missing+=("PRIVATE_KEY_PASSWORD")
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Release aborted before publishing: missing repository secrets: ${missing[*]}"
+          release_json="$RUNNER_TEMP/release.json"
+          tag_ref_json="$RUNNER_TEMP/tag-ref.json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" > "$release_json"
+          jq -e --arg tag "$RELEASE_VERSION" '.tag_name == $tag and .id != null' "$release_json" >/dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_VERSION}" > "$tag_ref_json"
+          tag_type="$(jq -r '.object.type' "$tag_ref_json")"
+          tag_object="$(jq -r '.object.sha' "$tag_ref_json")"
+          if [ "$tag_type" = tag ]; then
+            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.sha')"
+            tag_commit_type="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.object.type')"
+            [ "$tag_commit_type" = commit ] || { echo "::error::Annotated tag does not resolve to a commit."; exit 1; }
+          elif [ "$tag_type" = commit ]; then
+            tag_sha="$tag_object"
+          else
+            echo "::error::Release tag resolves to unsupported object type: $tag_type"
             exit 1
           fi
-
-          if [ -z "${RELEASE_VERSION:-}" ]; then
-            echo "::error::Release aborted: the release has no tag name."
-            exit 1
-          fi
-
-          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_VERSION}" --jq '.status')"
-          case "$status" in
-            identical|behind)
-              echo "Release tag ${RELEASE_VERSION} is reachable from main (compare status: ${status})." ;;
-            *)
-              echo "::error::Release aborted: tag ${RELEASE_VERSION} is not reachable from main (compare status: ${status})."
-              exit 1 ;;
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Tag does not resolve to a full commit SHA."; exit 1; }
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::main does not resolve to a full commit SHA."; exit 1; }
+          compare_status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_VERSION}" --jq '.status')"
+          case "$compare_status" in
+            identical|behind) ;;
+            *) echo "::error::Release tag is not reachable from reviewed main (compare status: $compare_status)."; exit 1 ;;
           esac
+          identity_asset_ids="$(jq -r '.assets[]? | select(.name == "markflow-release-identity.json") | .id' "$release_json")"
+          published_identity_asset_ids="$(jq -r '.assets[]? | select(.name == "markflow-release-published.json") | .id' "$release_json")"
+          [ "$(printf '%s\n' "$identity_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple pending release identity assets exist."; exit 1; }
+          [ "$(printf '%s\n' "$published_identity_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple completed release identity assets exist."; exit 1; }
+          identity_file="$RUNNER_TEMP/existing-identity.json"
+          # Prefer the completed marker on a rerun. The pending marker is retained
+          # as an immutable audit trail and must not be mistaken for current state.
+          identity_asset_id="$(printf '%s\n' "$published_identity_asset_ids" | sed -n '1p')"
+          [ -n "$identity_asset_id" ] || identity_asset_id="$(printf '%s\n' "$identity_asset_ids" | sed -n '1p')"
+          if [ -n "$identity_asset_id" ]; then
+            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${identity_asset_id}" > "$identity_file"
+          fi
+          printf 'tag_sha=%s\nmain_sha=%s\ncompare_status=%s\nidentity_file=%s\n' "$tag_sha" "$main_sha" "$compare_status" "$identity_file" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
@@ -84,7 +95,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
-          cache-read-only: true
+          cache-disabled: true
 
       - name: Patch Changelog
         if: ${{ github.event.release.body != '' }}
@@ -92,33 +103,90 @@ jobs:
           CHANGELOG: ${{ github.event.release.body }}
         run: |
           set -euo pipefail
-          RELEASE_NOTE="./build/tmp/release_note.txt"
-          mkdir -p "$(dirname "$RELEASE_NOTE")"
-          printf '%s\n' "$CHANGELOG" > "$RELEASE_NOTE"
-          ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file="$RELEASE_NOTE"
+          release_note="$RUNNER_TEMP/release_note.txt"
+          printf '%s\n' "$CHANGELOG" > "$release_note"
+          ./gradlew patchChangelog -PbuildVersion="$RELEASE_VERSION" --release-note-file="$release_note"
 
-      # Build the exact version first. Publication is irreversible, so version/artifact
-      # identity must be proven before publishPlugin is allowed to use Marketplace credentials.
-      - name: Build and verify release artifact
+      - name: Build exact release artifact
+        id: artifact
         run: |
           set -euo pipefail
           ./gradlew buildPlugin -PbuildVersion="$RELEASE_VERSION"
           shopt -s nullglob
           artifacts=(./build/distributions/*.zip)
-          if [ "${#artifacts[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one plugin distribution, found ${#artifacts[@]}."
+          [ "${#artifacts[@]}" -eq 1 ] || { echo "::error::Expected one plugin distribution, found ${#artifacts[@]}."; exit 1; }
+          printf 'path=%s\nname=%s\n' "${artifacts[0]}" "$(basename "${artifacts[0]}")" >> "$GITHUB_OUTPUT"
+
+      # This is a local dry-run only: it reads the built archive and the API-resolved
+      # immutable source identity, and writes a pending lock manifest under RUNNER_TEMP.
+      - name: Release provenance preflight (dry-run)
+        id: preflight
+        env:
+          PREFLIGHT_ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+          PREFLIGHT_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+          PREFLIGHT_IDENTITY_FILE: ${{ steps.source.outputs.identity_file }}
+          PREFLIGHT_MAIN_SHA: ${{ steps.source.outputs.main_sha }}
+          PREFLIGHT_TAG_SHA: ${{ steps.source.outputs.tag_sha }}
+          PREFLIGHT_COMPARE_STATUS: ${{ steps.source.outputs.compare_status }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/release.json"
+          artifact_name="$PREFLIGHT_ARTIFACT_NAME"
+          artifact_present=false
+          artifact_asset_ids="$(jq -r --arg name "$artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
+          [ "$(printf '%s\n' "$artifact_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple release artifacts have the same name."; exit 1; }
+          existing_artifact_sha256=""
+          artifact_asset_id="$(printf '%s\n' "$artifact_asset_ids" | sed -n '1p')"
+          if [ -n "$artifact_asset_id" ]; then
+            artifact_present=true
+            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${artifact_asset_id}" > "$RUNNER_TEMP/existing-release-artifact.zip"
+            existing_artifact_sha256="$(sha256sum "$RUNNER_TEMP/existing-release-artifact.zip" | awk '{print $1}')"
+          fi
+          existing="$PREFLIGHT_IDENTITY_FILE"
+          args=(
+            --dry-run
+            --tag "$RELEASE_VERSION"
+            --main-sha "$PREFLIGHT_MAIN_SHA"
+            --tag-sha "$PREFLIGHT_TAG_SHA"
+            --compare-status "$PREFLIGHT_COMPARE_STATUS"
+            --artifact "$PREFLIGHT_ARTIFACT_PATH"
+            --artifact-present "$artifact_present"
+            --existing-artifact-sha256 "$existing_artifact_sha256"
+            --output-manifest "$RUNNER_TEMP/markflow-release-identity.json"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          [ -s "$existing" ] && args+=(--existing-identity "$existing") || true
+          bash .github/scripts/release-preflight.sh "${args[@]}"
+
+      - name: Verify publication credentials
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${PUBLISH_TOKEN:-}" ] || missing+=(PUBLISH_TOKEN)
+          [ -n "${CERTIFICATE_CHAIN:-}" ] || missing+=(CERTIFICATE_CHAIN)
+          [ -n "${PRIVATE_KEY:-}" ] || missing+=(PRIVATE_KEY)
+          [ -n "${PRIVATE_KEY_PASSWORD:-}" ] || missing+=(PRIVATE_KEY_PASSWORD)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Publication aborted before any Marketplace call; missing: ${missing[*]}"
             exit 1
           fi
-          name="$(basename "${artifacts[0]}")"
-          case "$name" in
-            *"$RELEASE_VERSION"*)
-              echo "Distribution ${name} matches release tag ${RELEASE_VERSION}." ;;
-            *)
-              echo "::error::Distribution ${name} does not carry the released version ${RELEASE_VERSION}."
-              exit 1 ;;
-          esac
+
+      # A pending identity asset is a publication lock. If this run fails after the
+      # lock, reruns stop instead of guessing whether Marketplace publication happened.
+      - name: Lock release identity before publication
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-identity.json"
 
       - name: Publish Plugin
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
@@ -127,36 +195,40 @@ jobs:
         run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
 
       - name: Upload Release Asset
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_VERSION" ./build/distributions/*
+          RELEASE_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+        run: gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"
 
+      - name: Mark publication complete
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          jq '.publication_state = "published"' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-published.json"
+          gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-published.json"
+
+      # Changelog PR creation remains release-only and is idempotent for a rerun that
+      # already created the deterministic branch/PR. It never runs during CI validation.
       - name: Create Pull Request
-        if: ${{ github.event.release.body != '' }}
+        if: ${{ github.event.release.body != '' && steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          BRANCH="changelog-update-$RELEASE_VERSION"
-
-          git config user.email "action@github.com"
-          git config user.name "GitHub Action"
-
-          if git diff --quiet; then
-            echo "Changelog already up to date for $RELEASE_VERSION; nothing to propose."
+          branch="changelog-update-$RELEASE_VERSION"
+          existing_prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing_prs" -gt 0 ]; then
+            echo "Changelog PR $branch already exists; leaving it unchanged."
             exit 0
           fi
-
-          git checkout -b "$BRANCH"
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          if git diff --quiet; then echo "Changelog already up to date; nothing to propose."; exit 0; fi
+          git checkout -b "$branch"
           git commit -am "docs: changelog update - $RELEASE_VERSION"
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "HEAD:refs/heads/$BRANCH"
-
-          gh pr create \
-            --title "docs: changelog update - $RELEASE_VERSION" \
-            --body "Patched \`CHANGELOG.md\` for the \`$RELEASE_VERSION\` release." \
-            --label "type:docs" \
-            --label "area:docs" \
-            --base main \
-            --head "$BRANCH"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          gh pr create --title "docs: changelog update - $RELEASE_VERSION" --body "Patched CHANGELOG.md for the $RELEASE_VERSION release." --label "type:docs" --label "area:docs" --base main --head "$branch"
