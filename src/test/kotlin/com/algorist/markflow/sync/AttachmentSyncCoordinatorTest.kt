@@ -246,6 +246,34 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertEquals(DocumentRevision.INITIAL, fidelitySession.revision)
     }
 
+    fun testInvalidMultiEditPolicyRejectionRemainsTransactionScoped() {
+        val document = document("0123456789")
+        val session = session(document)
+        val coordinator = coordinator(session, "attachment-a")
+        val detail = "transaction policy rejected the complete edit set"
+        val request = multiEditRequest(
+            attachmentId = coordinator.attachmentId,
+            requestValue = "transaction-invalid",
+            revision = session.revision,
+            edits = listOf(SourceEdit(1, 3, "AB"), SourceEdit(7, 9, "XY")),
+        )
+
+        val result = onEdtResult {
+            coordinator.apply(request) { _, _ ->
+                DocumentMutationPolicyDecision.Reject(
+                    DocumentMutationPolicyRejection.Invalid(detail),
+                )
+            }
+        }
+
+        assertEquals(
+            AttachmentMutationRejection.InvalidTransaction(detail),
+            (result as AttachmentMutationResult.Rejected).reason,
+        )
+        assertEquals("0123456789", document.text)
+        assertEquals(DocumentRevision.INITIAL, session.revision)
+    }
+
     fun testNoOpIsAcceptedUnchangedWithoutAuthoritativeEvent() {
         val document = document("same")
         val session = session(document)

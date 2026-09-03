@@ -53,7 +53,12 @@ class SourceEditCollection private constructor(
 
     override fun hashCode(): Int = edits.hashCode()
 
-    override fun toString(): String = "SourceEditCollection(edits=$edits)"
+    override fun toString(): String {
+        val summaries = edits.joinToString(prefix = "[", postfix = "]") { edit ->
+            "{range=${edit.startOffset}..${edit.endOffset}, replacementLength=${edit.replacement.length}}"
+        }
+        return "SourceEditCollection(size=${edits.size}, edits=$summaries)"
+    }
 
     companion object {
         fun of(edits: Iterable<SourceEdit>): SourceEditCollection =
@@ -117,6 +122,11 @@ sealed interface DocumentMutationRejection {
         val reason: InvalidMutationReason,
     ) : DocumentMutationRejection
 
+    /** A transaction-scoped policy rejection that has no single offending edit. */
+    data class InvalidTransaction(
+        val detail: String,
+    ) : DocumentMutationRejection
+
     data class Conflict(
         val detail: String? = null,
     ) : DocumentMutationRejection
@@ -132,7 +142,6 @@ sealed interface InvalidMutationReason {
     data object EndBeyondDocument : InvalidMutationReason
     data object UnorderedEdits : InvalidMutationReason
     data object OverlappingEdits : InvalidMutationReason
-    data class PolicyRejected(val detail: String) : InvalidMutationReason
 }
 
 /** A policy decision made after revision and range checks, but before the write command. */

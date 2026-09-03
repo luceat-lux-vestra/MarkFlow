@@ -194,7 +194,7 @@ class DocumentSession(
                 DocumentMutationPolicyDecision.Accept -> Unit
                 is DocumentMutationPolicyDecision.Reject -> {
                     return@Computable DocumentMutationResult.Rejected(
-                        decision.reason.toRejection(proposal.edits.edits.first()),
+                        decision.reason.toRejection(),
                     )
                 }
             }
@@ -335,11 +335,8 @@ private fun SourceEditCollection.orderingError(): EditOrderingError? {
     return null
 }
 
-private fun DocumentMutationPolicyRejection.toRejection(edit: SourceEdit): DocumentMutationRejection = when (this) {
-    is DocumentMutationPolicyRejection.Invalid -> DocumentMutationRejection.InvalidMutation(
-        edit = edit,
-        reason = InvalidMutationReason.PolicyRejected(detail),
-    )
+private fun DocumentMutationPolicyRejection.toRejection(): DocumentMutationRejection = when (this) {
+    is DocumentMutationPolicyRejection.Invalid -> DocumentMutationRejection.InvalidTransaction(detail)
     is DocumentMutationPolicyRejection.Conflict -> DocumentMutationRejection.Conflict(detail)
     is DocumentMutationPolicyRejection.UnsupportedFidelity ->
         DocumentMutationRejection.UnsupportedFidelity(detail)

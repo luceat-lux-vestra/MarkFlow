@@ -71,6 +71,11 @@ sealed interface AttachmentMutationRejection {
         val reason: InvalidMutationReason,
     ) : AttachmentMutationRejection
 
+    /** A transaction-scoped rejection with no single offending edit. */
+    data class InvalidTransaction(
+        val detail: String,
+    ) : AttachmentMutationRejection
+
     data class Conflict(
         val detail: String? = null,
     ) : AttachmentMutationRejection

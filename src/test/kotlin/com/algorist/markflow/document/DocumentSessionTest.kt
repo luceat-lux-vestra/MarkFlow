@@ -15,6 +15,22 @@ import java.util.concurrent.Callable
 
 class DocumentSessionTest : BasePlatformTestCase() {
 
+    fun testSourceEditCollectionStringifiesWithoutReplacementPayload() {
+        val replacement = "do-not-log-this-markdown"
+        val collection = SourceEditCollection.of(
+            listOf(
+                SourceEdit(1, 2, replacement),
+                SourceEdit(4, 4, "x"),
+            ),
+        )
+
+        val rendered = collection.toString()
+        assertTrue(replacement !in rendered)
+        assertTrue("size=2" in rendered)
+        assertTrue("range=1..2" in rendered)
+        assertTrue("replacementLength=${replacement.length}" in rendered)
+    }
+
     fun testInitialSnapshotUsesDocumentTextAndZeroRevision() {
         val document = document("hello")
         val session = session(document)
@@ -457,6 +473,35 @@ class DocumentSessionTest : BasePlatformTestCase() {
 
         assertTrue((result as DocumentMutationResult.Rejected).reason is DocumentMutationRejection.Conflict)
         assertEquals(1, policyCalls)
+        assertEquals(before, snapshot(session))
+        assertEquals("abcdef", document.text)
+    }
+
+    fun testInvalidTransactionPolicyRejectionHasNoOffendingEditProvenance() {
+        val document = document("abcdef")
+        val session = session(document)
+        val before = snapshot(session)
+        val detail = "the complete transaction is outside the supported fidelity envelope"
+
+        val result = onEdtResult {
+            session.applyWebProposal(
+                proposal(
+                    before.revision,
+                    SourceEdit(0, 1, "A"),
+                    SourceEdit(4, 6, "YZ"),
+                ),
+                policy = DocumentMutationPolicy { _, _ ->
+                    DocumentMutationPolicyDecision.Reject(
+                        DocumentMutationPolicyRejection.Invalid(detail),
+                    )
+                },
+            )
+        }
+
+        assertEquals(
+            DocumentMutationRejection.InvalidTransaction(detail),
+            (result as DocumentMutationResult.Rejected).reason,
+        )
         assertEquals(before, snapshot(session))
         assertEquals("abcdef", document.text)
     }
