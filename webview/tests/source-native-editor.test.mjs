@@ -4,6 +4,7 @@ import {resolve} from "node:path";
 import {JSDOM} from "jsdom";
 import * as ts from "typescript";
 import {test} from "node:test";
+import {forceParsing} from "@codemirror/language";
 import {EditorState} from "@codemirror/state";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -61,17 +62,19 @@ const fixture = (name) => readFileSync(
     "utf8"
 );
 
-function withCore(initialSource, callback) {
+function withCore(initialSource, callback, {recordPreviewScans = false} = {}) {
     const parent = document.createElement("div");
     document.body.append(parent);
     const proposals = [];
+    const previewScans = [];
     const core = new SourceNativeEditorCore({
         parent,
         initialSource,
-        onLocalChange: (proposal) => proposals.push(proposal)
+        onLocalChange: (proposal) => proposals.push(proposal),
+        onPreviewRangeScanned: recordPreviewScans ? (range) => previewScans.push(range) : undefined
     });
     try {
-        return callback({core, parent, proposals});
+        return callback({core, parent, proposals, previewScans});
     } finally {
         core.dispose();
         parent.remove();
@@ -222,6 +225,52 @@ test("preview decoration removal follows a source edit without extra mutation", 
             changes: [{from: 0, to: 4, inserted: "plain"}]
         }]);
     });
+});
+
+test("a small edit in a long document scans only its bounded preview range", () => {
+    const source = [
+        "first *edit target*",
+        ...Array.from({length: 4000}, (_, index) => `unrelated line ${index} **strong**`)
+    ].join("\n");
+    const target = "edit target";
+    const from = source.indexOf(target);
+    assert.notEqual(from, -1);
+
+    withCore(source, ({core, proposals, previewScans}) => {
+        const scanCountBeforeEdit = previewScans.length;
+        assert.ok(scanCountBeforeEdit > 0);
+
+        core.view.dispatch({
+            changes: {from, to: from + target.length, insert: "changed target"},
+            userEvent: "input.type"
+        });
+
+        const editScans = previewScans.slice(scanCountBeforeEdit);
+        assert.equal(core.source, source.replace(target, "changed target"));
+        assert.equal(editScans.length, 1);
+        assert.ok(editScans[0].to - editScans[0].from < 4096);
+        assert.ok(editScans[0].to - editScans[0].from < source.length / 10);
+        assert.deepEqual(proposals[0].changes, [{
+            from,
+            to: from + target.length,
+            inserted: "changed target"
+        }]);
+    }, {recordPreviewScans: true});
+});
+
+test("parser progress refreshes only visible preview ranges without source mutation", () => {
+    const source = Array.from({length: 4000}, (_, index) => `line ${index} *emphasis*`).join("\n");
+
+    withCore(source, ({core, proposals, previewScans}) => {
+        const scanCountBeforeParsing = previewScans.length;
+        assert.equal(forceParsing(core.view, 6000), true);
+
+        const parserScans = previewScans.slice(scanCountBeforeParsing);
+        assert.ok(parserScans.length > 0);
+        assert.ok(parserScans.every((range) => range.to - range.from < 1000));
+        assert.equal(core.source, source);
+        assert.deepEqual(proposals, []);
+    }, {recordPreviewScans: true});
 });
 
 test("cursor and edit behavior remains source-coordinate based inside a marked range", () => {

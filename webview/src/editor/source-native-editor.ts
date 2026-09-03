@@ -3,11 +3,11 @@ import {syntaxTree} from "@codemirror/language";
 import {
     Annotation,
     EditorState,
-    StateEffect,
-    StateField
+    StateEffect
 } from "@codemirror/state";
 import type {ChangeSet, Range} from "@codemirror/state";
-import {Decoration, EditorView} from "@codemirror/view";
+import {Decoration, EditorView, ViewPlugin} from "@codemirror/view";
+import type {ViewUpdate} from "@codemirror/view";
 
 /**
  * A source edit uses the UTF-16 offsets used by JavaScript strings and by the
@@ -30,10 +30,20 @@ export interface SourceNativeEditorOptions {
     readonly parent: Element;
     readonly initialSource: string;
     readonly onLocalChange: (change: SourceChangeTransaction) => void;
+    /**
+     * Optional diagnostic observation of the bounded syntax ranges inspected
+     * by the representative preview. This is not part of source correctness
+     * or host transport.
+     */
+    readonly onPreviewRangeScanned?: (range: PreviewScanRange) => void;
+}
+
+export interface PreviewScanRange {
+    readonly from: number;
+    readonly to: number;
 }
 
 const hostOrigin = Annotation.define<true>();
-const refreshPreview = StateEffect.define<void>();
 
 const sourceNativeTheme = EditorView.baseTheme({
     ".cm-source-native-emphasis": {
@@ -44,37 +54,165 @@ const sourceNativeTheme = EditorView.baseTheme({
     }
 });
 
-function buildPreviewDecorations(state: EditorState): DecorationSet {
-    const ranges: Range<Decoration>[] = [];
-
-    syntaxTree(state).iterate({
-        enter(node) {
-            const className = node.name === "Emphasis"
-                ? "cm-source-native-emphasis"
-                : node.name === "StrongEmphasis"
-                    ? "cm-source-native-strong"
-                    : undefined;
-            if (className !== undefined) {
-                ranges.push(Decoration.mark({class: className}).range(node.from, node.to));
-            }
-        }
-    });
-
-    return Decoration.set(ranges, true);
-}
+const refreshPreview = StateEffect.define<void>();
+const PREVIEW_CONTEXT_LINES = 1;
 
 type DecorationSet = ReturnType<typeof Decoration.set>;
 
-const previewDecorations = StateField.define<DecorationSet>({
-    create: buildPreviewDecorations,
-    update(value, transaction) {
-        if (transaction.docChanged || transaction.effects.some((effect) => effect.is(refreshPreview))) {
-            return buildPreviewDecorations(transaction.state);
+function mergeRanges(ranges: readonly PreviewScanRange[]): PreviewScanRange[] {
+    const sorted = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
+    const merged: PreviewScanRange[] = [];
+
+    for (const range of sorted) {
+        const previous = merged.at(-1);
+        if (previous === undefined || range.from > previous.to) {
+            merged.push({from: range.from, to: range.to});
+        } else if (range.to > previous.to) {
+            merged[merged.length - 1] = {from: previous.from, to: range.to};
         }
-        return value;
-    },
-    provide: (field) => EditorView.decorations.from(field)
-});
+    }
+
+    return merged;
+}
+
+function expandToPreviewRange(state: EditorState, range: PreviewScanRange): PreviewScanRange {
+    const from = Math.max(0, Math.min(range.from, state.doc.length));
+    const to = Math.max(from, Math.min(range.to, state.doc.length));
+    const firstLine = state.doc.lineAt(from);
+    const lastLine = state.doc.lineAt(to);
+    const firstLineNumber = Math.max(1, firstLine.number - PREVIEW_CONTEXT_LINES);
+    const lastLineNumber = Math.min(state.doc.lines, lastLine.number + PREVIEW_CONTEXT_LINES);
+
+    return {
+        from: state.doc.line(firstLineNumber).from,
+        to: state.doc.line(lastLineNumber).to
+    };
+}
+
+function expandToPreviewRanges(state: EditorState, ranges: readonly PreviewScanRange[]): PreviewScanRange[] {
+    return mergeRanges(ranges.map((range) => expandToPreviewRange(state, range)));
+}
+
+function visiblePreviewRanges(view: EditorView): PreviewScanRange[] {
+    return expandToPreviewRanges(view.state, view.visibleRanges);
+}
+
+function changedPreviewRanges(state: EditorState, changes: ChangeSet): PreviewScanRange[] {
+    const ranges: PreviewScanRange[] = [];
+    changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+        ranges.push({from: fromB, to: toB});
+    }, true);
+    return expandToPreviewRanges(state, ranges);
+}
+
+function overlaps(left: PreviewScanRange, right: PreviewScanRange): boolean {
+    return left.from < right.to && right.from < left.to;
+}
+
+function previewClassName(nodeName: string): string | undefined {
+    return nodeName === "Emphasis"
+        ? "cm-source-native-emphasis"
+        : nodeName === "StrongEmphasis"
+            ? "cm-source-native-strong"
+            : undefined;
+}
+
+function buildPreviewDecorations(
+    state: EditorState,
+    scanRanges: readonly PreviewScanRange[],
+    onPreviewRangeScanned?: (range: PreviewScanRange) => void
+): Range<Decoration>[] {
+    const decorations: Range<Decoration>[] = [];
+
+    for (const range of scanRanges) {
+        onPreviewRangeScanned?.(range);
+        syntaxTree(state).iterate({
+            from: range.from,
+            to: range.to,
+            enter(node) {
+                const className = previewClassName(node.name);
+                if (className !== undefined && node.from >= range.from && node.to <= range.to) {
+                    decorations.push(Decoration.mark({class: className}).range(node.from, node.to));
+                }
+            }
+        });
+    }
+
+    return decorations;
+}
+
+function removePreviewDecorations(value: DecorationSet, ranges: readonly PreviewScanRange[]): DecorationSet {
+    let result = value;
+    for (const range of ranges) {
+        result = result.update({
+            filter: (from, to) => !overlaps({from, to}, range),
+            filterFrom: range.from,
+            filterTo: range.to
+        });
+    }
+    return result;
+}
+
+function retainVisiblePreviewDecorations(
+    value: DecorationSet,
+    visibleRanges: readonly PreviewScanRange[],
+    documentLength: number
+): DecorationSet {
+    return value.update({
+        filter: (from, to) => visibleRanges.some((range) => overlaps({from, to}, range)),
+        filterFrom: 0,
+        filterTo: documentLength
+    });
+}
+
+function createPreviewPlugin(
+    onPreviewRangeScanned?: (range: PreviewScanRange) => void
+) {
+    return ViewPlugin.fromClass(class {
+        decorations: DecorationSet;
+
+        constructor(view: EditorView) {
+            this.decorations = Decoration.set(buildPreviewDecorations(
+                view.state,
+                visiblePreviewRanges(view),
+                onPreviewRangeScanned
+            ), true);
+        }
+
+        update(update: ViewUpdate): void {
+            const visibleRanges = visiblePreviewRanges(update.view);
+            const containsLocalDocumentChange = update.transactions.some((transaction) =>
+                transaction.docChanged && transaction.annotation(hostOrigin) !== true
+            );
+            const invalidated = update.docChanged && containsLocalDocumentChange
+                ? changedPreviewRanges(update.state, update.changes)
+                : [];
+            const refreshRequested = update.transactions.some((transaction) =>
+                transaction.effects.some((effect) => effect.is(refreshPreview))
+            );
+            const parserOrStateProgressed = !update.docChanged && update.transactions.length > 0;
+            const refreshVisibleRanges = update.viewportChanged || refreshRequested || parserOrStateProgressed;
+            if (update.docChanged || refreshVisibleRanges) {
+                invalidated.push(...visibleRanges);
+            }
+
+            const ranges = mergeRanges(invalidated);
+            if (ranges.length === 0) {
+                return;
+            }
+
+            const mapped = this.decorations.map(update.changes);
+            const withoutInvalidated = removePreviewDecorations(mapped, ranges);
+            const additions = buildPreviewDecorations(update.state, ranges, onPreviewRangeScanned);
+            const withAdditions = withoutInvalidated.update({add: additions, sort: true});
+            this.decorations = retainVisiblePreviewDecorations(
+                withAdditions,
+                visibleRanges,
+                update.state.doc.length
+            );
+        }
+    }, {decorations: (value) => value.decorations});
+}
 
 function extractSourceChanges(changeSet: ChangeSet): SourceChangeTransaction | null {
     if (changeSet.empty) {
@@ -109,12 +247,13 @@ export class SourceNativeEditorCore {
             state: EditorState.create({
                 doc: options.initialSource,
                 extensions: [
-                    // The default recognizes CRLF/CR and canonicalizes them to LF.
-                    // LF-only recognition retains CRLF source characters and their
-                    // UTF-16 positions for the host logical-text boundary.
+                    // A default EditorState recognizes CRLF/CR and canonicalizes
+                    // them to LF. LF-only recognition retains CRLF source
+                    // characters and their UTF-16 positions for the host
+                    // logical-text boundary.
                     EditorState.lineSeparator.of("\n"),
                     markdown(),
-                    previewDecorations,
+                    createPreviewPlugin(options.onPreviewRangeScanned),
                     sourceNativeTheme,
                     EditorView.updateListener.of((update) => {
                         if (this.disposed || !update.docChanged) {
@@ -167,7 +306,7 @@ export class SourceNativeEditorCore {
         });
     }
 
-    /** Rebuild view-only Markdown decorations without changing source text. */
+    /** Refresh visible view-only Markdown decorations without changing source text. */
     refreshPreview(): void {
         if (!this.disposed) {
             this.view.dispatch({effects: refreshPreview.of(undefined)});
