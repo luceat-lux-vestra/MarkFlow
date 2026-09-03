@@ -1,12 +1,15 @@
 package com.algorist.markflow.document
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.openapi.util.Disposer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.Callable
 
 class DocumentSessionTest : BasePlatformTestCase() {
 
@@ -17,7 +20,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
         assertEquals(DocumentRevision.INITIAL, session.revision)
         assertEquals(
             AuthoritativeDocumentSnapshot(DocumentRevision.INITIAL, "hello"),
-            session.authoritativeSnapshot(),
+            snapshot(session),
         )
         assertNull(session.lastAuthoritativeMutation)
     }
@@ -55,11 +58,135 @@ class DocumentSessionTest : BasePlatformTestCase() {
         assertEquals(MutationOrigin.WEB, session.lastAuthoritativeMutation?.origin)
     }
 
+    fun testAuthoritativeObservationIsExactlyOnceOrderedAndSnapshotConsistent() {
+        val document = document("abc")
+        val session = session(document)
+        val observed = mutableListOf<AuthoritativeDocumentMutation>()
+        val owner = listenerOwner()
+
+        onEdt {
+            session.addMutationListener(
+                AuthoritativeDocumentMutationListener { observed += it },
+                owner,
+            )
+        }
+
+        writeDocument { document.replaceString(0, 1, "x") }
+        writeDocument { document.replaceString(1, 2, "y") }
+
+        assertEquals(listOf(DocumentRevision(1), DocumentRevision(2)), observed.map { it.revision })
+        assertEquals(listOf(MutationOrigin.IDE_HOST, MutationOrigin.IDE_HOST), observed.map { it.origin })
+        assertEquals(SourceEdit(0, 1, "x"), observed[0].edit)
+        assertEquals(SourceEdit(1, 2, "y"), observed[1].edit)
+        assertEquals(AuthoritativeDocumentSnapshot(DocumentRevision(1), "xbc"), observed[0].snapshot)
+        assertEquals(AuthoritativeDocumentSnapshot(DocumentRevision(2), "xyc"), observed[1].snapshot)
+
+        onEdt { Disposer.dispose(owner) }
+    }
+
+    fun testAcceptedWebMutationEmitsOneAuthoritativeObservationBeforeResult() {
+        val document = document("abc")
+        val session = session(document)
+        val observed = mutableListOf<AuthoritativeDocumentMutation>()
+        val owner = listenerOwner()
+
+        onEdt {
+            session.addMutationListener(
+                AuthoritativeDocumentMutationListener { observed += it },
+                owner,
+            )
+        }
+        val result = onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(1, 2, "X")),
+            )
+        } as DocumentMutationResult.Accepted
+
+        assertEquals(1, observed.size)
+        assertEquals(result.snapshot, observed.single().snapshot)
+        assertEquals(result.snapshot.revision, observed.single().revision)
+        assertEquals(MutationOrigin.WEB, observed.single().origin)
+        assertEquals(SourceEdit(1, 2, "X"), observed.single().edit)
+
+        onEdt { Disposer.dispose(owner) }
+    }
+
+    fun testNoOpAndRejectedProposalsEmitNoAuthoritativeObservation() {
+        val document = document("abc")
+        val session = session(document)
+        val observed = mutableListOf<AuthoritativeDocumentMutation>()
+        val owner = listenerOwner()
+
+        onEdt {
+            session.addMutationListener(
+                AuthoritativeDocumentMutationListener { observed += it },
+                owner,
+            )
+        }
+
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(0, 3, "abc")),
+            )
+        }
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(-1, 1, "x")),
+            )
+        }
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(0, 3, "x")),
+                policy = DocumentMutationPolicy { _, _ ->
+                    DocumentMutationPolicyDecision.Reject(
+                        DocumentMutationPolicyRejection.UnsupportedFidelity("unsupported"),
+                    )
+                },
+            )
+        }
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(0, 3, "x")),
+                policy = DocumentMutationPolicy { _, _ ->
+                    DocumentMutationPolicyDecision.Reject(
+                        DocumentMutationPolicyRejection.Conflict("conflict"),
+                    )
+                },
+            )
+        }
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(0, 1, "x")),
+            )
+        }
+        onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(DocumentRevision.INITIAL, SourceEdit(0, 1, "y")),
+            )
+        }
+
+        assertEquals(1, observed.size)
+        assertEquals(DocumentRevision(1), observed.single().revision)
+        assertEquals("xbc", observed.single().snapshot.text)
+        assertEquals(DocumentRevision(1), session.revision)
+
+        onEdt { Disposer.dispose(owner) }
+    }
+
+    fun testLiveSnapshotRejectsBackgroundReadWithoutIntellijAccess() {
+        val session = session(document("abc"))
+        val failure = ApplicationManager.getApplication().executeOnPooledThread(Callable {
+            runCatching { session.authoritativeSnapshot() }.exceptionOrNull()
+        }).get()
+
+        assertNotNull(failure)
+    }
+
     fun testStaleProposalIsTypedAndLeavesDocumentAndRevisionUnchanged() {
         val document = document("abc")
         val session = session(document)
         writeDocument { document.replaceString(0, 3, "new") }
-        val before = session.authoritativeSnapshot()
+        val before = snapshot(session)
 
         val result = onEdtResult {
             session.applyWebProposal(
@@ -80,7 +207,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
     fun testInvalidRangeIsTypedAndLeavesDocumentAndRevisionUnchanged() {
         val document = document("abc")
         val session = session(document)
-        val before = session.authoritativeSnapshot()
+        val before = snapshot(session)
 
         val result = onEdtResult {
             session.applyWebProposal(
@@ -94,14 +221,14 @@ class DocumentSessionTest : BasePlatformTestCase() {
         val rejected = result as DocumentMutationResult.Rejected
         val rejection = rejected.reason as DocumentMutationRejection.InvalidMutation
         assertEquals(InvalidMutationReason.NegativeStartOffset, rejection.reason)
-        assertEquals(before, session.authoritativeSnapshot())
+        assertEquals(before, snapshot(session))
         assertEquals("abc", document.text)
     }
 
     fun testFidelityRejectionIsTypedAndLeavesDocumentAndRevisionUnchanged() {
         val document = document("abc")
         val session = session(document)
-        val before = session.authoritativeSnapshot()
+        val before = snapshot(session)
 
         val result = onEdtResult {
             session.applyWebProposal(
@@ -116,14 +243,14 @@ class DocumentSessionTest : BasePlatformTestCase() {
 
         val rejected = result as DocumentMutationResult.Rejected
         assertTrue(rejected.reason is DocumentMutationRejection.UnsupportedFidelity)
-        assertEquals(before, session.authoritativeSnapshot())
+        assertEquals(before, snapshot(session))
         assertEquals("abc", document.text)
     }
 
     fun testConflictRejectionSeamIsTypedAndLeavesDocumentAndRevisionUnchanged() {
         val document = document("abc")
         val session = session(document)
-        val before = session.authoritativeSnapshot()
+        val before = snapshot(session)
 
         val result = onEdtResult {
             session.applyWebProposal(
@@ -138,7 +265,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
 
         val rejected = result as DocumentMutationResult.Rejected
         assertTrue(rejected.reason is DocumentMutationRejection.Conflict)
-        assertEquals(before, session.authoritativeSnapshot())
+        assertEquals(before, snapshot(session))
         assertEquals("abc", document.text)
     }
 
@@ -266,6 +393,13 @@ class DocumentSessionTest : BasePlatformTestCase() {
             com.intellij.openapi.util.Disposer.register(testRootDisposable, it)
         }
     }
+
+    private fun listenerOwner(): Disposable = object : Disposable {
+        override fun dispose() = Unit
+    }.also { Disposer.register(testRootDisposable, it) }
+
+    private fun snapshot(session: DocumentSession): AuthoritativeDocumentSnapshot =
+        onEdtResult(session::authoritativeSnapshot)
 
     private fun writeDocument(mutation: () -> Unit) {
         onEdt {

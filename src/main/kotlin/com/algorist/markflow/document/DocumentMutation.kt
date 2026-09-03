@@ -42,7 +42,19 @@ data class AuthoritativeDocumentMutation(
     val revision: DocumentRevision,
     val origin: MutationOrigin,
     val edit: SourceEdit,
+    /**
+     * The authoritative snapshot produced synchronously with the DocumentEvent.
+     *
+     * Consumers can reconcile from this immutable value without reading the live IntelliJ
+     * Document from an arbitrary callback thread.
+     */
+    val snapshot: AuthoritativeDocumentSnapshot,
 )
+
+/** Receives one synchronous authoritative mutation transition from a DocumentSession. */
+fun interface AuthoritativeDocumentMutationListener {
+    fun onMutation(mutation: AuthoritativeDocumentMutation)
+}
 
 /** Result of applying a document-domain web proposal. */
 sealed interface DocumentMutationResult {

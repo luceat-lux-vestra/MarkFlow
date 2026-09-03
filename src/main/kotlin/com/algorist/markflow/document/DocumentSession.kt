@@ -8,6 +8,9 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
+import com.intellij.openapi.util.Disposer
+import java.lang.ref.WeakReference
+import java.util.LinkedHashSet
 
 /**
  * Document-domain authority for one IntelliJ [Document] relationship.
@@ -35,6 +38,8 @@ class DocumentSession(
     @Volatile
     private var lastMutation: AuthoritativeDocumentMutation? = null
 
+    private val mutationListeners = LinkedHashSet<MutationSubscription>()
+
     /** Only used synchronously while the current thread performs one document mutation. */
     private val mutationOriginContext = ThreadLocal<MutationOrigin?>()
 
@@ -47,8 +52,7 @@ class DocumentSession(
             if (event.oldFragment.toString() == event.newFragment.toString()) return
 
             val nextRevision = currentRevision.next()
-            currentRevision = nextRevision
-            lastMutation = AuthoritativeDocumentMutation(
+            val mutation = AuthoritativeDocumentMutation(
                 revision = nextRevision,
                 origin = mutationOriginContext.get() ?: originResolver.resolve(event),
                 edit = SourceEdit(
@@ -56,7 +60,17 @@ class DocumentSession(
                     endOffset = event.offset + event.oldLength,
                     replacement = event.newFragment.toString(),
                 ),
+                snapshot = AuthoritativeDocumentSnapshot(
+                    revision = nextRevision,
+                    text = document.text,
+                ),
             )
+            currentRevision = nextRevision
+            lastMutation = mutation
+            val listeners = synchronized(mutationListeners) { mutationListeners.toList() }
+            listeners.forEach { subscription ->
+                subscription.notify(mutation)
+            }
         }
     }
 
@@ -75,16 +89,48 @@ class DocumentSession(
     val lastAuthoritativeMutation: AuthoritativeDocumentMutation?
         get() = lastMutation
 
+    /** True after this session's document listener and observation subscriptions are disposed. */
+    val isDisposed: Boolean
+        get() = disposed
+
+    /**
+     * Register a synchronous observer owned by [parentDisposable].
+     *
+     * The callback runs on the same thread as the authoritative IntelliJ DocumentEvent, after
+     * the session has advanced its revision and created the matching immutable snapshot. The
+     * normal integration contract is EDT-owned document mutation and subscription lifecycle;
+     * the callback must use [AuthoritativeDocumentMutation.snapshot] instead of reading the live
+     * Document unless it establishes IntelliJ read access itself.
+     */
+    fun addMutationListener(
+        listener: AuthoritativeDocumentMutationListener,
+        parentDisposable: Disposable,
+    ) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(!disposed) { "DocumentSession is disposed" }
+
+        val subscription = MutationSubscription(this, listener)
+        synchronized(mutationListeners) {
+            mutationListeners.add(subscription)
+        }
+        Disposer.register(parentDisposable, subscription)
+    }
+
     /**
      * Read a fresh immutable snapshot from the live IntelliJ Document.
      *
-     * Callers should use this on the EDT or under the IntelliJ read access appropriate to their
-     * integration. No source text is retained as a competing authority by this session.
+     * This method requires the EDT or an IntelliJ read-access context and fails fast otherwise.
+     * No source text is retained as a competing authority by this session. Observers should
+     * prefer the snapshot carried by [AuthoritativeDocumentMutation] when they are not already
+     * inside a platform access context.
      */
-    fun authoritativeSnapshot(): AuthoritativeDocumentSnapshot = AuthoritativeDocumentSnapshot(
-        revision = currentRevision,
-        text = document.text,
-    )
+    fun authoritativeSnapshot(): AuthoritativeDocumentSnapshot {
+        ApplicationManager.getApplication().assertReadAccessAllowed()
+        return AuthoritativeDocumentSnapshot(
+            revision = currentRevision,
+            text = document.text,
+        )
+    }
 
     /**
      * Apply one WEB proposal using normal IntelliJ command/undo semantics.
@@ -187,10 +233,43 @@ class DocumentSession(
         }
     }
 
+    private fun removeMutationListener(subscription: MutationSubscription) {
+        synchronized(mutationListeners) {
+            mutationListeners.remove(subscription)
+        }
+    }
+
     override fun dispose() {
         if (disposed) return
         disposed = true
+        synchronized(mutationListeners) {
+            mutationListeners.forEach(MutationSubscription::invalidate)
+            mutationListeners.clear()
+        }
         mutationOriginContext.remove()
+    }
+
+    private class MutationSubscription(
+        session: DocumentSession,
+        private val listener: AuthoritativeDocumentMutationListener,
+    ) : Disposable {
+        private val sessionReference = WeakReference(session)
+        @Volatile
+        private var disposed = false
+
+        fun notify(mutation: AuthoritativeDocumentMutation) {
+            if (!disposed) listener.onMutation(mutation)
+        }
+
+        fun invalidate() {
+            disposed = true
+        }
+
+        override fun dispose() {
+            if (disposed) return
+            disposed = true
+            sessionReference.get()?.removeMutationListener(this)
+        }
     }
 }
 
