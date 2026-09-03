@@ -1,7 +1,6 @@
 package com.algorist.markflow.sync
 
 import com.algorist.markflow.document.AuthoritativeDocumentMutation
-import com.algorist.markflow.document.AuthoritativeDocumentMutationListener
 import com.algorist.markflow.document.DocumentMutationPolicy
 import com.algorist.markflow.document.DocumentMutationRejection
 import com.algorist.markflow.document.DocumentMutationResult
@@ -10,7 +9,6 @@ import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.MutationOrigin
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import java.util.LinkedHashSet
 
 /**
  * Attachment-lifetime coordinator for one consumer of an existing [DocumentSession] authority.
@@ -23,9 +21,20 @@ class AttachmentSyncCoordinator(
     val attachmentId: AttachmentId,
     internal val documentSession: DocumentSession,
 ) : Disposable {
-    private val seenRequestIds = LinkedHashSet<RequestId>()
+    /**
+     * Duplicate identity is bounded by the request lifecycle, not an ever-growing history.
+     * A source-changing replay is fenced by its stale base revision before mutation; the last
+     * completed identity is retained only to classify an immediate duplicate, including an
+     * unchanged no-op.
+     */
+    private var inFlightRequestId: RequestId? = null
+    private var lastCompletedRequestId: RequestId? = null
     private var disposed = false
-    private val activeRequestId = ThreadLocal<RequestId?>()
+    private val activeRequestIdContext = ThreadLocal<RequestId?>()
+
+    /** Deterministic resource evidence: at most one terminal request identity is retained. */
+    internal val retainedRequestIdentityCount: Int
+        get() = if (lastCompletedRequestId == null) 0 else 1
 
     val isDisposed: Boolean
         get() = disposed
@@ -53,31 +62,37 @@ class AttachmentSyncCoordinator(
                 reason = AttachmentMutationRejection.WrongAttachment(request.attachmentId),
             )
         }
-        if (!seenRequestIds.add(request.requestId)) {
+        if (request.requestId == inFlightRequestId || request.requestId == lastCompletedRequestId) {
             return AttachmentMutationResult.Rejected(
                 requestId = request.requestId,
                 reason = AttachmentMutationRejection.DuplicateRequest,
             )
         }
 
-        val boundError = AttachmentProtocolBounds.validate(request.edits)
-        if (boundError != null) {
-            return AttachmentMutationResult.Rejected(
-                requestId = request.requestId,
-                reason = AttachmentMutationRejection.InvalidTransaction(boundError),
-            )
+        inFlightRequestId = request.requestId
+        return try {
+            val boundError = AttachmentProtocolBounds.validate(request.edits)
+            if (boundError != null) {
+                AttachmentMutationResult.Rejected(
+                    requestId = request.requestId,
+                    reason = AttachmentMutationRejection.InvalidTransaction(boundError),
+                )
+            } else {
+                val documentResult = withActiveRequest(request.requestId) {
+                    documentSession.applyWebProposal(
+                        proposal = DocumentMutationProposal(
+                            baseDocumentRevision = request.baseDocumentRevision,
+                            edits = request.edits,
+                        ),
+                        policy = policy,
+                    )
+                }
+                documentResult.toSyncResult(request.requestId)
+            }
+        } finally {
+            inFlightRequestId = null
+            lastCompletedRequestId = request.requestId
         }
-
-        val documentResult = withActiveRequest(request.requestId) {
-            documentSession.applyWebProposal(
-                proposal = DocumentMutationProposal(
-                    baseDocumentRevision = request.baseDocumentRevision,
-                    edits = request.edits,
-                ),
-                policy = policy,
-            )
-        }
-        return documentResult.toSyncResult(request.requestId)
     }
 
     /** Invalidates this attachment. The consumed [DocumentSession] is owned elsewhere. */
@@ -85,7 +100,8 @@ class AttachmentSyncCoordinator(
         assertEdt()
         if (disposed) return
         disposed = true
-        seenRequestIds.clear()
+        inFlightRequestId = null
+        lastCompletedRequestId = null
     }
 
     private fun assertEdt() {
@@ -93,15 +109,15 @@ class AttachmentSyncCoordinator(
     }
 
     internal fun suppressOwnWebMutation(mutation: AuthoritativeDocumentMutation): Boolean =
-        mutation.origin == MutationOrigin.WEB && activeRequestId.get() != null
+        mutation.origin == MutationOrigin.WEB && activeRequestIdContext.get() != null
 
     private fun <T> withActiveRequest(requestId: RequestId, action: () -> T): T {
-        val previous = activeRequestId.get()
-        activeRequestId.set(requestId)
+        val previous = activeRequestIdContext.get()
+        activeRequestIdContext.set(requestId)
         return try {
             action()
         } finally {
-            if (previous == null) activeRequestId.remove() else activeRequestId.set(previous)
+            if (previous == null) activeRequestIdContext.remove() else activeRequestIdContext.set(previous)
         }
     }
 }
@@ -119,14 +135,11 @@ class AttachmentHostUpdateBinding(
 
     init {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        coordinator.documentSession.addMutationListener(
-            AuthoritativeDocumentMutationListener { mutation ->
-                if (!disposed && !coordinator.isDisposed && !coordinator.suppressOwnWebMutation(mutation)) {
-                    onUpdate(AuthoritativeHostUpdate.from(coordinator.attachmentId, mutation))
-                }
-            },
-            this,
-        )
+        coordinator.documentSession.addMutationListener({ mutation ->
+            if (!disposed && !coordinator.isDisposed && !coordinator.suppressOwnWebMutation(mutation)) {
+                onUpdate(AuthoritativeHostUpdate.from(coordinator.attachmentId, mutation))
+            }
+        }, this)
     }
 
     override fun dispose() {

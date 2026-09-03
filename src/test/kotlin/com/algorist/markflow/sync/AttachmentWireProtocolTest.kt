@@ -53,6 +53,14 @@ class AttachmentWireProtocolTest {
                 rejectedRequest = true
             }
             assertTrue(rejectedRequest)
+
+            var rejectedRecovery = false
+            try {
+                RecoveryId.of(value)
+            } catch (_: IllegalArgumentException) {
+                rejectedRecovery = true
+            }
+            assertTrue(rejectedRecovery)
         }
     }
 
@@ -80,12 +88,18 @@ class AttachmentWireProtocolTest {
         )
         val recovery = AttachmentWireMessage.RecoverySnapshot(
             AttachmentId.of("attachment-a"),
+            RecoveryId.of("recovery-1"),
             DocumentRevision(4),
             "# recovery",
+        )
+        val request = AttachmentWireMessage.SnapshotRequest(
+            AttachmentId.of("attachment-a"),
+            RecoveryId.of("recovery-1"),
         )
 
         assertEquals(bootstrap, (AttachmentWireCodec.decode(AttachmentWireCodec.encode(bootstrap)) as AttachmentWireDecodeResult.Decoded).message)
         assertEquals(recovery, (AttachmentWireCodec.decode(AttachmentWireCodec.encode(recovery)) as AttachmentWireDecodeResult.Decoded).message)
+        assertEquals(request, (AttachmentWireCodec.decode(AttachmentWireCodec.encode(request)) as AttachmentWireDecodeResult.Decoded).message)
         assertTrue(AttachmentWireCodec.encode(bootstrap).contains("source"))
         assertTrue(AttachmentWireCodec.encode(recovery).contains("source"))
     }
@@ -126,6 +140,8 @@ class AttachmentWireProtocolTest {
             "{}{}",
             "{\"type\":\"unknown\"}",
             "{\"type\":\"mutationAccepted\",\"attachmentId\":\"a\",\"requestId\":\"r\",\"finalDocumentRevision\":1}",
+            "{\"type\":\"snapshotRequest\",\"attachmentId\":\"a\"}",
+            "{\"type\":\"recoverySnapshot\",\"attachmentId\":\"a\",\"documentRevision\":\"0\",\"source\":\"x\"}",
         )
         malformed.forEach { raw ->
             assertTrue(AttachmentWireCodec.decode(raw) is AttachmentWireDecodeResult.Rejected)

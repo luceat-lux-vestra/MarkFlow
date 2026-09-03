@@ -6,7 +6,6 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
-import com.algorist.markflow.document.DocumentMutationRejection
 import com.algorist.markflow.document.DocumentRevision
 import com.algorist.markflow.document.SourceEdit
 import com.algorist.markflow.document.SourceEditCollection
@@ -25,6 +24,7 @@ sealed interface AttachmentWireMessage {
 
     data class RecoverySnapshot(
         val attachmentId: AttachmentId,
+        val recoveryId: RecoveryId,
         val documentRevision: DocumentRevision,
         val source: String,
     ) : AttachmentWireMessage {
@@ -34,6 +34,7 @@ sealed interface AttachmentWireMessage {
 
     data class SnapshotRequest(
         val attachmentId: AttachmentId,
+        val recoveryId: RecoveryId,
     ) : AttachmentWireMessage
 
     data class MutationRequest(
@@ -128,15 +129,14 @@ object AttachmentWireCodec {
             val type = json.string("type")
             AttachmentWireDecodeResult.Decoded(
                 when (type) {
-                    "bootstrapSnapshot" -> json.snapshot { id, revision, source ->
-                        AttachmentWireMessage.BootstrapSnapshot(id, revision, source)
-                    }
-                    "recoverySnapshot" -> json.snapshot { id, revision, source ->
-                        AttachmentWireMessage.RecoverySnapshot(id, revision, source)
-                    }
+                    "bootstrapSnapshot" -> json.bootstrapSnapshot()
+                    "recoverySnapshot" -> json.recoverySnapshot()
                     "snapshotRequest" -> {
-                        json.requireKeys("type", "attachmentId")
-                        AttachmentWireMessage.SnapshotRequest(AttachmentId.of(json.string("attachmentId")))
+                        json.requireKeys("type", "attachmentId", "recoveryId")
+                        AttachmentWireMessage.SnapshotRequest(
+                            attachmentId = AttachmentId.of(json.string("attachmentId")),
+                            recoveryId = RecoveryId.of(json.string("recoveryId")),
+                        )
                     }
                     "mutationRequest" -> json.mutationRequest()
                     "mutationAccepted" -> json.accepted { id, request, revision ->
@@ -179,12 +179,14 @@ object AttachmentWireCodec {
         is AttachmentWireMessage.RecoverySnapshot -> snapshotJson(
             type = "recoverySnapshot",
             attachmentId = attachmentId,
+            recoveryId = recoveryId,
             revision = documentRevision,
             source = source,
         )
         is AttachmentWireMessage.SnapshotRequest -> JsonObject().apply {
             addProperty("type", "snapshotRequest")
             addProperty("attachmentId", attachmentId.value)
+            addProperty("recoveryId", recoveryId.value)
         }
         is AttachmentWireMessage.MutationRequest -> JsonObject().apply {
             addProperty("type", "mutationRequest")
@@ -216,11 +218,13 @@ object AttachmentWireCodec {
     private fun snapshotJson(
         type: String,
         attachmentId: AttachmentId,
+        recoveryId: RecoveryId? = null,
         revision: DocumentRevision,
         source: String,
     ): JsonObject = JsonObject().apply {
         addProperty("type", type)
         addProperty("attachmentId", attachmentId.value)
+        recoveryId?.let { addProperty("recoveryId", it.value) }
         addProperty("documentRevision", revision.toWire())
         addProperty("source", source)
     }
@@ -247,14 +251,22 @@ object AttachmentWireCodec {
         addProperty("inserted", edit.replacement)
     }
 
-    private fun JsonObject.snapshot(
-        create: (AttachmentId, DocumentRevision, String) -> AttachmentWireMessage,
-    ): AttachmentWireMessage {
+    private fun JsonObject.bootstrapSnapshot(): AttachmentWireMessage {
         requireKeys("type", "attachmentId", "documentRevision", "source")
-        return create(
-            AttachmentId.of(string("attachmentId")),
-            DocumentRevision.fromWire(string("documentRevision")),
-            string("source"),
+        return AttachmentWireMessage.BootstrapSnapshot(
+            attachmentId = AttachmentId.of(string("attachmentId")),
+            documentRevision = DocumentRevision.fromWire(string("documentRevision")),
+            source = string("source"),
+        )
+    }
+
+    private fun JsonObject.recoverySnapshot(): AttachmentWireMessage {
+        requireKeys("type", "attachmentId", "recoveryId", "documentRevision", "source")
+        return AttachmentWireMessage.RecoverySnapshot(
+            attachmentId = AttachmentId.of(string("attachmentId")),
+            recoveryId = RecoveryId.of(string("recoveryId")),
+            documentRevision = DocumentRevision.fromWire(string("documentRevision")),
+            source = string("source"),
         )
     }
 
@@ -321,14 +333,6 @@ object AttachmentWireCodec {
     private fun JsonObject.requireKeys(vararg expected: String) {
         require(keySet() == expected.toSet())
     }
-}
-
-private fun DocumentMutationRejection.toWireCategory(): MutationRejectionCategory = when (this) {
-    is DocumentMutationRejection.StaleRevision -> MutationRejectionCategory.STALE_DOCUMENT_REVISION
-    is DocumentMutationRejection.InvalidMutation -> MutationRejectionCategory.INVALID_MUTATION
-    is DocumentMutationRejection.InvalidTransaction -> MutationRejectionCategory.INVALID_TRANSACTION
-    is DocumentMutationRejection.Conflict -> MutationRejectionCategory.CONFLICT
-    is DocumentMutationRejection.UnsupportedFidelity -> MutationRejectionCategory.UNSUPPORTED_FIDELITY
 }
 
 private fun AttachmentMutationRejection.toWireCategory(): MutationRejectionCategory = when (this) {

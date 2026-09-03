@@ -331,6 +331,25 @@ export class SourceNativeEditorCore {
     }
 
     /**
+     * Count source-changing events represented by one pre-transaction proposal. This is read
+     * before CodeMirror commits the projection and lets the attachment store the exact revision
+     * delta an authoritative host transaction can produce.
+     */
+    effectiveSourceChangeCount(change: SourceChangeTransaction): number {
+        if (this.disposed) {
+            return 0;
+        }
+        return change.changes.reduce((count, item) => {
+            if (!isValidSourceChange(item, this.view.state.doc.length)) {
+                return count;
+            }
+            return this.view.state.doc.sliceString(item.from, item.to) === item.inserted
+                ? count
+                : count + 1;
+        }, 0);
+    }
+
+    /**
      * Apply a host-authoritative source projection. The annotation is part of
      * the transaction, so the update cannot be mistaken for a local proposal.
      */

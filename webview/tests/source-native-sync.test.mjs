@@ -87,6 +87,10 @@ function withAttachment(callback, {attachmentId = "attachment-a", source = "init
             let counter = 0;
             return () => `request-${++counter}`;
         })(),
+        nextRecoveryId: (() => {
+            let counter = 0;
+            return () => `recovery-${++counter}`;
+        })(),
         onStateTransition: (transition) => transitions.push(transition)
     });
     boot(attachment, source, revision);
@@ -113,6 +117,7 @@ test("attachment and request identities reject invalid or oversized values", () 
     for (const invalid of ["", "  ", "attachment\n", "x".repeat(129), null, 1]) {
         assert.throws(() => sync.parseAttachmentId(invalid));
         assert.throws(() => sync.parseRequestId(invalid));
+        assert.throws(() => sync.parseRecoveryId(invalid));
     }
 });
 
@@ -129,8 +134,14 @@ test("wire decoder is strict and normal ACK/update shapes contain no source", ()
         documentRevision: "9007199254740994",
         edit: {from: 1, to: 1, inserted: "x"}
     });
+    const snapshotRequest = JSON.stringify({
+        type: "snapshotRequest",
+        attachmentId: "attachment-a",
+        recoveryId: "recovery-1"
+    });
     assert.equal(sync.decodeAttachmentMessage(ack).finalDocumentRevision, "9007199254740993");
     assert.equal(sync.decodeAttachmentMessage(update).edit.inserted, "x");
+    assert.equal(sync.decodeAttachmentMessage(snapshotRequest).recoveryId, "recovery-1");
     assert.equal(ack.includes("source"), false);
     assert.equal(update.includes("source"), false);
     for (const raw of [
@@ -138,7 +149,8 @@ test("wire decoder is strict and normal ACK/update shapes contain no source", ()
         "not-json",
         JSON.stringify({type: "unknown"}),
         ack.replace("}", ',"source":"must-reject"}'),
-        ack.replace('"9007199254740993"', "9007199254740993")
+        ack.replace('"9007199254740993"', "9007199254740993"),
+        JSON.stringify({type: "snapshotRequest", attachmentId: "attachment-a"})
     ]) {
         assert.throws(() => sync.decodeAttachmentMessage(raw));
     }
@@ -182,20 +194,52 @@ test("surrogate-pair local edit preserves JavaScript UTF-16 coordinates", () => 
     }, {source: "A😀BC"});
 });
 
-test("exact accepted and accepted-unchanged ACKs correlate and return READY", () => {
+test("exact accepted ACK uses the exact effective event count", () => {
     withAttachment(({attachment, sent}) => {
-        attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+        attachment.editor.view.dispatch({
+            changes: [
+                {from: 0, insert: "x"},
+                {from: 2, insert: "y"}
+            ],
+            userEvent: "input.type"
+        });
         const request = sent[0];
+        assert.equal(request.edits.length, 2);
         assert.equal(attachment.receive({
             type: "mutationAccepted",
             attachmentId: attachment.attachmentId,
             requestId: request.requestId,
-            finalDocumentRevision: sync.parseDocumentRevision("1")
+            finalDocumentRevision: sync.parseDocumentRevision("2")
         }), true);
         assert.equal(attachment.state, "READY");
-        assert.equal(attachment.currentRevision, "1");
+        assert.equal(attachment.currentRevision, "2");
     });
+});
 
+test("too-small and too-large accepted revisions fail closed", () => {
+    for (const finalDocumentRevision of ["0", "1", "3"]) {
+        withAttachment(({attachment, sent}) => {
+            attachment.editor.view.dispatch({
+                changes: [
+                    {from: 0, insert: "x"},
+                    {from: 2, insert: "y"}
+                ],
+                userEvent: "input.type"
+            });
+            const request = sent[0];
+            assert.equal(attachment.receive({
+                type: "mutationAccepted",
+                attachmentId: attachment.attachmentId,
+                requestId: request.requestId,
+                finalDocumentRevision: sync.parseDocumentRevision(finalDocumentRevision)
+            }), false);
+            assert.equal(attachment.state, "RECOVERING");
+            assert.equal(sent.at(-1).type, "snapshotRequest");
+        });
+    }
+});
+
+test("accepted-unchanged requires base revision and does not accept an optimistic change", () => {
     withAttachment(({attachment, sent}) => {
         attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
         assert.equal(attachment.receive({
@@ -203,8 +247,9 @@ test("exact accepted and accepted-unchanged ACKs correlate and return READY", ()
             attachmentId: attachment.attachmentId,
             requestId: sent[0].requestId,
             finalDocumentRevision: sync.parseDocumentRevision("0")
-        }), true);
-        assert.equal(attachment.state, "READY");
+        }), false);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(sent.at(-1).type, "snapshotRequest");
     });
 });
 
@@ -223,12 +268,10 @@ test("wrong request ACK cannot advance and enters recovery", () => {
     });
 });
 
-test("all current-attachment rejection categories recover only by explicit snapshot", () => {
+test("recoverable current-attachment rejection categories request an explicit snapshot", () => {
     for (const category of [
         "STALE_DOCUMENT_REVISION",
         "DUPLICATE_REQUEST",
-        "WRONG_ATTACHMENT",
-        "DISPOSED",
         "INVALID_MUTATION",
         "INVALID_TRANSACTION",
         "CONFLICT",
@@ -248,6 +291,7 @@ test("all current-attachment rejection categories recover only by explicit snaps
             assert.equal(attachment.receive({
                 type: "recoverySnapshot",
                 attachmentId: attachment.attachmentId,
+                recoveryId: sent.at(-1).recoveryId,
                 documentRevision: sync.parseDocumentRevision("4"),
                 source: "authoritative recovery"
             }), true);
@@ -256,6 +300,83 @@ test("all current-attachment rejection categories recover only by explicit snaps
             assert.equal(attachment.state, "READY");
         });
     }
+});
+
+test("wrong-attachment and disposed rejection terminalize the attachment without recovery", () => {
+    for (const category of ["WRONG_ATTACHMENT", "DISPOSED"]) {
+        withAttachment(({attachment, sent}) => {
+            attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+            const request = sent[0];
+            assert.equal(attachment.receive({
+                type: "mutationRejected",
+                attachmentId: attachment.attachmentId,
+                requestId: request.requestId,
+                category
+            }), true);
+            assert.equal(attachment.state, "DISPOSED");
+            assert.equal(sent.length, 1);
+            const source = attachment.editor.source;
+            assert.equal(attachment.receive({
+                type: "recoverySnapshot",
+                attachmentId: attachment.attachmentId,
+                recoveryId: sync.parseRecoveryId("late-recovery"),
+                documentRevision: sync.parseDocumentRevision("4"),
+                source: "must-not-apply"
+            }), false);
+            attachment.editor.view.dispatch({changes: {from: 0, insert: "must-not-apply"}, userEvent: "input.type"});
+            assert.equal(attachment.editor.source, source);
+        });
+    }
+});
+
+test("delayed recovery snapshot from R1 cannot complete recovery R2", () => {
+    withAttachment(({attachment, sent}) => {
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+        assert.equal(attachment.receive({
+            type: "mutationRejected",
+            attachmentId: attachment.attachmentId,
+            requestId: sent[0].requestId,
+            category: "CONFLICT"
+        }), true);
+        const recoveryR1 = sent.at(-1);
+        assert.equal(recoveryR1.type, "snapshotRequest");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recoveryR1.recoveryId,
+            documentRevision: sync.parseDocumentRevision("1"),
+            source: "R1 source"
+        }), true);
+
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "y"}, userEvent: "input.type"});
+        assert.equal(attachment.receive({
+            type: "hostIncrementalUpdate",
+            attachmentId: attachment.attachmentId,
+            documentRevision: sync.parseDocumentRevision("2"),
+            edit: {from: 0, to: 0, inserted: "host"}
+        }), false);
+        const recoveryR2 = sent.at(-1);
+        assert.equal(recoveryR2.type, "snapshotRequest");
+        assert.notEqual(recoveryR1.recoveryId, recoveryR2.recoveryId);
+
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recoveryR1.recoveryId,
+            documentRevision: sync.parseDocumentRevision("3"),
+            source: "late R1 source"
+        }), false);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recoveryR2.recoveryId,
+            documentRevision: sync.parseDocumentRevision("4"),
+            source: "R2 source"
+        }), true);
+        assert.equal(attachment.state, "READY");
+        assert.equal(attachment.editor.source, "R2 source");
+    });
 });
 
 test("malformed or unknown inbound messages fail closed and do not fabricate success", () => {
@@ -289,6 +410,60 @@ test("transport uncertainty after an optimistic commit enters recovery without f
         attachment.dispose();
         parent.remove();
     }
+});
+
+test("asynchronous transport failures require the current attachment and operation", () => {
+    withAttachment(({attachment, sent}) => {
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+        const firstRequest = sent[0];
+        assert.equal(attachment.receiveTransportFailure({
+            type: "mutation",
+            attachmentId: attachment.attachmentId,
+            requestId: firstRequest.requestId
+        }), true);
+        const firstRecovery = sent.at(-1);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: firstRecovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("1"),
+            source: "recovered"
+        }), true);
+
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "y"}, userEvent: "input.type"});
+        const secondRequest = sent.at(-1);
+        assert.equal(attachment.receiveTransportFailure({
+            type: "mutation",
+            attachmentId: attachment.attachmentId,
+            requestId: firstRequest.requestId
+        }), false);
+        assert.equal(attachment.state, "AWAITING_ACK");
+        assert.equal(attachment.receiveTransportFailure({
+            type: "mutation",
+            attachmentId: attachment.attachmentId,
+            requestId: secondRequest.requestId
+        }), true);
+        assert.equal(attachment.state, "RECOVERING");
+    });
+
+    withAttachment(({attachment, sent}) => {
+        assert.equal(attachment.receiveRaw("not-json"), false);
+        const recovery = sent.at(-1);
+        assert.equal(attachment.receiveTransportFailure({
+            type: "recovery",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId
+        }), true);
+        assert.equal(attachment.state, "DISPOSED");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("1"),
+            source: "must-not-apply"
+        }), false);
+    });
 });
 
 test("contiguous host edit applies exactly, emits no local proposal, and advances one revision", () => {
@@ -368,6 +543,7 @@ test("old or disposed attachment callbacks cannot mutate a replacement attachmen
         assert.equal(oldAttachment.receive({
             type: "recoverySnapshot",
             attachmentId: oldAttachment.attachmentId,
+            recoveryId: sync.parseRecoveryId("stale-recovery"),
             documentRevision: sync.parseDocumentRevision("2"),
             source: "stale source"
         }), false);
@@ -434,6 +610,7 @@ test("disposal makes later source and callback work inert", () => {
     assert.equal(attachment.receive({
         type: "recoverySnapshot",
         attachmentId: attachment.attachmentId,
+        recoveryId: sync.parseRecoveryId("late-recovery"),
         documentRevision: sync.parseDocumentRevision("1"),
         source: "must-not-apply"
     }), false);

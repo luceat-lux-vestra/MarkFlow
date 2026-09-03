@@ -15,10 +15,12 @@ const MAX_SIGNED_LONG = "9223372036854775807";
 
 declare const attachmentIdBrand: unique symbol;
 declare const requestIdBrand: unique symbol;
+declare const recoveryIdBrand: unique symbol;
 declare const documentRevisionBrand: unique symbol;
 
 export type AttachmentId = string & {[attachmentIdBrand]: true};
 export type RequestId = string & {[requestIdBrand]: true};
+export type RecoveryId = string & {[recoveryIdBrand]: true};
 export type DocumentRevision = string & {[documentRevisionBrand]: true};
 
 export interface WireSourceEdit {
@@ -37,6 +39,7 @@ export interface BootstrapSnapshotMessage {
 export interface RecoverySnapshotMessage {
     readonly type: "recoverySnapshot";
     readonly attachmentId: AttachmentId;
+    readonly recoveryId: RecoveryId;
     readonly documentRevision: DocumentRevision;
     readonly source: string;
 }
@@ -44,6 +47,7 @@ export interface RecoverySnapshotMessage {
 export interface SnapshotRequestMessage {
     readonly type: "snapshotRequest";
     readonly attachmentId: AttachmentId;
+    readonly recoveryId: RecoveryId;
 }
 
 export interface MutationRequestMessage {
@@ -105,6 +109,18 @@ export type AttachmentWireMessage =
 
 export type AttachmentOutboundMessage = MutationRequestMessage | SnapshotRequestMessage;
 
+export type AttachmentTransportFailure =
+    | {
+        readonly type: "mutation";
+        readonly attachmentId: AttachmentId;
+        readonly requestId: RequestId;
+    }
+    | {
+        readonly type: "recovery";
+        readonly attachmentId: AttachmentId;
+        readonly recoveryId: RecoveryId;
+    };
+
 export class AttachmentWireDecodeError extends Error {
     constructor() {
         super("invalid attachment wire message");
@@ -118,6 +134,10 @@ export function parseAttachmentId(value: unknown): AttachmentId {
 
 export function parseRequestId(value: unknown): RequestId {
     return parseIdentity(value, MAX_REQUEST_ID_LENGTH) as RequestId;
+}
+
+export function parseRecoveryId(value: unknown): RecoveryId {
+    return parseIdentity(value, MAX_REQUEST_ID_LENGTH) as RecoveryId;
 }
 
 export function parseDocumentRevision(value: unknown): DocumentRevision {
@@ -135,8 +155,15 @@ export function parseDocumentRevision(value: unknown): DocumentRevision {
 }
 
 export function nextDocumentRevision(revision: DocumentRevision): DocumentRevision {
+    return advanceDocumentRevision(revision, 1);
+}
+
+function advanceDocumentRevision(revision: DocumentRevision, eventCount: number): DocumentRevision {
     try {
-        const next = BigInt(revision) + 1n;
+        if (!Number.isSafeInteger(eventCount) || eventCount < 1) {
+            throw new AttachmentWireDecodeError();
+        }
+        const next = BigInt(revision) + BigInt(eventCount);
         if (next > BigInt(MAX_SIGNED_LONG)) {
             throw new AttachmentWireDecodeError();
         }
@@ -186,11 +213,14 @@ export interface SourceNativeAttachmentOptions {
     readonly attachmentId: string;
     readonly onSend: (message: AttachmentOutboundMessage) => void;
     readonly nextRequestId?: () => string;
+    readonly nextRecoveryId?: () => string;
     readonly onStateTransition?: (transition: SourceNativeStateTransition) => void;
 }
 
 interface PendingMutation {
     readonly request: MutationRequestMessage;
+    readonly expectedFinalRevision: DocumentRevision;
+    readonly effectiveEditCount: number;
 }
 
 /**
@@ -204,15 +234,18 @@ export class SourceNativeAttachment {
     readonly attachmentId: AttachmentId;
     private readonly onSend: (message: AttachmentOutboundMessage) => void;
     private readonly nextRequestId: () => string;
+    private readonly nextRecoveryId: () => string;
     private readonly onStateTransition?: (transition: SourceNativeStateTransition) => void;
     private stateValue: SourceNativeAttachmentState = "BOOTSTRAP";
     private currentRevisionValue: DocumentRevision | null = null;
     private pendingMutation: PendingMutation | null = null;
+    private recoveryIdValue: RecoveryId | null = null;
 
     constructor(options: SourceNativeAttachmentOptions) {
         this.attachmentId = parseAttachmentId(options.attachmentId);
         this.onSend = options.onSend;
         this.nextRequestId = options.nextRequestId ?? (() => crypto.randomUUID());
+        this.nextRecoveryId = options.nextRecoveryId ?? (() => crypto.randomUUID());
         this.onStateTransition = options.onStateTransition;
         this.editor = new SourceNativeEditorCore({
             parent: options.parent,
@@ -234,6 +267,10 @@ export class SourceNativeAttachment {
         return this.pendingMutation?.request.requestId ?? null;
     }
 
+    get recoveryId(): RecoveryId | null {
+        return this.recoveryIdValue;
+    }
+
     /** Install only the snapshot allowed by the current lifecycle state. */
     receiveSnapshot(message: BootstrapSnapshotMessage | RecoverySnapshotMessage): boolean {
         if (message.attachmentId !== this.attachmentId || this.state === "DISPOSED") {
@@ -242,13 +279,16 @@ export class SourceNativeAttachment {
         if (message.type === "bootstrapSnapshot" && this.state !== "BOOTSTRAP") {
             return false;
         }
-        if (message.type === "recoverySnapshot" && this.state !== "RECOVERING") {
-            return false;
+        if (message.type === "recoverySnapshot") {
+            if (this.state !== "RECOVERING" || message.recoveryId !== this.recoveryIdValue) {
+                return false;
+            }
         }
 
         this.editor.applyHostSource(message.source);
         this.currentRevisionValue = message.documentRevision;
         this.pendingMutation = null;
+        this.recoveryIdValue = null;
         this.transition("READY", message.type);
         return true;
     }
@@ -299,6 +339,33 @@ export class SourceNativeAttachment {
         this.editor.dispose();
     }
 
+    /**
+     * Correlate an asynchronous transport failure with the exact live operation. A stale
+     * callback is inert; a mutation failure opens a correlated recovery operation, while a
+     * recovery-operation failure terminalizes the attachment without fabricating success.
+     */
+    receiveTransportFailure(failure: AttachmentTransportFailure): boolean {
+        if (this.state === "DISPOSED" || failure.attachmentId !== this.attachmentId) {
+            return false;
+        }
+        if (failure.type === "mutation") {
+            if (this.state !== "AWAITING_ACK"
+                || this.pendingMutation === null
+                || failure.requestId !== this.pendingMutation.request.requestId) {
+                return false;
+            }
+            this.enterRecovery("transport-failure");
+            return true;
+        }
+        if (failure.type !== "recovery"
+            || this.state !== "RECOVERING"
+            || failure.recoveryId !== this.recoveryIdValue) {
+            return false;
+        }
+        this.terminalize("recovery-transport-failure");
+        return true;
+    }
+
     private beforeLocalChange(change: SourceChangeTransaction): boolean {
         if (this.state !== "READY" || this.currentRevisionValue === null || this.pendingMutation !== null) {
             return false;
@@ -307,6 +374,16 @@ export class SourceNativeAttachment {
         let requestId: RequestId;
         try {
             requestId = parseRequestId(this.nextRequestId());
+        } catch (_error) {
+            return false;
+        }
+        const effectiveEditCount = this.editor.effectiveSourceChangeCount(change);
+        if (effectiveEditCount === 0) {
+            return false;
+        }
+        let expectedFinalRevision: DocumentRevision;
+        try {
+            expectedFinalRevision = advanceDocumentRevision(this.currentRevisionValue, effectiveEditCount);
         } catch (_error) {
             return false;
         }
@@ -321,7 +398,7 @@ export class SourceNativeAttachment {
                 inserted: item.inserted
             })))
         });
-        this.pendingMutation = {request};
+        this.pendingMutation = {request, expectedFinalRevision, effectiveEditCount};
         this.transition("AWAITING_ACK", "local-source-transaction-accepted");
         return true;
     }
@@ -352,7 +429,11 @@ export class SourceNativeAttachment {
             return false;
         }
         const relation = compareDocumentRevisions(message.finalDocumentRevision, pending.request.baseDocumentRevision);
-        if ((unchanged && relation !== 0) || (!unchanged && relation <= 0)) {
+        if (unchanged && (relation !== 0 || pending.effectiveEditCount !== 0)) {
+            this.enterRecovery("ack-revision-invariant-failure");
+            return false;
+        }
+        if (!unchanged && message.finalDocumentRevision !== pending.expectedFinalRevision) {
             this.enterRecovery("ack-revision-invariant-failure");
             return false;
         }
@@ -374,6 +455,10 @@ export class SourceNativeAttachment {
         }
 
         this.pendingMutation = null;
+        if (message.category === "WRONG_ATTACHMENT" || message.category === "DISPOSED") {
+            this.terminalize(`rejected-${message.category}`);
+            return true;
+        }
         this.enterRecovery(`rejected-${message.category}`);
         return true;
     }
@@ -406,12 +491,30 @@ export class SourceNativeAttachment {
             return;
         }
         this.pendingMutation = null;
+        let recoveryId: RecoveryId;
+        try {
+            recoveryId = parseRecoveryId(this.nextRecoveryId());
+        } catch (_error) {
+            this.terminalize("recovery-correlation-unavailable");
+            return;
+        }
+        this.recoveryIdValue = recoveryId;
         this.transition("RECOVERING", reason);
         try {
-            this.onSend({type: "snapshotRequest", attachmentId: this.attachmentId});
+            this.onSend({type: "snapshotRequest", attachmentId: this.attachmentId, recoveryId});
         } catch (_error) {
             // Recovery remains fail-closed if the transport cannot carry the request.
         }
+    }
+
+    private terminalize(reason: string): void {
+        if (this.state === "DISPOSED") {
+            return;
+        }
+        this.pendingMutation = null;
+        this.recoveryIdValue = null;
+        this.transition("DISPOSED", reason);
+        this.editor.dispose();
     }
 
     private transition(to: SourceNativeAttachmentState, reason: string): void {
@@ -504,16 +607,21 @@ function parseMessage(value: unknown): AttachmentWireMessage {
                 source: requiredString(value, "source")
             };
         case "recoverySnapshot":
-            requireKeys(value, ["type", "attachmentId", "documentRevision", "source"]);
+            requireKeys(value, ["type", "attachmentId", "recoveryId", "documentRevision", "source"]);
             return {
                 type: value.type,
                 attachmentId: parseAttachmentId(value.attachmentId),
+                recoveryId: parseRecoveryId(value.recoveryId),
                 documentRevision: parseDocumentRevision(value.documentRevision),
                 source: requiredString(value, "source")
             };
         case "snapshotRequest":
-            requireKeys(value, ["type", "attachmentId"]);
-            return {type: value.type, attachmentId: parseAttachmentId(value.attachmentId)};
+            requireKeys(value, ["type", "attachmentId", "recoveryId"]);
+            return {
+                type: value.type,
+                attachmentId: parseAttachmentId(value.attachmentId),
+                recoveryId: parseRecoveryId(value.recoveryId)
+            };
         case "mutationRequest":
             requireKeys(value, ["type", "attachmentId", "requestId", "baseDocumentRevision", "edits"]);
             return {
