@@ -59,7 +59,7 @@ class AttachmentSyncCoordinator(
         val documentResult = documentSession.applyWebProposal(
             proposal = DocumentMutationProposal(
                 baseDocumentRevision = request.baseDocumentRevision,
-                edit = request.edit,
+                edits = request.edits,
             ),
             policy = policy,
         )
@@ -113,6 +113,8 @@ private fun DocumentMutationRejection.toSyncRejection(): AttachmentMutationRejec
         AttachmentMutationRejection.StaleDocumentRevision(currentSnapshot)
     is DocumentMutationRejection.InvalidMutation ->
         AttachmentMutationRejection.InvalidMutation(edit.startOffset, edit.endOffset, reason)
+    is DocumentMutationRejection.InvalidTransaction ->
+        AttachmentMutationRejection.InvalidTransaction(detail)
     is DocumentMutationRejection.Conflict -> AttachmentMutationRejection.Conflict(detail)
     is DocumentMutationRejection.UnsupportedFidelity ->
         AttachmentMutationRejection.UnsupportedFidelity(detail)
