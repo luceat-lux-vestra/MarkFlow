@@ -111,6 +111,43 @@ class DocumentSessionTest : BasePlatformTestCase() {
         onEdt { Disposer.dispose(owner) }
     }
 
+    fun testObserverFailureIsIsolatedAndAcceptedWebResultStillReturns() {
+        val document = document("abc")
+        val session = session(document)
+        val observed = mutableListOf<AuthoritativeDocumentMutation>()
+        val failingOwner = listenerOwner()
+        val observingOwner = listenerOwner()
+
+        onEdt {
+            session.addMutationListener(
+                AuthoritativeDocumentMutationListener {
+                    throw IllegalStateException("observer failure")
+                },
+                failingOwner,
+            )
+            session.addMutationListener(
+                AuthoritativeDocumentMutationListener { observed += it },
+                observingOwner,
+            )
+        }
+
+        val result = onEdtResult {
+            session.applyWebProposal(
+                DocumentMutationProposal(session.revision, SourceEdit(1, 2, "X")),
+            )
+        } as DocumentMutationResult.Accepted
+
+        assertEquals(DocumentRevision(1), session.revision)
+        assertEquals(1, observed.size)
+        assertEquals(result.snapshot, observed.single().snapshot)
+        assertEquals(result.snapshot, snapshot(session))
+
+        onEdt {
+            Disposer.dispose(failingOwner)
+            Disposer.dispose(observingOwner)
+        }
+    }
+
     fun testNoOpAndRejectedProposalsEmitNoAuthoritativeObservation() {
         val document = document("abc")
         val session = session(document)

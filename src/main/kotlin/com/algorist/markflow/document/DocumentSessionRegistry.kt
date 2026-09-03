@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import java.util.IdentityHashMap
+import java.util.LinkedHashSet
 
 /**
  * Project-owned authority registry for live IntelliJ [Document] relationships.
@@ -114,16 +115,46 @@ class DocumentSessionLease internal constructor(
     internal val document: Document,
     val session: DocumentSession,
 ) : Disposable {
+    private val ownedSubscriptions = LinkedHashSet<Disposable>()
+    private var disposalStarted = false
     private var released = false
 
-    /** Release this consumer; repeated disposal is intentionally a no-op. */
+    /**
+     * Release this consumer and all subscriptions registered with this lease.
+     *
+     * Direct disposal and [Disposer.dispose] intentionally share this implementation. A lease is
+     * not used as a normal Disposer parent for mutation subscriptions, because direct
+     * [dispose] must not depend on Disposer walking a child tree.
+     */
     override fun dispose() {
+        val subscriptions = synchronized(this) {
+            if (disposalStarted) return
+            disposalStarted = true
+            val current = ownedSubscriptions.toList()
+            ownedSubscriptions.clear()
+            current
+        }
+        subscriptions.forEach(Disposer::dispose)
         registry.release(this)
     }
 
+    internal fun registerOwnedSubscription(subscription: Disposable) {
+        val disposeImmediately = synchronized(this) {
+            if (disposalStarted || released) {
+                true
+            } else {
+                ownedSubscriptions.add(subscription)
+                false
+            }
+        }
+        if (disposeImmediately) Disposer.dispose(subscription)
+    }
+
     internal fun markReleased(): Boolean {
-        if (released) return false
-        released = true
-        return true
+        return synchronized(this) {
+            if (released) return@synchronized false
+            released = true
+            true
+        }
     }
 }

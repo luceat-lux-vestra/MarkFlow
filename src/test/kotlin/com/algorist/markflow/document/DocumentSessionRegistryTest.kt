@@ -48,7 +48,7 @@ class DocumentSessionRegistryTest : BasePlatformTestCase() {
         assertSame(first.session, second.session)
 
         onEdt {
-            Disposer.dispose(first)
+            first.dispose()
             assertFalse(first.session.isDisposed)
         }
         writeDocument { document.replaceString(0, 1, "c") }
@@ -57,6 +57,10 @@ class DocumentSessionRegistryTest : BasePlatformTestCase() {
         assertEquals(DocumentRevision(2), secondObservations.last().revision)
 
         onEdt { Disposer.dispose(second) }
+        assertTrue(second.session.isDisposed)
+
+        writeDocument { document.replaceString(0, 1, "d") }
+        assertEquals(2, secondObservations.size)
     }
 
     fun testDifferentDocumentsHaveDifferentSessions() {

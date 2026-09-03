@@ -9,6 +9,7 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Computable
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.diagnostic.Logger
 import java.lang.ref.WeakReference
 import java.util.LinkedHashSet
 
@@ -69,7 +70,17 @@ class DocumentSession(
             lastMutation = mutation
             val listeners = synchronized(mutationListeners) { mutationListeners.toList() }
             listeners.forEach { subscription ->
-                subscription.notify(mutation)
+                try {
+                    subscription.notify(mutation)
+                } catch (error: Exception) {
+                    // The Document and revision transition is already authoritative. An
+                    // observer is downstream of that transition and must not make an accepted
+                    // mutation look rejected or prevent later observers from receiving it.
+                    LOG.warn(
+                        "Authoritative document mutation observer failed at revision ${mutation.revision}",
+                        error,
+                    )
+                }
             }
         }
     }
@@ -113,7 +124,11 @@ class DocumentSession(
         synchronized(mutationListeners) {
             mutationListeners.add(subscription)
         }
-        Disposer.register(parentDisposable, subscription)
+        if (parentDisposable is DocumentSessionLease) {
+            parentDisposable.registerOwnedSubscription(subscription)
+        } else {
+            Disposer.register(parentDisposable, subscription)
+        }
     }
 
     /**
@@ -270,6 +285,10 @@ class DocumentSession(
             disposed = true
             sessionReference.get()?.removeMutationListener(this)
         }
+    }
+
+    private companion object {
+        private val LOG = Logger.getInstance(DocumentSession::class.java)
     }
 }
 
