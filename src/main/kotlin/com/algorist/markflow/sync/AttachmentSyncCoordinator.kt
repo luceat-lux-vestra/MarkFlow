@@ -59,7 +59,7 @@ class AttachmentSyncCoordinator(
         val documentResult = documentSession.applyWebProposal(
             proposal = DocumentMutationProposal(
                 baseDocumentRevision = request.baseDocumentRevision,
-                edit = request.edit,
+                edits = request.edits,
             ),
             policy = policy,
         )

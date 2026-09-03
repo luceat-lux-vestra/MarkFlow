@@ -11,6 +11,7 @@ import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.InvalidMutationReason
 import com.algorist.markflow.document.MutationOrigin
 import com.algorist.markflow.document.SourceEdit
+import com.algorist.markflow.document.SourceEditCollection
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
@@ -42,6 +43,40 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertEquals(MutationOrigin.WEB, session.lastAuthoritativeMutation?.origin)
     }
 
+    fun testMultiEditRequestUsesOneRequestIdAndDelegatesOnce() {
+        val document = document("0123456789")
+        val session = session(document)
+        val coordinator = coordinator(session, "attachment-a")
+        val request = multiEditRequest(
+            attachmentId = coordinator.attachmentId,
+            requestValue = "transaction-1",
+            revision = session.revision,
+            edits = listOf(
+                SourceEdit(1, 3, "AB"),
+                SourceEdit(7, 9, "XY"),
+            ),
+        )
+        var policyCalls = 0
+
+        val first = onEdtResult {
+            coordinator.apply(request) { _, proposal ->
+                policyCalls += 1
+                assertEquals(2, proposal.edits.edits.size)
+                DocumentMutationPolicyDecision.Accept
+            }
+        }
+        val duplicate = onEdtResult { coordinator.apply(request) }
+
+        assertTrue(first is AttachmentMutationResult.Accepted)
+        assertEquals("0AB3456XY9", document.text)
+        assertEquals(DocumentRevision(2), session.revision)
+        assertEquals(1, policyCalls)
+        assertEquals(
+            AttachmentMutationRejection.DuplicateRequest,
+            (duplicate as AttachmentMutationResult.Rejected).reason,
+        )
+    }
+
     fun testStaleBaseRevisionRejectsWithoutChangingAuthority() {
         val document = document("abc")
         val session = session(document)
@@ -57,6 +92,29 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         val reason = rejected.reason as AttachmentMutationRejection.StaleDocumentRevision
         assertEquals(before, reason.currentSnapshot)
         assertEquals("host", document.text)
+        assertEquals(before.revision, session.revision)
+    }
+
+    fun testStaleMultiEditRequestRejectsWithoutChangingAuthority() {
+        val document = document("0123456789")
+        val session = session(document)
+        val coordinator = coordinator(session, "attachment-a")
+        writeDocument { document.replaceString(0, 1, "H") }
+        val before = snapshot(session)
+        val request = multiEditRequest(
+            attachmentId = coordinator.attachmentId,
+            requestValue = "transaction-1",
+            revision = DocumentRevision.INITIAL,
+            edits = listOf(SourceEdit(1, 3, "AB"), SourceEdit(7, 9, "XY")),
+        )
+
+        val result = onEdtResult { coordinator.apply(request) }
+
+        assertEquals(
+            before,
+            ((result as AttachmentMutationResult.Rejected).reason as AttachmentMutationRejection.StaleDocumentRevision).currentSnapshot,
+        )
+        assertEquals("H123456789", document.text)
         assertEquals(before.revision, session.revision)
     }
 
@@ -76,6 +134,28 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
             rejected.reason,
         )
         assertEquals("abc", document.text)
+        assertEquals(DocumentRevision.INITIAL, session.revision)
+    }
+
+    fun testWrongAttachmentRejectsMultiEditRequestBeforeDocumentMutation() {
+        val document = document("0123456789")
+        val session = session(document)
+        val coordinator = coordinator(session, "attachment-a")
+        val wrongAttachment = AttachmentId.of("attachment-b")
+        val request = multiEditRequest(
+            attachmentId = wrongAttachment,
+            requestValue = "transaction-1",
+            revision = session.revision,
+            edits = listOf(SourceEdit(1, 3, "AB"), SourceEdit(7, 9, "XY")),
+        )
+
+        val result = onEdtResult { coordinator.apply(request) }
+
+        assertEquals(
+            AttachmentMutationRejection.WrongAttachment(wrongAttachment),
+            (result as AttachmentMutationResult.Rejected).reason,
+        )
+        assertEquals("0123456789", document.text)
         assertEquals(DocumentRevision.INITIAL, session.revision)
     }
 
@@ -198,6 +278,28 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertTrue(coordinator.isDisposed)
     }
 
+    fun testDisposedAttachmentRejectsMultiEditRequestWithoutMutation() {
+        val document = document("0123456789")
+        val session = session(document)
+        val coordinator = coordinator(session, "attachment-a")
+        val request = multiEditRequest(
+            attachmentId = coordinator.attachmentId,
+            requestValue = "transaction-1",
+            revision = session.revision,
+            edits = listOf(SourceEdit(1, 3, "AB"), SourceEdit(7, 9, "XY")),
+        )
+
+        onEdt { coordinator.dispose() }
+        val result = onEdtResult { coordinator.apply(request) }
+
+        assertEquals(
+            AttachmentMutationRejection.DisposedAttachment,
+            (result as AttachmentMutationResult.Rejected).reason,
+        )
+        assertEquals("0123456789", document.text)
+        assertEquals(DocumentRevision.INITIAL, session.revision)
+    }
+
     fun testIndependentAttachmentsDoNotShareDuplicateState() {
         val document = document("abc")
         val session = session(document)
@@ -289,7 +391,19 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         attachmentId = attachmentId,
         requestId = RequestId.of(requestValue),
         baseDocumentRevision = revision,
-        edit = SourceEdit(startOffset, endOffset, replacement),
+        edits = SourceEditCollection.of(SourceEdit(startOffset, endOffset, replacement)),
+    )
+
+    private fun multiEditRequest(
+        attachmentId: AttachmentId,
+        requestValue: String,
+        revision: DocumentRevision,
+        edits: List<SourceEdit>,
+    ): AttachmentMutationRequest = AttachmentMutationRequest(
+        attachmentId = attachmentId,
+        requestId = RequestId.of(requestValue),
+        baseDocumentRevision = revision,
+        edits = SourceEditCollection.of(edits),
     )
 
     private fun assertInvalidIdentity(create: () -> Any) {

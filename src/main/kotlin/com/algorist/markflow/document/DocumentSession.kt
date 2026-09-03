@@ -148,11 +148,13 @@ class DocumentSession(
     }
 
     /**
-     * Apply one WEB proposal using normal IntelliJ command/undo semantics.
+     * Apply one WEB transaction proposal using normal IntelliJ command/undo semantics.
      *
-     * The revision check is inside the write command, immediately before range/policy validation
-     * and the Document write. The DocumentEvent produced by replaceString is the sole canonical
-     * revision-advance path; this method never increments the revision itself.
+     * The revision, range, ordering, policy, and no-op checks all run inside one write command
+     * against one authoritative pre-transaction snapshot. Only after every check passes are the
+     * source-effective edits applied in reverse source/list order. The DocumentEvent produced by
+     * each replaceString is the sole canonical revision-advance path; this method never
+     * increments the revision itself.
      */
     fun applyWebProposal(
         proposal: DocumentMutationProposal,
@@ -169,10 +171,22 @@ class DocumentSession(
                 )
             }
 
-            val invalidReason = proposal.edit.invalidReason(currentSnapshot.text.length)
-            if (invalidReason != null) {
+            val invalidEdit = proposal.edits.edits.firstNotNullOfOrNull { edit ->
+                edit.invalidReason(currentSnapshot.text.length)?.let { reason -> edit to reason }
+            }
+            if (invalidEdit != null) {
                 return@Computable DocumentMutationResult.Rejected(
-                    DocumentMutationRejection.InvalidMutation(proposal.edit, invalidReason),
+                    DocumentMutationRejection.InvalidMutation(invalidEdit.first, invalidEdit.second),
+                )
+            }
+
+            val orderingError = proposal.edits.orderingError()
+            if (orderingError != null) {
+                return@Computable DocumentMutationResult.Rejected(
+                    DocumentMutationRejection.InvalidMutation(
+                        edit = orderingError.edit,
+                        reason = orderingError.reason,
+                    ),
                 )
             }
 
@@ -180,36 +194,41 @@ class DocumentSession(
                 DocumentMutationPolicyDecision.Accept -> Unit
                 is DocumentMutationPolicyDecision.Reject -> {
                     return@Computable DocumentMutationResult.Rejected(
-                        decision.reason.toRejection(proposal.edit),
+                        decision.reason.toRejection(proposal.edits.edits.first()),
                     )
                 }
             }
 
-            val existingText = currentSnapshot.text.substring(
-                proposal.edit.startOffset,
-                proposal.edit.endOffset,
-            )
-            if (existingText == proposal.edit.replacement) {
+            val effectiveEdits = proposal.edits.edits.filter { edit ->
+                currentSnapshot.text.substring(edit.startOffset, edit.endOffset) != edit.replacement
+            }
+            if (effectiveEdits.isEmpty()) {
                 return@Computable DocumentMutationResult.AcceptedUnchanged(
                     snapshot = currentSnapshot,
                     origin = MutationOrigin.WEB,
                 )
             }
 
-            val expectedRevision = currentSnapshot.revision.next()
+            val expectedFinalRevision = effectiveEdits.fold(currentSnapshot.revision) { revision, _ ->
+                revision.next()
+            }
             withOriginContext(MutationOrigin.WEB) {
-                document.replaceString(
-                    proposal.edit.startOffset,
-                    proposal.edit.endOffset,
-                    proposal.edit.replacement,
-                )
+                effectiveEdits.asReversed().forEach { edit ->
+                    val revisionBeforeEdit = currentRevision
+                    document.replaceString(edit.startOffset, edit.endOffset, edit.replacement)
+
+                    // DocumentImpl dispatches DocumentEvent synchronously. Keeping the
+                    // per-event invariant here catches a broken listener/lifecycle path instead
+                    // of silently creating another revision mechanism or returning a false
+                    // acceptance.
+                    check(currentRevision == revisionBeforeEdit.next()) {
+                        "Authoritative Document mutation did not produce exactly one revision advance"
+                    }
+                }
             }
 
-            // DocumentImpl dispatches DocumentEvent synchronously. Keeping this invariant here
-            // catches a broken listener/lifecycle path instead of silently creating a second
-            // revision mechanism or returning a false acceptance.
-            check(currentRevision == expectedRevision) {
-                "Authoritative Document mutation did not produce exactly one revision advance"
+            check(currentRevision == expectedFinalRevision) {
+                "Authoritative Document mutation did not produce the expected revision advances"
             }
             DocumentMutationResult.Accepted(
                 snapshot = authoritativeSnapshot(),
@@ -297,6 +316,23 @@ private fun SourceEdit.invalidReason(documentLength: Int): InvalidMutationReason
     endOffset < startOffset -> InvalidMutationReason.EndBeforeStart
     endOffset > documentLength -> InvalidMutationReason.EndBeyondDocument
     else -> null
+}
+
+private data class EditOrderingError(
+    val edit: SourceEdit,
+    val reason: InvalidMutationReason,
+)
+
+private fun SourceEditCollection.orderingError(): EditOrderingError? {
+    edits.zipWithNext().forEach { (previous, current) ->
+        if (previous.startOffset > current.startOffset) {
+            return EditOrderingError(current, InvalidMutationReason.UnorderedEdits)
+        }
+        if (previous.endOffset > current.startOffset) {
+            return EditOrderingError(current, InvalidMutationReason.OverlappingEdits)
+        }
+    }
+    return null
 }
 
 private fun DocumentMutationPolicyRejection.toRejection(edit: SourceEdit): DocumentMutationRejection = when (this) {

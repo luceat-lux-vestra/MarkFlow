@@ -6,22 +6,23 @@ import com.algorist.markflow.document.DocumentMutationRejection
 import com.algorist.markflow.document.DocumentRevision
 import com.algorist.markflow.document.InvalidMutationReason
 import com.algorist.markflow.document.SourceEdit
+import com.algorist.markflow.document.SourceEditCollection
 
 /**
- * Typed host-side request for one explicit UTF-16 source mutation.
+ * Typed host-side request for one source-native transaction of explicit UTF-16 source edits.
  *
  * The attachment and request identities are correlation/lifetime dimensions. The
- * [baseDocumentRevision] is the only freshness input, and [edit] is the exact source-range
- * replacement delegated to the document authority.
+ * [baseDocumentRevision] is the only freshness input, and [edits] is the ordered pre-transaction
+ * collection delegated once to the document authority.
  */
 data class AttachmentMutationRequest(
     val attachmentId: AttachmentId,
     val requestId: RequestId,
     val baseDocumentRevision: DocumentRevision,
-    val edit: SourceEdit,
+    val edits: SourceEditCollection,
 )
 
-/** Result of validating and applying one [AttachmentMutationRequest]. */
+/** Result of validating and applying one [AttachmentMutationRequest] transaction. */
 sealed interface AttachmentMutationResult {
     val requestId: RequestId
 

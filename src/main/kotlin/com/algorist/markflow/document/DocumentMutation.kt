@@ -31,10 +31,42 @@ data class SourceEdit(
     val replacement: String,
 )
 
-/** A web/domain proposal that is explicitly based on one document revision and source range. */
+/**
+ * Immutable ordered edits from one source-native transaction.
+ *
+ * The list order is part of the contract: edits use pre-transaction UTF-16 coordinates, are
+ * validated in that order, and equal-position insertions retain that declared order.
+ */
+class SourceEditCollection private constructor(
+    edits: List<SourceEdit>,
+) : Iterable<SourceEdit> {
+    val edits: List<SourceEdit> = edits.toList()
+
+    init {
+        require(this.edits.isNotEmpty()) { "A source edit collection must not be empty" }
+    }
+
+    override fun iterator(): Iterator<SourceEdit> = edits.iterator()
+
+    override fun equals(other: Any?): Boolean =
+        other is SourceEditCollection && edits == other.edits
+
+    override fun hashCode(): Int = edits.hashCode()
+
+    override fun toString(): String = "SourceEditCollection(edits=$edits)"
+
+    companion object {
+        fun of(edits: Iterable<SourceEdit>): SourceEditCollection =
+            SourceEditCollection(edits.toList())
+
+        fun of(edit: SourceEdit): SourceEditCollection = of(listOf(edit))
+    }
+}
+
+/** A web/domain proposal explicitly based on one document revision and one edit collection. */
 data class DocumentMutationProposal(
     val baseDocumentRevision: DocumentRevision,
-    val edit: SourceEdit,
+    val edits: SourceEditCollection,
 )
 
 /** Metadata for the one canonical revision transition observed from a DocumentEvent. */
@@ -98,6 +130,8 @@ sealed interface InvalidMutationReason {
     data object NegativeStartOffset : InvalidMutationReason
     data object EndBeforeStart : InvalidMutationReason
     data object EndBeyondDocument : InvalidMutationReason
+    data object UnorderedEdits : InvalidMutationReason
+    data object OverlappingEdits : InvalidMutationReason
     data class PolicyRejected(val detail: String) : InvalidMutationReason
 }
 
@@ -120,8 +154,8 @@ sealed interface DocumentMutationPolicyRejection {
  * Apply-before-write validation seam for source fidelity and future conflict policy.
  *
  * A policy must be deterministic and side-effect free. It receives only an authoritative
- * snapshot and an explicit range proposal; it cannot mutate the Document. Stale revision and
- * range validation remain owned by [DocumentSession].
+ * snapshot and an explicit transaction proposal; it cannot mutate the Document. Stale revision,
+ * range, and edit-order validation remain owned by [DocumentSession].
  */
 fun interface DocumentMutationPolicy {
     fun validate(
