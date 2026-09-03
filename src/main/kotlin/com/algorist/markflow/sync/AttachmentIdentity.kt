@@ -38,5 +38,8 @@ value class RequestId private constructor(val value: String) {
 private fun requireIdentityValue(typeName: String, value: String): String {
     require(value.isNotBlank()) { "$typeName must not be blank" }
     require(value.none(Character::isISOControl)) { "$typeName must not contain control characters" }
+    require(value.length <= AttachmentProtocolBounds.MAX_IDENTITY_LENGTH) {
+        "$typeName exceeds the maximum length"
+    }
     return value
 }

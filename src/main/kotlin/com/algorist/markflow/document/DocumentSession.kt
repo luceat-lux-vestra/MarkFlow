@@ -29,6 +29,7 @@ class DocumentSession(
     private val document: Document,
     private val commandProject: Project? = null,
     private val originResolver: DocumentMutationOriginResolver = DocumentMutationOriginResolver.DEFAULT,
+    private val onSnapshotCreated: (() -> Unit)? = null,
 ) : Disposable {
     @Volatile
     private var currentRevision: DocumentRevision = DocumentRevision.INITIAL
@@ -60,10 +61,6 @@ class DocumentSession(
                     startOffset = event.offset,
                     endOffset = event.offset + event.oldLength,
                     replacement = event.newFragment.toString(),
-                ),
-                snapshot = AuthoritativeDocumentSnapshot(
-                    revision = nextRevision,
-                    text = document.text,
                 ),
             )
             currentRevision = nextRevision
@@ -108,10 +105,9 @@ class DocumentSession(
      * Register a synchronous observer owned by [parentDisposable].
      *
      * The callback runs on the same thread as the authoritative IntelliJ DocumentEvent, after
-     * the session has advanced its revision and created the matching immutable snapshot. The
-     * normal integration contract is EDT-owned document mutation and subscription lifecycle;
-     * the callback must use [AuthoritativeDocumentMutation.snapshot] instead of reading the live
-     * Document unless it establishes IntelliJ read access itself.
+     * the session has advanced its revision. The normal integration contract is EDT-owned
+     * document mutation and subscription lifecycle; mutation events intentionally do not retain
+     * historical full-source snapshots.
      */
     fun addMutationListener(
         listener: AuthoritativeDocumentMutationListener,
@@ -135,12 +131,13 @@ class DocumentSession(
      * Read a fresh immutable snapshot from the live IntelliJ Document.
      *
      * This method requires the EDT or an IntelliJ read-access context and fails fast otherwise.
-     * No source text is retained as a competing authority by this session. Observers should
-     * prefer the snapshot carried by [AuthoritativeDocumentMutation] when they are not already
-     * inside a platform access context.
+     * No source text is retained as a competing authority by this session. Callers that need a
+     * full source must cross this explicit boundary or use a result that owns a boundary snapshot;
+     * [AuthoritativeDocumentMutation] itself carries no historical source snapshot.
      */
     fun authoritativeSnapshot(): AuthoritativeDocumentSnapshot {
         ApplicationManager.getApplication().assertReadAccessAllowed()
+        onSnapshotCreated?.invoke()
         return AuthoritativeDocumentSnapshot(
             revision = currentRevision,
             text = document.text,

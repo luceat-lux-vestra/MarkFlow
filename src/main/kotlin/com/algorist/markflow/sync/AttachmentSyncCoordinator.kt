@@ -1,5 +1,7 @@
 package com.algorist.markflow.sync
 
+import com.algorist.markflow.document.AuthoritativeDocumentMutation
+import com.algorist.markflow.document.AuthoritativeDocumentMutationListener
 import com.algorist.markflow.document.DocumentMutationPolicy
 import com.algorist.markflow.document.DocumentMutationRejection
 import com.algorist.markflow.document.DocumentMutationResult
@@ -8,6 +10,7 @@ import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.MutationOrigin
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import java.util.LinkedHashSet
 
 /**
  * Attachment-lifetime coordinator for one consumer of an existing [DocumentSession] authority.
@@ -18,10 +21,11 @@ import com.intellij.openapi.application.ApplicationManager
  */
 class AttachmentSyncCoordinator(
     val attachmentId: AttachmentId,
-    private val documentSession: DocumentSession,
+    internal val documentSession: DocumentSession,
 ) : Disposable {
     private val seenRequestIds = LinkedHashSet<RequestId>()
     private var disposed = false
+    private val activeRequestId = ThreadLocal<RequestId?>()
 
     val isDisposed: Boolean
         get() = disposed
@@ -56,13 +60,23 @@ class AttachmentSyncCoordinator(
             )
         }
 
-        val documentResult = documentSession.applyWebProposal(
-            proposal = DocumentMutationProposal(
-                baseDocumentRevision = request.baseDocumentRevision,
-                edits = request.edits,
-            ),
-            policy = policy,
-        )
+        val boundError = AttachmentProtocolBounds.validate(request.edits)
+        if (boundError != null) {
+            return AttachmentMutationResult.Rejected(
+                requestId = request.requestId,
+                reason = AttachmentMutationRejection.InvalidTransaction(boundError),
+            )
+        }
+
+        val documentResult = withActiveRequest(request.requestId) {
+            documentSession.applyWebProposal(
+                proposal = DocumentMutationProposal(
+                    baseDocumentRevision = request.baseDocumentRevision,
+                    edits = request.edits,
+                ),
+                policy = policy,
+            )
+        }
         return documentResult.toSyncResult(request.requestId)
     }
 
@@ -76,6 +90,48 @@ class AttachmentSyncCoordinator(
 
     private fun assertEdt() {
         ApplicationManager.getApplication().assertIsDispatchThread()
+    }
+
+    internal fun suppressOwnWebMutation(mutation: AuthoritativeDocumentMutation): Boolean =
+        mutation.origin == MutationOrigin.WEB && activeRequestId.get() != null
+
+    private fun <T> withActiveRequest(requestId: RequestId, action: () -> T): T {
+        val previous = activeRequestId.get()
+        activeRequestId.set(requestId)
+        return try {
+            action()
+        } finally {
+            if (previous == null) activeRequestId.remove() else activeRequestId.set(previous)
+        }
+    }
+}
+
+/**
+ * Attachment-owned observer that exposes canonical host events as exact incremental updates.
+ * The originating attachment suppresses only its own synchronous WEB execution scope; other
+ * attachments receive every real DocumentEvent in order.
+ */
+class AttachmentHostUpdateBinding(
+    private val coordinator: AttachmentSyncCoordinator,
+    private val onUpdate: (AuthoritativeHostUpdate) -> Unit,
+) : Disposable {
+    private var disposed = false
+
+    init {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        coordinator.documentSession.addMutationListener(
+            AuthoritativeDocumentMutationListener { mutation ->
+                if (!disposed && !coordinator.isDisposed && !coordinator.suppressOwnWebMutation(mutation)) {
+                    onUpdate(AuthoritativeHostUpdate.from(coordinator.attachmentId, mutation))
+                }
+            },
+            this,
+        )
+    }
+
+    override fun dispose() {
+        if (disposed) return
+        disposed = true
     }
 }
 

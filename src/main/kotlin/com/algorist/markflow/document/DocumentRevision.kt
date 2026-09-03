@@ -20,8 +20,20 @@ value class DocumentRevision(val value: Long) : Comparable<DocumentRevision> {
         return DocumentRevision(value + 1L)
     }
 
+    /** Lossless wire representation shared by Kotlin and JavaScript. */
+    fun toWire(): String = value.toString()
+
     companion object {
         /** Revision seed: no accepted source mutation has occurred yet. */
         val INITIAL = DocumentRevision(0L)
+
+        /** Parse the canonical non-negative decimal string used on the wire. */
+        fun fromWire(value: String): DocumentRevision {
+            require(value.matches(Regex("0|[1-9][0-9]*"))) {
+                "DocumentRevision must be a canonical non-negative decimal string"
+            }
+            require(value.toLongOrNull() != null) { "DocumentRevision exceeds Long.MAX_VALUE" }
+            return DocumentRevision(value.toLong())
+        }
     }
 }

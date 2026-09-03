@@ -17,7 +17,11 @@ enum class MutationOrigin {
 data class AuthoritativeDocumentSnapshot(
     val revision: DocumentRevision,
     val text: String,
-)
+) {
+    /** Do not put authoritative source text into ordinary diagnostics. */
+    override fun toString(): String =
+        "AuthoritativeDocumentSnapshot(revision=$revision, textLength=${text.length})"
+}
 
 /**
  * An explicit UTF-16 source-range replacement, using IntelliJ Document offset semantics.
@@ -29,7 +33,11 @@ data class SourceEdit(
     val startOffset: Int,
     val endOffset: Int,
     val replacement: String,
-)
+) {
+    /** Do not put replacement source text into ordinary diagnostics. */
+    override fun toString(): String =
+        "SourceEdit(range=$startOffset..$endOffset, replacementLength=${replacement.length})"
+}
 
 /**
  * Immutable ordered edits from one source-native transaction.
@@ -79,13 +87,6 @@ data class AuthoritativeDocumentMutation(
     val revision: DocumentRevision,
     val origin: MutationOrigin,
     val edit: SourceEdit,
-    /**
-     * The authoritative snapshot produced synchronously with the DocumentEvent.
-     *
-     * Consumers can reconcile from this immutable value without reading the live IntelliJ
-     * Document from an arbitrary callback thread.
-     */
-    val snapshot: AuthoritativeDocumentSnapshot,
 )
 
 /** Receives one synchronous authoritative mutation transition from a DocumentSession. */

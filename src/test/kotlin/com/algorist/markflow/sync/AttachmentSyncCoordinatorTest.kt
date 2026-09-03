@@ -39,7 +39,7 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertEquals("abc xyz", document.text)
         assertEquals(DocumentRevision(1), accepted.snapshot.revision)
         assertEquals(DocumentRevision(1), session.revision)
-        assertEquals(accepted.snapshot, session.lastAuthoritativeMutation?.snapshot)
+        assertEquals(accepted.snapshot.revision, session.lastAuthoritativeMutation?.revision)
         assertEquals(MutationOrigin.WEB, session.lastAuthoritativeMutation?.origin)
     }
 
@@ -358,12 +358,46 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertEquals(AttachmentId.of("attachment-a"), update.attachmentId)
         assertEquals(mutation.revision, update.revision)
         assertEquals(mutation.edit, update.edit)
-        assertEquals(mutation.snapshot, update.snapshot)
         assertSame(mutation.edit, update.edit)
-        assertSame(mutation.snapshot, update.snapshot)
-        assertEquals("aXc", update.snapshot.text)
         writeDocument { document.replaceString(0, 1, "z") }
-        assertEquals("aXc", update.snapshot.text)
+        assertEquals("zXc", snapshot(session).text)
+    }
+
+    fun testOriginatingAttachmentSuppressesOwnEventsButOtherAttachmentGetsCanonicalSequence() {
+        val document = document("0123456789", "two-attachments.md")
+        val session = session(document)
+        val first = coordinator(session, "attachment-a")
+        val second = coordinator(session, "attachment-b")
+        val firstUpdates = mutableListOf<AuthoritativeHostUpdate>()
+        val secondUpdates = mutableListOf<AuthoritativeHostUpdate>()
+
+        onEdt {
+            AttachmentHostUpdateBinding(first) { firstUpdates += it }.also {
+                com.intellij.openapi.util.Disposer.register(testRootDisposable, it)
+            }
+            AttachmentHostUpdateBinding(second) { secondUpdates += it }.also {
+                com.intellij.openapi.util.Disposer.register(testRootDisposable, it)
+            }
+        }
+
+        onEdtResult {
+            first.apply(
+                multiEditRequest(
+                    attachmentId = first.attachmentId,
+                    requestValue = "transaction-1",
+                    revision = session.revision,
+                    edits = listOf(SourceEdit(1, 3, "AB"), SourceEdit(7, 9, "XY")),
+                ),
+            )
+        }
+
+        assertTrue(firstUpdates.isEmpty())
+        assertEquals(listOf(DocumentRevision(1), DocumentRevision(2)), secondUpdates.map { it.revision })
+        assertEquals(
+            listOf(SourceEdit(7, 9, "XY"), SourceEdit(1, 3, "AB")),
+            secondUpdates.map { it.edit },
+        )
+        assertTrue(secondUpdates.all { it.attachmentId == second.attachmentId })
     }
 
     fun testDisposedDocumentSessionIsTypedAsDisposedAttachment() {
