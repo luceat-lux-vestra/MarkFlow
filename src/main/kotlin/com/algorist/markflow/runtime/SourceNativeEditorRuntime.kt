@@ -14,6 +14,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
@@ -162,7 +163,11 @@ internal class SourceNativeEditorRuntime private constructor(
         ApplicationManager.getApplication().assertIsDispatchThread()
         if (disposed) return
         disposed = true
-        hostUpdateBinding.dispose()
+        // AttachmentHostUpdateBinding registers its DocumentSession mutation-listener subscription
+        // as a Disposer child of itself (see AttachmentSyncCoordinator.kt). Disposer.dispose walks
+        // and releases that child first; a direct hostUpdateBinding.dispose() call would skip that
+        // and leak the subscription in a still-live shared DocumentSession (the split-surface case).
+        Disposer.dispose(hostUpdateBinding)
         coordinator.dispose()
         transport.dispose()
         lease.dispose()

@@ -1,5 +1,6 @@
 package com.algorist.markflow.runtime
 
+import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.DocumentSessionRegistry
 import com.algorist.markflow.sync.AttachmentId
 import com.intellij.openapi.application.ApplicationManager
@@ -59,6 +60,34 @@ class SourceNativeEditorRuntimeTest : BasePlatformTestCase() {
             runtimeB.dispose()
             assertEquals(0, registry().activeSessionCount)
         }
+    }
+
+    fun testDisposingOneSplitSurfaceReleasesItsListenerFromTheStillLiveSharedSession() {
+        val document = document("split-listener-leak.md", "shared")
+        val fakeA = FakeSourceNativeRuntimeTransport()
+        val fakeB = FakeSourceNativeRuntimeTransport()
+        val runtimeA = onEdtResult { createRuntime(document, fakeA) }!!
+        val runtimeB = onEdtResult { createRuntime(document, fakeB) }!!
+        ready(fakeA)
+        ready(fakeB)
+
+        val listenerCountWithBoth = onEdtResult { sharedDocumentSession(document).mutationListenerCount }
+        assertEquals(2, listenerCountWithBoth)
+
+        onEdt { runtimeA.dispose() }
+
+        // The still-live shared DocumentSession must not retain A's disposed AttachmentHostUpdateBinding
+        // subscription: disposing one split surface must actually detach its listener, not merely
+        // make its callback body a no-op while the registration itself leaks.
+        val listenerCountAfterOneDisposed = onEdtResult { sharedDocumentSession(document).mutationListenerCount }
+        assertEquals(1, listenerCountAfterOneDisposed)
+
+        // B is still fully functional after A's disposal.
+        fakeB.transportHandler!!.invoke(mutationRequestJson(runtimeB.attachmentId, "still-live", "0", 0, 0, "X"))
+        assertEquals("Xshared", document.text)
+
+        onEdt { runtimeB.dispose() }
+        assertEquals(0, onEdtResult { sharedDocumentSession(document).mutationListenerCount })
     }
 
     fun testSeparateDocumentsAreIsolated() {
@@ -412,6 +441,16 @@ class SourceNativeEditorRuntimeTest : BasePlatformTestCase() {
         myFixture.configureByText(fileName, text).fileDocument
 
     private fun registry(): DocumentSessionRegistry = DocumentSessionRegistry.getInstance(project)
+
+    /** Reads the shared [DocumentSession] for [document] via a throwaway lease that is released immediately. */
+    private fun sharedDocumentSession(document: Document): DocumentSession {
+        val lease = registry().acquire(document)
+        try {
+            return lease.session
+        } finally {
+            lease.dispose()
+        }
+    }
 
     private fun onEdt(action: () -> Unit) {
         val application = ApplicationManager.getApplication()

@@ -101,6 +101,10 @@ class DocumentSession(
     val isDisposed: Boolean
         get() = disposed
 
+    /** Retained mutation-listener subscription count, for lifecycle/resource-retention evidence only. */
+    internal val mutationListenerCount: Int
+        get() = synchronized(mutationListeners) { mutationListeners.size }
+
     /**
      * Register a synchronous observer owned by [parentDisposable].
      *
