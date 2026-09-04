@@ -117,15 +117,33 @@ class DocumentSessionTest : BasePlatformTestCase() {
             listOf(SourceEdit(7, 9, "XY"), SourceEdit(1, 3, "AB")),
             observed.map { it.edit },
         )
-        assertEquals(
-            listOf(
-                AuthoritativeDocumentSnapshot(DocumentRevision(1), "0123456XY9"),
-                AuthoritativeDocumentSnapshot(DocumentRevision(2), "0AB3456XY9"),
-            ),
-            observed.map { it.snapshot },
-        )
         assertEquals(listOf(MutationOrigin.WEB, MutationOrigin.WEB), observed.map { it.origin })
         assertEquals(1, commands.size)
+    }
+
+    fun testMultiEditProposalCreatesOnlyBoundarySnapshotsNotPerEventSnapshots() {
+        val document = document("0123456789", "snapshot-boundary.md")
+        var snapshotCount = 0
+        val session = DocumentSession(
+            document = document,
+            commandProject = project,
+            onSnapshotCreated = { snapshotCount += 1 },
+        ).also { Disposer.register(testRootDisposable, it) }
+
+        val result = onEdtResult {
+            session.applyWebProposal(
+                proposal(
+                    session.revision,
+                    SourceEdit(1, 3, "AB"),
+                    SourceEdit(7, 9, "XY"),
+                ),
+            )
+        } as DocumentMutationResult.Accepted
+
+        assertEquals("0AB3456XY9", result.snapshot.text)
+        // One pre-transaction validation snapshot and one final accepted-result snapshot, not
+        // one full source copy for each canonical DocumentEvent.
+        assertEquals(2, snapshotCount)
     }
 
     fun testInsertionReplacementAndDeletionUsePreTransactionUtf16Coordinates() {
@@ -194,7 +212,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
         assertEquals(DocumentRevision(2), result.snapshot.revision)
     }
 
-    fun testAuthoritativeObservationIsExactlyOnceOrderedAndSnapshotConsistent() {
+    fun testAuthoritativeObservationIsExactlyOnceOrderedWithoutHistoricalSnapshots() {
         val document = document("abc")
         val session = session(document)
         val observed = mutableListOf<AuthoritativeDocumentMutation>()
@@ -214,8 +232,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
         assertEquals(listOf(MutationOrigin.IDE_HOST, MutationOrigin.IDE_HOST), observed.map { it.origin })
         assertEquals(SourceEdit(0, 1, "x"), observed[0].edit)
         assertEquals(SourceEdit(1, 2, "y"), observed[1].edit)
-        assertEquals(AuthoritativeDocumentSnapshot(DocumentRevision(1), "xbc"), observed[0].snapshot)
-        assertEquals(AuthoritativeDocumentSnapshot(DocumentRevision(2), "xyc"), observed[1].snapshot)
+        assertEquals(AuthoritativeDocumentSnapshot(DocumentRevision(2), "xyc"), snapshot(session))
 
         onEdt { Disposer.dispose(owner) }
     }
@@ -239,7 +256,6 @@ class DocumentSessionTest : BasePlatformTestCase() {
         } as DocumentMutationResult.Accepted
 
         assertEquals(1, observed.size)
-        assertEquals(result.snapshot, observed.single().snapshot)
         assertEquals(result.snapshot.revision, observed.single().revision)
         assertEquals(MutationOrigin.WEB, observed.single().origin)
         assertEquals(SourceEdit(1, 2, "X"), observed.single().edit)
@@ -275,7 +291,6 @@ class DocumentSessionTest : BasePlatformTestCase() {
 
         assertEquals(DocumentRevision(1), session.revision)
         assertEquals(1, observed.size)
-        assertEquals(result.snapshot, observed.single().snapshot)
         assertEquals(result.snapshot, snapshot(session))
 
         onEdt {
@@ -340,7 +355,7 @@ class DocumentSessionTest : BasePlatformTestCase() {
 
         assertEquals(1, observed.size)
         assertEquals(DocumentRevision(1), observed.single().revision)
-        assertEquals("xbc", observed.single().snapshot.text)
+        assertEquals("xbc", snapshot(session).text)
         assertEquals(DocumentRevision(1), session.revision)
 
         onEdt { Disposer.dispose(owner) }

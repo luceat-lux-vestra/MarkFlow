@@ -35,8 +35,28 @@ value class RequestId private constructor(val value: String) {
     }
 }
 
+/**
+ * Opaque identity for one recovery operation within one [AttachmentId] lifetime.
+ *
+ * Recovery IDs are deliberately separate from request IDs: a delayed recovery response must not
+ * be able to complete a later recovery operation, and recovery ordering is not document ordering.
+ */
+@JvmInline
+value class RecoveryId private constructor(val value: String) {
+    override fun toString(): String = value
+
+    companion object {
+        /** Creates one validated recovery-operation identity. */
+        fun of(value: String): RecoveryId =
+            RecoveryId(requireIdentityValue("RecoveryId", value))
+    }
+}
+
 private fun requireIdentityValue(typeName: String, value: String): String {
     require(value.isNotBlank()) { "$typeName must not be blank" }
     require(value.none(Character::isISOControl)) { "$typeName must not contain control characters" }
+    require(value.length <= AttachmentProtocolBounds.MAX_IDENTITY_LENGTH) {
+        "$typeName exceeds the maximum length"
+    }
     return value
 }

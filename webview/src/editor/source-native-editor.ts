@@ -29,6 +29,11 @@ export interface SourceChangeTransaction {
 export interface SourceNativeEditorOptions {
     readonly parent: Element;
     readonly initialSource: string;
+    /**
+     * Runs after the local transaction has been normalized but before CodeMirror applies it.
+     * Returning false rejects the source projection mutation at the dispatch boundary.
+     */
+    readonly onBeforeLocalChange?: (change: SourceChangeTransaction) => boolean;
     readonly onLocalChange: (change: SourceChangeTransaction) => void;
     /**
      * Optional diagnostic observation of the bounded syntax ranges inspected
@@ -56,6 +61,9 @@ const sourceNativeTheme = EditorView.baseTheme({
 
 const refreshPreview = StateEffect.define<void>();
 const PREVIEW_CONTEXT_LINES = 1;
+
+export const SOURCE_NATIVE_MAX_EDITS = 1024;
+export const SOURCE_NATIVE_MAX_INSERTED_UTF16 = 4 * 1024 * 1024;
 
 type DecorationSet = ReturnType<typeof Decoration.set>;
 
@@ -221,13 +229,29 @@ function extractSourceChanges(changeSet: ChangeSet): SourceChangeTransaction | n
 
     const changes: SourceChange[] = [];
     changeSet.iterChanges((from, to, _fromNew, _toNew, inserted) => {
-        changes.push({from, to, inserted: inserted.toString()});
+        changes.push(Object.freeze({from, to, inserted: inserted.toString()}));
     }, true);
 
     return {
         coordinateSpace: "pre-transaction",
         changes: Object.freeze(changes)
     };
+}
+
+function isWithinSourceMutationEnvelope(change: SourceChangeTransaction): boolean {
+    if (change.changes.length === 0 || change.changes.length > SOURCE_NATIVE_MAX_EDITS) {
+        return false;
+    }
+    const insertedLength = change.changes.reduce((total, item) => total + item.inserted.length, 0);
+    return insertedLength <= SOURCE_NATIVE_MAX_INSERTED_UTF16;
+}
+
+function isValidSourceChange(change: SourceChange, documentLength: number): boolean {
+    return Number.isSafeInteger(change.from)
+        && Number.isSafeInteger(change.to)
+        && change.from >= 0
+        && change.to >= change.from
+        && change.to <= documentLength;
 }
 
 /**
@@ -275,9 +299,28 @@ export class SourceNativeEditorCore {
             }),
             parent: options.parent,
             dispatchTransactions: (transactions, view) => {
-                if (!this.disposed) {
-                    view.update(transactions);
+                if (this.disposed) {
+                    return;
                 }
+
+                const localTransactions = transactions.filter((transaction) =>
+                    transaction.docChanged && transaction.annotation(hostOrigin) !== true
+                );
+                // A single dispatch may only commit one source transaction for this target. A
+                // multi-transaction batch is rejected before any of it reaches the projection.
+                if (localTransactions.length > 1) {
+                    return;
+                }
+                if (localTransactions.length === 1) {
+                    const change = extractSourceChanges(localTransactions[0].changes);
+                    if (change === null
+                        || !isWithinSourceMutationEnvelope(change)
+                        || options.onBeforeLocalChange?.(change) === false) {
+                        return;
+                    }
+                }
+
+                view.update(transactions);
             }
         });
     }
@@ -288,12 +331,31 @@ export class SourceNativeEditorCore {
     }
 
     /**
+     * Count source-changing events represented by one pre-transaction proposal. This is read
+     * before CodeMirror commits the projection and lets the attachment store the exact revision
+     * delta an authoritative host transaction can produce.
+     */
+    effectiveSourceChangeCount(change: SourceChangeTransaction): number {
+        if (this.disposed) {
+            return 0;
+        }
+        return change.changes.reduce((count, item) => {
+            if (!isValidSourceChange(item, this.view.state.doc.length)) {
+                return count;
+            }
+            return this.view.state.doc.sliceString(item.from, item.to) === item.inserted
+                ? count
+                : count + 1;
+        }, 0);
+    }
+
+    /**
      * Apply a host-authoritative source projection. The annotation is part of
      * the transaction, so the update cannot be mistaken for a local proposal.
      */
-    applyHostSource(source: string): void {
+    applyHostSource(source: string): boolean {
         if (this.disposed || this.source === source) {
-            return;
+            return false;
         }
 
         this.view.dispatch({
@@ -304,6 +366,27 @@ export class SourceNativeEditorCore {
             },
             annotations: hostOrigin.of(true)
         });
+        return true;
+    }
+
+    /** Apply one exact UTF-16 host edit without creating a local proposal. */
+    applyHostEdit(change: SourceChange): boolean {
+        if (this.disposed || !isValidSourceChange(change, this.view.state.doc.length)) {
+            return false;
+        }
+        if (this.view.state.doc.sliceString(change.from, change.to) === change.inserted) {
+            return false;
+        }
+
+        this.view.dispatch({
+            changes: {
+                from: change.from,
+                to: change.to,
+                insert: change.inserted
+            },
+            annotations: hostOrigin.of(true)
+        });
+        return true;
     }
 
     /** Refresh visible view-only Markdown decorations without changing source text. */

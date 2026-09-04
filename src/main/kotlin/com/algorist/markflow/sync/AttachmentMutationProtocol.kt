@@ -8,6 +8,35 @@ import com.algorist.markflow.document.InvalidMutationReason
 import com.algorist.markflow.document.SourceEdit
 import com.algorist.markflow.document.SourceEditCollection
 
+/** Conservative target envelope enforced independently at the host protocol boundary. */
+object AttachmentProtocolBounds {
+    const val MAX_EDIT_COUNT = 1024
+    const val MAX_INSERTED_UTF16_CODE_UNITS = 4 * 1024 * 1024
+    const val MAX_IDENTITY_LENGTH = 128
+
+    /**
+     * Exact duplicate identity retention is bounded by the attachment lifetime itself.
+     *
+     * The entry count is derived from the existing 4 Mi UTF-16 protocol envelope and the maximum
+     * identity length: even if every retained RequestId is 128 UTF-16 code units, retained ID text
+     * cannot exceed 4 Mi code units and the number of retained objects is also finite. Reaching
+     * the bound terminalizes the attachment instead of evicting history; the runtime owner may
+     * replace it with a fresh [AttachmentId].
+     */
+    const val MAX_REQUEST_IDENTITIES_PER_ATTACHMENT =
+        MAX_INSERTED_UTF16_CODE_UNITS / MAX_IDENTITY_LENGTH
+
+    fun validate(edits: SourceEditCollection): String? {
+        if (edits.edits.size > MAX_EDIT_COUNT) {
+            return "edit count exceeds the target envelope"
+        }
+        if (edits.edits.sumOf { it.replacement.length.toLong() } > MAX_INSERTED_UTF16_CODE_UNITS) {
+            return "inserted UTF-16 length exceeds the target envelope"
+        }
+        return null
+    }
+}
+
 /**
  * Typed host-side request for one source-native transaction of explicit UTF-16 source edits.
  *
@@ -98,14 +127,7 @@ data class AuthoritativeHostUpdate(
     val attachmentId: AttachmentId,
     val revision: DocumentRevision,
     val edit: SourceEdit,
-    val snapshot: AuthoritativeDocumentSnapshot,
 ) {
-    init {
-        require(revision == snapshot.revision) {
-            "Authoritative host update revision must match its snapshot revision"
-        }
-    }
-
     companion object {
         fun from(
             attachmentId: AttachmentId,
@@ -115,7 +137,6 @@ data class AuthoritativeHostUpdate(
                 attachmentId = attachmentId,
                 revision = mutation.revision,
                 edit = mutation.edit,
-                snapshot = mutation.snapshot,
             )
     }
 }

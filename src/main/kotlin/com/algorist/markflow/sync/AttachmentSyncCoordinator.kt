@@ -1,5 +1,6 @@
 package com.algorist.markflow.sync
 
+import com.algorist.markflow.document.AuthoritativeDocumentMutation
 import com.algorist.markflow.document.DocumentMutationPolicy
 import com.algorist.markflow.document.DocumentMutationRejection
 import com.algorist.markflow.document.DocumentMutationResult
@@ -8,6 +9,7 @@ import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.MutationOrigin
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import java.util.LinkedHashSet
 
 /**
  * Attachment-lifetime coordinator for one consumer of an existing [DocumentSession] authority.
@@ -15,13 +17,28 @@ import com.intellij.openapi.application.ApplicationManager
  * This object owns only its attachment identity, duplicate request state and disposed state. It
  * never owns the document, registry entry, persistence, or presentation/runtime resources. Both
  * [apply] and [dispose] are EDT-only and synchronous; this class does not hide thread dispatch.
+ *
+ * Request identity retention is exact for the complete live attachment lifetime. The ledger is
+ * explicitly bounded; exhaustion terminalizes this attachment instead of evicting an old identity
+ * and permitting a later RequestId collision to become a fresh mutation.
  */
 class AttachmentSyncCoordinator(
     val attachmentId: AttachmentId,
-    private val documentSession: DocumentSession,
+    internal val documentSession: DocumentSession,
+    private val requestIdentityCapacity: Int = AttachmentProtocolBounds.MAX_REQUEST_IDENTITIES_PER_ATTACHMENT,
 ) : Disposable {
     private val seenRequestIds = LinkedHashSet<RequestId>()
+    private var lastSeenRequestId: RequestId? = null
     private var disposed = false
+    private val activeRequestIdContext = ThreadLocal<RequestId?>()
+
+    init {
+        require(requestIdentityCapacity > 0) { "request identity capacity must be positive" }
+    }
+
+    /** Total exact RequestIds retained for this attachment lifetime. */
+    internal val rememberedRequestIdentityCount: Int
+        get() = seenRequestIds.size
 
     val isDisposed: Boolean
         get() = disposed
@@ -49,20 +66,47 @@ class AttachmentSyncCoordinator(
                 reason = AttachmentMutationRejection.WrongAttachment(request.attachmentId),
             )
         }
-        if (!seenRequestIds.add(request.requestId)) {
+
+        if (request.requestId in seenRequestIds) {
+            val reason = if (
+                request.requestId == lastSeenRequestId || request.baseDocumentRevision == documentSession.revision
+            ) {
+                AttachmentMutationRejection.DuplicateRequest
+            } else {
+                AttachmentMutationRejection.StaleDocumentRevision(documentSession.authoritativeSnapshot())
+            }
             return AttachmentMutationResult.Rejected(
                 requestId = request.requestId,
-                reason = AttachmentMutationRejection.DuplicateRequest,
+                reason = reason,
+            )
+        }
+        if (seenRequestIds.size >= requestIdentityCapacity) {
+            terminalize()
+            return AttachmentMutationResult.Rejected(
+                requestId = request.requestId,
+                reason = AttachmentMutationRejection.DisposedAttachment,
+            )
+        }
+        seenRequestIds.add(request.requestId)
+        lastSeenRequestId = request.requestId
+
+        val boundError = AttachmentProtocolBounds.validate(request.edits)
+        if (boundError != null) {
+            return AttachmentMutationResult.Rejected(
+                requestId = request.requestId,
+                reason = AttachmentMutationRejection.InvalidTransaction(boundError),
             )
         }
 
-        val documentResult = documentSession.applyWebProposal(
-            proposal = DocumentMutationProposal(
-                baseDocumentRevision = request.baseDocumentRevision,
-                edits = request.edits,
-            ),
-            policy = policy,
-        )
+        val documentResult = withActiveRequest(request.requestId) {
+            documentSession.applyWebProposal(
+                proposal = DocumentMutationProposal(
+                    baseDocumentRevision = request.baseDocumentRevision,
+                    edits = request.edits,
+                ),
+                policy = policy,
+            )
+        }
         return documentResult.toSyncResult(request.requestId)
     }
 
@@ -70,12 +114,57 @@ class AttachmentSyncCoordinator(
     override fun dispose() {
         assertEdt()
         if (disposed) return
+        terminalize()
+    }
+
+    private fun terminalize() {
         disposed = true
         seenRequestIds.clear()
+        lastSeenRequestId = null
+        activeRequestIdContext.remove()
     }
 
     private fun assertEdt() {
         ApplicationManager.getApplication().assertIsDispatchThread()
+    }
+
+    internal fun suppressOwnWebMutation(mutation: AuthoritativeDocumentMutation): Boolean =
+        mutation.origin == MutationOrigin.WEB && activeRequestIdContext.get() != null
+
+    private fun <T> withActiveRequest(requestId: RequestId, action: () -> T): T {
+        val previous = activeRequestIdContext.get()
+        activeRequestIdContext.set(requestId)
+        return try {
+            action()
+        } finally {
+            if (previous == null) activeRequestIdContext.remove() else activeRequestIdContext.set(previous)
+        }
+    }
+}
+
+/**
+ * Attachment-owned observer that exposes canonical host events as exact incremental updates.
+ * The originating attachment suppresses only its own synchronous WEB execution scope; other
+ * attachments receive every real DocumentEvent in order.
+ */
+class AttachmentHostUpdateBinding(
+    private val coordinator: AttachmentSyncCoordinator,
+    private val onUpdate: (AuthoritativeHostUpdate) -> Unit,
+) : Disposable {
+    private var disposed = false
+
+    init {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        coordinator.documentSession.addMutationListener({ mutation ->
+            if (!disposed && !coordinator.isDisposed && !coordinator.suppressOwnWebMutation(mutation)) {
+                onUpdate(AuthoritativeHostUpdate.from(coordinator.attachmentId, mutation))
+            }
+        }, this)
+    }
+
+    override fun dispose() {
+        if (disposed) return
+        disposed = true
     }
 }
 

@@ -44,7 +44,7 @@ class DocumentSessionRegistryTest : BasePlatformTestCase() {
         assertEquals(firstObservations, secondObservations)
         assertEquals(1, firstObservations.size)
         assertEquals(DocumentRevision(1), firstObservations.single().revision)
-        assertEquals("b", secondObservations.single().snapshot.text)
+        assertEquals("b", onEdtResult { second.session.authoritativeSnapshot() }.text)
         assertSame(first.session, second.session)
 
         onEdt {
