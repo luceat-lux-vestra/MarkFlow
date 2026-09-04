@@ -28,7 +28,6 @@ class AttachmentSyncCoordinator(
     private val requestIdentityCapacity: Int = AttachmentProtocolBounds.MAX_REQUEST_IDENTITIES_PER_ATTACHMENT,
 ) : Disposable {
     private val seenRequestIds = LinkedHashSet<RequestId>()
-    private var lastCompletedRequestId: RequestId? = null
     private var disposed = false
     private val activeRequestIdContext = ThreadLocal<RequestId?>()
 
@@ -39,10 +38,6 @@ class AttachmentSyncCoordinator(
     /** Total exact RequestIds retained for this attachment lifetime. */
     internal val rememberedRequestIdentityCount: Int
         get() = seenRequestIds.size
-
-    /** Hot-slot instrumentation retained for the original immediate-duplicate evidence. */
-    internal val retainedRequestIdentityCount: Int
-        get() = if (lastCompletedRequestId == null) 0 else 1
 
     val isDisposed: Boolean
         get() = disposed
@@ -89,28 +84,24 @@ class AttachmentSyncCoordinator(
             seenRequestIds.add(request.requestId)
         }
 
-        return try {
-            val boundError = AttachmentProtocolBounds.validate(request.edits)
-            if (boundError != null) {
-                AttachmentMutationResult.Rejected(
-                    requestId = request.requestId,
-                    reason = AttachmentMutationRejection.InvalidTransaction(boundError),
-                )
-            } else {
-                val documentResult = withActiveRequest(request.requestId) {
-                    documentSession.applyWebProposal(
-                        proposal = DocumentMutationProposal(
-                            baseDocumentRevision = request.baseDocumentRevision,
-                            edits = request.edits,
-                        ),
-                        policy = policy,
-                    )
-                }
-                documentResult.toSyncResult(request.requestId)
-            }
-        } finally {
-            lastCompletedRequestId = request.requestId
+        val boundError = AttachmentProtocolBounds.validate(request.edits)
+        if (boundError != null) {
+            return AttachmentMutationResult.Rejected(
+                requestId = request.requestId,
+                reason = AttachmentMutationRejection.InvalidTransaction(boundError),
+            )
         }
+
+        val documentResult = withActiveRequest(request.requestId) {
+            documentSession.applyWebProposal(
+                proposal = DocumentMutationProposal(
+                    baseDocumentRevision = request.baseDocumentRevision,
+                    edits = request.edits,
+                ),
+                policy = policy,
+            )
+        }
+        return documentResult.toSyncResult(request.requestId)
     }
 
     /** Invalidates this attachment. The consumed [DocumentSession] is owned elsewhere. */
@@ -123,7 +114,6 @@ class AttachmentSyncCoordinator(
     private fun terminalize() {
         disposed = true
         seenRequestIds.clear()
-        lastCompletedRequestId = null
         activeRequestIdContext.remove()
     }
 
