@@ -17,11 +17,14 @@ object AttachmentProtocolBounds {
     /**
      * Exact duplicate identity retention is bounded by the attachment lifetime itself.
      *
-     * Reaching this limit terminalizes the attachment instead of evicting old request identities
-     * and silently weakening lifetime duplicate semantics. The later runtime owner may replace the
-     * attachment with a fresh [AttachmentId].
+     * The entry count is derived from the existing 4 Mi UTF-16 protocol envelope and the maximum
+     * identity length: even if every retained RequestId is 128 UTF-16 code units, retained ID text
+     * cannot exceed 4 Mi code units and the number of retained objects is also finite. Reaching
+     * the bound terminalizes the attachment instead of evicting history; the runtime owner may
+     * replace it with a fresh [AttachmentId].
      */
-    const val MAX_REQUEST_IDENTITIES_PER_ATTACHMENT = 32 * 1024
+    const val MAX_REQUEST_IDENTITIES_PER_ATTACHMENT =
+        MAX_INSERTED_UTF16_CODE_UNITS / MAX_IDENTITY_LENGTH
 
     fun validate(edits: SourceEditCollection): String? {
         if (edits.edits.size > MAX_EDIT_COUNT) {
