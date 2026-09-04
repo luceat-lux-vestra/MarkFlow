@@ -67,22 +67,20 @@ class AttachmentSyncCoordinator(
         }
 
         val requestAlreadySeen = request.requestId in seenRequestIds
-        if (requestAlreadySeen && request.baseDocumentRevision == documentSession.revision) {
+        if (requestAlreadySeen) {
             return AttachmentMutationResult.Rejected(
                 requestId = request.requestId,
                 reason = AttachmentMutationRejection.DuplicateRequest,
             )
         }
-        if (!requestAlreadySeen) {
-            if (seenRequestIds.size >= requestIdentityCapacity) {
-                terminalize()
-                return AttachmentMutationResult.Rejected(
-                    requestId = request.requestId,
-                    reason = AttachmentMutationRejection.DisposedAttachment,
-                )
-            }
-            seenRequestIds.add(request.requestId)
+        if (seenRequestIds.size >= requestIdentityCapacity) {
+            terminalize()
+            return AttachmentMutationResult.Rejected(
+                requestId = request.requestId,
+                reason = AttachmentMutationRejection.DisposedAttachment,
+            )
         }
+        seenRequestIds.add(request.requestId)
 
         val boundError = AttachmentProtocolBounds.validate(request.edits)
         if (boundError != null) {
