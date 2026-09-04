@@ -15,14 +15,42 @@ import org.cef.handler.CefLoadHandlerAdapter
  * This class is never pooled, never reused across runtime owners, and never shared with the
  * legacy `MarkFlowBrowserLeasePool`. It does not read or interpret wire messages itself; it only
  * carries bytes and dispatches lifecycle callbacks to its owner.
+ *
+ * Construction and disposal are failure-atomic with respect to resources this class can observe:
+ * if query creation fails after the browser exists, already-created queries and the browser are
+ * released before the exception escapes; disposal attempts every owned release even if an earlier
+ * one throws.
  */
 internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
-    private val browser = JBCefBrowser()
-    private val transportQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
-    private val readinessQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
+    private val browser: JBCefBrowser
+    private val transportQuery: JBCefJSQuery
+    private val readinessQuery: JBCefJSQuery
 
     @Volatile
     private var disposed = false
+
+    init {
+        val createdBrowser = JBCefBrowser()
+        var createdTransportQuery: JBCefJSQuery? = null
+        var createdReadinessQuery: JBCefJSQuery? = null
+
+        try {
+            createdTransportQuery = JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
+            createdReadinessQuery = JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
+        } catch (failure: Throwable) {
+            cleanupConstructionFailure(
+                failure = failure,
+                browser = createdBrowser,
+                transportQuery = createdTransportQuery,
+                readinessQuery = createdReadinessQuery,
+            )
+            throw failure
+        }
+
+        browser = createdBrowser
+        transportQuery = requireNotNull(createdTransportQuery)
+        readinessQuery = requireNotNull(createdReadinessQuery)
+    }
 
     override fun loadUrl(url: String) {
         if (disposed) return
@@ -88,9 +116,24 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
     override fun dispose() {
         if (disposed) return
         disposed = true
-        readinessQuery.dispose()
-        transportQuery.dispose()
-        browser.dispose()
+
+        var firstFailure: Throwable? = null
+        fun release(action: () -> Unit) {
+            try {
+                action()
+            } catch (failure: Throwable) {
+                if (firstFailure == null) {
+                    firstFailure = failure
+                } else {
+                    firstFailure!!.addSuppressed(failure)
+                }
+            }
+        }
+
+        release { readinessQuery.dispose() }
+        release { transportQuery.dispose() }
+        release { browser.dispose() }
+        firstFailure?.let { throw it }
     }
 
     private fun toResponse(payload: String?): JBCefJSQuery.Response =
@@ -98,5 +141,24 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     private companion object {
         private const val REJECTED_STATUS = 400
+
+        private fun cleanupConstructionFailure(
+            failure: Throwable,
+            browser: JBCefBrowser,
+            transportQuery: JBCefJSQuery?,
+            readinessQuery: JBCefJSQuery?,
+        ) {
+            fun release(action: () -> Unit) {
+                try {
+                    action()
+                } catch (cleanupFailure: Throwable) {
+                    failure.addSuppressed(cleanupFailure)
+                }
+            }
+
+            readinessQuery?.let { release(it::dispose) }
+            transportQuery?.let { release(it::dispose) }
+            release { browser.dispose() }
+        }
     }
 }
