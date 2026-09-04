@@ -28,6 +28,7 @@ class AttachmentSyncCoordinator(
     private val requestIdentityCapacity: Int = AttachmentProtocolBounds.MAX_REQUEST_IDENTITIES_PER_ATTACHMENT,
 ) : Disposable {
     private val seenRequestIds = LinkedHashSet<RequestId>()
+    private var lastSeenRequestId: RequestId? = null
     private var disposed = false
     private val activeRequestIdContext = ThreadLocal<RequestId?>()
 
@@ -66,11 +67,17 @@ class AttachmentSyncCoordinator(
             )
         }
 
-        val requestAlreadySeen = request.requestId in seenRequestIds
-        if (requestAlreadySeen) {
+        if (request.requestId in seenRequestIds) {
+            val reason = if (
+                request.requestId == lastSeenRequestId || request.baseDocumentRevision == documentSession.revision
+            ) {
+                AttachmentMutationRejection.DuplicateRequest
+            } else {
+                AttachmentMutationRejection.StaleDocumentRevision(documentSession.authoritativeSnapshot())
+            }
             return AttachmentMutationResult.Rejected(
                 requestId = request.requestId,
-                reason = AttachmentMutationRejection.DuplicateRequest,
+                reason = reason,
             )
         }
         if (seenRequestIds.size >= requestIdentityCapacity) {
@@ -81,6 +88,7 @@ class AttachmentSyncCoordinator(
             )
         }
         seenRequestIds.add(request.requestId)
+        lastSeenRequestId = request.requestId
 
         val boundError = AttachmentProtocolBounds.validate(request.edits)
         if (boundError != null) {
@@ -112,6 +120,7 @@ class AttachmentSyncCoordinator(
     private fun terminalize() {
         disposed = true
         seenRequestIds.clear()
+        lastSeenRequestId = null
         activeRequestIdContext.remove()
     }
 
