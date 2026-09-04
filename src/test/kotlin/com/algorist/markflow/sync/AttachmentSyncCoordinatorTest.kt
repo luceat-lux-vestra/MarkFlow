@@ -182,7 +182,7 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
         assertEquals(DocumentRevision(1), session.revision)
     }
 
-    fun testRequestIdentityRetentionIsBoundedAndRevisionFencesOlderReplay() {
+    fun testRequestIdentityLedgerPreservesImmediateAndStaleReplaySafety() {
         val document = document("abc")
         val session = session(document)
         val coordinator = coordinator(session, "attachment-a")
@@ -205,14 +205,14 @@ class AttachmentSyncCoordinatorTest : BasePlatformTestCase() {
             onEdt { coordinator.apply(last) }
         }
 
-        assertEquals(1, coordinator.retainedRequestIdentityCount)
+        assertEquals(2048, coordinator.rememberedRequestIdentityCount)
         assertEquals(
             AttachmentMutationRejection.DuplicateRequest,
             (onEdtResult { coordinator.apply(last) } as AttachmentMutationResult.Rejected).reason,
         )
         val oldReplay = onEdtResult { coordinator.apply(first) } as AttachmentMutationResult.Rejected
         assertTrue(oldReplay.reason is AttachmentMutationRejection.StaleDocumentRevision)
-        assertEquals(1, coordinator.retainedRequestIdentityCount)
+        assertEquals(2048, coordinator.rememberedRequestIdentityCount)
     }
 
     fun testInvalidUtf16RangeMapsToTypedRejectionWithoutMutation() {
