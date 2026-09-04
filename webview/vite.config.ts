@@ -13,6 +13,12 @@ export default defineConfig({
         outDir: webviewOutputDir,
         emptyOutDir: true,
         rollupOptions: {
+            input: {
+                main: resolve(__dirname, "index.html"),
+                // Target #105/#81 per-surface runtime entry, parallel to the legacy Crepe `main`
+                // entry above. It has no build/runtime dependency on `main`'s bootstrap/bridge.
+                sourceNative: resolve(__dirname, "source-native.html")
+            },
             output: {
                 entryFileNames: `assets/[name].js`,
                 chunkFileNames: `assets/[name].js`,
