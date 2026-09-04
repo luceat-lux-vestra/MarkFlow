@@ -87,10 +87,6 @@ function withAttachment(callback, {attachmentId = "attachment-a", source = "init
             let counter = 0;
             return () => `request-${++counter}`;
         })(),
-        nextRecoveryId: (() => {
-            let counter = 0;
-            return () => `recovery-${++counter}`;
-        })(),
         onStateTransition: (transition) => transitions.push(transition)
     });
     boot(attachment, source, revision);

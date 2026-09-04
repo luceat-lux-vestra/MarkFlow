@@ -213,7 +213,6 @@ export interface SourceNativeAttachmentOptions {
     readonly attachmentId: string;
     readonly onSend: (message: AttachmentOutboundMessage) => void;
     readonly nextRequestId?: () => string;
-    readonly nextRecoveryId?: () => string;
     readonly onStateTransition?: (transition: SourceNativeStateTransition) => void;
 }
 
@@ -234,18 +233,17 @@ export class SourceNativeAttachment {
     readonly attachmentId: AttachmentId;
     private readonly onSend: (message: AttachmentOutboundMessage) => void;
     private readonly nextRequestId: () => string;
-    private readonly nextRecoveryId: () => string;
     private readonly onStateTransition?: (transition: SourceNativeStateTransition) => void;
     private stateValue: SourceNativeAttachmentState = "BOOTSTRAP";
     private currentRevisionValue: DocumentRevision | null = null;
     private pendingMutation: PendingMutation | null = null;
     private recoveryIdValue: RecoveryId | null = null;
+    private recoverySequence = 0n;
 
     constructor(options: SourceNativeAttachmentOptions) {
         this.attachmentId = parseAttachmentId(options.attachmentId);
         this.onSend = options.onSend;
         this.nextRequestId = options.nextRequestId ?? (() => crypto.randomUUID());
-        this.nextRecoveryId = options.nextRecoveryId ?? (() => crypto.randomUUID());
         this.onStateTransition = options.onStateTransition;
         this.editor = new SourceNativeEditorCore({
             parent: options.parent,
@@ -491,13 +489,7 @@ export class SourceNativeAttachment {
             return;
         }
         this.pendingMutation = null;
-        let recoveryId: RecoveryId;
-        try {
-            recoveryId = parseRecoveryId(this.nextRecoveryId());
-        } catch (_error) {
-            this.terminalize("recovery-correlation-unavailable");
-            return;
-        }
+        const recoveryId = this.nextRecoveryOperationId();
         this.recoveryIdValue = recoveryId;
         this.transition("RECOVERING", reason);
         try {
@@ -515,6 +507,11 @@ export class SourceNativeAttachment {
         this.recoveryIdValue = null;
         this.transition("DISPOSED", reason);
         this.editor.dispose();
+    }
+
+    private nextRecoveryOperationId(): RecoveryId {
+        this.recoverySequence += 1n;
+        return parseRecoveryId(`recovery-${this.recoverySequence.toString()}`);
     }
 
     private transition(to: SourceNativeAttachmentState, reason: string): void {
