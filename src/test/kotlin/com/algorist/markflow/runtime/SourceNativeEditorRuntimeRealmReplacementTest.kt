@@ -8,6 +8,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -28,25 +29,25 @@ class SourceNativeEditorRuntimeRealmReplacementTest : BasePlatformTestCase() {
         val hostPushesBefore = fake.deliveredMessageCount("hostIncrementalUpdate")
         val scriptsBefore = fake.executedScripts.size
 
-        // A second main-frame navigation is the earliest reliable signal that the one-realm
-        // lifetime is ending. It must invalidate synchronously, before EDT cleanup runs.
-        fake.fireRealmReplacementLoadStart()
-
-        assertNull(staleReadinessHandler.invoke(readySignal))
-        assertNull(
-            staleTransportHandler.invoke(
-                mutationRequestJson(runtime.attachmentId, "stale-after-reload", "0", 0, 1, "Z"),
-            ),
-        )
-        assertEquals("abc", document.text)
-
-        // The binding is still registered until the scheduled disposal executes, so mutate the
-        // authoritative Document now: invalidation itself must suppress delivery into the new realm.
+        // Keep invalidation and the authoritative host edit in one EDT turn. The replacement
+        // callback queues disposal with invokeLater, so this proves the synchronous invalidation
+        // fence itself suppresses stale callbacks/host delivery before cleanup can unregister the
+        // binding or dispose the transport.
         onEdt {
+            fake.fireRealmReplacementLoadStart()
+            assertFalse(fake.disposed)
+            assertNull(staleReadinessHandler.invoke(readySignal))
+            assertNull(
+                staleTransportHandler.invoke(
+                    mutationRequestJson(runtime.attachmentId, "stale-after-reload", "0", 0, 1, "Z"),
+                ),
+            )
             ApplicationManager.getApplication().runWriteAction {
                 document.insertString(0, "H")
             }
+            assertFalse(fake.disposed)
         }
+
         assertEquals("Habc", document.text)
         assertEquals(hostPushesBefore, fake.deliveredMessageCount("hostIncrementalUpdate"))
         assertEquals(scriptsBefore, fake.executedScripts.size)
