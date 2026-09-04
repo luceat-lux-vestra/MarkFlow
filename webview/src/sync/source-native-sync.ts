@@ -238,6 +238,7 @@ export class SourceNativeAttachment {
     private currentRevisionValue: DocumentRevision | null = null;
     private pendingMutation: PendingMutation | null = null;
     private recoveryIdValue: RecoveryId | null = null;
+    private recoveryRevisionFloorValue: DocumentRevision | null = null;
     private recoverySequence = 0n;
 
     constructor(options: SourceNativeAttachmentOptions) {
@@ -278,7 +279,10 @@ export class SourceNativeAttachment {
             return false;
         }
         if (message.type === "recoverySnapshot") {
-            if (this.state !== "RECOVERING" || message.recoveryId !== this.recoveryIdValue) {
+            if (this.state !== "RECOVERING"
+                || message.recoveryId !== this.recoveryIdValue
+                || (this.recoveryRevisionFloorValue !== null
+                    && compareDocumentRevisions(message.documentRevision, this.recoveryRevisionFloorValue) < 0)) {
                 return false;
             }
         }
@@ -287,6 +291,7 @@ export class SourceNativeAttachment {
         this.currentRevisionValue = message.documentRevision;
         this.pendingMutation = null;
         this.recoveryIdValue = null;
+        this.recoveryRevisionFloorValue = null;
         this.transition("READY", message.type);
         return true;
     }
@@ -333,6 +338,7 @@ export class SourceNativeAttachment {
             return;
         }
         this.pendingMutation = null;
+        this.recoveryRevisionFloorValue = null;
         this.transition("DISPOSED", "dispose");
         this.editor.dispose();
     }
@@ -462,6 +468,10 @@ export class SourceNativeAttachment {
     }
 
     private receiveHostUpdate(message: HostIncrementalUpdateMessage): boolean {
+        if (this.state === "RECOVERING") {
+            this.observeRecoveryRevision(message.documentRevision);
+            return false;
+        }
         if (this.state === "AWAITING_ACK") {
             this.enterRecovery("authoritative-update-during-local-proposal");
             return false;
@@ -489,13 +499,14 @@ export class SourceNativeAttachment {
             return;
         }
         this.pendingMutation = null;
+        this.recoveryRevisionFloorValue = this.currentRevisionValue;
         const recoveryId = this.nextRecoveryOperationId();
         this.recoveryIdValue = recoveryId;
         this.transition("RECOVERING", reason);
         try {
             this.onSend({type: "snapshotRequest", attachmentId: this.attachmentId, recoveryId});
         } catch (_error) {
-            // Recovery remains fail-closed if the transport cannot carry the request.
+            this.terminalize("recovery-request-send-failure");
         }
     }
 
@@ -505,8 +516,16 @@ export class SourceNativeAttachment {
         }
         this.pendingMutation = null;
         this.recoveryIdValue = null;
+        this.recoveryRevisionFloorValue = null;
         this.transition("DISPOSED", reason);
         this.editor.dispose();
+    }
+
+    private observeRecoveryRevision(revision: DocumentRevision): void {
+        if (this.recoveryRevisionFloorValue === null
+            || compareDocumentRevisions(revision, this.recoveryRevisionFloorValue) > 0) {
+            this.recoveryRevisionFloorValue = revision;
+        }
     }
 
     private nextRecoveryOperationId(): RecoveryId {

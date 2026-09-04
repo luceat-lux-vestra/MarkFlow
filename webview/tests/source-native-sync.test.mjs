@@ -375,6 +375,105 @@ test("delayed recovery snapshot from R1 cannot complete recovery R2", () => {
     });
 });
 
+test("recovery rejects a snapshot older than its acknowledged revision", () => {
+    withAttachment(({attachment, sent}) => {
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+        assert.equal(attachment.receive({
+            type: "mutationRejected",
+            attachmentId: attachment.attachmentId,
+            requestId: sent[0].requestId,
+            category: "CONFLICT"
+        }), true);
+        const recovery = sent.at(-1);
+        assert.equal(attachment.currentRevision, "5");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("4"),
+            source: "stale snapshot"
+        }), false);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.currentRevision, "5");
+        assert.equal(attachment.editor.source, "xinitial");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("5"),
+            source: "current snapshot"
+        }), true);
+        assert.equal(attachment.state, "READY");
+        assert.equal(attachment.currentRevision, "5");
+        assert.equal(attachment.editor.source, "current snapshot");
+    }, {revision: "5"});
+});
+
+test("recovery fences snapshots against an authoritative update observed first", () => {
+    withAttachment(({attachment, sent}) => {
+        assert.equal(attachment.receiveRaw("not-json"), false);
+        const recovery = sent.at(-1);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.receive({
+            type: "hostIncrementalUpdate",
+            attachmentId: attachment.attachmentId,
+            documentRevision: sync.parseDocumentRevision("7"),
+            edit: {from: 0, to: 0, inserted: "authoritative"}
+        }), false);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.currentRevision, "5");
+        assert.equal(attachment.editor.source, "initial");
+        assert.equal(sent.length, 1);
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("6"),
+            source: "snapshot before observed update"
+        }), false);
+        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: recovery.recoveryId,
+            documentRevision: sync.parseDocumentRevision("7"),
+            source: "snapshot after observed update"
+        }), true);
+        assert.equal(attachment.state, "READY");
+        assert.equal(attachment.currentRevision, "7");
+        assert.equal(attachment.editor.source, "snapshot after observed update");
+    }, {revision: "5"});
+});
+
+test("synchronous recovery snapshot send failure terminalizes instead of hanging in recovery", () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const attachment = new sync.SourceNativeAttachment({
+        parent,
+        attachmentId: "attachment-a",
+        onSend: (message) => {
+            if (message.type === "snapshotRequest") {
+                throw new Error("snapshot transport unavailable");
+            }
+        }
+    });
+    try {
+        assert.equal(attachment.receiveRaw("not-json"), false);
+        assert.equal(attachment.state, "DISPOSED");
+        assert.equal(attachment.recoveryId, null);
+        assert.equal(attachment.receive({
+            type: "recoverySnapshot",
+            attachmentId: attachment.attachmentId,
+            recoveryId: sync.parseRecoveryId("late-recovery"),
+            documentRevision: sync.parseDocumentRevision("1"),
+            source: "must-not-apply"
+        }), false);
+    } finally {
+        attachment.dispose();
+        parent.remove();
+    }
+});
+
 test("malformed or unknown inbound messages fail closed and do not fabricate success", () => {
     for (const raw of ["", "not-json", JSON.stringify({type: "unknown"})]) {
         withAttachment(({attachment, sent}) => {
@@ -391,8 +490,10 @@ test("transport uncertainty after an optimistic commit enters recovery without f
     const attachment = new sync.SourceNativeAttachment({
         parent,
         attachmentId: "attachment-a",
-        onSend: () => {
-            throw new Error("transport unavailable");
+        onSend: (message) => {
+            if (message.type === "mutationRequest") {
+                throw new Error("transport unavailable");
+            }
         },
         nextRequestId: () => "request-1"
     });
