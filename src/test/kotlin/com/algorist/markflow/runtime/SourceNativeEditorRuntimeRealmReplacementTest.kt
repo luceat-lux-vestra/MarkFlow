@@ -42,7 +42,11 @@ class SourceNativeEditorRuntimeRealmReplacementTest : BasePlatformTestCase() {
 
         // The binding is still registered until the scheduled disposal executes, so mutate the
         // authoritative Document now: invalidation itself must suppress delivery into the new realm.
-        onEdt { document.insertString(0, "H") }
+        onEdt {
+            ApplicationManager.getApplication().runWriteAction {
+                document.insertString(0, "H")
+            }
+        }
         assertEquals("Habc", document.text)
         assertEquals(hostPushesBefore, fake.deliveredMessageCount("hostIncrementalUpdate"))
         assertEquals(scriptsBefore, fake.executedScripts.size)
@@ -131,7 +135,7 @@ class SourceNativeEditorRuntimeRealmReplacementTest : BasePlatformTestCase() {
     private fun readySignalJsonFromUrl(fake: FakeSourceNativeRuntimeTransport): String {
         val url = fake.loadedUrls.single()
         return "{\"type\":\"runtimeReady\",\"attachmentId\":\"${urlParam(url, "attachmentId")}\"," +
-            "\"runtimeToken\":\"${urlParam(url, "runtimeToken")}\"}"
+            "\"runtimeToken\":\"${urlParam(url, "runtimeToken\")}\"}"
     }
 
     private fun urlParam(url: String, name: String): String {
