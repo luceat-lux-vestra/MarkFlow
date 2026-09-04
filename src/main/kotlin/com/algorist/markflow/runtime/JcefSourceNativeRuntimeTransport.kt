@@ -6,6 +6,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
+import org.cef.network.CefRequest
 
 /**
  * The only production [SourceNativeRuntimeTransport]: exactly one [JBCefBrowser] realm and exactly
@@ -99,6 +100,22 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     override fun setReadinessMessageHandler(handler: (String) -> String?) {
         readinessQuery.addHandler { raw -> toResponse(handler(raw)) }
+    }
+
+    override fun setLoadStartHandler(handler: () -> Unit) {
+        browser.jbCefClient.addLoadHandler(
+            object : CefLoadHandlerAdapter() {
+                override fun onLoadStart(
+                    cefBrowser: CefBrowser?,
+                    frame: CefFrame?,
+                    transitionType: CefRequest.TransitionType?,
+                ) {
+                    if (disposed || frame == null || !frame.isMain) return
+                    handler()
+                }
+            },
+            browser.cefBrowser,
+        )
     }
 
     override fun setLoadEndHandler(handler: () -> Unit) {
