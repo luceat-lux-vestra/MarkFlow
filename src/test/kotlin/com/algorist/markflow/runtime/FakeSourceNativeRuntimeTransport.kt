@@ -15,12 +15,15 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         private set
     var readinessHandler: ((String) -> String?)? = null
         private set
+    var loadStartHandler: (() -> Unit)? = null
+        private set
     var loadEndHandler: (() -> Unit)? = null
         private set
 
     val loadedUrls = mutableListOf<String>()
     val executedScripts = mutableListOf<String>()
 
+    private var initialLoadStartFired = false
     private var initialLoadEndFired = false
 
     var disposed = false
@@ -46,21 +49,38 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         readinessHandler = handler
     }
 
+    override fun setLoadStartHandler(handler: () -> Unit) {
+        loadStartHandler = handler
+    }
+
     override fun setLoadEndHandler(handler: () -> Unit) {
         loadEndHandler = handler
     }
 
+    /** Fires the one initial main-frame load start for this fake browser lifetime. */
+    fun fireLoadStart() {
+        if (initialLoadStartFired) return
+        initialLoadStartFired = true
+        loadStartHandler?.invoke()
+    }
+
     /** Fires the one initial main-frame load completion for this fake browser lifetime. */
     fun fireLoadEnd() {
+        fireLoadStart()
         if (initialLoadEndFired) return
         initialLoadEndFired = true
         loadEndHandler?.invoke()
     }
 
+    /** Models a later main-frame navigation start in the same browser/runtime object. */
+    fun fireRealmReplacementLoadStart() {
+        fireLoadStart()
+        loadStartHandler?.invoke()
+    }
+
     /**
-     * Models a later main-frame load in the same browser object, i.e. reload/navigation to a new
-     * JS realm while the old runtime owner still exists. The initial load is established first if
-     * a test has not already done so.
+     * Models completion of the replacement navigation. Tests normally use
+     * [fireRealmReplacementLoadStart] first so they can assert the earlier fail-closed fence.
      */
     fun fireRealmReplacementLoadEnd() {
         fireLoadEnd()
