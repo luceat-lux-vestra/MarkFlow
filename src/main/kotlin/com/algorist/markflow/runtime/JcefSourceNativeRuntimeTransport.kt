@@ -6,7 +6,6 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
-import javax.swing.JComponent
 
 /**
  * The only production [SourceNativeRuntimeTransport]: exactly one [JBCefBrowser] realm and exactly
@@ -24,9 +23,6 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     @Volatile
     private var disposed = false
-
-    override val component: JComponent
-        get() = browser.component
 
     override fun loadUrl(url: String) {
         if (disposed) return

@@ -1,7 +1,6 @@
 package com.algorist.markflow.runtime
 
 import com.intellij.openapi.Disposable
-import javax.swing.JComponent
 
 /**
  * Runtime-owned JCEF transport seam for exactly one [SourceNativeEditorRuntime] surface.
@@ -16,9 +15,6 @@ import javax.swing.JComponent
  * callbacks are inherently allowed to arrive after a Kotlin-side dispose call has already started.
  */
 internal interface SourceNativeRuntimeTransport : Disposable {
-    /** The browser's Swing component for this runtime's current lifetime. */
-    val component: JComponent
-
     /** Navigates the owned browser realm to [url]. Called at most once per transport instance. */
     fun loadUrl(url: String)
 

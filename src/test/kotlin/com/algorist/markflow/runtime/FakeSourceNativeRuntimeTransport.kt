@@ -1,8 +1,5 @@
 package com.algorist.markflow.runtime
 
-import javax.swing.JComponent
-import javax.swing.JPanel
-
 /**
  * Deterministic lifecycle fake for [SourceNativeRuntimeTransport].
  *
@@ -14,8 +11,6 @@ import javax.swing.JPanel
  * JCEF callback that was already in flight when disposal started.
  */
 internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
-    private val panel = JPanel()
-
     var transportHandler: ((String) -> String?)? = null
         private set
     var readinessHandler: ((String) -> String?)? = null
@@ -28,9 +23,6 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     var disposed = false
         private set
-
-    override val component: JComponent
-        get() = panel
 
     override fun loadUrl(url: String) {
         if (disposed) return

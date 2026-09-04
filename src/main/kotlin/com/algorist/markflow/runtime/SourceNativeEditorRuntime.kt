@@ -1,6 +1,7 @@
 package com.algorist.markflow.runtime
 
 import com.algorist.markflow.browser.MarkFlowJcefSupport
+import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
 import com.algorist.markflow.document.DocumentSessionLease
 import com.algorist.markflow.document.DocumentSessionRegistry
 import com.algorist.markflow.sync.AttachmentHostUpdateBinding
@@ -19,7 +20,6 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import javax.swing.JComponent
 
 /**
  * The per-surface JCEF runtime owner required by #105/#81.
@@ -55,10 +55,6 @@ internal class SourceNativeEditorRuntime private constructor(
 
     @Volatile
     private var disposed = false
-
-    /** The browser's Swing component for this runtime's current lifetime. */
-    val component: JComponent
-        get() = transport.component
 
     val isDisposed: Boolean
         get() = disposed
@@ -192,7 +188,7 @@ internal class SourceNativeEditorRuntime private constructor(
         fun create(
             project: Project,
             document: Document,
-            sourceNativeBaseUrl: () -> String?,
+            sourceNativeBaseUrl: () -> String? = { MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl() },
             isJcefAvailable: () -> Boolean = { MarkFlowJcefSupport.isAvailable },
             transportFactory: () -> SourceNativeRuntimeTransport = { JcefSourceNativeRuntimeTransport() },
         ): SourceNativeEditorRuntime? {
