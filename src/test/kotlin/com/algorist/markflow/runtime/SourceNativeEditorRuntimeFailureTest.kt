@@ -57,6 +57,7 @@ class SourceNativeEditorRuntimeFailureTest : BasePlatformTestCase() {
         assertEquals("load failed", failure.message)
         assertTrue(transport.transportHandlerRegistered)
         assertTrue(transport.readinessHandlerRegistered)
+        assertTrue(transport.loadStartHandlerRegistered)
         assertTrue(transport.loadEndHandlerRegistered)
         assertEquals(1, transport.disposeCount)
         assertEquals(sessionsBefore, onEdtResult { registry().activeSessionCount })
@@ -103,6 +104,8 @@ class SourceNativeEditorRuntimeFailureTest : BasePlatformTestCase() {
             private set
         var readinessHandlerRegistered = false
             private set
+        var loadStartHandlerRegistered = false
+            private set
         var loadEndHandlerRegistered = false
             private set
         var disposeCount = 0
@@ -124,6 +127,10 @@ class SourceNativeEditorRuntimeFailureTest : BasePlatformTestCase() {
 
         override fun setReadinessMessageHandler(handler: (String) -> String?) {
             if (!disposed) readinessHandlerRegistered = true
+        }
+
+        override fun setLoadStartHandler(handler: () -> Unit) {
+            if (!disposed) loadStartHandlerRegistered = true
         }
 
         override fun setLoadEndHandler(handler: () -> Unit) {
