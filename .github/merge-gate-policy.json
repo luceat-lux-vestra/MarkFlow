@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Canonical, machine-checkable merge-gate policy for MarkFlow-private.",
+    "Canonical, machine-checkable merge-gate policy for MarkFlow.",
     "The required/advisory/staged/release-only arrays are the only policy classification.",
     "The audit compares the required producer definitions with workflow files and, when an",
     "explicit repository-administration credential is supplied, with the live rulesets.",
@@ -10,7 +10,7 @@
     "and live settings change have both been completed."
   ],
   "version": 2,
-  "repository": "luceat-lux-vestra/MarkFlow-private",
+  "repository": "luceat-lux-vestra/MarkFlow",
   "protected_branch": "main",
   "ruleset_name": "main protection",
   "release_ruleset_name": "release tag immutability",
