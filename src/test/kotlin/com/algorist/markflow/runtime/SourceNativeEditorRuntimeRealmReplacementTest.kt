@@ -3,6 +3,7 @@ package com.algorist.markflow.runtime
 import com.algorist.markflow.document.DocumentSessionRegistry
 import com.algorist.markflow.sync.AttachmentId
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
@@ -42,7 +43,7 @@ class SourceNativeEditorRuntimeRealmReplacementTest : BasePlatformTestCase() {
                     mutationRequestJson(runtime.attachmentId, "stale-after-reload", "0", 0, 1, "Z"),
                 ),
             )
-            ApplicationManager.getApplication().runWriteAction {
+            WriteCommandAction.runWriteCommandAction(project) {
                 document.insertString(0, "H")
             }
             assertFalse(fake.disposed)
