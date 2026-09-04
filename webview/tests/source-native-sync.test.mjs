@@ -249,7 +249,7 @@ test("accepted-unchanged requires base revision and does not accept an optimisti
     });
 });
 
-test("wrong request ACK cannot advance and enters recovery", () => {
+test("wrong request ACK terminalizes unresolved mutation instead of racing recovery", () => {
     withAttachment(({attachment, sent}) => {
         attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
         assert.equal(attachment.receive({
@@ -258,9 +258,9 @@ test("wrong request ACK cannot advance and enters recovery", () => {
             requestId: sync.parseRequestId("other-request"),
             finalDocumentRevision: sync.parseDocumentRevision("1")
         }), false);
-        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.state, "DISPOSED");
         assert.equal(attachment.currentRevision, "0");
-        assert.equal(sent.at(-1).type, "snapshotRequest");
+        assert.equal(sent.length, 1);
     });
 });
 
@@ -345,12 +345,14 @@ test("delayed recovery snapshot from R1 cannot complete recovery R2", () => {
         }), true);
 
         attachment.editor.view.dispatch({changes: {from: 0, insert: "y"}, userEvent: "input.type"});
+        const secondRequest = sent.at(-1);
+        assert.equal(secondRequest.type, "mutationRequest");
         assert.equal(attachment.receive({
-            type: "hostIncrementalUpdate",
+            type: "mutationRejected",
             attachmentId: attachment.attachmentId,
-            documentRevision: sync.parseDocumentRevision("2"),
-            edit: {from: 0, to: 0, inserted: "host"}
-        }), false);
+            requestId: secondRequest.requestId,
+            category: "CONFLICT"
+        }), true);
         const recoveryR2 = sent.at(-1);
         assert.equal(recoveryR2.type, "snapshotRequest");
         assert.notEqual(recoveryR1.recoveryId, recoveryR2.recoveryId);
@@ -484,7 +486,18 @@ test("malformed or unknown inbound messages fail closed and do not fabricate suc
     }
 });
 
-test("transport uncertainty after an optimistic commit enters recovery without fabricated ACK", () => {
+test("malformed response while mutation is unresolved terminalizes without snapshot recovery", () => {
+    withAttachment(({attachment, sent}) => {
+        attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
+        assert.equal(attachment.state, "AWAITING_ACK");
+        assert.equal(sent.length, 1);
+        assert.equal(attachment.receiveRaw("not-json"), false);
+        assert.equal(attachment.state, "DISPOSED");
+        assert.equal(sent.length, 1);
+    });
+});
+
+test("transport uncertainty after an optimistic commit terminalizes without racing a snapshot", () => {
     const parent = document.createElement("div");
     document.body.append(parent);
     const attachment = new sync.SourceNativeAttachment({
@@ -501,8 +514,9 @@ test("transport uncertainty after an optimistic commit enters recovery without f
         boot(attachment, "source");
         attachment.editor.view.dispatch({changes: {from: 0, insert: "local"}, userEvent: "input.type"});
         assert.equal(attachment.editor.source, "localsource");
-        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.state, "DISPOSED");
         assert.equal(attachment.pendingRequestId, null);
+        assert.equal(attachment.recoveryId, null);
     } finally {
         attachment.dispose();
         parent.remove();
@@ -512,36 +526,20 @@ test("transport uncertainty after an optimistic commit enters recovery without f
 test("asynchronous transport failures require the current attachment and operation", () => {
     withAttachment(({attachment, sent}) => {
         attachment.editor.view.dispatch({changes: {from: 0, insert: "x"}, userEvent: "input.type"});
-        const firstRequest = sent[0];
+        const request = sent[0];
         assert.equal(attachment.receiveTransportFailure({
             type: "mutation",
             attachmentId: attachment.attachmentId,
-            requestId: firstRequest.requestId
-        }), true);
-        const firstRecovery = sent.at(-1);
-        assert.equal(attachment.state, "RECOVERING");
-        assert.equal(attachment.receive({
-            type: "recoverySnapshot",
-            attachmentId: attachment.attachmentId,
-            recoveryId: firstRecovery.recoveryId,
-            documentRevision: sync.parseDocumentRevision("1"),
-            source: "recovered"
-        }), true);
-
-        attachment.editor.view.dispatch({changes: {from: 0, insert: "y"}, userEvent: "input.type"});
-        const secondRequest = sent.at(-1);
-        assert.equal(attachment.receiveTransportFailure({
-            type: "mutation",
-            attachmentId: attachment.attachmentId,
-            requestId: firstRequest.requestId
+            requestId: sync.parseRequestId("stale-request")
         }), false);
         assert.equal(attachment.state, "AWAITING_ACK");
         assert.equal(attachment.receiveTransportFailure({
             type: "mutation",
             attachmentId: attachment.attachmentId,
-            requestId: secondRequest.requestId
+            requestId: request.requestId
         }), true);
-        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.state, "DISPOSED");
+        assert.equal(sent.length, 1);
     });
 
     withAttachment(({attachment, sent}) => {
@@ -599,7 +597,7 @@ test("stale, duplicate, gap, out-of-order, and invalid host updates recover with
     }
 });
 
-test("host update during AWAITING_ACK is not applied to speculative source", () => {
+test("host update during AWAITING_ACK terminalizes instead of racing speculative recovery", () => {
     withAttachment(({attachment, sent}) => {
         attachment.editor.view.dispatch({changes: {from: 0, insert: "local"}, userEvent: "input.type"});
         const beforeHostUpdate = attachment.editor.source;
@@ -609,9 +607,9 @@ test("host update during AWAITING_ACK is not applied to speculative source", () 
             documentRevision: sync.parseDocumentRevision("1"),
             edit: {from: 0, to: 0, inserted: "host"}
         }), false);
-        assert.equal(attachment.state, "RECOVERING");
+        assert.equal(attachment.state, "DISPOSED");
         assert.equal(attachment.editor.source, beforeHostUpdate);
-        assert.equal(sent.at(-1).type, "snapshotRequest");
+        assert.equal(sent.length, 1);
     });
 });
 
