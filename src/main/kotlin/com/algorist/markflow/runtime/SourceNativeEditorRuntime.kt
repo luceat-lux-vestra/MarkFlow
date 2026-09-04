@@ -51,6 +51,7 @@ internal class SourceNativeEditorRuntime private constructor(
     private lateinit var coordinator: AttachmentSyncCoordinator
     private lateinit var hostUpdateBinding: AttachmentHostUpdateBinding
     private val readySignalReceived = AtomicBoolean(false)
+    private val mainFrameLoadStarted = AtomicBoolean(false)
     private val mainFrameLoadReceived = AtomicBoolean(false)
     private var countedLiveInstance = false
 
@@ -76,6 +77,7 @@ internal class SourceNativeEditorRuntime private constructor(
             hostUpdateBinding = AttachmentHostUpdateBinding(coordinator, ::deliverHostIncrementalUpdate)
             transport.setTransportMessageHandler(::handleTransportMessage)
             transport.setReadinessMessageHandler(::handleReadinessMessage)
+            transport.setLoadStartHandler(::onLoadStart)
             transport.setLoadEndHandler(::onLoadEnd)
             transport.loadUrl(sourceNativeUrl)
             liveInstances.incrementAndGet()
@@ -85,6 +87,13 @@ internal class SourceNativeEditorRuntime private constructor(
             disposed = true
             releaseOwnedResources()?.let(failure::addSuppressed)
             throw failure
+        }
+    }
+
+    private fun onLoadStart() {
+        if (!isCurrentRuntime()) return
+        if (!mainFrameLoadStarted.compareAndSet(false, true)) {
+            invalidateForRealmReplacement()
         }
     }
 
@@ -98,11 +107,14 @@ internal class SourceNativeEditorRuntime private constructor(
     }
 
     /**
-     * A second main-frame load means the browser has crossed the one-realm-per-runtime boundary.
-     * Reusing this runtime's [AttachmentId], readiness state or bootstrap state in that new JS
-     * realm would violate #105's identity/lifetime contract. Invalidate synchronously so every
-     * already-captured callback fails closed, then release owned IntelliJ/JCEF resources on the
-     * EDT. A replacement must be constructed through [create], which issues fresh identities.
+     * Any later main-frame navigation crosses the one-realm-per-runtime boundary. Reusing this
+     * runtime's [AttachmentId], readiness state or bootstrap state in that new JS realm would
+     * violate #105's identity/lifetime contract. Load-start invalidates before the replacement
+     * realm can consume old host state; repeated load-end remains a defensive second fence.
+     *
+     * Invalidation is synchronous for callback acceptance, then resource release is dispatched to
+     * the IntelliJ EDT. A replacement must be constructed through [create], which issues fresh
+     * identities and owns a fresh browser/realm.
      */
     private fun invalidateForRealmReplacement() {
         if (invalidated || disposed) return
@@ -143,7 +155,7 @@ internal class SourceNativeEditorRuntime private constructor(
         if (readySignalReceived.compareAndSet(false, true)) {
             ApplicationManager.getApplication().invokeLater { sendBootstrapSnapshotOnce() }
         }
-        return READY_ACK_RESPONSE
+        return if (isCurrentRuntime()) READY_ACK_RESPONSE else null
     }
 
     private fun sendBootstrapSnapshotOnce() {
