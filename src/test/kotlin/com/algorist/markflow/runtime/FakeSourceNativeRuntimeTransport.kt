@@ -21,6 +21,8 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
     val loadedUrls = mutableListOf<String>()
     val executedScripts = mutableListOf<String>()
 
+    private var initialLoadEndFired = false
+
     var disposed = false
         private set
 
@@ -48,7 +50,20 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         loadEndHandler = handler
     }
 
+    /** Fires the one initial main-frame load completion for this fake browser lifetime. */
     fun fireLoadEnd() {
+        if (initialLoadEndFired) return
+        initialLoadEndFired = true
+        loadEndHandler?.invoke()
+    }
+
+    /**
+     * Models a later main-frame load in the same browser object, i.e. reload/navigation to a new
+     * JS realm while the old runtime owner still exists. The initial load is established first if
+     * a test has not already done so.
+     */
+    fun fireRealmReplacementLoadEnd() {
+        fireLoadEnd()
         loadEndHandler?.invoke()
     }
 
