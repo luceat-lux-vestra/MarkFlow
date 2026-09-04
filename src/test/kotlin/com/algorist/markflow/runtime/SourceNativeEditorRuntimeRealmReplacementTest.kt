@@ -135,7 +135,7 @@ class SourceNativeEditorRuntimeRealmReplacementTest : BasePlatformTestCase() {
     private fun readySignalJsonFromUrl(fake: FakeSourceNativeRuntimeTransport): String {
         val url = fake.loadedUrls.single()
         return "{\"type\":\"runtimeReady\",\"attachmentId\":\"${urlParam(url, "attachmentId")}\"," +
-            "\"runtimeToken\":\"${urlParam(url, "runtimeToken\")}\"}"
+            "\"runtimeToken\":\"${urlParam(url, "runtimeToken")}\"}"
     }
 
     private fun urlParam(url: String, name: String): String {
