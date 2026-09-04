@@ -51,10 +51,14 @@ internal class SourceNativeEditorRuntime private constructor(
     private lateinit var coordinator: AttachmentSyncCoordinator
     private lateinit var hostUpdateBinding: AttachmentHostUpdateBinding
     private val readySignalReceived = AtomicBoolean(false)
+    private val mainFrameLoadReceived = AtomicBoolean(false)
     private var countedLiveInstance = false
 
     @Volatile
     private var bootstrapSent = false
+
+    @Volatile
+    private var invalidated = false
 
     @Volatile
     private var disposed = false
@@ -77,6 +81,7 @@ internal class SourceNativeEditorRuntime private constructor(
             liveInstances.incrementAndGet()
             countedLiveInstance = true
         } catch (failure: Throwable) {
+            invalidated = true
             disposed = true
             releaseOwnedResources()?.let(failure::addSuppressed)
             throw failure
@@ -84,21 +89,42 @@ internal class SourceNativeEditorRuntime private constructor(
     }
 
     private fun onLoadEnd() {
-        if (disposed) return
+        if (!isCurrentRuntime()) return
+        if (!mainFrameLoadReceived.compareAndSet(false, true)) {
+            invalidateForRealmReplacement()
+            return
+        }
         transport.executeJavaScript(transport.buildBridgeGlueScript())
     }
 
     /**
+     * A second main-frame load means the browser has crossed the one-realm-per-runtime boundary.
+     * Reusing this runtime's [AttachmentId], readiness state or bootstrap state in that new JS
+     * realm would violate #105's identity/lifetime contract. Invalidate synchronously so every
+     * already-captured callback fails closed, then release owned IntelliJ/JCEF resources on the
+     * EDT. A replacement must be constructed through [create], which issues fresh identities.
+     */
+    private fun invalidateForRealmReplacement() {
+        if (invalidated || disposed) return
+        invalidated = true
+        ApplicationManager.getApplication().invokeLater {
+            if (!disposed) dispose()
+        }
+    }
+
+    private fun isCurrentRuntime(): Boolean = !disposed && !invalidated
+
+    /**
      * Invoked by [transport] for every web -> host mutation/recovery message. May run off the
      * EDT; this method is the one explicit dispatch boundary that reaches onto the EDT for the
-     * document/sync domain, and it re-checks disposal both before and after that dispatch so a
-     * disposal/replacement race can never let stale work reach [coordinator] or [lease].
+     * document/sync domain, and it re-checks lifecycle validity both before and after that dispatch
+     * so a disposal/replacement race can never let stale work reach [coordinator] or [lease].
      */
     private fun handleTransportMessage(raw: String): String? {
-        if (disposed) return null
+        if (!isCurrentRuntime()) return null
         var result: String? = null
         ApplicationManager.getApplication().invokeAndWait {
-            if (disposed) return@invokeAndWait
+            if (!isCurrentRuntime()) return@invokeAndWait
             result = SourceNativeAttachmentTransportHandler.handle(raw, attachmentId, coordinator)
         }
         return result
@@ -110,7 +136,7 @@ internal class SourceNativeEditorRuntime private constructor(
      * only the first current-runtime readiness may trigger the one [AttachmentWireMessage.BootstrapSnapshot].
      */
     private fun handleReadinessMessage(raw: String): String? {
-        if (disposed) return null
+        if (!isCurrentRuntime()) return null
         val signal = RuntimeReadinessCodec.decode(raw) ?: return null
         if (signal.attachmentId != attachmentId || signal.runtimeToken != runtimeToken) return null
 
@@ -121,7 +147,7 @@ internal class SourceNativeEditorRuntime private constructor(
     }
 
     private fun sendBootstrapSnapshotOnce() {
-        if (disposed || bootstrapSent) return
+        if (!isCurrentRuntime() || bootstrapSent) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         bootstrapSent = true
         val snapshot = lease.session.authoritativeSnapshot()
@@ -140,7 +166,7 @@ internal class SourceNativeEditorRuntime private constructor(
         // Steady-state pushes are gated on this exact runtime having already completed its one
         // bootstrap boundary; the eventual bootstrap snapshot always carries the current
         // revision, so an update observed before bootstrap needs no separate delivery.
-        if (disposed || !bootstrapSent) return
+        if (!isCurrentRuntime() || !bootstrapSent) return
         deliverToWeb(
             AttachmentWireCodec.encode(
                 AttachmentWireMessage.HostIncrementalUpdate(
@@ -153,7 +179,7 @@ internal class SourceNativeEditorRuntime private constructor(
     }
 
     private fun deliverToWeb(raw: String) {
-        if (disposed) return
+        if (!isCurrentRuntime()) return
         val payloadLiteral = gson.toJson(raw)
         transport.executeJavaScript(
             """
@@ -169,6 +195,7 @@ internal class SourceNativeEditorRuntime private constructor(
     override fun dispose() {
         ApplicationManager.getApplication().assertIsDispatchThread()
         if (disposed) return
+        invalidated = true
         disposed = true
         releaseOwnedResources()?.let { throw it }
     }
