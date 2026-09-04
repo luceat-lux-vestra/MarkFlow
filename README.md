@@ -45,4 +45,8 @@ for theme source, body font family and size, Mermaid sizing and zoom, error disp
 The Leap product contract under #52/#78 additionally requires native/source-editor coexistence and safe fallback from JCEF failures; those requirements are not presented here as completed current-runtime behavior.
 <!-- Plugin description end -->
 
+## License
+
+MarkFlow is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full license text.
+
 [template]: https://github.com/JetBrains/intellij-platform-plugin-template
