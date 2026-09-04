@@ -14,6 +14,15 @@ object AttachmentProtocolBounds {
     const val MAX_INSERTED_UTF16_CODE_UNITS = 4 * 1024 * 1024
     const val MAX_IDENTITY_LENGTH = 128
 
+    /**
+     * Exact duplicate identity retention is bounded by the attachment lifetime itself.
+     *
+     * Reaching this limit terminalizes the attachment instead of evicting old request identities
+     * and silently weakening lifetime duplicate semantics. The later runtime owner may replace the
+     * attachment with a fresh [AttachmentId].
+     */
+    const val MAX_REQUEST_IDENTITIES_PER_ATTACHMENT = 32 * 1024
+
     fun validate(edits: SourceEditCollection): String? {
         if (edits.edits.size > MAX_EDIT_COUNT) {
             return "edit count exceeds the target envelope"
