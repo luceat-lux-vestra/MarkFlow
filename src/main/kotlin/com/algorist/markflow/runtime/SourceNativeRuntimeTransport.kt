@@ -38,6 +38,13 @@ internal interface SourceNativeRuntimeTransport : Disposable {
     /** Registers the sole handler for the narrow web -> host readiness handshake query. */
     fun setReadinessMessageHandler(handler: (String) -> String?)
 
+    /**
+     * Registers the sole handler invoked when a main-frame navigation starts. The runtime uses
+     * this earlier boundary to fence a replacement realm before old bootstrap state can deliver
+     * host updates into a newly navigating page.
+     */
+    fun setLoadStartHandler(handler: () -> Unit)
+
     /** Registers the sole handler invoked once the main frame finishes loading. */
     fun setLoadEndHandler(handler: () -> Unit)
 }
