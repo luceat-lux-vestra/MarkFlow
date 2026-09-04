@@ -9,6 +9,7 @@ import com.algorist.markflow.document.DocumentSession
 import com.algorist.markflow.document.MutationOrigin
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import java.util.LinkedHashSet
 
 /**
  * Attachment-lifetime coordinator for one consumer of an existing [DocumentSession] authority.
@@ -16,23 +17,33 @@ import com.intellij.openapi.application.ApplicationManager
  * This object owns only its attachment identity, duplicate request state and disposed state. It
  * never owns the document, registry entry, persistence, or presentation/runtime resources. Both
  * [apply] and [dispose] are EDT-only and synchronous; this class does not hide thread dispatch.
+ *
+ * Request identity retention is exact for the complete live attachment lifetime. The ledger is
+ * explicitly bounded; exhaustion terminalizes this attachment instead of evicting an old identity
+ * and permitting a later RequestId collision to become a fresh mutation.
  */
 class AttachmentSyncCoordinator(
     val attachmentId: AttachmentId,
     internal val documentSession: DocumentSession,
+    private val requestIdentityCapacity: Int = AttachmentProtocolBounds.MAX_REQUEST_IDENTITIES_PER_ATTACHMENT,
 ) : Disposable {
-    /**
-     * Duplicate identity is bounded by the request lifecycle, not an ever-growing history.
-     * A source-changing replay is fenced by its stale base revision before mutation; the last
-     * completed identity is retained only to classify an immediate duplicate, including an
-     * unchanged no-op.
-     */
-    private var inFlightRequestId: RequestId? = null
+    private val seenRequestIds = LinkedHashSet<RequestId>()
     private var lastCompletedRequestId: RequestId? = null
     private var disposed = false
     private val activeRequestIdContext = ThreadLocal<RequestId?>()
 
-    /** Deterministic resource evidence: at most one terminal request identity is retained. */
+    init {
+        require(requestIdentityCapacity > 0) { "request identity capacity must be positive" }
+    }
+
+    /** Total exact RequestIds retained for this attachment lifetime. */
+    internal val rememberedRequestIdentityCount: Int
+        get() = seenRequestIds.size
+
+    /**
+     * Legacy hot-slot instrumentation retained for the earlier duplicate test. Total bounded
+     * identity retention is exposed by [rememberedRequestIdentityCount].
+     */
     internal val retainedRequestIdentityCount: Int
         get() = if (lastCompletedRequestId == null) 0 else 1
 
@@ -62,14 +73,27 @@ class AttachmentSyncCoordinator(
                 reason = AttachmentMutationRejection.WrongAttachment(request.attachmentId),
             )
         }
-        if (request.requestId == inFlightRequestId || request.requestId == lastCompletedRequestId) {
+
+        val requestAlreadySeen = request.requestId in seenRequestIds
+        if (request.requestId == lastCompletedRequestId
+            || (requestAlreadySeen && request.baseDocumentRevision == documentSession.revision)) {
             return AttachmentMutationResult.Rejected(
                 requestId = request.requestId,
                 reason = AttachmentMutationRejection.DuplicateRequest,
             )
         }
 
-        inFlightRequestId = request.requestId
+        if (!requestAlreadySeen) {
+            if (seenRequestIds.size >= requestIdentityCapacity) {
+                terminalize()
+                return AttachmentMutationResult.Rejected(
+                    requestId = request.requestId,
+                    reason = AttachmentMutationRejection.DisposedAttachment,
+                )
+            }
+            seenRequestIds.add(request.requestId)
+        }
+
         return try {
             val boundError = AttachmentProtocolBounds.validate(request.edits)
             if (boundError != null) {
@@ -90,7 +114,6 @@ class AttachmentSyncCoordinator(
                 documentResult.toSyncResult(request.requestId)
             }
         } finally {
-            inFlightRequestId = null
             lastCompletedRequestId = request.requestId
         }
     }
@@ -99,9 +122,14 @@ class AttachmentSyncCoordinator(
     override fun dispose() {
         assertEdt()
         if (disposed) return
+        terminalize()
+    }
+
+    private fun terminalize() {
         disposed = true
-        inFlightRequestId = null
+        seenRequestIds.clear()
         lastCompletedRequestId = null
+        activeRequestIdContext.remove()
     }
 
     private fun assertEdt() {
