@@ -227,6 +227,11 @@ interface PendingMutation {
  *
  * Bootstrap/recovery are the only full-source boundaries. Steady-state proposals, ACKs and host
  * updates carry exact source edits and independent attachment/request/document-revision identities.
+ *
+ * Recovery is permitted only after evidence that the current mutation has been resolved by the
+ * host (for example, an exact correlated rejection or ACK invariant failure). If the current
+ * mutation may still be in flight, the attachment terminalizes instead of racing a recovery
+ * snapshot against an unresolved mutation.
  */
 export class SourceNativeAttachment {
     readonly editor: SourceNativeEditorCore;
@@ -296,12 +301,16 @@ export class SourceNativeAttachment {
         return true;
     }
 
-    /** Decode and process one inbound message. Decode failure is recovery, never success. */
+    /** Decode and process one inbound message. Decode failure is never success. */
     receiveRaw(raw: string): boolean {
         try {
             return this.receive(decodeAttachmentMessage(raw));
         } catch (_error) {
-            this.enterRecovery("malformed-or-unknown-message");
+            if (this.state === "AWAITING_ACK") {
+                this.terminalize("malformed-response-while-mutation-unresolved");
+            } else {
+                this.enterRecovery("malformed-or-unknown-message");
+            }
             return false;
         }
     }
@@ -345,8 +354,9 @@ export class SourceNativeAttachment {
 
     /**
      * Correlate an asynchronous transport failure with the exact live operation. A stale
-     * callback is inert; a mutation failure opens a correlated recovery operation, while a
-     * recovery-operation failure terminalizes the attachment without fabricating success.
+     * callback is inert. A current mutation transport failure terminalizes the attachment because
+     * the host may still process that mutation later; starting snapshot recovery would create an
+     * ordering race. Recovery-operation failure is terminal for the same fail-closed reason.
      */
     receiveTransportFailure(failure: AttachmentTransportFailure): boolean {
         if (this.state === "DISPOSED" || failure.attachmentId !== this.attachmentId) {
@@ -358,7 +368,7 @@ export class SourceNativeAttachment {
                 || failure.requestId !== this.pendingMutation.request.requestId) {
                 return false;
             }
-            this.enterRecovery("transport-failure");
+            this.terminalize("mutation-transport-failure");
             return true;
         }
         if (failure.type !== "recovery"
@@ -410,13 +420,13 @@ export class SourceNativeAttachment {
     private afterLocalChange(change: SourceChangeTransaction): void {
         const pending = this.pendingMutation;
         if (this.state !== "AWAITING_ACK" || pending === null || !sameChanges(pending.request.edits, change)) {
-            this.enterRecovery("local-transaction-provenance-mismatch");
+            this.terminalize("local-transaction-provenance-mismatch");
             return;
         }
         try {
             this.onSend(pending.request);
         } catch (_error) {
-            this.enterRecovery("transport-uncertainty");
+            this.terminalize("mutation-send-uncertainty");
         }
     }
 
@@ -429,7 +439,7 @@ export class SourceNativeAttachment {
             return false;
         }
         if (message.requestId !== pending.request.requestId) {
-            this.enterRecovery("ack-correlation-mismatch");
+            this.terminalize("ack-correlation-mismatch");
             return false;
         }
         const relation = compareDocumentRevisions(message.finalDocumentRevision, pending.request.baseDocumentRevision);
@@ -454,7 +464,7 @@ export class SourceNativeAttachment {
             return false;
         }
         if (message.requestId !== pending.request.requestId) {
-            this.enterRecovery("rejection-correlation-mismatch");
+            this.terminalize("rejection-correlation-mismatch");
             return false;
         }
 
@@ -473,7 +483,7 @@ export class SourceNativeAttachment {
             return false;
         }
         if (this.state === "AWAITING_ACK") {
-            this.enterRecovery("authoritative-update-during-local-proposal");
+            this.terminalize("authoritative-update-during-unresolved-local-proposal");
             return false;
         }
         if (this.state !== "READY" || this.currentRevisionValue === null) {
