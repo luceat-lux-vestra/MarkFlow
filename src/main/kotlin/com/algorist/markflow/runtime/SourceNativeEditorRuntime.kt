@@ -30,7 +30,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - one fresh [AttachmentId];
  * - one [AttachmentSyncCoordinator] consuming an already-owned/shared [DocumentSessionLease];
  * - one [AttachmentHostUpdateBinding];
- * - one [DocumentSessionRegistry] consumer lease.
+ * - one [DocumentSessionRegistry] consumer lease;
+ * - one webview-resource-manager reference when the default bundled source-native page is used.
  *
  * It does not own IntelliJ [Document] authority or [com.algorist.markflow.document.DocumentRevision]
  * advancement (owned by [com.algorist.markflow.document.DocumentSession]), does not pool browsers,
@@ -44,11 +45,13 @@ internal class SourceNativeEditorRuntime private constructor(
     private val runtimeToken: String,
     private val transport: SourceNativeRuntimeTransport,
     sourceNativeUrl: String,
+    private val releaseWebviewResource: (() -> Unit)?,
 ) : Disposable {
     private val gson = Gson()
-    private val coordinator = AttachmentSyncCoordinator(attachmentId, lease.session)
-    private val hostUpdateBinding: AttachmentHostUpdateBinding
+    private lateinit var coordinator: AttachmentSyncCoordinator
+    private lateinit var hostUpdateBinding: AttachmentHostUpdateBinding
     private val readySignalReceived = AtomicBoolean(false)
+    private var countedLiveInstance = false
 
     @Volatile
     private var bootstrapSent = false
@@ -64,12 +67,20 @@ internal class SourceNativeEditorRuntime private constructor(
         get() = bootstrapSent
 
     init {
-        hostUpdateBinding = AttachmentHostUpdateBinding(coordinator, ::deliverHostIncrementalUpdate)
-        transport.setTransportMessageHandler(::handleTransportMessage)
-        transport.setReadinessMessageHandler(::handleReadinessMessage)
-        transport.setLoadEndHandler(::onLoadEnd)
-        transport.loadUrl(sourceNativeUrl)
-        liveInstances.incrementAndGet()
+        try {
+            coordinator = AttachmentSyncCoordinator(attachmentId, lease.session)
+            hostUpdateBinding = AttachmentHostUpdateBinding(coordinator, ::deliverHostIncrementalUpdate)
+            transport.setTransportMessageHandler(::handleTransportMessage)
+            transport.setReadinessMessageHandler(::handleReadinessMessage)
+            transport.setLoadEndHandler(::onLoadEnd)
+            transport.loadUrl(sourceNativeUrl)
+            liveInstances.incrementAndGet()
+            countedLiveInstance = true
+        } catch (failure: Throwable) {
+            disposed = true
+            releaseOwnedResources()?.let(failure::addSuppressed)
+            throw failure
+        }
     }
 
     private fun onLoadEnd() {
@@ -159,15 +170,48 @@ internal class SourceNativeEditorRuntime private constructor(
         ApplicationManager.getApplication().assertIsDispatchThread()
         if (disposed) return
         disposed = true
-        // AttachmentHostUpdateBinding registers its DocumentSession mutation-listener subscription
-        // as a Disposer child of itself (see AttachmentSyncCoordinator.kt). Disposer.dispose walks
-        // and releases that child first; a direct hostUpdateBinding.dispose() call would skip that
-        // and leak the subscription in a still-live shared DocumentSession (the split-surface case).
-        Disposer.dispose(hostUpdateBinding)
-        coordinator.dispose()
-        transport.dispose()
-        lease.dispose()
-        liveInstances.decrementAndGet()
+        releaseOwnedResources()?.let { throw it }
+    }
+
+    /**
+     * Releases every resource for which this runtime has accepted ownership, attempting all
+     * releases even when one cleanup action fails. This keeps disposal and constructor rollback
+     * failure-atomic with respect to the remaining resources rather than stopping at the first
+     * exception and leaking the rest.
+     */
+    private fun releaseOwnedResources(): Throwable? {
+        var firstFailure: Throwable? = null
+
+        fun release(action: () -> Unit) {
+            try {
+                action()
+            } catch (failure: Throwable) {
+                if (firstFailure == null) {
+                    firstFailure = failure
+                } else {
+                    firstFailure!!.addSuppressed(failure)
+                }
+            }
+        }
+
+        if (::hostUpdateBinding.isInitialized) {
+            // AttachmentHostUpdateBinding registers its DocumentSession mutation-listener
+            // subscription as a Disposer child of itself. Disposer.dispose must therefore own
+            // this transition; direct .dispose() would leave that child subscription registered.
+            release { Disposer.dispose(hostUpdateBinding) }
+        }
+        if (::coordinator.isInitialized) {
+            release { coordinator.dispose() }
+        }
+        release { transport.dispose() }
+        release { lease.dispose() }
+        releaseWebviewResource?.let { release(it) }
+
+        if (countedLiveInstance) {
+            countedLiveInstance = false
+            liveInstances.decrementAndGet()
+        }
+        return firstFailure
     }
 
     companion object {
@@ -181,33 +225,92 @@ internal class SourceNativeEditorRuntime private constructor(
 
         /**
          * Creates one fresh per-surface runtime owner, or `null` if JCEF is unavailable or the
-         * source-native web bundle cannot be located. On `null`, no [DocumentSessionLease] is
-         * acquired and no transport is created: a failed-to-initialize attempt leaves no partial
-         * ownership behind.
+         * source-native web bundle cannot be located.
+         *
+         * The default bundled-webview path acquires one explicit [MarkFlowWebviewResourceManager]
+         * owner reference and transfers that reference to the returned runtime. Custom URL
+         * suppliers (used by deterministic tests) are external/non-owned resources and therefore
+         * have no corresponding manager release.
+         *
+         * Any exception before ownership transfer rolls back every resource already acquired. If
+         * runtime initialization fails after transfer (for example `loadUrl` throws), the runtime
+         * constructor performs the same all-resources rollback before rethrowing.
          */
         fun create(
             project: Project,
             document: Document,
-            sourceNativeBaseUrl: () -> String? = { MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl() },
+            sourceNativeBaseUrl: (() -> String?)? = null,
             isJcefAvailable: () -> Boolean = { MarkFlowJcefSupport.isAvailable },
             transportFactory: () -> SourceNativeRuntimeTransport = { JcefSourceNativeRuntimeTransport() },
         ): SourceNativeEditorRuntime? {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (!isJcefAvailable()) return null
-            val baseUrl = sourceNativeBaseUrl() ?: return null
 
-            val lease = DocumentSessionRegistry.getInstance(project).acquire(document)
-            val attachmentId = SourceNativeRuntimeIdentity.freshAttachmentId()
-            val runtimeToken = SourceNativeRuntimeIdentity.freshRuntimeToken()
-            val transport = transportFactory()
+            var releaseWebviewResource: (() -> Unit)? = null
+            val baseUrl = if (sourceNativeBaseUrl == null) {
+                if (MarkFlowWebviewResourceManager.acquire() == null) return null
+                releaseWebviewResource = { MarkFlowWebviewResourceManager.release() }
+                MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl() ?: run {
+                    releaseWebviewResource.invoke()
+                    return null
+                }
+            } else {
+                sourceNativeBaseUrl.invoke() ?: return null
+            }
 
-            return SourceNativeEditorRuntime(
-                lease = lease,
-                attachmentId = attachmentId,
-                runtimeToken = runtimeToken,
-                transport = transport,
-                sourceNativeUrl = buildSourceNativeUrl(baseUrl, attachmentId, runtimeToken),
-            )
+            var lease: DocumentSessionLease? = null
+            var transport: SourceNativeRuntimeTransport? = null
+            var ownershipTransferred = false
+
+            try {
+                lease = DocumentSessionRegistry.getInstance(project).acquire(document)
+                val attachmentId = SourceNativeRuntimeIdentity.freshAttachmentId()
+                val runtimeToken = SourceNativeRuntimeIdentity.freshRuntimeToken()
+                transport = transportFactory()
+                val sourceNativeUrl = buildSourceNativeUrl(baseUrl, attachmentId, runtimeToken)
+
+                // From this point the constructor owns rollback if initialization itself fails.
+                ownershipTransferred = true
+                return SourceNativeEditorRuntime(
+                    lease = lease,
+                    attachmentId = attachmentId,
+                    runtimeToken = runtimeToken,
+                    transport = transport,
+                    sourceNativeUrl = sourceNativeUrl,
+                    releaseWebviewResource = releaseWebviewResource,
+                )
+            } catch (failure: Throwable) {
+                if (!ownershipTransferred) {
+                    cleanupBeforeOwnershipTransfer(transport, lease, releaseWebviewResource)
+                        ?.let(failure::addSuppressed)
+                }
+                throw failure
+            }
+        }
+
+        private fun cleanupBeforeOwnershipTransfer(
+            transport: SourceNativeRuntimeTransport?,
+            lease: DocumentSessionLease?,
+            releaseWebviewResource: (() -> Unit)?,
+        ): Throwable? {
+            var firstFailure: Throwable? = null
+
+            fun release(action: () -> Unit) {
+                try {
+                    action()
+                } catch (failure: Throwable) {
+                    if (firstFailure == null) {
+                        firstFailure = failure
+                    } else {
+                        firstFailure!!.addSuppressed(failure)
+                    }
+                }
+            }
+
+            transport?.let { release(it::dispose) }
+            lease?.let { release(it::dispose) }
+            releaseWebviewResource?.let { release(it) }
+            return firstFailure
         }
 
         private fun buildSourceNativeUrl(baseUrl: String, attachmentId: AttachmentId, runtimeToken: String): String {
