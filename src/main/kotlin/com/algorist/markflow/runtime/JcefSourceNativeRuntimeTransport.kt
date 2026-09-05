@@ -32,25 +32,30 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     init {
         val createdBrowser = JBCefBrowser()
-        var createdTransportQuery: JBCefJSQuery? = null
-        var createdReadinessQuery: JBCefJSQuery? = null
-
-        try {
-            createdTransportQuery = JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
-            createdReadinessQuery = JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
+        val createdTransportQuery = try {
+            JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
+        } catch (failure: Throwable) {
+            cleanupConstructionFailure(
+                failure = failure,
+                browser = createdBrowser,
+                transportQuery = null,
+            )
+            throw failure
+        }
+        val createdReadinessQuery = try {
+            JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
         } catch (failure: Throwable) {
             cleanupConstructionFailure(
                 failure = failure,
                 browser = createdBrowser,
                 transportQuery = createdTransportQuery,
-                readinessQuery = createdReadinessQuery,
             )
             throw failure
         }
 
         browser = createdBrowser
-        transportQuery = requireNotNull(createdTransportQuery)
-        readinessQuery = requireNotNull(createdReadinessQuery)
+        transportQuery = createdTransportQuery
+        readinessQuery = createdReadinessQuery
     }
 
     override fun loadUrl(url: String) {
@@ -139,10 +144,11 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
             try {
                 action()
             } catch (failure: Throwable) {
-                if (firstFailure == null) {
+                val existingFailure = firstFailure
+                if (existingFailure == null) {
                     firstFailure = failure
                 } else {
-                    firstFailure!!.addSuppressed(failure)
+                    existingFailure.addSuppressed(failure)
                 }
             }
         }
@@ -163,7 +169,6 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
             failure: Throwable,
             browser: JBCefBrowser,
             transportQuery: JBCefJSQuery?,
-            readinessQuery: JBCefJSQuery?,
         ) {
             fun release(action: () -> Unit) {
                 try {
@@ -173,7 +178,6 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
                 }
             }
 
-            readinessQuery?.let { release(it::dispose) }
             transportQuery?.let { release(it::dispose) }
             release { browser.dispose() }
         }
