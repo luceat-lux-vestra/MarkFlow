@@ -1,4 +1,4 @@
-import {markdown} from "@codemirror/lang-markdown";
+import {markdown, markdownLanguage} from "@codemirror/lang-markdown";
 import {syntaxTree} from "@codemirror/language";
 import {
     Annotation,
@@ -50,6 +50,24 @@ export interface PreviewScanRange {
 
 const hostOrigin = Annotation.define<true>();
 
+// markdownLanguage enables GFM plus the package's additional Markdown extensions.
+// Table is the only extension intentionally added to the source-native product grammar here.
+// Remove every other non-CommonMark parser explicitly so parser acceptance cannot silently
+// widen the supported product contract.
+const sourceNativeMarkdown = markdown({
+    base: markdownLanguage,
+    extensions: [{
+        remove: [
+            "TaskList",
+            "Strikethrough",
+            "Autolink",
+            "Subscript",
+            "Superscript",
+            "Emoji"
+        ]
+    }]
+});
+
 const sourceNativeTheme = EditorView.baseTheme({
     ".cm-source-native-emphasis": {
         fontStyle: "italic"
@@ -78,6 +96,20 @@ const sourceNativeTheme = EditorView.baseTheme({
     ".cm-source-native-thematic-break": {
         fontWeight: "600",
         letterSpacing: "0.12em"
+    },
+    ".cm-source-native-table-header": {
+        fontWeight: "600"
+    },
+    ".cm-source-native-table-header, .cm-source-native-table-row": {
+        borderBottom: "1px solid currentColor"
+    },
+    ".cm-source-native-table-cell": {
+        display: "inline-block",
+        padding: "0 0.35em"
+    },
+    ".cm-source-native-table-delimiter-row": {
+        fontFamily: "monospace",
+        opacity: "0.7"
     },
     ".cm-source-native-heading-1": {
         fontSize: "1.7em",
@@ -122,7 +154,11 @@ type PreviewConstructKind =
     | "blockquote"
     | "fenced-code"
     | "indented-code"
-    | "thematic-break";
+    | "thematic-break"
+    | "table-header"
+    | "table-row"
+    | "table-cell"
+    | "table-delimiter-row";
 type PreviewSyntaxKind =
     | "HeaderMark"
     | "EmphasisMark"
@@ -132,7 +168,8 @@ type PreviewSyntaxKind =
     | "LinkTitle"
     | "ListMark"
     | "QuoteMark"
-    | "CodeInfo";
+    | "CodeInfo"
+    | "TableDelimiter";
 
 interface PreviewSyntaxRange extends PreviewScanRange {
     readonly name: PreviewSyntaxKind;
@@ -198,7 +235,10 @@ function contains(outer: PreviewScanRange, inner: PreviewScanRange): boolean {
     return outer.from <= inner.from && inner.to <= outer.to;
 }
 
-function previewConstruct(nodeName: string): Pick<PreviewConstruct, "kind" | "className"> | undefined {
+function previewConstruct(
+    nodeName: string,
+    nodeLength: number
+): Pick<PreviewConstruct, "kind" | "className"> | undefined {
     if (nodeName === "Emphasis") {
         return {kind: "emphasis", className: "cm-source-native-emphasis"};
     }
@@ -226,6 +266,21 @@ function previewConstruct(nodeName: string): Pick<PreviewConstruct, "kind" | "cl
     if (nodeName === "HorizontalRule") {
         return {kind: "thematic-break", className: "cm-source-native-thematic-break"};
     }
+    if (nodeName === "TableHeader") {
+        return {kind: "table-header", className: "cm-source-native-table-header"};
+    }
+    if (nodeName === "TableRow") {
+        return {kind: "table-row", className: "cm-source-native-table-row"};
+    }
+    if (nodeName === "TableCell") {
+        return {kind: "table-cell", className: "cm-source-native-table-cell"};
+    }
+    // One-character TableDelimiter nodes are structural pipe tokens owned by their row.
+    // The multi-character delimiter/alignment row has the same parser node name, so keep it
+    // source-visible and style-only rather than treating it as a token that can be hidden.
+    if (nodeName === "TableDelimiter" && nodeLength > 1) {
+        return {kind: "table-delimiter-row", className: "cm-source-native-table-delimiter-row"};
+    }
     const heading = /^ATXHeading([1-6])$/.exec(nodeName);
     if (heading !== null) {
         return {kind: "heading", className: `cm-source-native-heading-${heading[1]}`};
@@ -244,6 +299,7 @@ function previewSyntaxKind(nodeName: string): PreviewSyntaxKind | undefined {
         case "ListMark":
         case "QuoteMark":
         case "CodeInfo":
+        case "TableDelimiter":
             return nodeName;
         default:
             return undefined;
@@ -267,8 +323,13 @@ function constructOwnsSyntax(kind: PreviewConstructKind, syntax: PreviewSyntaxKi
             return syntax === "QuoteMark";
         case "fenced-code":
             return syntax === "CodeMark" || syntax === "CodeInfo";
+        case "table-header":
+        case "table-row":
+            return syntax === "TableDelimiter";
         case "indented-code":
         case "thematic-break":
+        case "table-cell":
+        case "table-delimiter-row":
             return false;
     }
 }
@@ -348,10 +409,18 @@ function inactiveSyntaxRanges(construct: PreviewConstruct): PreviewScanRange[] |
                 ...construct.syntax.filter((syntax) => syntax.name === "CodeInfo")
             ];
         }
+        case "table-header":
+        case "table-row":
+            return construct.syntax.filter((syntax) =>
+                syntax.name === "TableDelimiter" && syntax.to - syntax.from === 1
+            );
         // Lezer exposes no independent indentation marker for CodeBlock and no independent
-        // marker children for HorizontalRule. Keep those exact source forms visible and style-only.
+        // marker children for HorizontalRule. Table cells contain source content, and the table
+        // alignment row is intentionally source-visible. Keep all four forms style-only.
         case "indented-code":
         case "thematic-break":
+        case "table-cell":
+        case "table-delimiter-row":
             return [];
     }
 }
@@ -375,7 +444,7 @@ function buildPreviewDecorations(
                 if (node.from < range.from || node.to > range.to) {
                     return;
                 }
-                const construct = previewConstruct(node.name);
+                const construct = previewConstruct(node.name, node.to - node.from);
                 if (construct !== undefined) {
                     constructs.push({
                         from: node.from,
@@ -551,7 +620,7 @@ export class SourceNativeEditorCore {
                     // logical-text boundary.
                     EditorState.lineSeparator.of("\n"),
                     EditorState.allowMultipleSelections.of(true),
-                    markdown(),
+                    sourceNativeMarkdown,
                     createPreviewPlugin(options.onPreviewRangeScanned),
                     sourceNativeTheme,
                     EditorView.updateListener.of((update) => {
