@@ -23,7 +23,7 @@ class JcefTransportEnvelopeProbeStarter : ApplicationStarter {
         // The diagnostic command runs earlier than a normal editor surface. Resolve the public
         // proxy-settings service before the first JBCefApp access so legacy migration behind the
         // platform proxy facade cannot be first-created from inside JBCefApp's class initializer.
-        val proxyConfiguration = ProxySettings.getInstance().proxyConfiguration
+        val proxyConfiguration = ProxySettings.getInstance().getProxyConfiguration()
         LOG.info("JCEF transport probe proxy settings initialized: ${proxyConfiguration.javaClass.simpleName}")
 
         check(JcefTransportEnvelopeProbe.startIfRequested()) {
