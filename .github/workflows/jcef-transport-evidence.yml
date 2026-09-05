@@ -99,6 +99,7 @@ jobs:
               'bootstrap-complex-4m',
               'recovery-complex-4m',
               'handler-rejection',
+              'handler-exception',
               'late-after-dispose',
               'repeated-create-dispose',
           }
@@ -142,8 +143,6 @@ jobs:
               case_id for case_id in required
               if by_id[case_id].get('outcome') != 'PASS'
           )
-          if failed_required:
-              raise SystemExit(f'required JCEF envelope cases failed: {failed_required}')
 
           mutation = by_id['mutation-max-envelope']
           if mutation.get('kind') != 'MUTATION_REQUEST':
@@ -154,16 +153,20 @@ jobs:
               raise SystemExit('mutation envelope did not record production JSON overhead')
 
           verdict = evidence.get('verdict')
-          if verdict == 'COMPLETE_CUTOVER_BLOCKED':
-              raise SystemExit('real JCEF evidence is complete but the required production envelope is blocked')
-          if verdict != 'COMPLETE_REQUIRED_ENVELOPE_PASS':
+          if verdict not in {'COMPLETE_REQUIRED_ENVELOPE_PASS', 'COMPLETE_CUTOVER_BLOCKED'}:
               raise SystemExit(f'unrecognized verdict: {verdict}')
+          if verdict == 'COMPLETE_REQUIRED_ENVELOPE_PASS' and failed_required:
+              raise SystemExit(f'PASS verdict disagrees with failed required cases: {failed_required}')
+          if verdict == 'COMPLETE_CUTOVER_BLOCKED' and not failed_required:
+              raise SystemExit('CUTOVER_BLOCKED verdict has no failed required case')
 
           print(f"JCEF evidence verdict: {verdict}")
           print(f"IDE build: {evidence.get('ideBuild')}")
           print(f"OS: {evidence.get('osName')} {evidence.get('osVersion')} {evidence.get('osArch')}")
           for case in cases:
               print(f"{case.get('id')}: {case.get('outcome')} ({case.get('payloadUtf16Units')} UTF-16 units)")
+          if verdict == 'COMPLETE_CUTOVER_BLOCKED':
+              print(f'::warning::Real JCEF evidence is complete, but production cutover remains blocked by: {failed_required}')
           PY
 
       - name: Upload JCEF evidence

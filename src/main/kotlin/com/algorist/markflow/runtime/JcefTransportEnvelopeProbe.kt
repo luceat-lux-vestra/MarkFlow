@@ -124,6 +124,7 @@ internal object JcefTransportEnvelopeProbe {
                     "{\"accepted\":true}"
                 }
                 "reject" -> null
+                "throw" -> error("intentional JCEF probe handler exception")
                 "late" -> {
                     lateMessages.incrementAndGet()
                     "{\"accepted\":true}"
@@ -163,6 +164,7 @@ internal object JcefTransportEnvelopeProbe {
                 Kind.HOST_BOOTSTRAP -> hostSnapshotScript(probeCase, recovery = false)
                 Kind.HOST_RECOVERY -> hostSnapshotScript(probeCase, recovery = true)
                 Kind.REJECTION -> rejectionScript(probeCase)
+                Kind.HANDLER_EXCEPTION -> handlerExceptionScript(probeCase)
             }
 
             try {
@@ -255,7 +257,9 @@ internal object JcefTransportEnvelopeProbe {
                     -> callbackOutcome == "success" &&
                         observedLength == probeCase.size &&
                         observedHash == expectedHash(probeCase)
-                    Kind.REJECTION -> callbackOutcome == "failure"
+                    Kind.REJECTION,
+                    Kind.HANDLER_EXCEPTION,
+                    -> callbackOutcome == "failure"
                 }
 
                 val envelope = envelopeMetrics(probeCase)
@@ -363,7 +367,25 @@ internal object JcefTransportEnvelopeProbe {
             timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule(
                 {
                     ApplicationManager.getApplication().invokeLater {
-                        if (!finished) finishIncomplete("$detail after ${seconds}s")
+                        if (finished) return@invokeLater
+                        val active = currentCase
+                        if (active?.kind == Kind.HANDLER_EXCEPTION) {
+                            val envelope = envelopeMetrics(active)
+                            completeCurrent(
+                                CaseResult(
+                                    id = active.id,
+                                    kind = active.kind.name,
+                                    payloadUtf16Units = active.size,
+                                    encodedJsonChars = envelope.encodedJsonChars,
+                                    outerJavaScriptLiteralChars = envelope.outerJavaScriptLiteralChars,
+                                    requiredForCurrentEnvelope = active.required,
+                                    outcome = "FAIL",
+                                    detail = "$detail after ${seconds}s; handler exception produced no JS failure callback",
+                                ),
+                            )
+                        } else {
+                            finishIncomplete("$detail after ${seconds}s")
+                        }
                     }
                 },
                 seconds,
@@ -639,6 +661,21 @@ internal object JcefTransportEnvelopeProbe {
                 );
             })();
         """.trimIndent()
+
+        private fun handlerExceptionScript(probeCase: ProbeCase): String = """
+            (function() {
+                const caseId = ${gson.toJson(probeCase.id)};
+                window.__markflowSourceNativeSend(
+                    JSON.stringify({op: 'throw', caseId: caseId}),
+                    function() {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'success', detail: 'unexpected success callback'});
+                    },
+                    function(code, message) {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'failure', detail: String(code) + ':' + String(message)});
+                    }
+                );
+            })();
+        """.trimIndent()
     }
 
     private enum class Kind {
@@ -648,6 +685,7 @@ internal object JcefTransportEnvelopeProbe {
         HOST_BOOTSTRAP,
         HOST_RECOVERY,
         REJECTION,
+        HANDLER_EXCEPTION,
     }
 
     private data class ProbeCase(
@@ -709,6 +747,7 @@ internal object JcefTransportEnvelopeProbe {
         ProbeCase("response-oversize", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024 + 256 * 1024, required = false),
         ProbeCase("recovery-oversize", Kind.HOST_RECOVERY, 8 * 1024 * 1024, complex = true, required = false),
         ProbeCase("handler-rejection", Kind.REJECTION, 0),
+        ProbeCase("handler-exception", Kind.HANDLER_EXCEPTION, 0),
     )
 
     private fun payload(size: Int, complex: Boolean): String {
