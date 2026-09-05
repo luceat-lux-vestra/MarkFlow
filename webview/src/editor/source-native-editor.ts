@@ -66,6 +66,19 @@ const sourceNativeTheme = EditorView.baseTheme({
         textDecoration: "underline",
         textUnderlineOffset: "0.12em"
     },
+    ".cm-source-native-list-item": {
+        paddingInlineStart: "0.15em"
+    },
+    ".cm-source-native-blockquote": {
+        fontStyle: "italic"
+    },
+    ".cm-source-native-fenced-code, .cm-source-native-indented-code": {
+        fontFamily: "monospace"
+    },
+    ".cm-source-native-thematic-break": {
+        fontWeight: "600",
+        letterSpacing: "0.12em"
+    },
     ".cm-source-native-heading-1": {
         fontSize: "1.7em",
         fontWeight: "700"
@@ -99,8 +112,27 @@ export const SOURCE_NATIVE_MAX_EDITS = 1024;
 export const SOURCE_NATIVE_MAX_INSERTED_UTF16 = 4 * 1024 * 1024;
 
 type DecorationSet = ReturnType<typeof Decoration.set>;
-type PreviewConstructKind = "heading" | "emphasis" | "strong" | "inline-code" | "link";
-type PreviewSyntaxKind = "HeaderMark" | "EmphasisMark" | "CodeMark" | "LinkMark" | "URL" | "LinkTitle";
+type PreviewConstructKind =
+    | "heading"
+    | "emphasis"
+    | "strong"
+    | "inline-code"
+    | "link"
+    | "list-item"
+    | "blockquote"
+    | "fenced-code"
+    | "indented-code"
+    | "thematic-break";
+type PreviewSyntaxKind =
+    | "HeaderMark"
+    | "EmphasisMark"
+    | "CodeMark"
+    | "LinkMark"
+    | "URL"
+    | "LinkTitle"
+    | "ListMark"
+    | "QuoteMark"
+    | "CodeInfo";
 
 interface PreviewSyntaxRange extends PreviewScanRange {
     readonly name: PreviewSyntaxKind;
@@ -179,6 +211,21 @@ function previewConstruct(nodeName: string): Pick<PreviewConstruct, "kind" | "cl
     if (nodeName === "Link") {
         return {kind: "link", className: "cm-source-native-link"};
     }
+    if (nodeName === "ListItem") {
+        return {kind: "list-item", className: "cm-source-native-list-item"};
+    }
+    if (nodeName === "Blockquote") {
+        return {kind: "blockquote", className: "cm-source-native-blockquote"};
+    }
+    if (nodeName === "FencedCode") {
+        return {kind: "fenced-code", className: "cm-source-native-fenced-code"};
+    }
+    if (nodeName === "CodeBlock") {
+        return {kind: "indented-code", className: "cm-source-native-indented-code"};
+    }
+    if (nodeName === "HorizontalRule") {
+        return {kind: "thematic-break", className: "cm-source-native-thematic-break"};
+    }
     const heading = /^ATXHeading([1-6])$/.exec(nodeName);
     if (heading !== null) {
         return {kind: "heading", className: `cm-source-native-heading-${heading[1]}`};
@@ -194,6 +241,9 @@ function previewSyntaxKind(nodeName: string): PreviewSyntaxKind | undefined {
         case "LinkMark":
         case "URL":
         case "LinkTitle":
+        case "ListMark":
+        case "QuoteMark":
+        case "CodeInfo":
             return nodeName;
         default:
             return undefined;
@@ -211,6 +261,15 @@ function constructOwnsSyntax(kind: PreviewConstructKind, syntax: PreviewSyntaxKi
             return syntax === "CodeMark";
         case "link":
             return syntax === "LinkMark" || syntax === "URL" || syntax === "LinkTitle";
+        case "list-item":
+            return syntax === "ListMark";
+        case "blockquote":
+            return syntax === "QuoteMark";
+        case "fenced-code":
+            return syntax === "CodeMark" || syntax === "CodeInfo";
+        case "indented-code":
+        case "thematic-break":
+            return false;
     }
 }
 
@@ -269,6 +328,31 @@ function inactiveSyntaxRanges(construct: PreviewConstruct): PreviewScanRange[] |
                 {from: marks[2].from, to: lastMark.to}
             ];
         }
+        case "list-item": {
+            const marks = construct.syntax.filter((syntax) => syntax.name === "ListMark");
+            return marks.length === 1 ? marks : null;
+        }
+        case "blockquote": {
+            const marks = construct.syntax.filter((syntax) => syntax.name === "QuoteMark");
+            return marks.length > 0 ? marks : null;
+        }
+        case "fenced-code": {
+            const marks = construct.syntax
+                .filter((syntax) => syntax.name === "CodeMark")
+                .sort((left, right) => left.from - right.from);
+            if (marks.length !== 2) {
+                return null;
+            }
+            return [
+                ...marks,
+                ...construct.syntax.filter((syntax) => syntax.name === "CodeInfo")
+            ];
+        }
+        // Lezer exposes no independent indentation marker for CodeBlock and no independent
+        // marker children for HorizontalRule. Keep those exact source forms visible and style-only.
+        case "indented-code":
+        case "thematic-break":
+            return [];
     }
 }
 
