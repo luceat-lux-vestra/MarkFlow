@@ -1,0 +1,181 @@
+name: JCEF Transport Evidence
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/jcef-transport-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbeStarter.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeEditorRuntime.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeRuntimeTransport.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentIdentity.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentMutationProtocol.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentWireProtocol.kt'
+      - 'webview/src/runtime/source-native-bootstrap.ts'
+      - 'webview/src/sync/source-native-sync.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jcef-transport-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real JCEF envelope probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real JCEF transport probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Internal case timeouts bound payload callbacks. This outer watchdog also covers a probe
+          # command that never starts, a JCEF callback stall, or shutdown failure.
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForJcefTransportProbe --stacktrace
+
+      - name: Validate evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/jcef-transport-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('JCEF probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 2:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('cutoverAuthorized') is not False:
+              raise SystemExit('evidence runner must never authorize production cutover')
+          if evidence.get('baselineTransportCount') != evidence.get('finalTransportCount'):
+              raise SystemExit('JCEF transport live-instance count did not return to baseline')
+
+          required = {
+              'request-ascii-64k',
+              'request-complex-64k',
+              'request-ascii-1m',
+              'request-ascii-4m',
+              'mutation-max-envelope',
+              'response-ascii-4m',
+              'bootstrap-complex-4m',
+              'recovery-complex-4m',
+              'handler-rejection',
+              'handler-exception',
+              'late-after-dispose',
+              'repeated-create-dispose',
+          }
+          optional = {
+              'request-oversize',
+              'response-oversize',
+              'recovery-oversize',
+          }
+          expected = required | optional
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate JCEF evidence case ids')
+          missing = sorted(expected - by_id.keys())
+          unexpected = sorted(by_id.keys() - expected)
+          if missing or unexpected:
+              raise SystemExit(f'JCEF evidence case contract mismatch: missing={missing}, unexpected={unexpected}')
+
+          incomplete = [
+              case for case in cases
+              if case.get('outcome') in {'TIMEOUT', 'INCOMPLETE'}
+          ]
+          if incomplete or evidence.get('verdict') == 'INCOMPLETE':
+              raise SystemExit(f'incomplete JCEF evidence: {incomplete}')
+
+          misclassified_required = sorted(
+              case_id for case_id in required
+              if by_id[case_id].get('requiredForCurrentEnvelope') is not True
+          )
+          misclassified_optional = sorted(
+              case_id for case_id in optional
+              if by_id[case_id].get('requiredForCurrentEnvelope') is not False
+          )
+          if misclassified_required or misclassified_optional:
+              raise SystemExit(
+                  'JCEF evidence required/optional classification mismatch: '
+                  f'required={misclassified_required}, optional={misclassified_optional}'
+              )
+
+          failed_required = sorted(
+              case_id for case_id in required
+              if by_id[case_id].get('outcome') != 'PASS'
+          )
+
+          mutation = by_id['mutation-max-envelope']
+          if mutation.get('kind') != 'MUTATION_REQUEST':
+              raise SystemExit(f"unexpected mutation probe kind: {mutation.get('kind')}")
+          if mutation.get('payloadUtf16Units') != 4 * 1024 * 1024:
+              raise SystemExit(f"unexpected mutation payload size: {mutation.get('payloadUtf16Units')}")
+          if not isinstance(mutation.get('encodedJsonChars'), int) or mutation['encodedJsonChars'] <= mutation['payloadUtf16Units']:
+              raise SystemExit('mutation envelope did not record production JSON overhead')
+
+          verdict = evidence.get('verdict')
+          if verdict not in {'COMPLETE_REQUIRED_ENVELOPE_PASS', 'COMPLETE_CUTOVER_BLOCKED'}:
+              raise SystemExit(f'unrecognized verdict: {verdict}')
+          if verdict == 'COMPLETE_REQUIRED_ENVELOPE_PASS' and failed_required:
+              raise SystemExit(f'PASS verdict disagrees with failed required cases: {failed_required}')
+          if verdict == 'COMPLETE_CUTOVER_BLOCKED' and not failed_required:
+              raise SystemExit('CUTOVER_BLOCKED verdict has no failed required case')
+
+          print(f"JCEF evidence verdict: {verdict}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          print(f"OS: {evidence.get('osName')} {evidence.get('osVersion')} {evidence.get('osArch')}")
+          for case in cases:
+              print(f"{case.get('id')}: {case.get('outcome')} ({case.get('payloadUtf16Units')} UTF-16 units)")
+          if verdict == 'COMPLETE_CUTOVER_BLOCKED':
+              print(f'::warning::Real JCEF evidence is complete, but production cutover remains blocked by: {failed_required}')
+          PY
+
+      - name: Upload JCEF evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: jcef-transport-evidence
+          path: |
+            build/jcef-transport-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-xvfb.log
+          if-no-files-found: warn

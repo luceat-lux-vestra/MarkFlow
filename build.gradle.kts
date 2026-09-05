@@ -142,6 +142,7 @@ val webviewDir = file("webview")
 val webviewOutputDir = file("build/webview")
 val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
 val diagnosticsJvmProperty = "markflow.diagnostics"
+val jcefTransportProbeOutput = layout.buildDirectory.file("jcef-transport-probe/evidence.json")
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -240,9 +241,29 @@ intellijPlatformTesting {
                 robotServerPlugin()
             }
         }
+
+        register("runIdeForJcefTransportProbe") {
+            task {
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.jcefTransportProbe.output=${jcefTransportProbeOutput.get().asFile.absolutePath}",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.consents.confirmation.enabled=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf("markflow-jcef-transport-probe")
+                }
+            }
+        }
     }
 }
 
 tasks.named("runIdeForUiTests") {
+    dependsOn(buildWebview)
+}
+
+tasks.named("runIdeForJcefTransportProbe") {
     dependsOn(buildWebview)
 }
