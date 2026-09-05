@@ -191,7 +191,7 @@ val buildWebview by tasks.registering(Exec::class) {
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         commandLine("cmd", "/c", "npm run build")
     } else {
-        commandLine("sh", "-c", npmInstallCommand.replace("npm install", "npm run build"))
+        commandLine("sh", "-c", "npm run build")
     }
 }
 
