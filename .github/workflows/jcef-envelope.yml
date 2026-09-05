@@ -45,7 +45,7 @@ jobs:
           report_dir="$RUNNER_TEMP/markflow-jcef-envelope"
           report_path="$report_dir/report.json"
           mkdir -p "$report_dir"
-          export JAVA_TOOL_OPTIONS="-Dmarkflow.jcefEnvelopeProbe=true -Dmarkflow.jcefEnvelopeProbe.report=$report_path"
+          export JAVA_TOOL_OPTIONS="-Dmarkflow.jcefEnvelopeProbe=true -Dmarkflow.jcefEnvelopeProbe.report=$report_path -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
           export DISPLAY=:99.0
           Xvfb -ac :99 -screen 0 1920x1080x16 &
           xvfb_pid=$!
