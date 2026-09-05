@@ -145,8 +145,6 @@ val diagnosticsJvmProperty = "markflow.diagnostics"
 val jcefTransportProbeOutput = layout.buildDirectory.file("jcef-transport-probe/evidence.json")
 val jcefTransportProbeProjectPath = layout.projectDirectory.asFile.absolutePath
 
-tasks.registering(Exec::class)
-
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
     description = "Installs webview dependencies"
@@ -193,7 +191,7 @@ val buildWebview by tasks.registering(Exec::class) {
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         commandLine("cmd", "/c", "npm run build")
     } else {
-        commandLine("sh", "-c", "npm run build")
+        commandLine("sh", "-c", npmInstallCommand.replace("npm install", "npm run build"))
     }
 }
 
