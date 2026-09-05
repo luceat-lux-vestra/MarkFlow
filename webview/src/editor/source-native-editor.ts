@@ -56,6 +56,39 @@ const sourceNativeTheme = EditorView.baseTheme({
     },
     ".cm-source-native-strong": {
         fontWeight: "bold"
+    },
+    ".cm-source-native-inline-code": {
+        fontFamily: "monospace",
+        borderRadius: "0.2em",
+        padding: "0 0.15em"
+    },
+    ".cm-source-native-link": {
+        textDecoration: "underline",
+        textUnderlineOffset: "0.12em"
+    },
+    ".cm-source-native-heading-1": {
+        fontSize: "1.7em",
+        fontWeight: "700"
+    },
+    ".cm-source-native-heading-2": {
+        fontSize: "1.5em",
+        fontWeight: "700"
+    },
+    ".cm-source-native-heading-3": {
+        fontSize: "1.3em",
+        fontWeight: "700"
+    },
+    ".cm-source-native-heading-4": {
+        fontSize: "1.15em",
+        fontWeight: "700"
+    },
+    ".cm-source-native-heading-5": {
+        fontSize: "1.05em",
+        fontWeight: "700"
+    },
+    ".cm-source-native-heading-6": {
+        fontSize: "1em",
+        fontWeight: "700"
     }
 });
 
@@ -66,6 +99,18 @@ export const SOURCE_NATIVE_MAX_EDITS = 1024;
 export const SOURCE_NATIVE_MAX_INSERTED_UTF16 = 4 * 1024 * 1024;
 
 type DecorationSet = ReturnType<typeof Decoration.set>;
+type PreviewConstructKind = "heading" | "emphasis" | "strong" | "inline-code" | "link";
+type PreviewSyntaxKind = "HeaderMark" | "EmphasisMark" | "CodeMark" | "LinkMark" | "URL" | "LinkTitle";
+
+interface PreviewSyntaxRange extends PreviewScanRange {
+    readonly name: PreviewSyntaxKind;
+}
+
+interface PreviewConstruct extends PreviewScanRange {
+    readonly kind: PreviewConstructKind;
+    readonly className: string;
+    readonly syntax: PreviewSyntaxRange[];
+}
 
 function mergeRanges(ranges: readonly PreviewScanRange[]): PreviewScanRange[] {
     const sorted = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
@@ -117,12 +162,114 @@ function overlaps(left: PreviewScanRange, right: PreviewScanRange): boolean {
     return left.from < right.to && right.from < left.to;
 }
 
-function previewClassName(nodeName: string): string | undefined {
-    return nodeName === "Emphasis"
-        ? "cm-source-native-emphasis"
-        : nodeName === "StrongEmphasis"
-            ? "cm-source-native-strong"
-            : undefined;
+function contains(outer: PreviewScanRange, inner: PreviewScanRange): boolean {
+    return outer.from <= inner.from && inner.to <= outer.to;
+}
+
+function previewConstruct(nodeName: string): Pick<PreviewConstruct, "kind" | "className"> | undefined {
+    if (nodeName === "Emphasis") {
+        return {kind: "emphasis", className: "cm-source-native-emphasis"};
+    }
+    if (nodeName === "StrongEmphasis") {
+        return {kind: "strong", className: "cm-source-native-strong"};
+    }
+    if (nodeName === "InlineCode") {
+        return {kind: "inline-code", className: "cm-source-native-inline-code"};
+    }
+    if (nodeName === "Link") {
+        return {kind: "link", className: "cm-source-native-link"};
+    }
+    const heading = /^ATXHeading([1-6])$/.exec(nodeName);
+    if (heading !== null) {
+        return {kind: "heading", className: `cm-source-native-heading-${heading[1]}`};
+    }
+    return undefined;
+}
+
+function previewSyntaxKind(nodeName: string): PreviewSyntaxKind | undefined {
+    switch (nodeName) {
+        case "HeaderMark":
+        case "EmphasisMark":
+        case "CodeMark":
+        case "LinkMark":
+        case "URL":
+        case "LinkTitle":
+            return nodeName;
+        default:
+            return undefined;
+    }
+}
+
+function constructOwnsSyntax(kind: PreviewConstructKind, syntax: PreviewSyntaxKind): boolean {
+    switch (kind) {
+        case "heading":
+            return syntax === "HeaderMark";
+        case "emphasis":
+        case "strong":
+            return syntax === "EmphasisMark";
+        case "inline-code":
+            return syntax === "CodeMark";
+        case "link":
+            return syntax === "LinkMark" || syntax === "URL" || syntax === "LinkTitle";
+    }
+}
+
+function selectionTouchesConstruct(state: EditorState, construct: PreviewConstruct): boolean {
+    return state.selection.ranges.some((selection) => {
+        if (selection.empty) {
+            return selection.from >= construct.from && selection.from <= construct.to;
+        }
+        return selection.from < construct.to && selection.to > construct.from;
+    });
+}
+
+function assignSyntaxToConstructs(
+    constructs: PreviewConstruct[],
+    syntaxRanges: readonly PreviewSyntaxRange[]
+): void {
+    for (const syntax of syntaxRanges) {
+        const owner = constructs
+            .filter((construct) => constructOwnsSyntax(construct.kind, syntax.name) && contains(construct, syntax))
+            .sort((left, right) => (left.to - left.from) - (right.to - right.from))[0];
+        owner?.syntax.push(syntax);
+    }
+}
+
+function inactiveSyntaxRanges(construct: PreviewConstruct): PreviewScanRange[] | null {
+    switch (construct.kind) {
+        case "heading":
+            return construct.syntax.filter((syntax) => syntax.name === "HeaderMark");
+        case "emphasis":
+        case "strong":
+            return construct.syntax.filter((syntax) => syntax.name === "EmphasisMark");
+        case "inline-code": {
+            const marks = construct.syntax
+                .filter((syntax) => syntax.name === "CodeMark")
+                .sort((left, right) => left.from - right.from);
+            return marks.length === 2 ? marks : null;
+        }
+        case "link": {
+            const marks = construct.syntax
+                .filter((syntax) => syntax.name === "LinkMark")
+                .sort((left, right) => left.from - right.from);
+            const urls = construct.syntax.filter((syntax) => syntax.name === "URL");
+            // Exactly four LinkMark nodes are the parser-defined ordinary inline-link shape:
+            // [, ], (, ). Additional LinkMark nodes mean nested/ambiguous syntax and must remain
+            // source-visible instead of letting the outer link claim another construct's markers.
+            if (marks.length !== 4 || urls.length !== 1) {
+                return null;
+            }
+            const lastMark = marks.at(-1);
+            if (lastMark === undefined) {
+                return null;
+            }
+            return [
+                marks[0],
+                marks[1],
+                {from: marks[2].from, to: lastMark.to}
+            ];
+        }
+    }
 }
 
 function buildPreviewDecorations(
@@ -134,16 +281,56 @@ function buildPreviewDecorations(
 
     for (const range of scanRanges) {
         onPreviewRangeScanned?.(range);
+        const constructs: PreviewConstruct[] = [];
+        const syntaxRanges: PreviewSyntaxRange[] = [];
+
         syntaxTree(state).iterate({
             from: range.from,
             to: range.to,
             enter(node) {
-                const className = previewClassName(node.name);
-                if (className !== undefined && node.from >= range.from && node.to <= range.to) {
-                    decorations.push(Decoration.mark({class: className}).range(node.from, node.to));
+                if (node.from < range.from || node.to > range.to) {
+                    return;
+                }
+                const construct = previewConstruct(node.name);
+                if (construct !== undefined) {
+                    constructs.push({
+                        from: node.from,
+                        to: node.to,
+                        kind: construct.kind,
+                        className: construct.className,
+                        syntax: []
+                    });
+                }
+                const syntax = previewSyntaxKind(node.name);
+                if (syntax !== undefined) {
+                    syntaxRanges.push({from: node.from, to: node.to, name: syntax});
                 }
             }
         });
+
+        assignSyntaxToConstructs(constructs, syntaxRanges);
+        const hiddenSyntax: PreviewScanRange[] = [];
+
+        for (const construct of constructs) {
+            const syntaxToHide = inactiveSyntaxRanges(construct);
+            // An unsupported/ambiguous parser shape degrades to plain source rather than applying
+            // a partial visual interpretation that could hide the wrong source range.
+            if (syntaxToHide === null) {
+                continue;
+            }
+            decorations.push(
+                Decoration.mark({class: construct.className}).range(construct.from, construct.to)
+            );
+            if (!selectionTouchesConstruct(state, construct)) {
+                hiddenSyntax.push(...syntaxToHide);
+            }
+        }
+
+        for (const hidden of mergeRanges(hiddenSyntax)) {
+            if (hidden.from < hidden.to) {
+                decorations.push(Decoration.replace({}).range(hidden.from, hidden.to));
+            }
+        }
     }
 
     return decorations;
@@ -198,6 +385,9 @@ function createPreviewPlugin(
             const refreshRequested = update.transactions.some((transaction) =>
                 transaction.effects.some((effect) => effect.is(refreshPreview))
             );
+            // Selection movement, host updates, parser-progress transactions and explicit refreshes
+            // rebuild only the visible preview window. This is intentionally bounded and avoids a
+            // whole-document syntax walk while still restoring syntax after the caret moves away.
             const parserOrStateProgressed = !update.docChanged && update.transactions.length > 0;
             const refreshVisibleRanges = update.viewportChanged || refreshRequested || parserOrStateProgressed;
             if (update.docChanged || refreshVisibleRanges) {
@@ -276,6 +466,7 @@ export class SourceNativeEditorCore {
                     // characters and their UTF-16 positions for the host
                     // logical-text boundary.
                     EditorState.lineSeparator.of("\n"),
+                    EditorState.allowMultipleSelections.of(true),
                     markdown(),
                     createPreviewPlugin(options.onPreviewRangeScanned),
                     sourceNativeTheme,
