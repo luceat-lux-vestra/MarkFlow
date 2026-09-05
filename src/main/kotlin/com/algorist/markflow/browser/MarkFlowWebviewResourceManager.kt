@@ -51,6 +51,16 @@ internal object MarkFlowWebviewResourceManager {
         return "http://127.0.0.1:$port/index.html"
     }
 
+    /**
+     * URL for the target source-native runtime entry page (#105/#81). This is a distinct static
+     * page/bundle from [loadWebviewIndexUrl]'s legacy Crepe entry; it is served by the same
+     * extracted webview root and local HTTP server.
+     */
+    fun loadSourceNativeIndexUrl(): String? {
+        val port = ensurePort() ?: return null
+        return "http://127.0.0.1:$port/source-native.html"
+    }
+
     fun registerLocalDocument(documentPath: String): LocalDocumentRegistration? {
         val port = ensurePort() ?: return null
         val resource = createLocalDocumentResource(documentPath) ?: return null
