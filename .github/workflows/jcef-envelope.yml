@@ -45,12 +45,12 @@ jobs:
           report_dir="$RUNNER_TEMP/markflow-jcef-envelope"
           report_path="$report_dir/report.json"
           mkdir -p "$report_dir"
-          export JAVA_TOOL_OPTIONS="-Dmarkflow.jcefEnvelopeProbe=true -Dmarkflow.jcefEnvelopeProbe.report=$report_path -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
+          export JAVA_TOOL_OPTIONS="-Dmarkflow.jcefEnvelopeProbe=true -Dmarkflow.jcefEnvelopeProbe.report=$report_path"
           export DISPLAY=:99.0
           Xvfb -ac :99 -screen 0 1920x1080x16 &
           xvfb_pid=$!
           trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
-          ./gradlew runIde --args "$GITHUB_WORKSPACE"
+          ./gradlew runIdeForUiTests --args "$GITHUB_WORKSPACE"
           python3 .github/scripts/verify-jcef-envelope-report.py "$report_path"
 
       - name: Upload JCEF envelope report
