@@ -18,7 +18,10 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
-        <appStarter implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"/>
+        <appStarter
+                id="markflow-jcef-transport-probe"
+                implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
+                internal="true"/>
         <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
     </extensions>
