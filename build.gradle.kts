@@ -143,7 +143,6 @@ val webviewOutputDir = file("build/webview")
 val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val jcefTransportProbeOutput = layout.buildDirectory.file("jcef-transport-probe/evidence.json")
-val jcefTransportProbeProjectPath = layout.projectDirectory.asFile.absolutePath
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -254,7 +253,7 @@ intellijPlatformTesting {
                     )
                 }
                 argumentProviders += CommandLineArgumentProvider {
-                    listOf(jcefTransportProbeProjectPath)
+                    listOf("markflow-jcef-transport-probe")
                 }
             }
         }

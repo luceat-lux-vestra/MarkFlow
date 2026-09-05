@@ -5,10 +5,11 @@ on:
     paths:
       - '.github/workflows/jcef-transport-evidence.yml'
       - 'build.gradle.kts'
-      - 'src/main/kotlin/com/algorist/markflow/MarkFlowStartupActivity.kt'
+      - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/runtime/ApplicationExitCompat.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbeStarter.kt'
   workflow_dispatch:
 
 permissions:
@@ -59,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           # Internal case timeouts bound payload callbacks. This outer watchdog also covers a probe
-          # that never starts, an IDE that never opens the requested project, or shutdown failure.
+          # command that never starts, a JCEF callback stall, or shutdown failure.
           timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForJcefTransportProbe --stacktrace
 
       - name: Validate evidence completeness
