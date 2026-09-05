@@ -6,6 +6,7 @@ on:
       - '.github/workflows/jcef-transport-evidence.yml'
       - 'build.gradle.kts'
       - 'src/main/kotlin/com/algorist/markflow/MarkFlowStartupActivity.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/ApplicationExitCompat.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
   workflow_dispatch:
@@ -21,7 +22,7 @@ jobs:
   probe:
     name: Real JCEF envelope probe
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -54,7 +55,12 @@ jobs:
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
       - name: Run real JCEF transport probe
-        run: ./gradlew runIdeForJcefTransportProbe --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Internal case timeouts bound payload callbacks. This outer watchdog also covers a probe
+          # that never starts, an IDE that never opens the requested project, or shutdown failure.
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForJcefTransportProbe --stacktrace
 
       - name: Validate evidence completeness
         shell: bash
@@ -123,5 +129,6 @@ jobs:
           name: jcef-transport-evidence
           path: |
             build/jcef-transport-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-xvfb.log
           if-no-files-found: warn
