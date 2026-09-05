@@ -6,6 +6,7 @@ on:
     paths:
       - "src/main/kotlin/com/algorist/markflow/runtime/**"
       - "src/main/kotlin/com/algorist/markflow/MarkFlowStartupActivity.kt"
+      - "src/main/resources/META-INF/plugin.xml"
       - "webview/**"
       - ".github/workflows/jcef-envelope.yml"
       - ".github/scripts/verify-jcef-envelope-report.py"
