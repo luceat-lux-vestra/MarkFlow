@@ -1,0 +1,570 @@
+package com.algorist.markflow.runtime
+
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.intellij.openapi.application.ApplicationInfo
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.util.concurrency.AppExecutorUtil
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.time.Instant
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Diagnostic-only real-JCEF evidence runner for #109.
+ *
+ * The runner is unreachable unless [OUTPUT_PROPERTY] is explicitly set for an IDE process. It uses
+ * the production [JcefSourceNativeRuntimeTransport] directly, but it never acquires a
+ * DocumentSession and never participates in editor/source authority. Results are written as JSON so
+ * CI can retain the exact IDE/OS/payload evidence instead of inferring JCEF behavior from fake-based
+ * platform tests.
+ */
+internal object JcefTransportEnvelopeProbe {
+    const val OUTPUT_PROPERTY = "markflow.jcefTransportProbe.output"
+
+    private val started = AtomicBoolean(false)
+
+    /** Returns true when probe mode was requested, even if another project already started it. */
+    fun startIfRequested(): Boolean {
+        val output = System.getProperty(OUTPUT_PROPERTY)?.takeIf(String::isNotBlank) ?: return false
+        if (!started.compareAndSet(false, true)) return true
+
+        ApplicationManager.getApplication().invokeLater {
+            Runner(Paths.get(output)).start()
+        }
+        return true
+    }
+
+    private class Runner(
+        private val output: Path,
+    ) {
+        private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
+        private val cases = buildCases()
+        private val results = mutableListOf<CaseResult>()
+        private val lateMessages = AtomicInteger(0)
+        private var transport: JcefSourceNativeRuntimeTransport? = null
+        private var baselineTransportCount = 0
+        private var caseIndex = 0
+        private var currentCase: ProbeCase? = null
+        private var timeout: ScheduledFuture<*>? = null
+        private var finished = false
+
+        fun start() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            baselineTransportCount = JcefSourceNativeRuntimeTransport.liveInstanceCount
+
+            try {
+                val created = JcefSourceNativeRuntimeTransport()
+                transport = created
+                created.setTransportMessageHandler(::handleTransportMessage)
+                created.setReadinessMessageHandler { "{\"type\":\"probeReady\"}" }
+                created.setLoadEndHandler {
+                    ApplicationManager.getApplication().invokeLater(::onPageLoaded)
+                }
+                created.loadUrl("about:blank")
+            } catch (failure: Throwable) {
+                finishIncomplete("transport construction/load failed: ${failure.javaClass.name}: ${failure.message}")
+            }
+        }
+
+        private fun onPageLoaded() {
+            if (finished) return
+            val currentTransport = transport ?: return finishIncomplete("transport missing after page load")
+            try {
+                currentTransport.executeJavaScript(currentTransport.buildBridgeGlueScript())
+                currentTransport.executeJavaScript(PROBE_HELPERS_SCRIPT)
+                runNextCase()
+            } catch (failure: Throwable) {
+                finishIncomplete("bridge/helper installation failed: ${failure.javaClass.name}: ${failure.message}")
+            }
+        }
+
+        private fun runNextCase() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            if (finished) return
+            if (caseIndex >= cases.size) {
+                runLateAfterDisposeCase()
+                return
+            }
+
+            val probeCase = cases[caseIndex++]
+            currentCase = probeCase
+            timeout?.cancel(false)
+            timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (currentCase?.id == probeCase.id) {
+                            completeCurrent(
+                                CaseResult(
+                                    id = probeCase.id,
+                                    kind = probeCase.kind.name,
+                                    payloadUtf16Units = probeCase.size,
+                                    encodedJsonChars = encodedCharsFor(probeCase),
+                                    requiredForCurrentEnvelope = probeCase.required,
+                                    outcome = "TIMEOUT",
+                                    detail = "no success/failure/report callback before ${CASE_TIMEOUT_SECONDS}s",
+                                ),
+                            )
+                        }
+                    }
+                },
+                CASE_TIMEOUT_SECONDS,
+                TimeUnit.SECONDS,
+            )
+
+            val script = when (probeCase.kind) {
+                Kind.WEB_REQUEST -> webRequestScript(probeCase)
+                Kind.SUCCESS_RESPONSE -> successResponseScript(probeCase)
+                Kind.HOST_INJECTION -> hostInjectionScript(probeCase)
+                Kind.REJECTION -> rejectionScript(probeCase)
+            }
+
+            try {
+                transport?.executeJavaScript(script)
+                    ?: completeCurrent(internalFailure(probeCase, "transport missing before executeJavaScript"))
+            } catch (failure: Throwable) {
+                completeCurrent(
+                    internalFailure(
+                        probeCase,
+                        "executeJavaScript threw ${failure.javaClass.name}: ${failure.message}",
+                    ),
+                )
+            }
+        }
+
+        private fun handleTransportMessage(raw: String): String? {
+            val parsed = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+            return when (parsed.string("op")) {
+                "request" -> handleWebRequest(parsed, raw)
+                "response" -> handleSuccessResponseRequest(parsed)
+                "report" -> {
+                    handleReport(parsed)
+                    "{\"accepted\":true}"
+                }
+                "reject" -> null
+                "late" -> {
+                    lateMessages.incrementAndGet()
+                    "{\"accepted\":true}"
+                }
+                else -> null
+            }
+        }
+
+        private fun handleWebRequest(message: JsonObject, raw: String): String? {
+            val probeCase = currentCase ?: return null
+            if (probeCase.kind != Kind.WEB_REQUEST || message.string("caseId") != probeCase.id) return null
+            val payload = message.string("payload") ?: return null
+            val valid = payload.length == probeCase.size && fnv1aUtf16(payload) == expectedHash(probeCase)
+            if (!valid) return null
+            return gson.toJson(
+                mapOf(
+                    "accepted" to true,
+                    "payloadUtf16Units" to payload.length,
+                    "payloadHash" to fnv1aUtf16(payload),
+                    "wireChars" to raw.length,
+                ),
+            )
+        }
+
+        private fun handleSuccessResponseRequest(message: JsonObject): String? {
+            val probeCase = currentCase ?: return null
+            if (probeCase.kind != Kind.SUCCESS_RESPONSE || message.string("caseId") != probeCase.id) return null
+            return payload(probeCase.size, probeCase.complex)
+        }
+
+        private fun handleReport(message: JsonObject) {
+            val caseId = message.string("caseId") ?: return
+            ApplicationManager.getApplication().invokeLater {
+                val probeCase = currentCase ?: return@invokeLater
+                if (probeCase.id != caseId) return@invokeLater
+
+                val callbackOutcome = message.string("outcome") ?: "missing"
+                val observedLength = message.int("length")
+                val observedHash = message.long("hash")
+                val detail = message.string("detail")
+
+                val passed = when (probeCase.kind) {
+                    Kind.WEB_REQUEST -> callbackOutcome == "success"
+                    Kind.SUCCESS_RESPONSE,
+                    Kind.HOST_INJECTION,
+                    -> callbackOutcome == "success" &&
+                        observedLength == probeCase.size &&
+                        observedHash == expectedHash(probeCase)
+                    Kind.REJECTION -> callbackOutcome == "failure"
+                }
+
+                completeCurrent(
+                    CaseResult(
+                        id = probeCase.id,
+                        kind = probeCase.kind.name,
+                        payloadUtf16Units = probeCase.size,
+                        encodedJsonChars = encodedCharsFor(probeCase),
+                        requiredForCurrentEnvelope = probeCase.required,
+                        outcome = if (passed) "PASS" else "FAIL",
+                        observedUtf16Units = observedLength,
+                        observedHash = observedHash,
+                        detail = detail ?: "callback=$callbackOutcome",
+                    ),
+                )
+            }
+        }
+
+        private fun completeCurrent(result: CaseResult) {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            if (currentCase?.id != result.id || finished) return
+            timeout?.cancel(false)
+            timeout = null
+            results += result
+            currentCase = null
+            runNextCase()
+        }
+
+        private fun runLateAfterDisposeCase() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            val currentTransport = transport ?: return finishIncomplete("transport missing before late-dispose case")
+            val before = JcefSourceNativeRuntimeTransport.liveInstanceCount
+            val script = """
+                window.setTimeout(function() {
+                    window.__markflowSourceNativeSend(
+                        JSON.stringify({op: 'late', caseId: 'late-after-dispose'}),
+                        function() {},
+                        function() {}
+                    );
+                }, 150);
+            """.trimIndent()
+
+            try {
+                currentTransport.executeJavaScript(script)
+                currentTransport.dispose()
+                transport = null
+            } catch (failure: Throwable) {
+                return finishIncomplete("late-dispose setup failed: ${failure.javaClass.name}: ${failure.message}")
+            }
+
+            AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (finished) return@invokeLater
+                        val after = JcefSourceNativeRuntimeTransport.liveInstanceCount
+                        results += CaseResult(
+                            id = "late-after-dispose",
+                            kind = "LIFECYCLE",
+                            payloadUtf16Units = 0,
+                            encodedJsonChars = 0,
+                            requiredForCurrentEnvelope = true,
+                            outcome = if (lateMessages.get() == 0 && after == baselineTransportCount) "PASS" else "FAIL",
+                            detail = "lateMessages=${lateMessages.get()}, liveBeforeDispose=$before, liveAfterDispose=$after, baseline=$baselineTransportCount",
+                        )
+                        runRepeatedConstructionDisposalEvidence()
+                    }
+                },
+                LATE_DISPOSE_OBSERVATION_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+        }
+
+        private fun runRepeatedConstructionDisposalEvidence() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            val before = JcefSourceNativeRuntimeTransport.liveInstanceCount
+            var failureDetail: String? = null
+            repeat(REPEATED_DISPOSAL_CYCLES) { index ->
+                if (failureDetail != null) return@repeat
+                try {
+                    JcefSourceNativeRuntimeTransport().dispose()
+                } catch (failure: Throwable) {
+                    failureDetail = "cycle=$index ${failure.javaClass.name}: ${failure.message}"
+                }
+            }
+            val after = JcefSourceNativeRuntimeTransport.liveInstanceCount
+            results += CaseResult(
+                id = "repeated-create-dispose",
+                kind = "LIFECYCLE",
+                payloadUtf16Units = 0,
+                encodedJsonChars = 0,
+                requiredForCurrentEnvelope = true,
+                outcome = if (failureDetail == null && before == after && after == baselineTransportCount) "PASS" else "FAIL",
+                detail = failureDetail ?: "cycles=$REPEATED_DISPOSAL_CYCLES, liveBefore=$before, liveAfter=$after, baseline=$baselineTransportCount",
+            )
+            finish()
+        }
+
+        private fun finishIncomplete(detail: String) {
+            if (finished) return
+            LOG.warn("JCEF transport envelope probe incomplete: $detail")
+            results += CaseResult(
+                id = "probe-internal",
+                kind = "INTERNAL",
+                payloadUtf16Units = 0,
+                encodedJsonChars = 0,
+                requiredForCurrentEnvelope = true,
+                outcome = "INCOMPLETE",
+                detail = detail,
+            )
+            finish()
+        }
+
+        private fun finish() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            if (finished) return
+            finished = true
+            timeout?.cancel(false)
+
+            var disposalFailure: String? = null
+            transport?.let { currentTransport ->
+                try {
+                    currentTransport.dispose()
+                } catch (failure: Throwable) {
+                    disposalFailure = "${failure.javaClass.name}: ${failure.message}"
+                }
+            }
+            transport = null
+
+            if (disposalFailure != null) {
+                results += CaseResult(
+                    id = "final-dispose",
+                    kind = "LIFECYCLE",
+                    payloadUtf16Units = 0,
+                    encodedJsonChars = 0,
+                    requiredForCurrentEnvelope = true,
+                    outcome = "INCOMPLETE",
+                    detail = disposalFailure,
+                )
+            }
+
+            val evidenceComplete = results.none { it.outcome == "TIMEOUT" || it.outcome == "INCOMPLETE" }
+            val requiredEnvelopePass = evidenceComplete && results
+                .filter(CaseResult::requiredForCurrentEnvelope)
+                .all { it.outcome == "PASS" }
+            val verdict = when {
+                !evidenceComplete -> "INCOMPLETE"
+                requiredEnvelopePass -> "COMPLETE_REQUIRED_ENVELOPE_PASS"
+                else -> "COMPLETE_CUTOVER_BLOCKED"
+            }
+
+            val evidence = Evidence(
+                schemaVersion = 1,
+                generatedAt = Instant.now().toString(),
+                ideBuild = ApplicationInfo.getInstance().build.asString(),
+                javaRuntime = System.getProperty("java.runtime.version") ?: "unknown",
+                osName = System.getProperty("os.name") ?: "unknown",
+                osVersion = System.getProperty("os.version") ?: "unknown",
+                osArch = System.getProperty("os.arch") ?: "unknown",
+                baselineTransportCount = baselineTransportCount,
+                finalTransportCount = JcefSourceNativeRuntimeTransport.liveInstanceCount,
+                verdict = verdict,
+                cutoverAuthorized = false,
+                cases = results.toList(),
+            )
+
+            try {
+                output.parent?.let(Files::createDirectories)
+                Files.writeString(output, gson.toJson(evidence), StandardCharsets.UTF_8)
+                LOG.warn("JCEF transport envelope probe wrote $output with verdict=$verdict")
+            } catch (failure: Throwable) {
+                LOG.error("Failed to write JCEF transport envelope evidence to $output", failure)
+            } finally {
+                ApplicationManager.getApplication().exit(true, true)
+            }
+        }
+
+        private fun internalFailure(probeCase: ProbeCase, detail: String) = CaseResult(
+            id = probeCase.id,
+            kind = probeCase.kind.name,
+            payloadUtf16Units = probeCase.size,
+            encodedJsonChars = encodedCharsFor(probeCase),
+            requiredForCurrentEnvelope = probeCase.required,
+            outcome = "INCOMPLETE",
+            detail = detail,
+        )
+
+        private fun encodedCharsFor(probeCase: ProbeCase): Int {
+            if (probeCase.size == 0) return 0
+            return gson.toJson(payload(probeCase.size, probeCase.complex)).length
+        }
+
+        private fun expectedHash(probeCase: ProbeCase): Long = fnv1aUtf16(payload(probeCase.size, probeCase.complex))
+
+        private fun webRequestScript(probeCase: ProbeCase): String = """
+            (function() {
+                const caseId = ${gson.toJson(probeCase.id)};
+                const payload = window.__mfProbePayload(${probeCase.size}, ${probeCase.complex});
+                window.__markflowSourceNativeSend(
+                    JSON.stringify({op: 'request', caseId: caseId, payload: payload}),
+                    function(response) {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'success', detail: response});
+                    },
+                    function(code, message) {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'failure', detail: String(code) + ':' + String(message)});
+                    }
+                );
+            })();
+        """.trimIndent()
+
+        private fun successResponseScript(probeCase: ProbeCase): String = """
+            (function() {
+                const caseId = ${gson.toJson(probeCase.id)};
+                window.__markflowSourceNativeSend(
+                    JSON.stringify({op: 'response', caseId: caseId}),
+                    function(response) {
+                        window.__mfProbeReport({
+                            caseId: caseId,
+                            outcome: 'success',
+                            length: response.length,
+                            hash: window.__mfProbeHash(response)
+                        });
+                    },
+                    function(code, message) {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'failure', detail: String(code) + ':' + String(message)});
+                    }
+                );
+            })();
+        """.trimIndent()
+
+        private fun hostInjectionScript(probeCase: ProbeCase): String {
+            val payloadLiteral = gson.toJson(payload(probeCase.size, probeCase.complex))
+            return """
+                (function(payload) {
+                    window.__mfProbeReport({
+                        caseId: ${gson.toJson(probeCase.id)},
+                        outcome: 'success',
+                        length: payload.length,
+                        hash: window.__mfProbeHash(payload)
+                    });
+                })($payloadLiteral);
+            """.trimIndent()
+        }
+
+        private fun rejectionScript(probeCase: ProbeCase): String = """
+            (function() {
+                const caseId = ${gson.toJson(probeCase.id)};
+                window.__markflowSourceNativeSend(
+                    JSON.stringify({op: 'reject', caseId: caseId}),
+                    function() {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'success', detail: 'unexpected success callback'});
+                    },
+                    function(code, message) {
+                        window.__mfProbeReport({caseId: caseId, outcome: 'failure', detail: String(code) + ':' + String(message)});
+                    }
+                );
+            })();
+        """.trimIndent()
+    }
+
+    private enum class Kind {
+        WEB_REQUEST,
+        SUCCESS_RESPONSE,
+        HOST_INJECTION,
+        REJECTION,
+    }
+
+    private data class ProbeCase(
+        val id: String,
+        val kind: Kind,
+        val size: Int,
+        val complex: Boolean = false,
+        val required: Boolean = true,
+    )
+
+    private data class CaseResult(
+        val id: String,
+        val kind: String,
+        val payloadUtf16Units: Int,
+        val encodedJsonChars: Int,
+        val requiredForCurrentEnvelope: Boolean,
+        val outcome: String,
+        val observedUtf16Units: Int? = null,
+        val observedHash: Long? = null,
+        val detail: String? = null,
+    )
+
+    private data class Evidence(
+        val schemaVersion: Int,
+        val generatedAt: String,
+        val ideBuild: String,
+        val javaRuntime: String,
+        val osName: String,
+        val osVersion: String,
+        val osArch: String,
+        val baselineTransportCount: Int,
+        val finalTransportCount: Int,
+        val verdict: String,
+        val cutoverAuthorized: Boolean,
+        val cases: List<CaseResult>,
+    )
+
+    private fun buildCases(): List<ProbeCase> = listOf(
+        ProbeCase("request-ascii-64k", Kind.WEB_REQUEST, 64 * 1024),
+        ProbeCase("request-complex-64k", Kind.WEB_REQUEST, 64 * 1024, complex = true),
+        ProbeCase("request-ascii-1m", Kind.WEB_REQUEST, 1024 * 1024),
+        ProbeCase("request-ascii-4m", Kind.WEB_REQUEST, 4 * 1024 * 1024),
+        ProbeCase("response-ascii-4m", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024),
+        ProbeCase("host-injection-complex-4m", Kind.HOST_INJECTION, 4 * 1024 * 1024, complex = true),
+        ProbeCase("request-oversize", Kind.WEB_REQUEST, 4 * 1024 * 1024 + 256 * 1024, required = false),
+        ProbeCase("response-oversize", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024 + 256 * 1024, required = false),
+        ProbeCase("host-injection-oversize", Kind.HOST_INJECTION, 8 * 1024 * 1024, complex = true, required = false),
+        ProbeCase("handler-rejection", Kind.REJECTION, 0),
+    )
+
+    private fun payload(size: Int, complex: Boolean): String {
+        if (size == 0) return ""
+        if (!complex) return "x".repeat(size)
+
+        val unit = "A한🙂\"\\\n"
+        val builder = StringBuilder(size)
+        while (builder.length + unit.length <= size) builder.append(unit)
+        while (builder.length < size) builder.append('x')
+        return builder.toString()
+    }
+
+    private fun fnv1aUtf16(value: String): Long {
+        var hash = 0x811c9dc5.toInt()
+        for (character in value) {
+            hash = (hash xor character.code) * 0x01000193
+        }
+        return hash.toUInt().toLong()
+    }
+
+    private fun JsonObject.string(name: String): String? = get(name)?.takeUnless { it.isJsonNull }?.asString
+    private fun JsonObject.int(name: String): Int? = get(name)?.takeUnless { it.isJsonNull }?.asInt
+    private fun JsonObject.long(name: String): Long? = get(name)?.takeUnless { it.isJsonNull }?.asLong
+
+    private const val CASE_TIMEOUT_SECONDS = 30L
+    private const val LATE_DISPOSE_OBSERVATION_MILLIS = 500L
+    private const val REPEATED_DISPOSAL_CYCLES = 3
+
+    private val LOG = Logger.getInstance(JcefTransportEnvelopeProbe::class.java)
+
+    private val PROBE_HELPERS_SCRIPT = """
+        window.__mfProbeHash = function(value) {
+            let hash = 0x811c9dc5 >>> 0;
+            for (let index = 0; index < value.length; index += 1) {
+                hash ^= value.charCodeAt(index);
+                hash = Math.imul(hash, 0x01000193) >>> 0;
+            }
+            return hash >>> 0;
+        };
+        window.__mfProbePayload = function(size, complex) {
+            if (!complex) return 'x'.repeat(size);
+            const unit = 'A' + String.fromCharCode(0xD55C) + String.fromCodePoint(0x1F642) + '"' + '\\' + '\n';
+            let value = '';
+            while (value.length + unit.length <= size) value += unit;
+            while (value.length < size) value += 'x';
+            return value;
+        };
+        window.__mfProbeReport = function(report) {
+            window.__markflowSourceNativeSend(
+                JSON.stringify(Object.assign({op: 'report'}, report)),
+                function() {},
+                function() {}
+            );
+        };
+    """.trimIndent()
+}
