@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>MarkFlow JCEF Envelope Probe</title>
+</head>
+<body>
+<script>
+(() => {
+    const seed = 'A"\\\r\nΩ😀<\/script>';
+
+    function makePayload(size) {
+        let value = '';
+        while (value.length < size) value += seed;
+        return value.slice(0, size);
+    }
+
+    function checksum(value) {
+        let hash = 0x811c9dc5;
+        for (let index = 0; index < value.length; index += 1) {
+            hash ^= value.charCodeAt(index);
+            hash = Math.imul(hash, 0x01000193);
+        }
+        return (hash >>> 0).toString(16).padStart(8, '0');
+    }
+
+    function report(result) {
+        const ready = window.__markflowSourceNativeReady;
+        if (typeof ready !== 'function') return;
+        ready(JSON.stringify(result), () => {}, () => {});
+    }
+
+    window.__markflowEnvelopeRun = (rawSpec) => {
+        const spec = JSON.parse(rawSpec);
+        const send = window.__markflowSourceNativeSend;
+        if (typeof send !== 'function') {
+            report({id: spec.id, outcome: 'bridge-missing'});
+            return;
+        }
+
+        if (spec.kind === 'request') {
+            const payload = makePayload(spec.size);
+            send(
+                JSON.stringify({kind: 'request', id: spec.id, payload}),
+                (response) => report({id: spec.id, outcome: 'success', response}),
+                (errorCode, errorMessage) => report({id: spec.id, outcome: 'failure', errorCode, errorMessage})
+            );
+            return;
+        }
+
+        if (spec.kind === 'response') {
+            send(
+                JSON.stringify({kind: 'response', id: spec.id, size: spec.size}),
+                (response) => report({
+                    id: spec.id,
+                    outcome: 'success',
+                    responseLength: response.length,
+                    responseChecksum: checksum(response)
+                }),
+                (errorCode, errorMessage) => report({id: spec.id, outcome: 'failure', errorCode, errorMessage})
+            );
+            return;
+        }
+
+        if (spec.kind === 'reject') {
+            send(
+                JSON.stringify({kind: 'reject', id: spec.id}),
+                () => report({id: spec.id, outcome: 'unexpected-success'}),
+                (errorCode, errorMessage) => report({id: spec.id, outcome: 'expected-failure', errorCode, errorMessage})
+            );
+        }
+    };
+
+    window.__markflowEnvelopeDeliveryId = null;
+    window.__markflowSourceNativeReceive = (raw) => {
+        report({
+            id: window.__markflowEnvelopeDeliveryId,
+            outcome: 'success',
+            responseLength: raw.length,
+            responseChecksum: checksum(raw)
+        });
+    };
+})();
+</script>
+</body>
+</html>
