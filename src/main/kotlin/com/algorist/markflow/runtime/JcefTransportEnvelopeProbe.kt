@@ -1,5 +1,10 @@
 package com.algorist.markflow.runtime
 
+import com.algorist.markflow.document.DocumentRevision
+import com.algorist.markflow.sync.AttachmentId
+import com.algorist.markflow.sync.AttachmentWireCodec
+import com.algorist.markflow.sync.AttachmentWireMessage
+import com.algorist.markflow.sync.RecoveryId
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
@@ -21,22 +26,22 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Diagnostic-only real-JCEF evidence runner for #109.
  *
- * The runner is unreachable unless [OUTPUT_PROPERTY] is explicitly set for an IDE process. It uses
- * the production [JcefSourceNativeRuntimeTransport] directly, but it never acquires a
- * DocumentSession and never participates in editor/source authority. Results are written as JSON so
- * CI can retain the exact IDE/OS/payload evidence instead of inferring JCEF behavior from fake-based
- * platform tests.
+ * The runner is unreachable unless [OUTPUT_PROPERTY] is explicitly set for an IDE process. It
+ * exercises the production [JcefSourceNativeRuntimeTransport] directly, but never acquires a
+ * DocumentSession and never participates in source/revision authority. Evidence is written as JSON
+ * so CI can prove which payloads actually crossed JCEF rather than inferring behavior from fakes.
  */
 internal object JcefTransportEnvelopeProbe {
     const val OUTPUT_PROPERTY = "markflow.jcefTransportProbe.output"
 
     private val started = AtomicBoolean(false)
 
-    /** Returns true when probe mode was requested, even if another project already started it. */
+    /** Returns true whenever probe mode was requested, including after another project started it. */
     fun startIfRequested(): Boolean {
         val output = System.getProperty(OUTPUT_PROPERTY)?.takeIf(String::isNotBlank) ?: return false
         if (!started.compareAndSet(false, true)) return true
 
+        LOG.warn("JCEF envelope probe requested; output=$output")
         ApplicationManager.getApplication().invokeLater {
             Runner(Paths.get(output)).start()
         }
@@ -56,34 +61,75 @@ internal object JcefTransportEnvelopeProbe {
         private var currentCase: ProbeCase? = null
         private var timeout: ScheduledFuture<*>? = null
         private var finished = false
+        private var pageReady = false
 
         fun start() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             baselineTransportCount = JcefSourceNativeRuntimeTransport.liveInstanceCount
+            LOG.warn("JCEF envelope probe starting; baselineTransportCount=$baselineTransportCount")
+            armTimeout("probe page did not become ready", PAGE_READY_TIMEOUT_SECONDS)
 
             try {
                 val created = JcefSourceNativeRuntimeTransport()
                 transport = created
                 created.setTransportMessageHandler(::handleTransportMessage)
                 created.setReadinessMessageHandler { "{\"type\":\"probeReady\"}" }
-                created.setLoadEndHandler {
-                    ApplicationManager.getApplication().invokeLater(::onPageLoaded)
-                }
-                created.loadUrl("about:blank")
+                created.setLoadEndHandler(::onAnyPageLoaded)
+                // A distinct data URL avoids relying on whether JBCefBrowser emits a load event for
+                // its constructor's initial about:blank realm.
+                created.loadUrl(PROBE_PAGE_URL)
             } catch (failure: Throwable) {
                 finishIncomplete("transport construction/load failed: ${failure.javaClass.name}: ${failure.message}")
             }
         }
 
-        private fun onPageLoaded() {
-            if (finished) return
+        private fun onAnyPageLoaded() {
+            if (finished || pageReady) return
             val currentTransport = transport ?: return finishIncomplete("transport missing after page load")
             try {
+                // An initial about:blank load can race the explicit data URL. Install the bridge on
+                // every observed realm, but only begin cases when JavaScript reports our marker URL.
                 currentTransport.executeJavaScript(currentTransport.buildBridgeGlueScript())
                 currentTransport.executeJavaScript(PROBE_HELPERS_SCRIPT)
-                runNextCase()
+                currentTransport.executeJavaScript(
+                    "window.__mfProbePageReady(String(window.location.href));",
+                )
             } catch (failure: Throwable) {
                 finishIncomplete("bridge/helper installation failed: ${failure.javaClass.name}: ${failure.message}")
+            }
+        }
+
+        private fun handleTransportMessage(raw: String): String? {
+            val parsed = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+            return when (parsed.string("op")) {
+                "pageReady" -> {
+                    handlePageReady(parsed)
+                    "{\"accepted\":true}"
+                }
+                "request" -> handleWebRequest(parsed, raw)
+                "response" -> handleSuccessResponseRequest(parsed)
+                "report" -> {
+                    handleReport(parsed)
+                    "{\"accepted\":true}"
+                }
+                "reject" -> null
+                "late" -> {
+                    lateMessages.incrementAndGet()
+                    "{\"accepted\":true}"
+                }
+                else -> null
+            }
+        }
+
+        private fun handlePageReady(message: JsonObject) {
+            val href = message.string("href") ?: return
+            if (!href.contains(PROBE_PAGE_MARKER)) return
+            ApplicationManager.getApplication().invokeLater {
+                if (finished || pageReady) return@invokeLater
+                pageReady = true
+                cancelTimeout()
+                LOG.warn("JCEF envelope probe page ready: $href")
+                runNextCase()
             }
         }
 
@@ -97,33 +143,13 @@ internal object JcefTransportEnvelopeProbe {
 
             val probeCase = cases[caseIndex++]
             currentCase = probeCase
-            timeout?.cancel(false)
-            timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule(
-                {
-                    ApplicationManager.getApplication().invokeLater {
-                        if (currentCase?.id == probeCase.id) {
-                            completeCurrent(
-                                CaseResult(
-                                    id = probeCase.id,
-                                    kind = probeCase.kind.name,
-                                    payloadUtf16Units = probeCase.size,
-                                    encodedJsonChars = encodedCharsFor(probeCase),
-                                    requiredForCurrentEnvelope = probeCase.required,
-                                    outcome = "TIMEOUT",
-                                    detail = "no success/failure/report callback before ${CASE_TIMEOUT_SECONDS}s",
-                                ),
-                            )
-                        }
-                    }
-                },
-                CASE_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
-            )
+            armTimeout("case ${probeCase.id} produced no terminal callback", CASE_TIMEOUT_SECONDS)
 
             val script = when (probeCase.kind) {
                 Kind.WEB_REQUEST -> webRequestScript(probeCase)
                 Kind.SUCCESS_RESPONSE -> successResponseScript(probeCase)
-                Kind.HOST_INJECTION -> hostInjectionScript(probeCase)
+                Kind.HOST_BOOTSTRAP -> hostSnapshotScript(probeCase, recovery = false)
+                Kind.HOST_RECOVERY -> hostSnapshotScript(probeCase, recovery = true)
                 Kind.REJECTION -> rejectionScript(probeCase)
             }
 
@@ -140,35 +166,16 @@ internal object JcefTransportEnvelopeProbe {
             }
         }
 
-        private fun handleTransportMessage(raw: String): String? {
-            val parsed = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
-            return when (parsed.string("op")) {
-                "request" -> handleWebRequest(parsed, raw)
-                "response" -> handleSuccessResponseRequest(parsed)
-                "report" -> {
-                    handleReport(parsed)
-                    "{\"accepted\":true}"
-                }
-                "reject" -> null
-                "late" -> {
-                    lateMessages.incrementAndGet()
-                    "{\"accepted\":true}"
-                }
-                else -> null
-            }
-        }
-
         private fun handleWebRequest(message: JsonObject, raw: String): String? {
             val probeCase = currentCase ?: return null
             if (probeCase.kind != Kind.WEB_REQUEST || message.string("caseId") != probeCase.id) return null
-            val payload = message.string("payload") ?: return null
-            val valid = payload.length == probeCase.size && fnv1aUtf16(payload) == expectedHash(probeCase)
-            if (!valid) return null
+            val value = message.string("payload") ?: return null
+            if (value.length != probeCase.size || fnv1aUtf16(value) != expectedHash(probeCase)) return null
             return gson.toJson(
                 mapOf(
                     "accepted" to true,
-                    "payloadUtf16Units" to payload.length,
-                    "payloadHash" to fnv1aUtf16(payload),
+                    "payloadUtf16Units" to value.length,
+                    "payloadHash" to fnv1aUtf16(value),
                     "wireChars" to raw.length,
                 ),
             )
@@ -184,29 +191,31 @@ internal object JcefTransportEnvelopeProbe {
             val caseId = message.string("caseId") ?: return
             ApplicationManager.getApplication().invokeLater {
                 val probeCase = currentCase ?: return@invokeLater
-                if (probeCase.id != caseId) return@invokeLater
+                if (probeCase.id != caseId || finished) return@invokeLater
 
                 val callbackOutcome = message.string("outcome") ?: "missing"
                 val observedLength = message.int("length")
                 val observedHash = message.long("hash")
                 val detail = message.string("detail")
-
                 val passed = when (probeCase.kind) {
                     Kind.WEB_REQUEST -> callbackOutcome == "success"
                     Kind.SUCCESS_RESPONSE,
-                    Kind.HOST_INJECTION,
+                    Kind.HOST_BOOTSTRAP,
+                    Kind.HOST_RECOVERY,
                     -> callbackOutcome == "success" &&
                         observedLength == probeCase.size &&
                         observedHash == expectedHash(probeCase)
                     Kind.REJECTION -> callbackOutcome == "failure"
                 }
 
+                val envelope = envelopeMetrics(probeCase)
                 completeCurrent(
                     CaseResult(
                         id = probeCase.id,
                         kind = probeCase.kind.name,
                         payloadUtf16Units = probeCase.size,
-                        encodedJsonChars = encodedCharsFor(probeCase),
+                        encodedJsonChars = envelope.encodedJsonChars,
+                        outerJavaScriptLiteralChars = envelope.outerJavaScriptLiteralChars,
                         requiredForCurrentEnvelope = probeCase.required,
                         outcome = if (passed) "PASS" else "FAIL",
                         observedUtf16Units = observedLength,
@@ -220,15 +229,16 @@ internal object JcefTransportEnvelopeProbe {
         private fun completeCurrent(result: CaseResult) {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (currentCase?.id != result.id || finished) return
-            timeout?.cancel(false)
-            timeout = null
+            cancelTimeout()
             results += result
+            LOG.warn("JCEF envelope probe ${result.id}: ${result.outcome}")
             currentCase = null
             runNextCase()
         }
 
         private fun runLateAfterDisposeCase() {
             ApplicationManager.getApplication().assertIsDispatchThread()
+            cancelTimeout()
             val currentTransport = transport ?: return finishIncomplete("transport missing before late-dispose case")
             val before = JcefSourceNativeRuntimeTransport.liveInstanceCount
             val script = """
@@ -259,6 +269,7 @@ internal object JcefTransportEnvelopeProbe {
                             kind = "LIFECYCLE",
                             payloadUtf16Units = 0,
                             encodedJsonChars = 0,
+                            outerJavaScriptLiteralChars = 0,
                             requiredForCurrentEnvelope = true,
                             outcome = if (lateMessages.get() == 0 && after == baselineTransportCount) "PASS" else "FAIL",
                             detail = "lateMessages=${lateMessages.get()}, liveBeforeDispose=$before, liveAfterDispose=$after, baseline=$baselineTransportCount",
@@ -289,6 +300,7 @@ internal object JcefTransportEnvelopeProbe {
                 kind = "LIFECYCLE",
                 payloadUtf16Units = 0,
                 encodedJsonChars = 0,
+                outerJavaScriptLiteralChars = 0,
                 requiredForCurrentEnvelope = true,
                 outcome = if (failureDetail == null && before == after && after == baselineTransportCount) "PASS" else "FAIL",
                 detail = failureDetail ?: "cycles=$REPEATED_DISPOSAL_CYCLES, liveBefore=$before, liveAfter=$after, baseline=$baselineTransportCount",
@@ -296,14 +308,35 @@ internal object JcefTransportEnvelopeProbe {
             finish()
         }
 
+        private fun armTimeout(detail: String, seconds: Long) {
+            cancelTimeout()
+            timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (!finished) finishIncomplete("$detail after ${seconds}s")
+                    }
+                },
+                seconds,
+                TimeUnit.SECONDS,
+            )
+        }
+
+        private fun cancelTimeout() {
+            timeout?.cancel(false)
+            timeout = null
+        }
+
         private fun finishIncomplete(detail: String) {
+            ApplicationManager.getApplication().assertIsDispatchThread()
             if (finished) return
             LOG.warn("JCEF transport envelope probe incomplete: $detail")
+            val active = currentCase
             results += CaseResult(
-                id = "probe-internal",
-                kind = "INTERNAL",
-                payloadUtf16Units = 0,
-                encodedJsonChars = 0,
+                id = active?.id ?: "probe-internal",
+                kind = active?.kind?.name ?: "INTERNAL",
+                payloadUtf16Units = active?.size ?: 0,
+                encodedJsonChars = active?.let(::envelopeMetrics)?.encodedJsonChars ?: 0,
+                outerJavaScriptLiteralChars = active?.let(::envelopeMetrics)?.outerJavaScriptLiteralChars ?: 0,
                 requiredForCurrentEnvelope = true,
                 outcome = "INCOMPLETE",
                 detail = detail,
@@ -315,7 +348,7 @@ internal object JcefTransportEnvelopeProbe {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (finished) return
             finished = true
-            timeout?.cancel(false)
+            cancelTimeout()
 
             var disposalFailure: String? = null
             transport?.let { currentTransport ->
@@ -333,6 +366,7 @@ internal object JcefTransportEnvelopeProbe {
                     kind = "LIFECYCLE",
                     payloadUtf16Units = 0,
                     encodedJsonChars = 0,
+                    outerJavaScriptLiteralChars = 0,
                     requiredForCurrentEnvelope = true,
                     outcome = "INCOMPLETE",
                     detail = disposalFailure,
@@ -350,7 +384,7 @@ internal object JcefTransportEnvelopeProbe {
             }
 
             val evidence = Evidence(
-                schemaVersion = 1,
+                schemaVersion = 2,
                 generatedAt = Instant.now().toString(),
                 ideBuild = ApplicationInfo.getInstance().build.asString(),
                 javaRuntime = System.getProperty("java.runtime.version") ?: "unknown",
@@ -375,19 +409,31 @@ internal object JcefTransportEnvelopeProbe {
             }
         }
 
-        private fun internalFailure(probeCase: ProbeCase, detail: String) = CaseResult(
-            id = probeCase.id,
-            kind = probeCase.kind.name,
-            payloadUtf16Units = probeCase.size,
-            encodedJsonChars = encodedCharsFor(probeCase),
-            requiredForCurrentEnvelope = probeCase.required,
-            outcome = "INCOMPLETE",
-            detail = detail,
-        )
+        private fun internalFailure(probeCase: ProbeCase, detail: String): CaseResult {
+            val envelope = envelopeMetrics(probeCase)
+            return CaseResult(
+                id = probeCase.id,
+                kind = probeCase.kind.name,
+                payloadUtf16Units = probeCase.size,
+                encodedJsonChars = envelope.encodedJsonChars,
+                outerJavaScriptLiteralChars = envelope.outerJavaScriptLiteralChars,
+                requiredForCurrentEnvelope = probeCase.required,
+                outcome = "INCOMPLETE",
+                detail = detail,
+            )
+        }
 
-        private fun encodedCharsFor(probeCase: ProbeCase): Int {
-            if (probeCase.size == 0) return 0
-            return gson.toJson(payload(probeCase.size, probeCase.complex)).length
+        private fun envelopeMetrics(probeCase: ProbeCase): EnvelopeMetrics = when (probeCase.kind) {
+            Kind.HOST_BOOTSTRAP,
+            Kind.HOST_RECOVERY,
+            -> {
+                val raw = snapshotWire(probeCase, probeCase.kind == Kind.HOST_RECOVERY)
+                EnvelopeMetrics(raw.length, gson.toJson(raw).length)
+            }
+            else -> {
+                val value = payload(probeCase.size, probeCase.complex)
+                EnvelopeMetrics(gson.toJson(value).length, 0)
+            }
         }
 
         private fun expectedHash(probeCase: ProbeCase): Long = fnv1aUtf16(payload(probeCase.size, probeCase.complex))
@@ -428,18 +474,50 @@ internal object JcefTransportEnvelopeProbe {
             })();
         """.trimIndent()
 
-        private fun hostInjectionScript(probeCase: ProbeCase): String {
-            val payloadLiteral = gson.toJson(payload(probeCase.size, probeCase.complex))
+        /** Mirrors SourceNativeEditorRuntime.deliverToWeb: wire JSON first, then outer JS literal. */
+        private fun hostSnapshotScript(probeCase: ProbeCase, recovery: Boolean): String {
+            val rawWire = snapshotWire(probeCase, recovery)
+            val payloadLiteral = gson.toJson(rawWire)
             return """
-                (function(payload) {
-                    window.__mfProbeReport({
-                        caseId: ${gson.toJson(probeCase.id)},
-                        outcome: 'success',
-                        length: payload.length,
-                        hash: window.__mfProbeHash(payload)
-                    });
+                (function(raw) {
+                    try {
+                        const message = JSON.parse(raw);
+                        const source = message.source;
+                        window.__mfProbeReport({
+                            caseId: ${gson.toJson(probeCase.id)},
+                            outcome: 'success',
+                            length: source.length,
+                            hash: window.__mfProbeHash(source),
+                            detail: 'wireChars=' + raw.length + ',outerLiteralChars=${payloadLiteral.length}'
+                        });
+                    } catch (error) {
+                        window.__mfProbeReport({
+                            caseId: ${gson.toJson(probeCase.id)},
+                            outcome: 'failure',
+                            detail: String(error)
+                        });
+                    }
                 })($payloadLiteral);
             """.trimIndent()
+        }
+
+        private fun snapshotWire(probeCase: ProbeCase, recovery: Boolean): String {
+            val source = payload(probeCase.size, probeCase.complex)
+            val message = if (recovery) {
+                AttachmentWireMessage.RecoverySnapshot(
+                    attachmentId = PROBE_ATTACHMENT_ID,
+                    recoveryId = PROBE_RECOVERY_ID,
+                    documentRevision = DocumentRevision.INITIAL,
+                    source = source,
+                )
+            } else {
+                AttachmentWireMessage.BootstrapSnapshot(
+                    attachmentId = PROBE_ATTACHMENT_ID,
+                    documentRevision = DocumentRevision.INITIAL,
+                    source = source,
+                )
+            }
+            return AttachmentWireCodec.encode(message)
         }
 
         private fun rejectionScript(probeCase: ProbeCase): String = """
@@ -461,7 +539,8 @@ internal object JcefTransportEnvelopeProbe {
     private enum class Kind {
         WEB_REQUEST,
         SUCCESS_RESPONSE,
-        HOST_INJECTION,
+        HOST_BOOTSTRAP,
+        HOST_RECOVERY,
         REJECTION,
     }
 
@@ -473,11 +552,17 @@ internal object JcefTransportEnvelopeProbe {
         val required: Boolean = true,
     )
 
+    private data class EnvelopeMetrics(
+        val encodedJsonChars: Int,
+        val outerJavaScriptLiteralChars: Int,
+    )
+
     private data class CaseResult(
         val id: String,
         val kind: String,
         val payloadUtf16Units: Int,
         val encodedJsonChars: Int,
+        val outerJavaScriptLiteralChars: Int,
         val requiredForCurrentEnvelope: Boolean,
         val outcome: String,
         val observedUtf16Units: Int? = null,
@@ -506,10 +591,11 @@ internal object JcefTransportEnvelopeProbe {
         ProbeCase("request-ascii-1m", Kind.WEB_REQUEST, 1024 * 1024),
         ProbeCase("request-ascii-4m", Kind.WEB_REQUEST, 4 * 1024 * 1024),
         ProbeCase("response-ascii-4m", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024),
-        ProbeCase("host-injection-complex-4m", Kind.HOST_INJECTION, 4 * 1024 * 1024, complex = true),
+        ProbeCase("bootstrap-complex-4m", Kind.HOST_BOOTSTRAP, 4 * 1024 * 1024, complex = true),
+        ProbeCase("recovery-complex-4m", Kind.HOST_RECOVERY, 4 * 1024 * 1024, complex = true),
         ProbeCase("request-oversize", Kind.WEB_REQUEST, 4 * 1024 * 1024 + 256 * 1024, required = false),
         ProbeCase("response-oversize", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024 + 256 * 1024, required = false),
-        ProbeCase("host-injection-oversize", Kind.HOST_INJECTION, 8 * 1024 * 1024, complex = true, required = false),
+        ProbeCase("recovery-oversize", Kind.HOST_RECOVERY, 8 * 1024 * 1024, complex = true, required = false),
         ProbeCase("handler-rejection", Kind.REJECTION, 0),
     )
 
@@ -536,10 +622,16 @@ internal object JcefTransportEnvelopeProbe {
     private fun JsonObject.int(name: String): Int? = get(name)?.takeUnless { it.isJsonNull }?.asInt
     private fun JsonObject.long(name: String): Long? = get(name)?.takeUnless { it.isJsonNull }?.asLong
 
+    private const val PAGE_READY_TIMEOUT_SECONDS = 45L
     private const val CASE_TIMEOUT_SECONDS = 30L
     private const val LATE_DISPOSE_OBSERVATION_MILLIS = 500L
     private const val REPEATED_DISPOSAL_CYCLES = 3
+    private const val PROBE_PAGE_MARKER = "markflow-jcef-envelope-probe"
+    private const val PROBE_PAGE_URL =
+        "data:text/html;charset=utf-8,%3Chtml%3E%3Cbody%20id%3D%22markflow-jcef-envelope-probe%22%3Eprobe%3C%2Fbody%3E%3C%2Fhtml%3E#markflow-jcef-envelope-probe"
 
+    private val PROBE_ATTACHMENT_ID = AttachmentId.of("jcef-envelope-probe-attachment")
+    private val PROBE_RECOVERY_ID = RecoveryId.of("jcef-envelope-probe-recovery")
     private val LOG = Logger.getInstance(JcefTransportEnvelopeProbe::class.java)
 
     private val PROBE_HELPERS_SCRIPT = """
@@ -562,6 +654,13 @@ internal object JcefTransportEnvelopeProbe {
         window.__mfProbeReport = function(report) {
             window.__markflowSourceNativeSend(
                 JSON.stringify(Object.assign({op: 'report'}, report)),
+                function() {},
+                function() {}
+            );
+        };
+        window.__mfProbePageReady = function(href) {
+            window.__markflowSourceNativeSend(
+                JSON.stringify({op: 'pageReady', href: href}),
                 function() {},
                 function() {}
             );
