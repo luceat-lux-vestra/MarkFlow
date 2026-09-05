@@ -7,6 +7,7 @@ import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.network.CefRequest
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The only production [SourceNativeRuntimeTransport]: exactly one [JBCefBrowser] realm and exactly
@@ -56,6 +57,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         browser = createdBrowser
         transportQuery = createdTransportQuery
         readinessQuery = createdReadinessQuery
+        liveInstances.incrementAndGet()
     }
 
     override fun loadUrl(url: String) {
@@ -156,14 +158,24 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         release { readinessQuery.dispose() }
         release { transportQuery.dispose() }
         release { browser.dispose() }
-        firstFailure?.let { throw it }
+        val failure = firstFailure
+        if (failure == null) {
+            liveInstances.decrementAndGet()
+        } else {
+            throw failure
+        }
     }
 
     private fun toResponse(payload: String?): JBCefJSQuery.Response =
         if (payload != null) JBCefJSQuery.Response(payload) else JBCefJSQuery.Response(null, REJECTED_STATUS, "rejected")
 
-    private companion object {
+    companion object {
         private const val REJECTED_STATUS = 400
+        private val liveInstances = AtomicInteger(0)
+
+        /** Diagnostic lifecycle evidence only; it is never a correctness or ownership authority. */
+        internal val liveInstanceCount: Int
+            get() = liveInstances.get()
 
         private fun cleanupConstructionFailure(
             failure: Throwable,
