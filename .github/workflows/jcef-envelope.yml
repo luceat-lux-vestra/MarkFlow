@@ -50,7 +50,7 @@ jobs:
           Xvfb -ac :99 -screen 0 1920x1080x16 &
           xvfb_pid=$!
           trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
-          ./gradlew runIde
+          ./gradlew runIde --args "$GITHUB_WORKSPACE"
           python3 .github/scripts/verify-jcef-envelope-report.py "$report_path"
 
       - name: Upload JCEF envelope report
