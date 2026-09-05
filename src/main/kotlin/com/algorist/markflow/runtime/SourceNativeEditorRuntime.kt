@@ -225,10 +225,11 @@ internal class SourceNativeEditorRuntime private constructor(
             try {
                 action()
             } catch (failure: Throwable) {
-                if (firstFailure == null) {
+                val existingFailure = firstFailure
+                if (existingFailure == null) {
                     firstFailure = failure
                 } else {
-                    firstFailure!!.addSuppressed(failure)
+                    existingFailure.addSuppressed(failure)
                 }
             }
         }
@@ -338,10 +339,11 @@ internal class SourceNativeEditorRuntime private constructor(
                 try {
                     action()
                 } catch (failure: Throwable) {
-                    if (firstFailure == null) {
+                    val existingFailure = firstFailure
+                    if (existingFailure == null) {
                         firstFailure = failure
                     } else {
-                        firstFailure!!.addSuppressed(failure)
+                        existingFailure.addSuppressed(failure)
                     }
                 }
             }
