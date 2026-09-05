@@ -11,6 +11,12 @@
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
+    <applicationListeners>
+        <listener
+                topic="com.intellij.ide.AppLifecycleListener"
+                class="com.algorist.markflow.runtime.JcefEnvelopeProbeAppLifecycleListener"/>
+    </applicationListeners>
+
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.algorist.markflow.settings.MarkFlowSettingsService"/>
         <applicationConfigurable
