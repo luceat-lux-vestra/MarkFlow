@@ -1,6 +1,8 @@
 package com.algorist.markflow.runtime
 
 import com.intellij.openapi.application.ApplicationStarter
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.util.net.ProxySettings
 
 /**
  * Dedicated IntelliJ command entry point for the #109 real-JCEF evidence runner.
@@ -17,6 +19,13 @@ class JcefTransportEnvelopeProbeStarter : ApplicationStarter {
         check(args.firstOrNull() == COMMAND_NAME) {
             "Unexpected JCEF transport probe command arguments: $args"
         }
+
+        // The diagnostic command runs earlier than a normal editor surface. Resolve the public
+        // proxy-settings service before the first JBCefApp access so legacy migration behind the
+        // platform proxy facade cannot be first-created from inside JBCefApp's class initializer.
+        val proxyConfiguration = ProxySettings.getInstance().proxyConfiguration
+        LOG.info("JCEF transport probe proxy settings initialized: ${proxyConfiguration.javaClass.simpleName}")
+
         check(JcefTransportEnvelopeProbe.startIfRequested()) {
             "JCEF transport probe command requires -D${JcefTransportEnvelopeProbe.OUTPUT_PROPERTY}=<path>"
         }
@@ -24,5 +33,6 @@ class JcefTransportEnvelopeProbeStarter : ApplicationStarter {
 
     companion object {
         const val COMMAND_NAME = "markflow-jcef-transport-probe"
+        private val LOG = Logger.getInstance(JcefTransportEnvelopeProbeStarter::class.java)
     }
 }

@@ -76,8 +76,11 @@ internal object JcefTransportEnvelopeProbe {
                 created.setReadinessMessageHandler { "{\"type\":\"probeReady\"}" }
                 created.setLoadEndHandler(::onAnyPageLoaded)
                 // A distinct data URL avoids relying on whether JBCefBrowser emits a load event for
-                // its constructor's initial about:blank realm.
+                // its constructor's initial about:blank realm. The diagnostic command has no
+                // Swing editor surface, so explicitly realize the native browser after queuing the
+                // target URL; production surfaces continue to realize through the UI hierarchy.
                 created.loadUrl(PROBE_PAGE_URL)
+                created.createImmediatelyForDiagnostics()
             } catch (failure: Throwable) {
                 finishIncomplete("transport construction/load failed: ${failure.javaClass.name}: ${failure.message}")
             }

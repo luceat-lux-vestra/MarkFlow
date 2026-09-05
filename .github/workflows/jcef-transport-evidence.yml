@@ -76,7 +76,7 @@ jobs:
               raise SystemExit('JCEF probe did not produce evidence.json')
 
           evidence = json.loads(path.read_text(encoding='utf-8'))
-          if evidence.get('schemaVersion') != 1:
+          if evidence.get('schemaVersion') != 2:
               raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
           if evidence.get('cutoverAuthorized') is not False:
               raise SystemExit('evidence runner must never authorize production cutover')
@@ -90,18 +90,22 @@ jobs:
               'request-ascii-1m',
               'request-ascii-4m',
               'response-ascii-4m',
-              'host-injection-complex-4m',
+              'bootstrap-complex-4m',
+              'recovery-complex-4m',
               'request-oversize',
               'response-oversize',
-              'host-injection-oversize',
+              'recovery-oversize',
               'handler-rejection',
               'late-after-dispose',
               'repeated-create-dispose',
           }
           by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate JCEF evidence case ids')
           missing = sorted(expected - by_id.keys())
-          if missing:
-              raise SystemExit(f'missing probe cases: {missing}')
+          unexpected = sorted(by_id.keys() - expected)
+          if missing or unexpected:
+              raise SystemExit(f'JCEF evidence case contract mismatch: missing={missing}, unexpected={unexpected}')
 
           incomplete = [
               case for case in cases

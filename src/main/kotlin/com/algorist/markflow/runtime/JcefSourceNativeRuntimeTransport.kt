@@ -70,6 +70,15 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
     }
 
+    /**
+     * Forces creation of the native browser only for the headless-by-construction evidence harness.
+     * Production editor surfaces rely on the normal Swing hierarchy realization path instead.
+     */
+    internal fun createImmediatelyForDiagnostics() {
+        if (disposed) return
+        browser.createImmediately()
+    }
+
     override fun buildBridgeGlueScript(): String {
         val sendSnippet = transportQuery.inject(
             "window.__markflowSNTransportRequest",
