@@ -6,10 +6,16 @@ on:
       - '.github/workflows/jcef-transport-evidence.yml'
       - 'build.gradle.kts'
       - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/kotlin/com/algorist/markflow/runtime/ApplicationExitCompat.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbeStarter.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeEditorRuntime.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeRuntimeTransport.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentIdentity.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentMutationProtocol.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentWireProtocol.kt'
+      - 'webview/src/runtime/source-native-bootstrap.ts'
+      - 'webview/src/sync/source-native-sync.ts'
   workflow_dispatch:
 
 permissions:
@@ -83,22 +89,26 @@ jobs:
           if evidence.get('baselineTransportCount') != evidence.get('finalTransportCount'):
               raise SystemExit('JCEF transport live-instance count did not return to baseline')
 
-          cases = evidence.get('cases') or []
-          expected = {
+          required = {
               'request-ascii-64k',
               'request-complex-64k',
               'request-ascii-1m',
               'request-ascii-4m',
+              'mutation-max-envelope',
               'response-ascii-4m',
               'bootstrap-complex-4m',
               'recovery-complex-4m',
-              'request-oversize',
-              'response-oversize',
-              'recovery-oversize',
               'handler-rejection',
               'late-after-dispose',
               'repeated-create-dispose',
           }
+          optional = {
+              'request-oversize',
+              'response-oversize',
+              'recovery-oversize',
+          }
+          expected = required | optional
+          cases = evidence.get('cases') or []
           by_id = {case.get('id'): case for case in cases}
           if len(by_id) != len(cases):
               raise SystemExit('duplicate JCEF evidence case ids')
@@ -114,8 +124,39 @@ jobs:
           if incomplete or evidence.get('verdict') == 'INCOMPLETE':
               raise SystemExit(f'incomplete JCEF evidence: {incomplete}')
 
+          misclassified_required = sorted(
+              case_id for case_id in required
+              if by_id[case_id].get('requiredForCurrentEnvelope') is not True
+          )
+          misclassified_optional = sorted(
+              case_id for case_id in optional
+              if by_id[case_id].get('requiredForCurrentEnvelope') is not False
+          )
+          if misclassified_required or misclassified_optional:
+              raise SystemExit(
+                  'JCEF evidence required/optional classification mismatch: '
+                  f'required={misclassified_required}, optional={misclassified_optional}'
+              )
+
+          failed_required = sorted(
+              case_id for case_id in required
+              if by_id[case_id].get('outcome') != 'PASS'
+          )
+          if failed_required:
+              raise SystemExit(f'required JCEF envelope cases failed: {failed_required}')
+
+          mutation = by_id['mutation-max-envelope']
+          if mutation.get('kind') != 'MUTATION_REQUEST':
+              raise SystemExit(f"unexpected mutation probe kind: {mutation.get('kind')}")
+          if mutation.get('payloadUtf16Units') != 4 * 1024 * 1024:
+              raise SystemExit(f"unexpected mutation payload size: {mutation.get('payloadUtf16Units')}")
+          if not isinstance(mutation.get('encodedJsonChars'), int) or mutation['encodedJsonChars'] <= mutation['payloadUtf16Units']:
+              raise SystemExit('mutation envelope did not record production JSON overhead')
+
           verdict = evidence.get('verdict')
-          if verdict not in {'COMPLETE_REQUIRED_ENVELOPE_PASS', 'COMPLETE_CUTOVER_BLOCKED'}:
+          if verdict == 'COMPLETE_CUTOVER_BLOCKED':
+              raise SystemExit('real JCEF evidence is complete but the required production envelope is blocked')
+          if verdict != 'COMPLETE_REQUIRED_ENVELOPE_PASS':
               raise SystemExit(f'unrecognized verdict: {verdict}')
 
           print(f"JCEF evidence verdict: {verdict}")
@@ -123,8 +164,6 @@ jobs:
           print(f"OS: {evidence.get('osName')} {evidence.get('osVersion')} {evidence.get('osArch')}")
           for case in cases:
               print(f"{case.get('id')}: {case.get('outcome')} ({case.get('payloadUtf16Units')} UTF-16 units)")
-          if verdict == 'COMPLETE_CUTOVER_BLOCKED':
-              print('::warning::Real JCEF evidence is complete but the current transport does not satisfy the required envelope; production cutover remains blocked.')
           PY
 
       - name: Upload JCEF evidence

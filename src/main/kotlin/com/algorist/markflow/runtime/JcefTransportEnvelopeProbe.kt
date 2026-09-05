@@ -1,10 +1,15 @@
 package com.algorist.markflow.runtime
 
 import com.algorist.markflow.document.DocumentRevision
+import com.algorist.markflow.document.SourceEdit
+import com.algorist.markflow.document.SourceEditCollection
 import com.algorist.markflow.sync.AttachmentId
+import com.algorist.markflow.sync.AttachmentProtocolBounds
 import com.algorist.markflow.sync.AttachmentWireCodec
+import com.algorist.markflow.sync.AttachmentWireDecodeResult
 import com.algorist.markflow.sync.AttachmentWireMessage
 import com.algorist.markflow.sync.RecoveryId
+import com.algorist.markflow.sync.RequestId
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
@@ -36,7 +41,7 @@ internal object JcefTransportEnvelopeProbe {
 
     private val started = AtomicBoolean(false)
 
-    /** Returns true whenever probe mode was requested, including after another project started it. */
+    /** Returns true whenever probe mode was requested, including after another caller started it. */
     fun startIfRequested(): Boolean {
         val output = System.getProperty(OUTPUT_PROPERTY)?.takeIf(String::isNotBlank) ?: return false
         if (!started.compareAndSet(false, true)) return true
@@ -104,6 +109,9 @@ internal object JcefTransportEnvelopeProbe {
 
         private fun handleTransportMessage(raw: String): String? {
             val parsed = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+            if (parsed.string("type") == "mutationRequest") {
+                return handleProductionMutationRequest(raw)
+            }
             return when (parsed.string("op")) {
                 "pageReady" -> {
                     handlePageReady(parsed)
@@ -150,6 +158,7 @@ internal object JcefTransportEnvelopeProbe {
 
             val script = when (probeCase.kind) {
                 Kind.WEB_REQUEST -> webRequestScript(probeCase)
+                Kind.MUTATION_REQUEST -> productionMutationRequestScript(probeCase)
                 Kind.SUCCESS_RESPONSE -> successResponseScript(probeCase)
                 Kind.HOST_BOOTSTRAP -> hostSnapshotScript(probeCase, recovery = false)
                 Kind.HOST_RECOVERY -> hostSnapshotScript(probeCase, recovery = true)
@@ -184,6 +193,42 @@ internal object JcefTransportEnvelopeProbe {
             )
         }
 
+        private fun handleProductionMutationRequest(raw: String): String? {
+            val probeCase = currentCase ?: return null
+            if (probeCase.kind != Kind.MUTATION_REQUEST) return null
+            val decoded = AttachmentWireCodec.decode(raw)
+            val message = (decoded as? AttachmentWireDecodeResult.Decoded)?.message as? AttachmentWireMessage.MutationRequest
+                ?: return null
+            if (message.attachmentId != PROBE_ATTACHMENT_ID) return null
+            if (message.requestId != RequestId.of(probeCase.id)) return null
+            if (message.baseDocumentRevision != DocumentRevision.INITIAL) return null
+
+            val edits = message.edits.edits
+            if (edits.size != AttachmentProtocolBounds.MAX_EDIT_COUNT) return null
+            if (edits.sumOf { it.replacement.length.toLong() } != probeCase.size.toLong()) return null
+
+            val chunkSize = mutationChunkSize(probeCase)
+            val expectedChunk = payload(chunkSize, complex = true)
+            val exactEdits = edits.withIndex().all { (index, edit) ->
+                edit.startOffset == index &&
+                    edit.endOffset == index &&
+                    edit.replacement == expectedChunk
+            }
+            if (!exactEdits) return null
+
+            val expectedWireChars = productionMutationWire(probeCase).length
+            if (raw.length != expectedWireChars) return null
+
+            return gson.toJson(
+                mapOf(
+                    "accepted" to true,
+                    "editCount" to edits.size,
+                    "insertedUtf16Units" to probeCase.size,
+                    "wireChars" to raw.length,
+                ),
+            )
+        }
+
         private fun handleSuccessResponseRequest(message: JsonObject): String? {
             val probeCase = currentCase ?: return null
             if (probeCase.kind != Kind.SUCCESS_RESPONSE || message.string("caseId") != probeCase.id) return null
@@ -201,7 +246,9 @@ internal object JcefTransportEnvelopeProbe {
                 val observedHash = message.long("hash")
                 val detail = message.string("detail")
                 val passed = when (probeCase.kind) {
-                    Kind.WEB_REQUEST -> callbackOutcome == "success"
+                    Kind.WEB_REQUEST,
+                    Kind.MUTATION_REQUEST,
+                    -> callbackOutcome == "success"
                     Kind.SUCCESS_RESPONSE,
                     Kind.HOST_BOOTSTRAP,
                     Kind.HOST_RECOVERY,
@@ -408,7 +455,7 @@ internal object JcefTransportEnvelopeProbe {
             } catch (failure: Throwable) {
                 LOG.error("Failed to write JCEF transport envelope evidence to $output", failure)
             } finally {
-                ApplicationManager.getApplication().exit(true, true)
+                ApplicationManager.getApplication().exit(true, true, false)
             }
         }
 
@@ -427,6 +474,7 @@ internal object JcefTransportEnvelopeProbe {
         }
 
         private fun envelopeMetrics(probeCase: ProbeCase): EnvelopeMetrics = when (probeCase.kind) {
+            Kind.MUTATION_REQUEST -> EnvelopeMetrics(productionMutationWire(probeCase).length, 0)
             Kind.HOST_BOOTSTRAP,
             Kind.HOST_RECOVERY,
             -> {
@@ -456,6 +504,60 @@ internal object JcefTransportEnvelopeProbe {
                 );
             })();
         """.trimIndent()
+
+        private fun productionMutationRequestScript(probeCase: ProbeCase): String {
+            val chunkSize = mutationChunkSize(probeCase)
+            return """
+                (function() {
+                    const caseId = ${gson.toJson(probeCase.id)};
+                    const inserted = window.__mfProbePayload($chunkSize, true);
+                    const edits = [];
+                    for (let index = 0; index < ${AttachmentProtocolBounds.MAX_EDIT_COUNT}; index += 1) {
+                        edits.push({from: index, to: index, inserted: inserted});
+                    }
+                    const raw = JSON.stringify({
+                        type: 'mutationRequest',
+                        attachmentId: ${gson.toJson(PROBE_ATTACHMENT_ID.value)},
+                        requestId: caseId,
+                        baseDocumentRevision: '0',
+                        edits: edits
+                    });
+                    window.__markflowSourceNativeSend(
+                        raw,
+                        function(response) {
+                            window.__mfProbeReport({caseId: caseId, outcome: 'success', detail: response});
+                        },
+                        function(code, message) {
+                            window.__mfProbeReport({caseId: caseId, outcome: 'failure', detail: String(code) + ':' + String(message)});
+                        }
+                    );
+                })();
+            """.trimIndent()
+        }
+
+        private fun productionMutationWire(probeCase: ProbeCase): String {
+            val inserted = payload(mutationChunkSize(probeCase), complex = true)
+            val edits = SourceEditCollection.of(
+                (0 until AttachmentProtocolBounds.MAX_EDIT_COUNT).map { index ->
+                    SourceEdit(index, index, inserted)
+                },
+            )
+            return AttachmentWireCodec.encode(
+                AttachmentWireMessage.MutationRequest(
+                    attachmentId = PROBE_ATTACHMENT_ID,
+                    requestId = RequestId.of(probeCase.id),
+                    baseDocumentRevision = DocumentRevision.INITIAL,
+                    edits = edits,
+                ),
+            )
+        }
+
+        private fun mutationChunkSize(probeCase: ProbeCase): Int {
+            require(probeCase.size % AttachmentProtocolBounds.MAX_EDIT_COUNT == 0) {
+                "mutation envelope size must divide evenly across maximum edit count"
+            }
+            return probeCase.size / AttachmentProtocolBounds.MAX_EDIT_COUNT
+        }
 
         private fun successResponseScript(probeCase: ProbeCase): String = """
             (function() {
@@ -541,6 +643,7 @@ internal object JcefTransportEnvelopeProbe {
 
     private enum class Kind {
         WEB_REQUEST,
+        MUTATION_REQUEST,
         SUCCESS_RESPONSE,
         HOST_BOOTSTRAP,
         HOST_RECOVERY,
@@ -593,6 +696,12 @@ internal object JcefTransportEnvelopeProbe {
         ProbeCase("request-complex-64k", Kind.WEB_REQUEST, 64 * 1024, complex = true),
         ProbeCase("request-ascii-1m", Kind.WEB_REQUEST, 1024 * 1024),
         ProbeCase("request-ascii-4m", Kind.WEB_REQUEST, 4 * 1024 * 1024),
+        ProbeCase(
+            "mutation-max-envelope",
+            Kind.MUTATION_REQUEST,
+            AttachmentProtocolBounds.MAX_INSERTED_UTF16_CODE_UNITS,
+            complex = true,
+        ),
         ProbeCase("response-ascii-4m", Kind.SUCCESS_RESPONSE, 4 * 1024 * 1024),
         ProbeCase("bootstrap-complex-4m", Kind.HOST_BOOTSTRAP, 4 * 1024 * 1024, complex = true),
         ProbeCase("recovery-complex-4m", Kind.HOST_RECOVERY, 4 * 1024 * 1024, complex = true),
