@@ -2,6 +2,13 @@ name: JCEF Envelope Evidence
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/main/kotlin/com/algorist/markflow/runtime/**"
+      - "src/main/kotlin/com/algorist/markflow/MarkFlowStartupActivity.kt"
+      - "webview/**"
+      - ".github/workflows/jcef-envelope.yml"
+      - ".github/scripts/verify-jcef-envelope-report.py"
 
 permissions:
   contents: read
