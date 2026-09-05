@@ -4,6 +4,7 @@ headings-and-delimiters	fixtures/markdown-fidelity/cases/headings-and-delimiters
 code-forms-and-fences	fixtures/markdown-fidelity/cases/code-forms-and-fences.md	supported	lexically-local	LF	true	backtick-fence,tilde-fence,fence-length,indented-code
 thematic-break-variants	fixtures/markdown-fidelity/cases/thematic-break-variants.md	supported	lexically-local	LF	true	thematic-break
 links-and-references	fixtures/markdown-fidelity/cases/links-and-references.md	supported	lexically-local	LF	true	inline-link,inline-image,reference-link,reference-definition
+table-lexical-variants	fixtures/markdown-fidelity/cases/table-lexical-variants.md	supported	lexically-local	LF	true	gfm-table,table-alignment,escaped-pipe,table-lexical-variants
 whitespace-and-blank-lines	fixtures/markdown-fidelity/cases/whitespace-and-blank-lines.md	supported	lexically-local	LF	true	blank-lines,whitespace,indentation
 line-endings-lf	fixtures/markdown-fidelity/cases/line-endings-lf.md	supported	byte-stable	LF	true	lf,line-endings
 line-endings-crlf	fixtures/markdown-fidelity/cases/line-endings-crlf.md	supported	byte-stable	CRLF	true	crlf,line-endings
