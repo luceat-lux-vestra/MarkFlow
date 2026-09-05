@@ -1,16 +1,24 @@
 package com.algorist.markflow
 
+import com.algorist.markflow.browser.MarkFlowSharedBrowserService
+import com.algorist.markflow.file.MarkFlowFileSupport
+import com.algorist.markflow.runtime.JcefTransportEnvelopeProbe
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import com.algorist.markflow.browser.MarkFlowSharedBrowserService
-import com.algorist.markflow.file.MarkFlowFileSupport
 
 class MarkFlowStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
+        if (JcefTransportEnvelopeProbe.enabled) {
+            ApplicationManager.getApplication().invokeLater {
+                if (!project.isDisposed) JcefTransportEnvelopeProbe.start()
+            }
+            return
+        }
+
         val manager = FileEditorManager.getInstance(project)
         val sharedBrowserService = project.getService(MarkFlowSharedBrowserService::class.java)
 
