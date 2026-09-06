@@ -1,4 +1,5 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
+import {installSourceNativeLocalImagePreview} from "../trust/source-native-local-image-preview.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
 import {
     SourceNativeAttachment,
@@ -84,7 +85,22 @@ export function installSourceNativeBootstrap(
         attachment.receiveRaw(raw);
     };
 
+    let localImagePreviewInstalled = false;
     hostWindow.__markflowSourceNativeInit = () => {
+        if (attachment.state === "DISPOSED") {
+            return;
+        }
+        if (!localImagePreviewInstalled) {
+            localImagePreviewInstalled = true;
+            try {
+                installSourceNativeLocalImagePreview(
+                    attachment.editor.view,
+                    hostWindow.__markflowSourceNativeLocalImageBaseUrl ?? null
+                );
+            } catch (_error) {
+                // Local-image presentation is optional. Core source readiness remains available.
+            }
+        }
         signalReady(hostWindow, attachmentId, runtimeToken);
     };
 

@@ -9,6 +9,9 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const corePath = resolve(repositoryRoot, "webview/src/editor/source-native-editor.ts");
 const pastePath = resolve(repositoryRoot, "webview/src/editor/source-native-paste.ts");
 const syncPath = resolve(repositoryRoot, "webview/src/sync/source-native-sync.ts");
+const policyPath = resolve(repositoryRoot, "webview/src/trust/preview-trust-policy.ts");
+const localImageCapabilityPath = resolve(repositoryRoot, "webview/src/trust/source-native-local-image-capability.ts");
+const localImagePreviewPath = resolve(repositoryRoot, "webview/src/trust/source-native-local-image-preview.ts");
 const navigationGuardPath = resolve(repositoryRoot, "webview/src/trust/source-native-navigation-guard.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
 
@@ -21,8 +24,10 @@ for (const [name, value] of [
     ["DOMParser", dom.window.DOMParser],
     ["Element", dom.window.Element],
     ["HTMLElement", dom.window.HTMLElement],
+    ["HTMLImageElement", dom.window.HTMLImageElement],
     ["Node", dom.window.Node],
     ["Range", dom.window.Range],
+    ["Event", dom.window.Event],
     ["getComputedStyle", dom.window.getComputedStyle.bind(dom.window)],
     ["requestAnimationFrame", dom.window.requestAnimationFrame.bind(dom.window)],
     ["cancelAnimationFrame", dom.window.cancelAnimationFrame.bind(dom.window)]
@@ -69,23 +74,41 @@ const pasteUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
 const syncUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(syncPath, "utf8"), new Map([["../editor/source-native-editor.ts", coreUrl]]))
 )}`;
+const policyUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(policyPath, "utf8"))
+)}`;
+const localImageCapabilityUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(localImageCapabilityPath, "utf8"), new Map([
+        ["./preview-trust-policy.ts", policyUrl]
+    ]))
+)}`;
+const localImagePreviewUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(localImagePreviewPath, "utf8"), new Map([
+        ...packageUrls,
+        ["./source-native-local-image-capability.ts", localImageCapabilityUrl]
+    ]))
+)}`;
 const navigationGuardUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(navigationGuardPath, "utf8"), packageUrls)
 )}`;
 const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(bootstrapPath, "utf8"), new Map([
         ["../editor/source-native-paste.ts", pasteUrl],
+        ["../trust/source-native-local-image-preview.ts", localImagePreviewUrl],
         ["../trust/source-native-navigation-guard.ts", navigationGuardUrl],
         ["../sync/source-native-sync.ts", syncUrl]
     ]))
 )}`;
 const bootstrap = await import(bootstrapUrl);
 
+const CAPABILITY_BASE = `http://127.0.0.1:31337/__markflow_source_image__/${"A".repeat(43)}/`;
+
 function makeHostWindow(overrides = {}) {
     return Object.assign(
         {
             __markflowSourceNativeSend: undefined,
             __markflowSourceNativeReady: undefined,
+            __markflowSourceNativeLocalImageBaseUrl: undefined,
             __markflowSourceNativeReceive: undefined,
             __markflowSourceNativeInit: undefined,
             __markflowHostGlueInstalled: undefined
@@ -170,6 +193,87 @@ test("host-first ordering: glue already installed before bootstrap runs signals 
     assert.deepEqual(JSON.parse(readyCalls[0]), {type: "runtimeReady", attachmentId: "a2", runtimeToken: "t2"});
 
     attachment.dispose();
+    parent.remove();
+});
+
+test("web-first capability is consumed at init exactly once and remains source-neutral", () => {
+    const readyCalls = [];
+    const sent = [];
+    const hostWindow = makeHostWindow({
+        __markflowSourceNativeSend: (raw) => sent.push(JSON.parse(raw)),
+        __markflowSourceNativeReady: (raw, onSuccess) => {
+            readyCalls.push(raw);
+            onSuccess("{\"type\":\"runtimeReadyAck\"}");
+        }
+    });
+    const parent = makeParent();
+    const attachment = bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a-local&runtimeToken=t-local");
+
+    assert.equal(parent.querySelectorAll(".cm-source-native-local-image").length, 0);
+    hostWindow.__markflowSourceNativeLocalImageBaseUrl = CAPABILITY_BASE;
+    hostWindow.__markflowHostGlueInstalled = true;
+    hostWindow.__markflowSourceNativeInit();
+    hostWindow.__markflowSourceNativeInit(); // preview install is idempotent even if init is repeated
+
+    hostWindow.__markflowSourceNativeReceive(JSON.stringify({
+        type: "bootstrapSnapshot",
+        attachmentId: "a-local",
+        documentRevision: "0",
+        source: "plain\n![local](image.png)"
+    }));
+
+    assert.equal(parent.querySelectorAll(".cm-source-native-local-image").length, 1);
+    assert.equal(attachment.editor.source, "plain\n![local](image.png)");
+    assert.equal(sent.length, 0);
+    assert.equal(readyCalls.length, 2);
+
+    attachment.dispose();
+    parent.remove();
+});
+
+test("host-first capability is available before immediate init and later bootstrap projection renders it", () => {
+    const readyCalls = [];
+    const hostWindow = makeHostWindow({
+        __markflowHostGlueInstalled: true,
+        __markflowSourceNativeLocalImageBaseUrl: CAPABILITY_BASE,
+        __markflowSourceNativeReady: (raw, onSuccess) => {
+            readyCalls.push(raw);
+            onSuccess("{\"type\":\"runtimeReadyAck\"}");
+        }
+    });
+    const parent = makeParent();
+    const attachment = bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a-host&runtimeToken=t-host");
+
+    hostWindow.__markflowSourceNativeReceive(JSON.stringify({
+        type: "bootstrapSnapshot",
+        attachmentId: "a-host",
+        documentRevision: "0",
+        source: "plain\n![local](nested/image.png)"
+    }));
+
+    assert.equal(readyCalls.length, 1);
+    const image = parent.querySelector(".cm-source-native-local-image");
+    assert.ok(image instanceof window.HTMLImageElement);
+    assert.equal(image.src, CAPABILITY_BASE + "nested/image.png");
+    assert.equal(attachment.editor.source, "plain\n![local](nested/image.png)");
+
+    attachment.dispose();
+    parent.remove();
+});
+
+test("stale init after attachment disposal cannot reinstall preview or signal readiness", () => {
+    const readyCalls = [];
+    const hostWindow = makeHostWindow({
+        __markflowSourceNativeLocalImageBaseUrl: CAPABILITY_BASE,
+        __markflowSourceNativeReady: (raw) => readyCalls.push(raw)
+    });
+    const parent = makeParent();
+    const attachment = bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a-stale&runtimeToken=t-stale");
+    const staleInit = hostWindow.__markflowSourceNativeInit;
+
+    attachment.dispose();
+    assert.doesNotThrow(() => staleInit());
+    assert.equal(readyCalls.length, 0);
     parent.remove();
 });
 
