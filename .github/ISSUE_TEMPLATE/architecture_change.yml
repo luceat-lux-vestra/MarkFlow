@@ -1,5 +1,5 @@
 name: Architecture / behavior change
-description: Propose a contract, architecture, lifecycle, compatibility, or security change
+description: Propose a contract, architecture, lifecycle, compatibility, migration, or security change
 title: "architecture: "
 labels:
   - type:research
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form when a change may alter a contract, ownership boundary, lifecycle, compatibility policy, security boundary, or release behavior. Do not prescribe classes before the contract is clear.
+        Use this form when a change may alter a contract, ownership boundary, lifecycle, compatibility policy, security boundary, migration boundary, or release behavior. Start from accepted product/architecture authority and do not preserve current classes or mechanisms by default.
 
   - type: textarea
     id: problem
@@ -18,10 +18,18 @@ body:
       required: true
 
   - type: textarea
+    id: authority
+    attributes:
+      label: Existing authority / dependency
+      description: Identify the product contract, accepted ADR, Track, or Task this change must obey or revise. Mark unresolved architecture explicitly.
+    validations:
+      required: true
+
+  - type: textarea
     id: current_behavior
     attributes:
       label: Current behavior and ownership
-      description: Describe the current data flow and resource/state owners, including accidental coupling or unclear ownership.
+      description: Describe the current data flow and resource/state owners, including temporary migration mechanisms, accidental coupling, or unclear ownership. Current implementation is evidence, not authority.
     validations:
       required: true
 
@@ -29,9 +37,9 @@ body:
     id: proposed_contract
     attributes:
       label: Proposed contract
-      description: Define the desired observable behavior and ownership precisely enough to test.
+      description: Define the desired observable behavior and ownership precisely enough to falsify with evidence.
       placeholder: |
-        Cover applicable areas such as Markdown/source fidelity, IntelliJ Document/VFS/undo-redo, host-webview protocol and revision/order semantics, JCEF/editor/project lifecycle, failure/recovery, security, compatibility, and resource bounds.
+        Cover applicable areas such as Markdown source authority/fidelity, native IntelliJ Document/Editor/VFS/undo-redo, source-neutral projection and stale-work rejection, derived renderer boundaries, lifecycle/disposal, local resources/navigation/raw HTML, failure/recovery, security, compatibility, and resource bounds. Include host-web/JCEF protocol details only when an actual retained or proposed boundary requires them.
     validations:
       required: true
 
@@ -39,7 +47,7 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Include the simplest viable alternative and why it is insufficient.
+      description: Include the simplest viable alternative, responsibility elimination where possible, and why the chosen boundary is justified.
     validations:
       required: true
 
@@ -47,7 +55,7 @@ body:
     id: migration
     attributes:
       label: Migration and deletion plan
-      description: Identify implementation that may be deleted and behavior, tests, or evidence that must be retained.
+      description: Classify affected responsibilities as RETAIN / EXTRACT / REPLACE / DELETE / TEMPORARY / UNRESOLVED where applicable. Give every temporary mechanism an owner and deletion criterion.
     validations:
       required: true
 
@@ -55,7 +63,7 @@ body:
     id: evidence
     attributes:
       label: Evidence required before acceptance
-      description: List tests, fixtures, measurements, compatibility checks, or bounded spikes.
+      description: List success, failure, recovery, regression, compatibility, lifecycle, ownership, edge, adversarial, measurement, or bounded-spike evidence that can falsify the proposal.
     validations:
       required: true
 
@@ -63,6 +71,6 @@ body:
     id: exit_criteria
     attributes:
       label: Exit criteria
-      description: Define conditions that can be verified on merged main.
+      description: Define deterministic conditions that can be verified on the exact final HEAD and, when merged, on post-main state.
     validations:
       required: true

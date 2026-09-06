@@ -10,7 +10,7 @@
 
 - [ ] Implementation
 - [ ] Refactor / architecture
-- [ ] Bug fix
+- [ ] Migration / deletion
 - [ ] Tests / evidence
 - [ ] Documentation
 - [ ] Build / CI / dependencies
@@ -20,35 +20,43 @@
 
 Describe impact on each applicable area. Write `N/A` with a reason when truly not applicable.
 
-- **Markdown/source fidelity:**
-- **IntelliJ Document / VFS / undo-redo:**
-- **Host↔webview protocol / revisions / ordering:**
-- **JCEF/editor/project lifecycle and disposal:**
-- **Security / untrusted content / resource access:**
+- **Markdown source authority / fidelity:**
+- **Native IntelliJ Document / Editor / VFS / undo-redo:**
+- **Projection / exact-source reveal / stale-work rejection:**
+- **Derived renderer / Mermaid / KaTeX / raw HTML:**
+- **Lifecycle / disposal / bounded resources:**
+- **Security / local resources / navigation / untrusted content:**
+- **Optional JCEF / renderer-runtime isolation:**
 - **IDE/API compatibility:**
-- **Performance / bounded resources:**
+- **Performance:**
 - **User-visible behavior:**
 
-## Architecture / ownership
+## Architecture / migration ownership
 
-<!-- Which component owns the changed state/resource after this PR? What old responsibility was removed? -->
+<!-- Which component owns the changed responsibility after this PR? If old code remains TEMPORARY, name its owner and exact deletion criterion. -->
+
+- `RETAIN` / `EXTRACT` / `REPLACE` / `DELETE` / `TEMPORARY` / `UNRESOLVED` impact:
+- Superseded responsibility removed:
+- Temporary owner + deletion criterion:
 
 ## Failure and edge cases
 
-<!-- Include stale sessions, delayed/duplicated messages, load/reload failure, external edits, split editors, close/dispose, etc. as relevant. -->
+<!-- Include stale projection/render work, renderer unavailable/failure, malformed/unsupported source, external edits, splits, recreate/dispose, JCEF unavailable, hostile resources, and legacy migration failure when relevant. -->
 
 ## Validation performed
 
 List commands/scenarios actually run. Do not check a box for work that was not performed.
 
-- [ ] Relevant Kotlin tests
-- [ ] Relevant webview tests
+- [ ] Relevant Kotlin/platform tests
+- [ ] Relevant renderer/web tests
 - [ ] `./gradlew check`
 - [ ] `./gradlew buildPlugin`
 - [ ] Plugin verification where compatibility is affected
-- [ ] Manual IDE/JCEF scenario testing where lifecycle/UI behavior is affected
+- [ ] Manual IntelliJ runtime evidence where editor/UI behavior is affected
+- [ ] Real renderer/JCEF evidence where a retained renderer runtime is affected
 - [ ] Security/adversarial fixtures where trust boundaries are affected
 - [ ] Performance/resource evidence where performance claims are made
+- [ ] Migration/deletion search proving no unintended consumer remains
 
 Details / results:
 
@@ -58,24 +66,29 @@ Details / results:
 
 ## Risk / rollback
 
-<!-- What can regress? How can the change be reverted or disabled safely? -->
+<!-- What can regress? Prefer reverting an unmerged/merged slice over preserving two permanent editor architectures. -->
 
 ## Review checklist
 
-- [ ] The diff has one independently reviewable purpose.
-- [ ] No current implementation detail is preserved solely because it already exists.
-- [ ] Ownership/lifecycle boundaries are explicit.
-- [ ] Timing/debounce/retry behavior is not being used as a substitute for correctness.
-- [ ] New listeners/tasks/timers/queries/browsers/caches have explicit bounds and disposal.
-- [ ] Diagnostics are actionable and do not expose full document content by default.
-- [ ] Tests/evidence cover the changed contract and important failure paths.
-- [ ] Documentation and claims match the implementation.
-- [ ] No unrelated dead code, workaround, compatibility shim, or generated artifact is included.
+- [ ] The diff has one coherent independently reviewable purpose.
+- [ ] IntelliJ `Document` remains the sole mutable Markdown authority.
+- [ ] Presentation/renderer work cannot mutate source merely by rendering.
+- [ ] No browser/JCEF dependency was introduced into ordinary source-editing correctness.
+- [ ] No host↔web source protocol/custom revision/ACK/retry was added without a separate proven requirement.
+- [ ] Stale derived work has deterministic rejection.
+- [ ] Mermaid/KaTeX continuity does not create duplicate renderer engines.
+- [ ] Already-merged Leap code is not preserved solely because it exists.
+- [ ] Every temporary mechanism has an owner and deletion criterion.
+- [ ] New listeners/tasks/timers/browsers/caches/artifacts have explicit bounds and disposal.
+- [ ] Diagnostics are actionable/redacted and do not expose full document content by default.
+- [ ] Tests/evidence cover changed success, failure, recovery, lifecycle, compatibility, edge and adversarial contracts.
+- [ ] Documentation/issues match the accepted target and actual implementation state.
+- [ ] No unrelated dead code, workaround, compatibility shim or generated artifact is included.
 
 ## Final merge gate
 
-A green CI result is necessary but **not sufficient**.
+A green CI result is necessary but **not sufficient**. `UNKNOWN`, `UNVERIFIED`, and insufficient evidence are FAIL.
 
-Before merge, the reviewer must inspect the exact final PR HEAD for correctness, architecture/ownership, lifecycle/concurrency, source fidelity, error handling/diagnostics, security, compatibility, performance/resource retention, complexity/dead code, edge cases, tests/evidence, scope, and docs consistency.
+Before merge, review the exact final PR HEAD plus fresh `main`, merge-base, live ruleset, required checks and unresolved threads. Any HEAD movement invalidates a prior PASS.
 
-Any HEAD change invalidates a prior PASS. Squash merge only with the reviewed `expected_head_sha`. Release/publication is a separate explicit gate.
+Squash merge only with the reviewed `expected_head_sha`, then verify merged `main` SHA/tree/signature and post-main checks before closing the linked Task. Release/publication is a separate explicit gate.

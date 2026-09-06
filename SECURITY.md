@@ -17,35 +17,51 @@ Include:
 - affected version or commit;
 - impact and realistic attack scenario;
 - reproduction steps or proof of concept;
-- Markdown/HTML/resource/message payload required to reproduce, minimized where possible;
+- minimized Markdown/HTML/resource/renderer/message payload required to reproduce;
 - suggested mitigation, if known;
 - whether the issue or exploit is already public.
 
 Never include production credentials, personal data, private documents, or third-party secrets.
 
-## Security boundaries
+## Target security boundaries
 
-Treat Markdown content, raw HTML, external/local resource references, Mermaid input/configuration, JCEF-originated messages, and host↔webview protocol payloads as untrusted input.
+The accepted architecture removes browser authority from ordinary Markdown editing. Treat these as untrusted input:
+
+- Markdown source and raw HTML;
+- external/local resource references;
+- clipboard/imported file data;
+- Mermaid source/configuration;
+- KaTeX/math source;
+- derived renderer input/output;
+- any message/request boundary of a retained isolated renderer runtime.
 
 Security-sensitive changes must explicitly review:
 
-- raw HTML/script/event/style injection;
-- sanitization boundaries;
-- navigation and local/remote resource loading;
-- JCEF origin/resource serving;
-- protocol schema, validation, size bounds, and unexpected messages;
-- clipboard and file-system interactions;
-- diagnostics/log redaction;
+- raw HTML/script/event/style/active-content containment;
+- sanitization/isolation of derived preview without source rewriting;
+- local path normalization, traversal/encoded traversal, symlink escape, media type and size/decoded-size bounds;
+- explicit external-navigation scheme/user-action policy;
+- renderer network/filesystem/navigation isolation;
+- Mermaid security configuration;
+- renderer request/origin/CSP policy if JCEF is actually retained below the renderer boundary;
+- clipboard/file-import user authority, VFS destination/collision/rollback and read-only/non-local cases;
+- diagnostics/log redaction and bounded payloads;
 - dependency/supply-chain changes.
 
-Do not weaken trust boundaries merely to make rendering or integration easier.
+Opening/editing Markdown must not grant arbitrary filesystem, network, navigation, or active-content authority. Optional renderer failure must leave exact source editing available.
+
+## Migration-period legacy surfaces
+
+Until production cutover/purge, current `main` may still contain JCEF editor messages, host↔web mutation protocol, loopback routes, request filters, CSP/navigation controls and local-image capability tokens.
+
+Those remain live attack surfaces **only while a current production consumer exists**. Changes touching them must preserve current-main fail-closed safety and real-runtime evidence as applicable, but they are not target trust authority and must not be generalized or revived. #154 owns their mandatory deletion after native cutover. If JCEF remains for rendering, renderer-specific containment is designed/proven separately rather than reusing the editor realm by default.
 
 ## Repository control boundaries
 
-Live repository settings are evidence, not assumptions. Dependabot alerts and automated security fixes are enabled according to the latest admin-capable readback; live API state remains authoritative if those controls change. GitHub default code scanning is not enabled, and secret scanning/push protection are not enabled; these controls must not be described as active until live readback proves otherwise. The private-vulnerability-reporting endpoint is not currently exposed to the repository credential, so reporters must use a private maintainer channel and must not post exploit details in a public issue.
+Live repository settings are evidence, not assumptions. Security/governance documentation must not describe unavailable scanning, secret-protection, branch/ruleset, or workflow controls as active until live readback proves them.
 
-The repository-level Actions setting allows all actions and does not enforce SHA pinning at the platform setting level. Workflow permissions, immutable action references, untrusted-PR boundaries, and drift checks are delivery controls owned by Track #60; this policy does not treat their intended state as already live.
+Workflow permissions, immutable action references, untrusted-PR boundaries and drift checks are delivery controls separate from runtime trust architecture.
 
 ## Disclosure and release
 
-Security fixes require the same exact-final-HEAD review as other changes, plus a separate release/publication decision. Do not publish exploit details before an appropriate remediation/disclosure plan exists.
+Security fixes require the same exact-final-HEAD proof-obligation review as other changes plus a separate release/publication decision. Do not publish exploit details before an appropriate remediation/disclosure plan exists.
