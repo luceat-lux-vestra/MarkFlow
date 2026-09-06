@@ -7,6 +7,7 @@ on:
       - 'build.gradle.kts'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
+      - 'src/main/kotlin/com/algorist/markflow/browser/SourceNativeCspResourceHandler.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbeStarter.kt'
@@ -20,8 +21,10 @@ on:
       - 'webview/source-native.html'
       - 'webview/vite.config.ts'
       - 'webview/vite.source-native.config.ts'
+      - 'webview/src/editor/source-native-editor.ts'
       - 'webview/src/runtime/source-native-bootstrap.ts'
       - 'webview/src/sync/source-native-sync.ts'
+      - 'webview/src/trust/source-native-csp.ts'
   workflow_dispatch:
 
 permissions:
