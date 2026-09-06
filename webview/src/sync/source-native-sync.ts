@@ -211,6 +211,8 @@ export interface SourceNativeStateTransition {
 export interface SourceNativeAttachmentOptions {
     readonly parent: Element;
     readonly attachmentId: string;
+    /** Presentation-only CSP metadata. Never serialized into source, URLs or sync protocol identity. */
+    readonly cspNonce?: string;
     readonly onSend: (message: AttachmentOutboundMessage) => void;
     readonly nextRequestId?: () => string;
     readonly onStateTransition?: (transition: SourceNativeStateTransition) => void;
@@ -254,6 +256,7 @@ export class SourceNativeAttachment {
         this.editor = new SourceNativeEditorCore({
             parent: options.parent,
             initialSource: "",
+            cspNonce: options.cspNonce,
             onBeforeLocalChange: (change) => this.beforeLocalChange(change),
             onLocalChange: (change) => this.afterLocalChange(change)
         });
