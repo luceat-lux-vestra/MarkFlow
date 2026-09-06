@@ -36,22 +36,18 @@ class MarkFlowIdeThemeService : Disposable {
         }
     }
 
-    private val LOG = Logger.getInstance(MarkFlowIdeThemeService::class.java)
-    private val current = AtomicReference<Snapshot>(Snapshot.EMPTY)
+    private val log = Logger.getInstance(MarkFlowIdeThemeService::class.java)
+    private val current = AtomicReference(Snapshot.EMPTY)
 
     init {
-        val listener = object : EditorColorsListener {
-            override fun globalSchemeChange(scheme: EditorColorsScheme?) {
-                refresh()
-            }
-        }
+        val listener = EditorColorsListener { refresh() }
         val connection = ApplicationManager.getApplication().messageBus.connect(this)
         connection.subscribe(EditorColorsManager.TOPIC, listener)
         // Initial capture establishes the source of truth. There are no open MarkFlow editors to
         // notify yet, so initialization must not trigger a runtime-settings push.
         val snapshot = captureFromCurrentScheme()
         current.set(snapshot)
-        LOG.info(
+        log.info(
             "MARKFLOW_THEME initial capture dark=${snapshot.dark} colors=${snapshot.colors.keys.sorted()} " +
                 "fonts=${snapshot.fonts.keys.sorted()}"
         )
@@ -65,7 +61,7 @@ class MarkFlowIdeThemeService : Disposable {
     fun refresh(): Snapshot {
         val snapshot = captureFromCurrentScheme()
         current.set(snapshot)
-        LOG.info(
+        log.info(
             "MARKFLOW_THEME captured dark=${snapshot.dark} colors=${snapshot.colors.keys.sorted()} " +
                 "fonts=${snapshot.fonts.keys.sorted()}"
         )
@@ -89,8 +85,8 @@ class MarkFlowIdeThemeService : Disposable {
             val hex = toHex(color) ?: return
             colors[name] = hex
         }
-        put("background", scheme.getDefaultBackground())
-        put("foreground", scheme.getDefaultForeground())
+        put("background", scheme.defaultBackground)
+        put("foreground", scheme.defaultForeground)
         put("selectionBackground", scheme.getColor(EditorColors.SELECTION_BACKGROUND_COLOR))
         put("selectionForeground", scheme.getColor(EditorColors.SELECTION_FOREGROUND_COLOR))
         put("border", scheme.getColor(EditorColors.BORDER_LINES_COLOR))

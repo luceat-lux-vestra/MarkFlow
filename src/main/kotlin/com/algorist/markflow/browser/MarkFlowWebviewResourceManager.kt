@@ -352,10 +352,8 @@ internal object MarkFlowWebviewResourceManager {
     }
 
     private fun sendStatus(exchange: HttpExchange, status: Int) {
-        try {
-            exchange.sendResponseHeaders(status, -1)
-        } finally {
-            exchange.close()
+        exchange.use {
+            it.sendResponseHeaders(status, -1)
         }
     }
 

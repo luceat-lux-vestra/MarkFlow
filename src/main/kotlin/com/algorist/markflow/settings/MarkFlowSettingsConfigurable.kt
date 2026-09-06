@@ -195,7 +195,7 @@ class MarkFlowSettingsConfigurable : Configurable {
                     hasFocus: Boolean
                 ): Component {
                     super.getListCellRendererComponent(list, value, index, isSelected, hasFocus)
-                    if (value is FontFamilyOption) setText(value.displayName)
+                    if (value is FontFamilyOption) text = value.displayName
                     return this
                 }
             }
