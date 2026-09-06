@@ -14,8 +14,12 @@ const localImageCapabilityPath = resolve(repositoryRoot, "webview/src/trust/sour
 const localImagePreviewPath = resolve(repositoryRoot, "webview/src/trust/source-native-local-image-preview.ts");
 const navigationGuardPath = resolve(repositoryRoot, "webview/src/trust/source-native-navigation-guard.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
+const VALID_CSP_NONCE = "A".repeat(43);
 
-const dom = new JSDOM("<!doctype html><html><body></body></html>", {pretendToBeVisual: true});
+const dom = new JSDOM(
+    `<!doctype html><html><head><meta property="csp-nonce" nonce="${VALID_CSP_NONCE}"></head><body></body></html>`,
+    {pretendToBeVisual: true}
+);
 for (const [name, value] of [
     ["window", dom.window],
     ["document", dom.window.document],
