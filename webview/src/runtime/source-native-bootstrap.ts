@@ -29,6 +29,8 @@ export interface SourceNativeHostBridge {
         onSuccess: (response: string) => void,
         onFailure: (errorCode: number, errorMessage: string) => void
     ) => void;
+    /** Host-owned, runtime-lifetime capability state; never sourced from location/search or Markdown. */
+    __markflowSourceNativeLocalImageBaseUrl?: string | null;
     __markflowSourceNativeReceive?: (raw: string) => void;
     __markflowSourceNativeInit?: () => void;
     __markflowHostGlueInstalled?: boolean;
