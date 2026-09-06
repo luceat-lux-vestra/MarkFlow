@@ -1,5 +1,6 @@
 package com.algorist.markflow.runtime
 
+import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
 import com.algorist.markflow.document.DocumentRevision
 import com.algorist.markflow.document.SourceEdit
 import com.algorist.markflow.document.SourceEditCollection
@@ -28,20 +29,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Diagnostic-only real-JCEF evidence runner for #109.
- *
- * The runner is unreachable unless [OUTPUT_PROPERTY] is explicitly set for an IDE process. It
- * exercises the production [JcefSourceNativeRuntimeTransport] directly, but never acquires a
- * DocumentSession and never participates in source/revision authority. Evidence is written as JSON
- * so CI can prove which payloads actually crossed JCEF rather than inferring behavior from fakes.
- */
+/** Diagnostic-only real-JCEF evidence runner for the production source-native transport. */
 internal object JcefTransportEnvelopeProbe {
     const val OUTPUT_PROPERTY = "markflow.jcefTransportProbe.output"
 
     private val started = AtomicBoolean(false)
 
-    /** Returns true whenever probe mode was requested, including after another caller started it. */
     fun startIfRequested(): Boolean {
         val output = System.getProperty(OUTPUT_PROPERTY)?.takeIf(String::isNotBlank) ?: return false
         if (!started.compareAndSet(false, true)) return true
@@ -67,24 +60,31 @@ internal object JcefTransportEnvelopeProbe {
         private var timeout: ScheduledFuture<*>? = null
         private var finished = false
         private var pageReady = false
+        private var requestBoundaryProved = false
+        private var webviewResourceAcquired = false
 
         fun start() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             baselineTransportCount = JcefSourceNativeRuntimeTransport.liveInstanceCount
             LOG.warn("JCEF envelope probe starting; baselineTransportCount=$baselineTransportCount")
-            armTimeout("probe page did not become ready", PAGE_READY_TIMEOUT_SECONDS)
+            armTimeout("source-native probe page did not become ready", PAGE_READY_TIMEOUT_SECONDS)
 
             try {
+                if (MarkFlowWebviewResourceManager.acquire() == null) {
+                    return finishIncomplete("source-native webview resource manager unavailable")
+                }
+                webviewResourceAcquired = true
+                val baseUrl = MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl()
+                    ?: return finishIncomplete("source-native entry URL unavailable")
+                val probeUrl =
+                    "$baseUrl?attachmentId=${PROBE_ATTACHMENT_ID.value}&runtimeToken=$PROBE_RUNTIME_TOKEN"
+
                 val created = JcefSourceNativeRuntimeTransport()
                 transport = created
                 created.setTransportMessageHandler(::handleTransportMessage)
                 created.setReadinessMessageHandler { "{\"type\":\"probeReady\"}" }
                 created.setLoadEndHandler(::onAnyPageLoaded)
-                // A distinct data URL avoids relying on whether JBCefBrowser emits a load event for
-                // its constructor's initial about:blank realm. The diagnostic command has no
-                // Swing editor surface, so explicitly realize the native browser after queuing the
-                // target URL; production surfaces continue to realize through the UI hierarchy.
-                created.loadUrl(PROBE_PAGE_URL)
+                created.loadUrl(probeUrl)
                 created.createImmediatelyForDiagnostics()
             } catch (failure: Throwable) {
                 finishIncomplete("transport construction/load failed: ${failure.javaClass.name}: ${failure.message}")
@@ -95,8 +95,6 @@ internal object JcefTransportEnvelopeProbe {
             if (finished || pageReady) return
             val currentTransport = transport ?: return finishIncomplete("transport missing after page load")
             try {
-                // An initial about:blank load can race the explicit data URL. Install the bridge on
-                // every observed realm, but only begin cases when JavaScript reports our marker URL.
                 currentTransport.executeJavaScript(currentTransport.buildBridgeGlueScript())
                 currentTransport.executeJavaScript(PROBE_HELPERS_SCRIPT)
                 currentTransport.executeJavaScript(
@@ -140,9 +138,45 @@ internal object JcefTransportEnvelopeProbe {
                 if (finished || pageReady) return@invokeLater
                 pageReady = true
                 cancelTimeout()
-                LOG.warn("JCEF envelope probe page ready: $href")
-                runNextCase()
+                results += CaseResult(
+                    id = "source-native-production-entry",
+                    kind = "REQUEST_POLICY",
+                    payloadUtf16Units = 0,
+                    encodedJsonChars = 0,
+                    outerJavaScriptLiteralChars = 0,
+                    requiredForCurrentEnvelope = true,
+                    outcome = "PASS",
+                    detail = "source-native loopback entry and target module graph executed",
+                )
+                runRequestBoundaryCase()
             }
+        }
+
+        private fun runRequestBoundaryCase() {
+            ApplicationManager.getApplication().assertIsDispatchThread()
+            val currentTransport = transport ?: return finishIncomplete("transport missing before request-boundary case")
+            armTimeout("cross-origin navigation was not rejected by JCEF request policy", CASE_TIMEOUT_SECONDS)
+            currentTransport.setRequestPolicyBlockHandlerForDiagnostics { reason ->
+                if (reason != "navigation") return@setRequestPolicyBlockHandlerForDiagnostics
+                ApplicationManager.getApplication().invokeLater {
+                    if (finished || requestBoundaryProved) return@invokeLater
+                    requestBoundaryProved = true
+                    cancelTimeout()
+                    currentTransport.setRequestPolicyBlockHandlerForDiagnostics(null)
+                    results += CaseResult(
+                        id = "browser-blocked-cross-origin-navigation",
+                        kind = "REQUEST_POLICY",
+                        payloadUtf16Units = 0,
+                        encodedJsonChars = 0,
+                        outerJavaScriptLiteralChars = 0,
+                        requiredForCurrentEnvelope = true,
+                        outcome = "PASS",
+                        detail = "blocked=navigation",
+                    )
+                    runNextCase()
+                }
+            }
+            currentTransport.loadUrl(BLOCKED_CROSS_ORIGIN_URL)
         }
 
         private fun runNextCase() {
@@ -340,12 +374,21 @@ internal object JcefTransportEnvelopeProbe {
             ApplicationManager.getApplication().assertIsDispatchThread()
             val before = JcefSourceNativeRuntimeTransport.liveInstanceCount
             var failureDetail: String? = null
-            repeat(REPEATED_DISPOSAL_CYCLES) { index ->
-                if (failureDetail != null) return@repeat
-                try {
-                    JcefSourceNativeRuntimeTransport().dispose()
-                } catch (failure: Throwable) {
-                    failureDetail = "cycle=$index ${failure.javaClass.name}: ${failure.message}"
+            val baseUrl = MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl()
+            if (baseUrl == null) {
+                failureDetail = "source-native entry URL unavailable during repeated disposal evidence"
+            } else {
+                repeat(REPEATED_DISPOSAL_CYCLES) { index ->
+                    if (failureDetail != null) return@repeat
+                    try {
+                        val current = JcefSourceNativeRuntimeTransport()
+                        current.loadUrl(
+                            "$baseUrl?attachmentId=jcef-dispose-$index&runtimeToken=jcef-dispose-token-$index",
+                        )
+                        current.dispose()
+                    } catch (failure: Throwable) {
+                        failureDetail = "cycle=$index ${failure.javaClass.name}: ${failure.message}"
+                    }
                 }
             }
             val after = JcefSourceNativeRuntimeTransport.liveInstanceCount
@@ -425,12 +468,23 @@ internal object JcefTransportEnvelopeProbe {
             var disposalFailure: String? = null
             transport?.let { currentTransport ->
                 try {
+                    currentTransport.setRequestPolicyBlockHandlerForDiagnostics(null)
                     currentTransport.dispose()
                 } catch (failure: Throwable) {
                     disposalFailure = "${failure.javaClass.name}: ${failure.message}"
                 }
             }
             transport = null
+
+            if (webviewResourceAcquired) {
+                try {
+                    MarkFlowWebviewResourceManager.release()
+                } catch (failure: Throwable) {
+                    disposalFailure = disposalFailure
+                        ?: "webview resource release failed: ${failure.javaClass.name}: ${failure.message}"
+                }
+                webviewResourceAcquired = false
+            }
 
             if (disposalFailure != null) {
                 results += CaseResult(
@@ -601,7 +655,6 @@ internal object JcefTransportEnvelopeProbe {
             })();
         """.trimIndent()
 
-        /** Mirrors SourceNativeEditorRuntime.deliverToWeb: wire JSON first, then outer JS literal. */
         private fun hostSnapshotScript(probeCase: ProbeCase, recovery: Boolean): String {
             val rawWire = snapshotWire(probeCase, recovery)
             val payloadLiteral = gson.toJson(rawWire)
@@ -777,9 +830,9 @@ internal object JcefTransportEnvelopeProbe {
     private const val CASE_TIMEOUT_SECONDS = 30L
     private const val LATE_DISPOSE_OBSERVATION_MILLIS = 500L
     private const val REPEATED_DISPOSAL_CYCLES = 3
-    private const val PROBE_PAGE_MARKER = "markflow-jcef-envelope-probe"
-    private const val PROBE_PAGE_URL =
-        "data:text/html;charset=utf-8,%3Chtml%3E%3Cbody%20id%3D%22markflow-jcef-envelope-probe%22%3Eprobe%3C%2Fbody%3E%3C%2Fhtml%3E#markflow-jcef-envelope-probe"
+    private const val PROBE_PAGE_MARKER = "jcef-envelope-probe-attachment"
+    private const val PROBE_RUNTIME_TOKEN = "jcef-envelope-probe-runtime"
+    private const val BLOCKED_CROSS_ORIGIN_URL = "https://example.invalid/markflow-request-policy-probe"
 
     private val PROBE_ATTACHMENT_ID = AttachmentId.of("jcef-envelope-probe-attachment")
     private val PROBE_RECOVERY_ID = RecoveryId.of("jcef-envelope-probe-recovery")

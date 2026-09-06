@@ -179,7 +179,9 @@ val buildWebview by tasks.registering(Exec::class) {
     inputs.files(
         fileTree("webview/src"),
         file("webview/index.html"),
+        file("webview/source-native.html"),
         file("webview/vite.config.ts"),
+        file("webview/vite.source-native.config.ts"),
         file("webview/tsconfig.json"),
         file("webview/tsconfig.node.json"),
         file("webview/package.json"),
