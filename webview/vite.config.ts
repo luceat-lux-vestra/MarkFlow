@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const webviewOutputDir = resolve(__dirname, "../build/webview");
 
+/** Legacy Crepe build only. The source-native target is built by vite.source-native.config.ts. */
 export default defineConfig({
     base: "./",
     build: {
@@ -14,10 +15,7 @@ export default defineConfig({
         emptyOutDir: true,
         rollupOptions: {
             input: {
-                main: resolve(__dirname, "index.html"),
-                // Target #105/#81 per-surface runtime entry, parallel to the legacy Crepe `main`
-                // entry above. It has no build/runtime dependency on `main`'s bootstrap/bridge.
-                sourceNative: resolve(__dirname, "source-native.html")
+                main: resolve(__dirname, "index.html")
             },
             output: {
                 entryFileNames: `assets/[name].js`,
