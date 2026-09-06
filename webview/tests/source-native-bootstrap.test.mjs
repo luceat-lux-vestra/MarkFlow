@@ -14,8 +14,12 @@ const localImageCapabilityPath = resolve(repositoryRoot, "webview/src/trust/sour
 const localImagePreviewPath = resolve(repositoryRoot, "webview/src/trust/source-native-local-image-preview.ts");
 const navigationGuardPath = resolve(repositoryRoot, "webview/src/trust/source-native-navigation-guard.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
+const VALID_CSP_NONCE = "A".repeat(43);
 
-const dom = new JSDOM("<!doctype html><html><body></body></html>", {pretendToBeVisual: true});
+const dom = new JSDOM(
+    `<!doctype html><html><head><meta property="csp-nonce" nonce="${VALID_CSP_NONCE}"></head><body></body></html>`,
+    {pretendToBeVisual: true}
+);
 for (const [name, value] of [
     ["window", dom.window],
     ["document", dom.window.document],
@@ -100,6 +104,7 @@ const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     ]))
 )}`;
 const bootstrap = await import(bootstrapUrl);
+const {EditorView} = await import("@codemirror/view");
 
 const CAPABILITY_BASE = `http://127.0.0.1:31337/__markflow_source_image__/${"A".repeat(43)}/`;
 
@@ -122,6 +127,57 @@ function makeParent() {
     document.body.append(parent);
     return parent;
 }
+
+function setCspNonceMetas(values) {
+    document.head.querySelectorAll('meta[property="csp-nonce"]').forEach((meta) => meta.remove());
+    for (const value of values) {
+        const meta = document.createElement("meta");
+        meta.setAttribute("property", "csp-nonce");
+        meta.nonce = value;
+        document.head.append(meta);
+    }
+}
+
+function assertCspBootstrapFailure(values) {
+    setCspNonceMetas(values);
+    const hostWindow = makeHostWindow();
+    const parent = makeParent();
+    assert.throws(
+        () => bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a-csp&runtimeToken=t-csp"),
+        bootstrap.SourceNativeBootstrapError
+    );
+    assert.equal(parent.childElementCount, 0);
+    assert.equal(hostWindow.__markflowSourceNativeReceive, undefined);
+    assert.equal(hostWindow.__markflowSourceNativeInit, undefined);
+    parent.remove();
+}
+
+test("valid single CSP nonce is accepted and reaches CodeMirror runtime style construction", () => {
+    setCspNonceMetas([VALID_CSP_NONCE]);
+    const hostWindow = makeHostWindow();
+    const parent = makeParent();
+    const attachment = bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a-csp&runtimeToken=t-csp");
+
+    assert.equal(attachment.editor.view.state.facet(EditorView.cspNonce), VALID_CSP_NONCE);
+    const runtimeStyles = [...document.head.querySelectorAll("style")];
+    assert.ok(runtimeStyles.some((style) => style.nonce === VALID_CSP_NONCE));
+
+    attachment.dispose();
+    parent.remove();
+});
+
+test("missing duplicate placeholder and malformed CSP nonce metadata fail before bootstrap ownership", () => {
+    try {
+        assertCspBootstrapFailure([]);
+        assertCspBootstrapFailure([VALID_CSP_NONCE, VALID_CSP_NONCE]);
+        assertCspBootstrapFailure([bootstrap.SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER]);
+        for (const malformed of ["", "short", "A".repeat(42), "A".repeat(44), `+${"A".repeat(42)}`]) {
+            assertCspBootstrapFailure([malformed]);
+        }
+    } finally {
+        setCspNonceMetas([VALID_CSP_NONCE]);
+    }
+});
 
 test("missing attachmentId or runtimeToken in location.search fails closed without installing anything", () => {
     const hostWindow = makeHostWindow();
@@ -327,6 +383,7 @@ test("local mutation is sent through the host bridge exactly once and ACK is con
     assert.equal(sent.length, 1);
     assert.equal(sent[0].type, "mutationRequest");
     assert.equal(sent[0].attachmentId, "a1");
+    assert.equal(JSON.stringify(sent[0]).includes(VALID_CSP_NONCE), false);
     assert.equal(attachment.state, "READY");
     assert.equal(attachment.currentRevision, "1");
 
