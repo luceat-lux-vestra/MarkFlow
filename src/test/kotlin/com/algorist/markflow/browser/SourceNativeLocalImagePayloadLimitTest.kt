@@ -29,17 +29,17 @@ class SourceNativeLocalImagePayloadLimitTest : BasePlatformTestCase() {
     }
 
     fun testSizePredicateIncludesExactLimitAndRejectsOutsideRange() {
-        val limit = MarkFlowWebviewResourceManager.SOURCE_NATIVE_LOCAL_IMAGE_MAX_BYTES
-        assertFalse(MarkFlowWebviewResourceManager.isAllowedSourceNativeLocalImageSize(-1))
-        assertTrue(MarkFlowWebviewResourceManager.isAllowedSourceNativeLocalImageSize(limit - 1))
-        assertTrue(MarkFlowWebviewResourceManager.isAllowedSourceNativeLocalImageSize(limit))
-        assertFalse(MarkFlowWebviewResourceManager.isAllowedSourceNativeLocalImageSize(limit + 1))
+        val limit = SourceNativeLocalImagePolicy.MAX_BYTES
+        assertFalse(SourceNativeLocalImagePolicy.isAllowedSize(-1))
+        assertTrue(SourceNativeLocalImagePolicy.isAllowedSize(limit - 1))
+        assertTrue(SourceNativeLocalImagePolicy.isAllowedSize(limit))
+        assertFalse(SourceNativeLocalImagePolicy.isAllowedSize(limit + 1))
     }
 
     fun testGetAndHeadEnforceSameBelowEqualAndAboveLimitPolicy() {
         val documentDirectory = Files.createDirectories(tempRoot.resolve("docs"))
         val document = Files.writeString(documentDirectory.resolve("readme.md"), "# test")
-        val limit = MarkFlowWebviewResourceManager.SOURCE_NATIVE_LOCAL_IMAGE_MAX_BYTES
+        val limit = SourceNativeLocalImagePolicy.MAX_BYTES
 
         Files.write(documentDirectory.resolve("below.png"), byteArrayOf(1, 2, 3, 4))
         createSparseFile(documentDirectory.resolve("equal.png"), limit)
@@ -73,9 +73,7 @@ class SourceNativeLocalImagePayloadLimitTest : BasePlatformTestCase() {
     }
 
     private fun createSparseFile(path: Path, size: Long) {
-        RandomAccessFile(path.toFile(), "rw").use { file ->
-            file.setLength(size)
-        }
+        RandomAccessFile(path.toFile(), "rw").use { file -> file.setLength(size) }
     }
 
     private fun <T> get(url: String, bodyHandler: HttpResponse.BodyHandler<T>): HttpResponse<T> {
