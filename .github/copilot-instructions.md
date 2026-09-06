@@ -1,16 +1,19 @@
 # MarkFlow Copilot Instructions
 
-Follow the repository root `AGENTS.md` as the authoritative engineering and review policy.
+Follow repository root `AGENTS.md`, `docs/architecture/README.md`, accepted ADR 0001/0002, and the focused issue.
 
 Key constraints:
 
-- Preserve proven product behavior, not the current implementation structure.
-- Treat IntelliJ `Document`/VFS/FileEditor lifecycle, JCEF resource ownership, Markdown source fidelity, and host↔webview synchronization as correctness-critical contracts.
-- Do not assume existing browser pooling, `window.*` globals, `cefQuery` message formats, source-preserving helpers, timers, boolean guards, or Milkdown/Crepe integration are permanent architecture.
-- Prefer explicit ownership, a versioned/validated bridge protocol, and deterministic revision/session state over timing-dependent fixes.
-- Treat Markdown, raw HTML, links/resources, and webview messages as untrusted input.
-- Do not log full document content by default.
-- CI green is necessary but insufficient. Changes require strict review of the exact final PR HEAD as described in `AGENTS.md`.
+- IntelliJ `Document` is the sole mutable live Markdown authority; a native IntelliJ `Editor` edits that same `Document` directly.
+- MarkFlow presentation is derived and source-neutral. Projection/inlays/folds/render artifacts never become a second editable source model.
+- Do not introduce or preserve host↔web edit mutation, custom source revisions, attachment/ACK/recovery, browser flush durability, JS editor state, or JCEF editor readiness as target architecture.
+- Reject stale parse/projection/render work using exact current source/config identity. Do not solve correctness with debounce, retries, sleeps, boolean guards, pooling, or prewarm.
+- Unsupported/ambiguous/renderer-failed content must remain editable exact source.
+- Mermaid `11.17.2` and KaTeX `^0.18.4` are retained renderer engines during migration. Extract one renderer service first, connect the native consumer to that same service, then delete old editor adapters; do not create duplicate engines.
+- TypeScript/Vite/Node/JCEF may remain only for actual isolated renderer consumers. Optional renderer/JCEF failure must never gate source editing.
+- Local images/resources and external navigation are host-owned capabilities. Treat Markdown, raw HTML, links/resources and renderer inputs as untrusted.
+- Already-merged Leap code gets no preservation credit. Use #141 responsibility classifications and explicit TEMPORARY deletion criteria.
+- CI green is necessary but insufficient. Review the exact final HEAD; any HEAD movement invalidates prior PASS/evidence.
 - Release/publication is a separate explicit gate.
 
-For architecture work, use #52's process/anti-goals and the approved target architecture/ADRs. Do not create or assume #52 execution child issues before repository hardening and the architecture owner's fresh-main audit/design; the owner creates the complete initial child-issue set afterward. Historical `plans/*` are non-authoritative context only.
+Historical `plans/*`, old browser-editor tests, and current file/package structure are evidence only, not architecture authority.

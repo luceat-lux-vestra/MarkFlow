@@ -1,6 +1,6 @@
 # Architecture
 
-MarkFlow's architecture is governed by **product/correctness invariants first, accepted ADRs second, and implementation last**. Existing code is never authoritative merely because it already exists or was previously merged during Leap.
+MarkFlow's architecture is governed by **product/correctness invariants first, accepted ADRs second, and implementation last**. Existing code is never authoritative merely because it exists or was previously merged during Leap.
 
 ## Authority hierarchy
 
@@ -12,44 +12,65 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines the replacement-first Leap policy. Issue #139 is the architecture reset gate. Issue #140 records the first-principles editor/runtime comparison, and #141 owns the repository-wide `RETAIN / REPLACE / DELETE / TEMPORARY` migration map after target selection.
+Issue #52 defines replacement-first Leap policy. Issue #139 is the architecture reset gate. #140 records the first-principles comparison. PR #142 merged ADR 0001 and ADR 0002. #141 owns repository-wide migration classification/stale-guidance/backlog reconciliation before #139 may close.
 
-## Current target direction
+## Accepted target
 
-ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, source-neutral Markdown projection layer** as the accepted Leap target when PR #142 merges.
+ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, source-neutral Markdown projection layer**.
 
 ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migration**. Native editor migration removes the browser from source-editing correctness; it does not authorize reimplementing or dropping supported Mermaid/KaTeX rendering. Existing maintained renderer engines are extracted from editor-specific integration and reused behind the derived-render boundary.
 
-The target principles are:
+Target principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
-2. **Native editing is the invariant; the integration shell is evidence-selected.** Prefer augmenting the platform text editor when it can coexist cleanly with bundled Markdown/editor behavior. A MarkFlow-owned shell is acceptable only if it still wraps a native editor on the same `Document` and independently proves equivalent platform semantics. Neither option may introduce a second editable source model.
-3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews are projections over source and never become source authority.
-4. **Reveal exact source in active edit context.** Presentation may visually reduce Markdown syntax only when the exact source remains recoverable and caret/selection interaction cannot become ambiguous.
-5. **Stale derived work is inert.** Asynchronous parse/render results apply only to the exact current source/config generation they were produced from.
-6. **Mermaid and KaTeX remain supported renderer capabilities.** The editor migration reuses/extracts the maintained Mermaid and KaTeX renderer stack; it does not create parallel renderer engines. Crepe/CodeMirror integration is replaceable, the renderer capability is not collateral deletion.
-7. **Derived renderer execution is isolated from editing.** TypeScript/Vite and an isolated JCEF off-screen runtime may remain when they are the best execution adapter for Mermaid/KaTeX. JCEF below this boundary never owns source editing.
-8. **Trust surfaces are eliminated before they are hardened.** Local resources, navigation and renderer inputs use explicit host-owned capabilities. Browser origin/network/CSP machinery is not retained for deleted editor surfaces; any retained renderer runtime receives its own narrower containment policy.
-9. **Lifecycle ownership is explicit.** Per-editor presentation controllers own their listeners, folds/inlays, tasks and artifacts; renderer runtime ownership is separate and deterministic.
-10. **Optimization follows evidence.** Incremental parsing, caches, retained artifacts, concurrency and renderer reuse require measured benefit and bounded lifetime.
-11. **Replacement includes Leap code, but classification is responsibility-level.** CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation already merged during Leap is retained only where #141 independently justifies the responsibility. Whole directories/toolchains are not deleted merely because one consumer is superseded.
+2. **Native editing is invariant; integration shell is evidence-selected.** #143 compares platform editor augmentation with a MarkFlow-owned `FileEditor` containing a native editor over the same `Document`.
+3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews never become source authority.
+4. **Reveal exact source in active edit context.** Presentation may visually reduce syntax only when exact source remains recoverable and interaction is unambiguous.
+5. **Stale derived work is inert.** Parse/render results apply only to the exact current source/config identity they were produced from.
+6. **Mermaid and KaTeX remain supported renderer capabilities.** Mermaid `11.17.2` and KaTeX `^0.18.4` are extracted/reused; editor adapters are replaceable.
+7. **Derived renderer execution is isolated from editing.** TypeScript/Vite/Node/JCEF may remain for real renderer consumers, but JCEF never owns source editing or gates it.
+8. **Trust surfaces are minimized first.** Local resources/navigation are host-owned. Browser origin/network/CSP machinery is deleted with superseded editor surfaces; retained renderer runtimes receive narrower renderer-specific containment.
+9. **Lifecycle ownership is explicit.** Per-editor presentation controllers and renderer runtimes have separate deterministic owners and bounded resources.
+10. **Optimization follows evidence.** Incremental parsing, caches, retained artifacts, renderer reuse, pooling/prewarm/concurrency require measured benefit and explicit bounds.
+11. **Replacement includes already-merged Leap code.** Current CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation survives only where #141 independently justifies a responsibility.
+12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
-See `leap-target-architecture-comparison.md`, `0001-native-authority-projection-architecture.md`, and `0002-mermaid-katex-renderer-continuity.md`.
+See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
 
 ## Architecture anti-goals
 
 Do not:
 
-- preserve a component because removing it creates a larger diff;
-- delete a working supported renderer merely because its current editor adapter is being replaced;
-- maintain two independent Mermaid or KaTeX engines during steady-state production;
-- keep a host↔web editing protocol when the responsibility can remain inside the IntelliJ editor/Document model;
-- add protocol versions, epochs, retries, caches or adapters unless they represent a real independent requirement;
+- preserve a component because removing it creates a larger diff or discards recent work;
+- delete a working supported renderer merely because its current editor adapter is replaced;
+- maintain two independent Mermaid or KaTeX engines in steady-state production;
+- keep/revive a host↔web editing protocol, custom revisions, ACK/recovery, browser flush or whole-content reconstruction without a new independent proof;
 - make source durability depend on debounce, arbitrary sleeps, browser readiness or retry luck;
-- make optional renderer/JCEF availability a prerequisite for editing Markdown;
+- make optional renderer/JCEF availability a prerequisite for Markdown editing;
 - reconstruct authoritative Markdown from a lossy rich document model;
 - persist ephemeral resource/security capabilities;
-- keep two editor architectures indefinitely for rollback comfort.
+- keep two editor architectures indefinitely for rollback comfort;
+- preserve Node/TypeScript/Vite/JCEF merely because `webview/` exists, or delete them before actual renderer consumers are known.
+
+## Migration execution
+
+#141 defines the canonical execution graph:
+
+- early parallel candidates: #143 native shell proof, #144 renderer extraction, #150 image-import product decision;
+- #143 -> #145 projection foundation;
+- #143 + #145 -> #146 native paste/actions/state;
+- #145 -> #147 host local-image/navigation;
+- #144 + #145 -> #148 Mermaid/KaTeX native inlays;
+- #145 -> #149 sanitized source-preserved raw-HTML rendering;
+- #150 + #147 -> #151 image import;
+- #145 + #146 -> #152 ordinary Markdown/table parity;
+- required #143–#152 evidence -> #153 production native cutover;
+- #153 -> #154 mandatory old-editor/protocol/trust purge;
+- #154 -> #155 dependency/toolchain/JCEF/settings convergence;
+- #155 -> #156 final compatibility/lifecycle/performance/release convergence;
+- #156 -> #84 eligible to close.
+
+#139 may close after #141 repository-reset evidence is merged/post-main verified. #52 remains open until implementation/convergence completes.
 
 ## When an ADR is required
 
@@ -57,8 +78,8 @@ Write or revise an ADR before implementation when a change affects any of:
 
 - authoritative document/source ownership;
 - primary editor-surface architecture;
-- source normalization or persistence semantics;
-- synchronization/transport model where more than one correctness authority exists;
+- source normalization/persistence semantics;
+- synchronization/transport model where more than one correctness authority would exist;
 - lifecycle/ownership of editors, JCEF or derived renderer processes;
 - security/trust/resource/navigation boundaries;
 - supported IntelliJ/JCEF compatibility policy;
@@ -71,17 +92,10 @@ Routine implementation details under an accepted boundary do not require a new A
 
 ## ADR lifecycle
 
-Use `adr-template.md`. Store records in this directory using a stable numeric prefix, for example:
+Use `adr-template.md`. Statuses: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
-```text
-0001-native-authority-projection-architecture.md
-0002-mermaid-katex-renderer-continuity.md
-```
-
-Statuses: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
-
-An ADR must record context, decision, materially different alternatives, consequences, compatibility/migration implications, security/lifecycle implications and the evidence required to validate implementation.
+An ADR must record context, decision, materially different alternatives, consequences, compatibility/migration implications, security/lifecycle implications and evidence required to validate implementation.
 
 ## Repository hardening
 
-Repository hardening remains a separate concern owned by its governance/hardening issues. Passing repository CI does not authorize an architecture; architecture approval and implementation both remain subject to #52's proof-obligation discipline.
+Repository hardening remains separate. Passing repository CI does not authorize an architecture; architecture approval and every migration slice remain subject to proof-obligation review.
