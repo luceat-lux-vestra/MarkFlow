@@ -10,6 +10,8 @@ import {
 } from "../sync/source-native-sync.ts";
 
 const MAX_IDENTITY_LENGTH = 128;
+export const SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER = "__MARKFLOW_SOURCE_NATIVE_CSP_NONCE__";
+const SOURCE_NATIVE_CSP_NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 /**
  * Window-level bridge functions the host runtime ({@link JcefSourceNativeRuntimeTransport} on the
@@ -51,6 +53,20 @@ export class SourceNativeBootstrapError extends Error {
     }
 }
 
+/** Read exactly one Vite-provided nonce without ever copying it into source/protocol identity. */
+export function readSourceNativeCspNonce(ownerDocument: Document): string {
+    const metas = ownerDocument.querySelectorAll<HTMLMetaElement>('meta[property="csp-nonce"]');
+    if (metas.length !== 1) {
+        throw new SourceNativeBootstrapError("invalid source-native CSP nonce metadata");
+    }
+
+    const nonce = metas[0].nonce;
+    if (nonce === SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER || !SOURCE_NATIVE_CSP_NONCE_PATTERN.test(nonce)) {
+        throw new SourceNativeBootstrapError("invalid source-native CSP nonce metadata");
+    }
+    return nonce;
+}
+
 function readIdentityParam(search: string, name: string): string {
     const params = new URLSearchParams(search);
     const value = params.get(name);
@@ -74,12 +90,15 @@ export function installSourceNativeBootstrap(
     locationSearch: string,
     onStateTransition?: (transition: SourceNativeStateTransition) => void
 ): SourceNativeAttachment {
+    // Security metadata is consumed before any attachment/editor/bridge ownership is established.
+    const cspNonce = readSourceNativeCspNonce(parent.ownerDocument);
     const attachmentId = readIdentityParam(locationSearch, "attachmentId");
     const runtimeToken = readIdentityParam(locationSearch, "runtimeToken");
 
     const attachment: SourceNativeAttachment = new SourceNativeAttachment({
         parent,
         attachmentId,
+        cspNonce,
         onSend: (message: AttachmentOutboundMessage) => sendToHost(hostWindow, attachment, message),
         onStateTransition
     });
