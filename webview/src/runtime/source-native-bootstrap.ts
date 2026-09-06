@@ -1,6 +1,7 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
 import {installSourceNativeLocalImagePreview} from "../trust/source-native-local-image-preview.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
+import {readSourceNativeCspNonce, SourceNativeCspNonceError} from "../trust/source-native-csp.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -60,6 +61,17 @@ function readIdentityParam(search: string, name: string): string {
     return value;
 }
 
+function requireSourceNativeCspNonce(parent: Element): string {
+    try {
+        return readSourceNativeCspNonce(parent.ownerDocument);
+    } catch (error) {
+        if (error instanceof SourceNativeCspNonceError) {
+            throw new SourceNativeBootstrapError("missing or invalid CSP nonce");
+        }
+        throw error;
+    }
+}
+
 /**
  * Installs one [SourceNativeAttachment] bound to the current browser realm's host bridge.
  *
@@ -76,10 +88,14 @@ export function installSourceNativeBootstrap(
 ): SourceNativeAttachment {
     const attachmentId = readIdentityParam(locationSearch, "attachmentId");
     const runtimeToken = readIdentityParam(locationSearch, "runtimeToken");
+    // Fail closed before constructing the attachment/editor. The nonce belongs only to this HTML
+    // response and is not allowed to enter source, transport identity, URLs, persistence or logs.
+    const cspNonce = requireSourceNativeCspNonce(parent);
 
     const attachment: SourceNativeAttachment = new SourceNativeAttachment({
         parent,
         attachmentId,
+        cspNonce,
         onSend: (message: AttachmentOutboundMessage) => sendToHost(hostWindow, attachment, message),
         onStateTransition
     });
