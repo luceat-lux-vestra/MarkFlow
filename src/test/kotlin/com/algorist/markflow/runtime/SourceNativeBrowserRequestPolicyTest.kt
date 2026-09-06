@@ -37,7 +37,7 @@ class SourceNativeBrowserRequestPolicyTest : BasePlatformTestCase() {
         )
     }
 
-    fun testOnlyDedicatedStaticNamespaceAndBrowserResourceClassesAreAllowed() {
+    fun testOnlyDedicatedCanonicalStaticNamespaceAndBrowserResourceClassesAreAllowed() {
         val policy = policy()
         val script = "http://127.0.0.1:43123/source-native-assets/sourceNative.js"
 
@@ -68,9 +68,10 @@ class SourceNativeBrowserRequestPolicyTest : BasePlatformTestCase() {
         assertDenied("http://127.0.0.1:43123/index.html")
         assertDenied("http://127.0.0.1:43123/source-native-assets/../assets/bootstrap.js")
         assertDenied("http://127.0.0.1:43123/source-native-assets/sourceNative.js?probe=1")
+        assertDenied("http://127.0.0.1:43123/source%2Dnative-assets/sourceNative.js")
     }
 
-    fun testLocalImagesRemainBoundToTargetCapabilityNamespaceAndImageType() {
+    fun testLocalImagesRemainBoundToExactTargetCapabilityNamespaceAndImageType() {
         val token = "A".repeat(43)
         val image = "http://127.0.0.1:43123/__markflow_source_image__/$token/diagram.png"
         val policy = policy()
@@ -85,9 +86,14 @@ class SourceNativeBrowserRequestPolicyTest : BasePlatformTestCase() {
             ),
         )
         assertDenied(image, resourceType = CefRequest.ResourceType.RT_SCRIPT)
+        assertDenied("$image?probe=1", resourceType = CefRequest.ResourceType.RT_IMAGE)
         assertDenied("http://127.0.0.1:43123/__markflow_local__/legacy/image.png", resourceType = CefRequest.ResourceType.RT_IMAGE)
         assertDenied(
             "http://127.0.0.1:43123/__markflow_source_image__/${"B".repeat(42)}/diagram.png",
+            resourceType = CefRequest.ResourceType.RT_IMAGE,
+        )
+        assertDenied(
+            "http://127.0.0.1:43123/__markflow_source_image__/${"B".repeat(44)}/diagram.png",
             resourceType = CefRequest.ResourceType.RT_IMAGE,
         )
     }
