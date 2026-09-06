@@ -59,7 +59,7 @@ internal object JcefTransportEnvelopeProbe {
         private var currentCase: ProbeCase? = null
         private var timeout: ScheduledFuture<*>? = null
         private var finished = false
-        private var pageReady = false
+        private var productionEntryReady = false
         private var requestBoundaryProved = false
         private var webviewResourceAcquired = false
 
@@ -67,7 +67,7 @@ internal object JcefTransportEnvelopeProbe {
             ApplicationManager.getApplication().assertIsDispatchThread()
             baselineTransportCount = JcefSourceNativeRuntimeTransport.liveInstanceCount
             LOG.warn("JCEF envelope probe starting; baselineTransportCount=$baselineTransportCount")
-            armTimeout("source-native probe page did not become ready", PAGE_READY_TIMEOUT_SECONDS)
+            armTimeout("source-native production readiness handshake did not complete", PAGE_READY_TIMEOUT_SECONDS)
 
             try {
                 if (MarkFlowWebviewResourceManager.acquire() == null) {
@@ -82,7 +82,7 @@ internal object JcefTransportEnvelopeProbe {
                 val created = JcefSourceNativeRuntimeTransport()
                 transport = created
                 created.setTransportMessageHandler(::handleTransportMessage)
-                created.setReadinessMessageHandler { "{\"type\":\"probeReady\"}" }
+                created.setReadinessMessageHandler(::handleProductionReadiness)
                 created.setLoadEndHandler(::onAnyPageLoaded)
                 created.loadUrl(probeUrl)
                 created.createImmediatelyForDiagnostics()
@@ -92,17 +92,54 @@ internal object JcefTransportEnvelopeProbe {
         }
 
         private fun onAnyPageLoaded() {
-            if (finished || pageReady) return
+            if (finished || productionEntryReady) return
             val currentTransport = transport ?: return finishIncomplete("transport missing after page load")
             try {
+                // Installing host glue is not itself readiness evidence. PASS is emitted only after
+                // the bundled production module calls the readiness JBCefJSQuery with the exact
+                // attachment/runtime identity below. A page-load callback alone can never pass.
                 currentTransport.executeJavaScript(currentTransport.buildBridgeGlueScript())
-                currentTransport.executeJavaScript(PROBE_HELPERS_SCRIPT)
-                currentTransport.executeJavaScript(
-                    "window.__mfProbePageReady(String(window.location.href));",
-                )
             } catch (failure: Throwable) {
-                finishIncomplete("bridge/helper installation failed: ${failure.javaClass.name}: ${failure.message}")
+                finishIncomplete("bridge installation failed: ${failure.javaClass.name}: ${failure.message}")
             }
+        }
+
+        private fun handleProductionReadiness(raw: String): String? {
+            val parsed = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+            if (parsed.keySet() != setOf("type", "attachmentId", "runtimeToken") ||
+                parsed.string("type") != "runtimeReady" ||
+                parsed.string("attachmentId") != PROBE_ATTACHMENT_ID.value ||
+                parsed.string("runtimeToken") != PROBE_RUNTIME_TOKEN
+            ) {
+                return null
+            }
+
+            ApplicationManager.getApplication().invokeLater {
+                if (finished || productionEntryReady) return@invokeLater
+                productionEntryReady = true
+                cancelTimeout()
+                val currentTransport = transport
+                    ?: return@invokeLater finishIncomplete("transport missing after production readiness")
+                try {
+                    currentTransport.executeJavaScript(PROBE_HELPERS_SCRIPT)
+                } catch (failure: Throwable) {
+                    return@invokeLater finishIncomplete(
+                        "probe helper installation failed after production readiness: ${failure.javaClass.name}: ${failure.message}",
+                    )
+                }
+                results += CaseResult(
+                    id = "source-native-production-entry",
+                    kind = "REQUEST_POLICY",
+                    payloadUtf16Units = 0,
+                    encodedJsonChars = 0,
+                    outerJavaScriptLiteralChars = 0,
+                    requiredForCurrentEnvelope = true,
+                    outcome = "PASS",
+                    detail = "production module completed CSP-gated bootstrap and exact runtimeReady handshake",
+                )
+                runRequestBoundaryCase()
+            }
+            return "{\"type\":\"probeReady\"}"
         }
 
         private fun handleTransportMessage(raw: String): String? {
@@ -111,10 +148,6 @@ internal object JcefTransportEnvelopeProbe {
                 return handleProductionMutationRequest(raw)
             }
             return when (parsed.string("op")) {
-                "pageReady" -> {
-                    handlePageReady(parsed)
-                    "{\"accepted\":true}"
-                }
                 "request" -> handleWebRequest(parsed, raw)
                 "response" -> handleSuccessResponseRequest(parsed)
                 "report" -> {
@@ -128,27 +161,6 @@ internal object JcefTransportEnvelopeProbe {
                     "{\"accepted\":true}"
                 }
                 else -> null
-            }
-        }
-
-        private fun handlePageReady(message: JsonObject) {
-            val href = message.string("href") ?: return
-            if (!href.contains(PROBE_PAGE_MARKER)) return
-            ApplicationManager.getApplication().invokeLater {
-                if (finished || pageReady) return@invokeLater
-                pageReady = true
-                cancelTimeout()
-                results += CaseResult(
-                    id = "source-native-production-entry",
-                    kind = "REQUEST_POLICY",
-                    payloadUtf16Units = 0,
-                    encodedJsonChars = 0,
-                    outerJavaScriptLiteralChars = 0,
-                    requiredForCurrentEnvelope = true,
-                    outcome = "PASS",
-                    detail = "source-native loopback entry and target module graph executed",
-                )
-                runRequestBoundaryCase()
             }
         }
 
@@ -830,7 +842,6 @@ internal object JcefTransportEnvelopeProbe {
     private const val CASE_TIMEOUT_SECONDS = 30L
     private const val LATE_DISPOSE_OBSERVATION_MILLIS = 500L
     private const val REPEATED_DISPOSAL_CYCLES = 3
-    private const val PROBE_PAGE_MARKER = "jcef-envelope-probe-attachment"
     private const val PROBE_RUNTIME_TOKEN = "jcef-envelope-probe-runtime"
     private const val BLOCKED_CROSS_ORIGIN_URL = "https://example.invalid/markflow-request-policy-probe"
 
@@ -858,13 +869,6 @@ internal object JcefTransportEnvelopeProbe {
         window.__mfProbeReport = function(report) {
             window.__markflowSourceNativeSend(
                 JSON.stringify(Object.assign({op: 'report'}, report)),
-                function() {},
-                function() {}
-            );
-        };
-        window.__mfProbePageReady = function(href) {
-            window.__markflowSourceNativeSend(
-                JSON.stringify({op: 'pageReady', href: href}),
                 function() {},
                 function() {}
             );
