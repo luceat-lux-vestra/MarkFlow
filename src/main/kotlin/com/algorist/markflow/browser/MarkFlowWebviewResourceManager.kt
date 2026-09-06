@@ -152,6 +152,9 @@ internal object MarkFlowWebviewResourceManager {
 
         return try {
             val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext(SourceNativeCspResourceHandler.ENTRY_PATH) { exchange ->
+                SourceNativeCspResourceHandler.serve(exchange, root)
+            }
             server.createContext("/") { exchange ->
                 val requestUri = exchange.requestURI
                 val requestPath = requestUri?.path.orEmpty()
