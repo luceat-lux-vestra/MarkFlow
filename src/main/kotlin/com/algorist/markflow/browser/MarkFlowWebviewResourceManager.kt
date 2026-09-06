@@ -171,6 +171,15 @@ internal object MarkFlowWebviewResourceManager {
                     return@createContext
                 }
 
+                if (requestPath == SOURCE_NATIVE_ENTRY_PATH || rawRequestPath == SOURCE_NATIVE_ENTRY_PATH) {
+                    if (requestPath != SOURCE_NATIVE_ENTRY_PATH || rawRequestPath != SOURCE_NATIVE_ENTRY_PATH) {
+                        sendStatus(exchange, 404)
+                    } else {
+                        serveSourceNativeEntry(exchange, root)
+                    }
+                    return@createContext
+                }
+
                 serveWebviewResource(exchange, root, requestPath)
             }
             server.executor = null
@@ -190,12 +199,62 @@ internal object MarkFlowWebviewResourceManager {
     private fun serveWebviewResource(exchange: HttpExchange, root: Path, requestPath: String) {
         val normalized = if (requestPath == "/") "index.html" else requestPath.removePrefix("/")
         val target = root.resolve(normalized).normalize()
-        if (!target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
+        val sourceNativeEntry = root.resolve(SOURCE_NATIVE_ENTRY_FILE).normalize()
+        if (target == sourceNativeEntry || !target.startsWith(root) || !Files.exists(target) || Files.isDirectory(target)) {
             sendStatus(exchange, 404)
             return
         }
 
         serveFile(exchange, target, requireImage = false)
+    }
+
+    private fun serveSourceNativeEntry(exchange: HttpExchange, root: Path) {
+        if (!exchange.requestMethod.equals("GET", ignoreCase = true)) {
+            exchange.responseHeaders["Allow"] = "GET"
+            sendStatus(exchange, 405)
+            return
+        }
+
+        val target = root.resolve(SOURCE_NATIVE_ENTRY_FILE).normalize()
+        if (!target.startsWith(root) || !Files.isRegularFile(target)) {
+            sendStatus(exchange, 404)
+            return
+        }
+
+        val prepared = try {
+            SourceNativeCspPolicy.prepareResponse(Files.readString(target, StandardCharsets.UTF_8))
+        } catch (ioe: IOException) {
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn("MARKFLOW_UI source-native entry read failed: ${ioe.javaClass.simpleName}")
+            }
+            null
+        }
+        if (prepared == null) {
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn("MARKFLOW_UI source-native CSP template rejected")
+            }
+            sendStatus(exchange, 500)
+            return
+        }
+
+        val body = prepared.html.toByteArray(StandardCharsets.UTF_8)
+        try {
+            exchange.responseHeaders["Content-Type"] = "text/html; charset=UTF-8"
+            exchange.responseHeaders["Cache-Control"] = "no-store"
+            exchange.responseHeaders["X-Content-Type-Options"] = "nosniff"
+            exchange.responseHeaders["Referrer-Policy"] = "no-referrer"
+            exchange.responseHeaders["Cross-Origin-Resource-Policy"] = "same-origin"
+            exchange.responseHeaders["Content-Security-Policy"] = prepared.contentSecurityPolicy
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { output ->
+                output.write(body)
+            }
+        } catch (ioe: IOException) {
+            if (MarkFlowDiagnostics.enabled) {
+                LOG.warn("MARKFLOW_UI source-native entry response failed: ${ioe.javaClass.simpleName}")
+            }
+            exchange.close()
+        }
     }
 
     /** Original legacy endpoint semantics retained as-is. */
@@ -557,6 +616,8 @@ internal object MarkFlowWebviewResourceManager {
     private const val SOURCE_NATIVE_LOCAL_IMAGE_TOKEN_BYTES = 32
     private const val MAX_TOKEN_MINT_ATTEMPTS = 4
     private const val WEBVIEW_ENTRY_RESOURCE = "webview/index.html"
+    private const val SOURCE_NATIVE_ENTRY_PATH = "/source-native.html"
+    private const val SOURCE_NATIVE_ENTRY_FILE = "source-native.html"
     private const val LOCAL_DOCUMENT_PREFIX = "__markflow_local__"
     internal const val SOURCE_NATIVE_LOCAL_IMAGE_PREFIX = "__markflow_source_image__"
     internal const val SOURCE_NATIVE_LOCAL_IMAGE_MAX_BYTES: Long = 64L * 1024L * 1024L
