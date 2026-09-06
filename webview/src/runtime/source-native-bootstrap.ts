@@ -1,4 +1,5 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
+import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -75,6 +76,7 @@ export function installSourceNativeBootstrap(
         onStateTransition
     });
     installSourceNativeMarkdownPaste(attachment.editor.view);
+    installSourceNativeNavigationGuard(attachment.editor.view, parent);
 
     hostWindow.__markflowSourceNativeReceive = (raw: string) => {
         attachment.receiveRaw(raw);
