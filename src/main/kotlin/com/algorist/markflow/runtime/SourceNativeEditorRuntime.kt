@@ -11,11 +11,13 @@ import com.algorist.markflow.sync.AttachmentWireCodec
 import com.algorist.markflow.sync.AttachmentWireMessage
 import com.algorist.markflow.sync.AuthoritativeHostUpdate
 import com.google.gson.Gson
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,8 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * The per-surface JCEF runtime owner required by #105/#81.
  *
  * Exactly one live instance owns, for its own lifetime only:
- * - one [SourceNativeRuntimeTransport] (one browser realm, one mutation/recovery query, one
- *   readiness query);
+ * - one [SourceNativeRuntimeTransport] (one browser realm plus isolated mutation/recovery,
+ *   readiness and external-navigation queries);
  * - one fresh [AttachmentId];
  * - one [AttachmentSyncCoordinator] consuming an already-owned/shared [DocumentSessionLease];
  * - one [AttachmentHostUpdateBinding];
@@ -46,6 +48,7 @@ internal class SourceNativeEditorRuntime private constructor(
     private val runtimeToken: String,
     private val transport: SourceNativeRuntimeTransport,
     private val localImageCapability: SourceNativeLocalImageCapability?,
+    private val externalNavigator: (URI) -> Unit,
     sourceNativeUrl: String,
     private val releaseWebviewResource: (() -> Unit)?,
 ) : Disposable {
@@ -79,6 +82,7 @@ internal class SourceNativeEditorRuntime private constructor(
             hostUpdateBinding = AttachmentHostUpdateBinding(coordinator, ::deliverHostIncrementalUpdate)
             transport.setTransportMessageHandler(::handleTransportMessage)
             transport.setReadinessMessageHandler(::handleReadinessMessage)
+            transport.setExternalNavigationMessageHandler(::handleExternalNavigationMessage)
             transport.setLoadStartHandler(::onLoadStart)
             transport.setLoadEndHandler(::onLoadEnd)
             transport.loadUrl(sourceNativeUrl)
@@ -182,6 +186,31 @@ internal class SourceNativeEditorRuntime private constructor(
         return if (isCurrentRuntime()) READY_ACK_RESPONSE else null
     }
 
+    /**
+     * Handle one presentation-only external-navigation request on its dedicated query.
+     *
+     * Browser-side URL filtering is not trusted. The strict host decoder and URI validator run
+     * before the request is scheduled, exact runtime identity is checked here, and lifecycle is
+     * checked again on the EDT immediately before invoking the platform browser opener. Failure is
+     * inert: no retry, embedded navigation, source mutation or diagnostic URL disclosure occurs.
+     */
+    private fun handleExternalNavigationMessage(raw: String): String? {
+        if (!isCurrentRuntime()) return null
+        val request = SourceNativeExternalNavigationProtocol.decode(raw) ?: return null
+        if (request.attachmentId != attachmentId || request.runtimeToken != runtimeToken) return null
+        val uri = SourceNativeExternalNavigationProtocol.validateHttpUrl(request.url) ?: return null
+
+        ApplicationManager.getApplication().invokeLater {
+            if (!isCurrentRuntime()) return@invokeLater
+            try {
+                externalNavigator(uri)
+            } catch (_: Exception) {
+                // External-browser launch failure is presentation-only and must remain inert.
+            }
+        }
+        return if (isCurrentRuntime()) EXTERNAL_NAVIGATION_ACK_RESPONSE else null
+    }
+
     private fun sendBootstrapSnapshotOnce() {
         if (!isCurrentRuntime() || bootstrapSent) return
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -281,6 +310,7 @@ internal class SourceNativeEditorRuntime private constructor(
 
     companion object {
         private const val READY_ACK_RESPONSE = "{\"type\":\"runtimeReadyAck\"}"
+        private const val EXTERNAL_NAVIGATION_ACK_RESPONSE = "{\"type\":\"openExternalAccepted\"}"
 
         private val liveInstances = AtomicInteger(0)
 
@@ -297,6 +327,10 @@ internal class SourceNativeEditorRuntime private constructor(
          * failure to mint it degrades image capability only and does not fail open or abort the
          * source editor. Tests may inject [localImageCapabilityFactory] to prove ownership without
          * constructing a real loopback registration.
+         *
+         * [externalNavigator] is the host-owned external-browser action. Production uses IntelliJ's
+         * maintained [BrowserUtil] API; tests replace it with an inert recorder. It receives only a
+         * URI that has passed [SourceNativeExternalNavigationProtocol]'s host validation.
          *
          * The default bundled-webview path acquires one explicit [MarkFlowWebviewResourceManager]
          * owner reference and transfers that reference to the returned runtime. The local-image
@@ -315,6 +349,7 @@ internal class SourceNativeEditorRuntime private constructor(
             isJcefAvailable: () -> Boolean = { MarkFlowJcefSupport.isAvailable },
             transportFactory: () -> SourceNativeRuntimeTransport = { JcefSourceNativeRuntimeTransport() },
             localImageCapabilityFactory: (String) -> SourceNativeLocalImageCapability? = ::createSourceNativeLocalImageCapability,
+            externalNavigator: (URI) -> Unit = { uri -> BrowserUtil.browse(uri.toString()) },
         ): SourceNativeEditorRuntime? {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (!isJcefAvailable()) return null
@@ -352,6 +387,7 @@ internal class SourceNativeEditorRuntime private constructor(
                     runtimeToken = runtimeToken,
                     transport = transport,
                     localImageCapability = localImageCapability,
+                    externalNavigator = externalNavigator,
                     sourceNativeUrl = sourceNativeUrl,
                     releaseWebviewResource = releaseWebviewResource,
                 )

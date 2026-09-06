@@ -23,8 +23,8 @@ internal interface SourceNativeRuntimeTransport : Disposable {
 
     /**
      * Builds the one-time glue script that defines the window-level bridge functions the browser
-     * bootstrap uses to reach [setTransportMessageHandler] and [setReadinessMessageHandler]. Safe
-     * to execute repeatedly; each execution simply redefines the same functions.
+     * bootstrap uses to reach the sync, readiness and external-navigation handlers. Safe to execute
+     * repeatedly; each execution simply redefines the same functions.
      */
     fun buildBridgeGlueScript(): String
 
@@ -37,6 +37,9 @@ internal interface SourceNativeRuntimeTransport : Disposable {
 
     /** Registers the sole handler for the narrow web -> host readiness handshake query. */
     fun setReadinessMessageHandler(handler: (String) -> String?)
+
+    /** Registers the sole handler for the isolated web -> host external-navigation capability. */
+    fun setExternalNavigationMessageHandler(handler: (String) -> String?)
 
     /**
      * Registers the sole handler invoked when a main-frame navigation starts. The runtime uses

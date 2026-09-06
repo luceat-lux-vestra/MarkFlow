@@ -30,6 +30,11 @@ export interface SourceNativeHostBridge {
         onSuccess: (response: string) => void,
         onFailure: (errorCode: number, errorMessage: string) => void
     ) => void;
+    __markflowSourceNativeOpenExternal?: (
+        raw: string,
+        onSuccess: (response: string) => void,
+        onFailure: (errorCode: number, errorMessage: string) => void
+    ) => void;
     /** Host-owned, runtime-lifetime capability state; never sourced from location/search or Markdown. */
     __markflowSourceNativeLocalImageBaseUrl?: string | null;
     __markflowSourceNativeReceive?: (raw: string) => void;
@@ -79,7 +84,11 @@ export function installSourceNativeBootstrap(
         onStateTransition
     });
     installSourceNativeMarkdownPaste(attachment.editor.view);
-    installSourceNativeNavigationGuard(attachment.editor.view, parent);
+    installSourceNativeNavigationGuard(
+        attachment.editor.view,
+        parent,
+        (url) => requestExternalNavigation(hostWindow, attachment, attachmentId, runtimeToken, url)
+    );
 
     hostWindow.__markflowSourceNativeReceive = (raw: string) => {
         attachment.receiveRaw(raw);
@@ -128,6 +137,31 @@ function sendToHost(
         },
         () => {
             attachment.receiveTransportFailure(toTransportFailure(message));
+        }
+    );
+}
+
+function requestExternalNavigation(
+    hostWindow: SourceNativeHostBridge,
+    attachment: SourceNativeAttachment,
+    attachmentId: string,
+    runtimeToken: string,
+    url: string
+): void {
+    if (attachment.state === "DISPOSED") {
+        return;
+    }
+    const openExternal = hostWindow.__markflowSourceNativeOpenExternal;
+    if (typeof openExternal !== "function") {
+        return;
+    }
+    openExternal(
+        JSON.stringify({type: "openExternal", attachmentId, runtimeToken, url}),
+        () => {
+            // Host acceptance is intentionally presentation-only and carries no source state.
+        },
+        () => {
+            // Navigation failure is inert. Never retry or fall back to embedded navigation.
         }
     );
 }

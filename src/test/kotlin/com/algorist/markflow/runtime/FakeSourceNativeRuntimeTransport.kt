@@ -15,6 +15,8 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         private set
     var readinessHandler: ((String) -> String?)? = null
         private set
+    var externalNavigationHandler: ((String) -> String?)? = null
+        private set
     var loadStartHandler: (() -> Unit)? = null
         private set
     var loadEndHandler: (() -> Unit)? = null
@@ -47,6 +49,10 @@ internal class FakeSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     override fun setReadinessMessageHandler(handler: (String) -> String?) {
         readinessHandler = handler
+    }
+
+    override fun setExternalNavigationMessageHandler(handler: (String) -> String?) {
+        externalNavigationHandler = handler
     }
 
     override fun setLoadStartHandler(handler: () -> Unit) {
