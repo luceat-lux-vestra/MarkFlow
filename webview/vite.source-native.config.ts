@@ -5,6 +5,7 @@ import {fileURLToPath} from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const webviewOutputDir = resolve(__dirname, "../build/webview");
+const sourceNativeCspNoncePlaceholder = "__MARKFLOW_CSP_NONCE__";
 
 /**
  * Build the target source-native realm separately from the legacy Crepe realm.
@@ -14,6 +15,11 @@ const webviewOutputDir = resolve(__dirname, "../build/webview");
  */
 export default defineConfig({
     base: "./",
+    html: {
+        // Production replaces this build-time marker with a cryptographically random value for
+        // every source-native document response. It must never be served as an active nonce.
+        cspNonce: sourceNativeCspNoncePlaceholder
+    },
     build: {
         outDir: webviewOutputDir,
         emptyOutDir: false,
