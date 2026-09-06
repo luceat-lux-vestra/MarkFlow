@@ -1,7 +1,6 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
 import {installSourceNativeLocalImagePreview} from "../trust/source-native-local-image-preview.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
-import {readSourceNativeCspNonce, SourceNativeCspNonceError} from "../trust/source-native-csp.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -61,36 +60,12 @@ function readIdentityParam(search: string, name: string): string {
     return value;
 }
 
-function requireProductionCspNonce(parent: Element): string {
-    try {
-        return readSourceNativeCspNonce(parent.ownerDocument);
-    } catch (error) {
-        if (error instanceof SourceNativeCspNonceError) {
-            throw new SourceNativeBootstrapError("missing or invalid CSP nonce");
-        }
-        throw error;
-    }
-}
-
 /**
- * Production composition gate. CSP response identity is validated before attachment identity,
- * bridge functions or CodeMirror ownership are created.
- */
-export function installProductionSourceNativeBootstrap(
-    parent: Element,
-    hostWindow: SourceNativeBootstrapWindow,
-    locationSearch: string,
-    onStateTransition?: (transition: SourceNativeStateTransition) => void
-): SourceNativeAttachment {
-    const cspNonce = requireProductionCspNonce(parent);
-    return installSourceNativeBootstrap(parent, hostWindow, locationSearch, onStateTransition, cspNonce);
-}
-
-/**
- * Lower-level attachment bootstrap used by deterministic protocol/lifecycle tests.
+ * Browser-policy-neutral attachment bootstrap.
  *
- * Production must enter through [installProductionSourceNativeBootstrap]. Keeping this seam free of
- * browser-document assumptions lets the source-sync state machine remain independently testable.
+ * Production enters through `source-native-production-bootstrap.ts`, which validates browser
+ * response security metadata before calling this seam. Deterministic protocol/lifecycle tests may
+ * call this directly without constructing a production browser document.
  */
 export function installSourceNativeBootstrap(
     parent: Element,
