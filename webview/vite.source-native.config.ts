@@ -5,15 +5,21 @@ import {fileURLToPath} from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const webviewOutputDir = resolve(__dirname, "../build/webview");
+const SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER = "__MARKFLOW_SOURCE_NATIVE_CSP_NONCE__";
 
 /**
  * Build the target source-native realm separately from the legacy Crepe realm.
  *
  * A dedicated output namespace is a trust boundary: the production JCEF request policy can grant
  * the target only its own executable/static graph without implicitly authorizing legacy assets.
+ * The nonce is deliberately a build-time placeholder. The loopback server must replace every
+ * generated occurrence with one fresh per-response nonce before source-native.html is served.
  */
 export default defineConfig({
     base: "./",
+    html: {
+        cspNonce: SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER
+    },
     build: {
         outDir: webviewOutputDir,
         emptyOutDir: false,
