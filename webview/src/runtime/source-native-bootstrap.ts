@@ -1,7 +1,6 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
 import {installSourceNativeLocalImagePreview} from "../trust/source-native-local-image-preview.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
-import {readSourceNativeCspNonce, SourceNativeCspNonceError} from "../trust/source-native-csp.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -61,38 +60,14 @@ function readIdentityParam(search: string, name: string): string {
     return value;
 }
 
-function requireSourceNativeCspNonce(parent: Element): string {
-    try {
-        return readSourceNativeCspNonce(parent.ownerDocument);
-    } catch (error) {
-        if (error instanceof SourceNativeCspNonceError) {
-            throw new SourceNativeBootstrapError("missing or invalid CSP nonce");
-        }
-        throw error;
-    }
-}
-
-/**
- * Production-only bootstrap. The actual source-native entry must pass through this gate so a
- * missing, duplicated, placeholder or malformed response nonce cannot create an editor attachment.
- */
-export function installProductionSourceNativeBootstrap(
-    parent: Element,
-    hostWindow: SourceNativeBootstrapWindow,
-    locationSearch: string,
-    onStateTransition?: (transition: SourceNativeStateTransition) => void
-): SourceNativeAttachment {
-    const cspNonce = requireSourceNativeCspNonce(parent);
-    return installSourceNativeBootstrap(parent, hostWindow, locationSearch, onStateTransition, cspNonce);
-}
-
 /**
  * Installs one [SourceNativeAttachment] bound to the current browser realm's host bridge.
  *
- * This lower-level seam remains usable by deterministic non-browser-policy tests. Production must
- * call [installProductionSourceNativeBootstrap], which supplies the validated response nonce.
- * The source-native CodeMirror path sends only target mutation/recovery wire messages and has zero
- * correctness dependency on Crepe/Milkdown or the legacy bridge/session.
+ * The production source-native entry validates its response CSP nonce before calling this seam and
+ * passes that nonce as [cspNonce]. Deterministic sync/bootstrap tests may omit the nonce because
+ * they do not execute as the production browser entry. This path sends only target
+ * mutation/recovery wire messages and has zero correctness dependency on Crepe/Milkdown or the
+ * legacy bridge/session.
  */
 export function installSourceNativeBootstrap(
     parent: Element,
