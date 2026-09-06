@@ -21,8 +21,10 @@ export function readSourceNativeCspNonce(document: Document): string {
         throw new SourceNativeCspNonceError();
     }
 
-    const nonce = metas[0].nonce;
-    if (nonce === SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER || !SOURCE_NATIVE_CSP_NONCE_PATTERN.test(nonce)) {
+    const nonce = metas[0]?.nonce;
+    if (typeof nonce !== "string"
+        || nonce === SOURCE_NATIVE_CSP_NONCE_PLACEHOLDER
+        || !SOURCE_NATIVE_CSP_NONCE_PATTERN.test(nonce)) {
         throw new SourceNativeCspNonceError();
     }
     return nonce;
