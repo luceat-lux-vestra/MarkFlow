@@ -73,24 +73,36 @@ function requireSourceNativeCspNonce(parent: Element): string {
 }
 
 /**
- * Installs one [SourceNativeAttachment] bound to the current browser realm's host bridge.
- *
- * This is the minimum production-capable web entry point required by #105: it uses the
- * source-native CodeMirror path exclusively, sends only target mutation/recovery wire messages,
- * strictly consumes ACK/rejection/host messages through [SourceNativeAttachment]'s own strict
- * decode path, and has zero correctness dependency on Crepe/Milkdown or the legacy bridge/session.
+ * Production-only bootstrap. The actual source-native entry must pass through this gate so a
+ * missing, duplicated, placeholder or malformed response nonce cannot create an editor attachment.
  */
-export function installSourceNativeBootstrap(
+export function installProductionSourceNativeBootstrap(
     parent: Element,
     hostWindow: SourceNativeBootstrapWindow,
     locationSearch: string,
     onStateTransition?: (transition: SourceNativeStateTransition) => void
 ): SourceNativeAttachment {
+    const cspNonce = requireSourceNativeCspNonce(parent);
+    return installSourceNativeBootstrap(parent, hostWindow, locationSearch, onStateTransition, cspNonce);
+}
+
+/**
+ * Installs one [SourceNativeAttachment] bound to the current browser realm's host bridge.
+ *
+ * This lower-level seam remains usable by deterministic non-browser-policy tests. Production must
+ * call [installProductionSourceNativeBootstrap], which supplies the validated response nonce.
+ * The source-native CodeMirror path sends only target mutation/recovery wire messages and has zero
+ * correctness dependency on Crepe/Milkdown or the legacy bridge/session.
+ */
+export function installSourceNativeBootstrap(
+    parent: Element,
+    hostWindow: SourceNativeBootstrapWindow,
+    locationSearch: string,
+    onStateTransition?: (transition: SourceNativeStateTransition) => void,
+    cspNonce?: string
+): SourceNativeAttachment {
     const attachmentId = readIdentityParam(locationSearch, "attachmentId");
     const runtimeToken = readIdentityParam(locationSearch, "runtimeToken");
-    // Fail closed before constructing the attachment/editor. The nonce belongs only to this HTML
-    // response and is not allowed to enter source, transport identity, URLs, persistence or logs.
-    const cspNonce = requireSourceNativeCspNonce(parent);
 
     const attachment: SourceNativeAttachment = new SourceNativeAttachment({
         parent,
