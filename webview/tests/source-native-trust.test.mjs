@@ -4,6 +4,7 @@ import {resolve} from "node:path";
 import {test} from "node:test";
 import {JSDOM} from "jsdom";
 import * as ts from "typescript";
+import {markdown} from "@codemirror/lang-markdown";
 import {EditorState} from "@codemirror/state";
 import {EditorView} from "@codemirror/view";
 
@@ -67,11 +68,16 @@ const policyModuleUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent
 const policy = await import(policyModuleUrl);
 
 const guardPackageUrls = new Map([
+    ["@codemirror/language", await import.meta.resolve("@codemirror/language")],
     ["@codemirror/state", await import.meta.resolve("@codemirror/state")],
     ["@codemirror/view", await import.meta.resolve("@codemirror/view")]
 ]);
 const guardModuleUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(transpileSource(guardSourceText, guardPackageUrls))}`;
-const {installSourceNativeNavigationGuard} = await import(guardModuleUrl);
+const {
+    externalNavigationTargetAt,
+    installSourceNativeNavigationGuard,
+    resolveSourceNativeExternalNavigationUrl
+} = await import(guardModuleUrl);
 
 function withGuard(callback) {
     const parent = document.createElement("div");
@@ -89,14 +95,35 @@ function withGuard(callback) {
     }
 }
 
-function dispatchMouse(target, type, button) {
-    const event = new window.MouseEvent(type, {bubbles: true, cancelable: true, button});
+function withMarkdownGuard(source, selection, onExternalNavigation, callback) {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+        state: EditorState.create({doc: source, selection, extensions: [markdown()]}),
+        parent
+    });
+    installSourceNativeNavigationGuard(view, parent, onExternalNavigation);
+    try {
+        return callback({view, root: parent});
+    } finally {
+        view.destroy();
+        parent.remove();
+    }
+}
+
+function dispatchMouse(target, type, button, modifiers = {}) {
+    const event = new window.MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button,
+        ...modifiers
+    });
     target.dispatchEvent(event);
     return event;
 }
 
 test("source-native bootstrap installs the trust guard on its dedicated root without legacy renderer dependencies", () => {
-    assert.match(bootstrapSourceText, /installSourceNativeNavigationGuard\(attachment\.editor\.view, parent\)/);
+    assert.match(bootstrapSourceText, /installSourceNativeNavigationGuard\(\s*attachment\.editor\.view,\s*parent,/);
     assert.doesNotMatch(guardSourceText, /@milkdown|prose|Crepe|raw-html-support|mermaid|window\.open|location\s*=/);
     assert.doesNotMatch(policySourceText, /@codemirror|@milkdown|prose|Crepe|raw-html-support|mermaid/);
 });
@@ -158,6 +185,93 @@ test("remote, fragment and local syntax are classified but never implicitly auth
     assert.deepEqual(policy.classifyPreviewUrl("https://[::1"), {kind: "malformed", requirement: "denied"});
     assert.deepEqual(policy.classifyPreviewUrl("http ://example.com"), {kind: "malformed", requirement: "denied"});
     assert.deepEqual(policy.classifyPreviewUrl(""), {kind: "malformed", requirement: "denied"});
+});
+
+test("external-navigation URL validation is HTTP(S)-only and preserves the exact source destination", () => {
+    for (const sample of [
+        "https://example.com/a%20b?q=%E2%9C%93#frag",
+        "http://example.com/path?q=1#two",
+        "https://example.com/한글?q=✓#부분"
+    ]) {
+        assert.equal(resolveSourceNativeExternalNavigationUrl(sample), sample);
+    }
+    for (const sample of [
+        "javascript:alert(1)", "vbscript:msgbox(1)", "%6a%61vascript%3Aalert(1)",
+        "file:///tmp/a", "data:text/plain,x", "blob:https://example.com/id", "//example.com/path",
+        "relative.md", "../parent", "#fragment", "mailto:test@example.com",
+        "https://user@example.com/path", "https://example.com/has space", "https://[::1"
+    ]) {
+        assert.equal(resolveSourceNativeExternalNavigationUrl(sample), null, sample);
+    }
+});
+
+test("only an inactive parser-proven ordinary Markdown Link yields an external-navigation target", () => {
+    const source = "prefix [go](https://example.com/a?q=1#f) suffix";
+    const linkStart = source.indexOf("[go]");
+    const linkEnd = source.indexOf(")") + 1;
+    const position = source.indexOf("go") + 1;
+    const inactive = EditorState.create({doc: source, selection: {anchor: 0}, extensions: [markdown()]});
+    assert.equal(externalNavigationTargetAt(inactive, position), "https://example.com/a?q=1#f");
+
+    for (const anchor of [linkStart, source.indexOf("example.com"), linkEnd]) {
+        const active = EditorState.create({doc: source, selection: {anchor}, extensions: [markdown()]});
+        assert.equal(externalNavigationTargetAt(active, position), null, `active caret ${anchor}`);
+    }
+    const overlapping = EditorState.create({
+        doc: source,
+        selection: {anchor: linkStart - 1, head: linkStart + 2},
+        extensions: [markdown()]
+    });
+    assert.equal(externalNavigationTargetAt(overlapping, position), null);
+
+    for (const sample of [
+        "prefix ![img](https://example.com/image.png)",
+        "prefix `https://example.com/code`",
+        "prefix \\[go](https://example.com/escaped)",
+        "prefix https://example.com/plain"
+    ]) {
+        const state = EditorState.create({doc: sample, selection: {anchor: 0}, extensions: [markdown()]});
+        assert.equal(externalNavigationTargetAt(state, sample.indexOf("example.com")), null, sample);
+    }
+});
+
+test("Ctrl/Cmd+mousedown on an inactive parser-owned link emits exactly one host request and no source mutation", () => {
+    const source = "prefix [go](https://example.com/a?q=1#f) suffix";
+    const position = source.indexOf("go") + 1;
+    for (const modifiers of [{ctrlKey: true}, {metaKey: true}]) {
+        const opened = [];
+        withMarkdownGuard(source, {anchor: 0}, (url) => opened.push(url), ({view}) => {
+            Object.defineProperty(view, "posAtCoords", {configurable: true, value: () => position});
+            const event = dispatchMouse(view.contentDOM, "mousedown", 0, modifiers);
+            assert.equal(event.defaultPrevented, true);
+            assert.deepEqual(opened, ["https://example.com/a?q=1#f"]);
+            assert.equal(view.state.doc.toString(), source);
+        });
+    }
+});
+
+test("ordinary click and active-link modifier click remain editing-only and source-neutral", () => {
+    const source = "prefix [go](https://example.com/a) suffix";
+    const position = source.indexOf("go") + 1;
+    const linkStart = source.indexOf("[go]");
+
+    const inactiveOpened = [];
+    withMarkdownGuard(source, {anchor: 0}, (url) => inactiveOpened.push(url), ({view}) => {
+        Object.defineProperty(view, "posAtCoords", {configurable: true, value: () => position});
+        const ordinary = dispatchMouse(view.contentDOM, "mousedown", 0);
+        assert.equal(ordinary.defaultPrevented, false);
+        assert.deepEqual(inactiveOpened, []);
+        assert.equal(view.state.doc.toString(), source);
+    });
+
+    const activeOpened = [];
+    withMarkdownGuard(source, {anchor: linkStart}, (url) => activeOpened.push(url), ({view}) => {
+        Object.defineProperty(view, "posAtCoords", {configurable: true, value: () => position});
+        const active = dispatchMouse(view.contentDOM, "mousedown", 0, {ctrlKey: true});
+        assert.equal(active.defaultPrevented, false);
+        assert.deepEqual(activeOpened, []);
+        assert.equal(view.state.doc.toString(), source);
+    });
 });
 
 test("active DOM surfaces are denied and unknown elements fail closed", () => {

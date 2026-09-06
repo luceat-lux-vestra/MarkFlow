@@ -65,6 +65,7 @@ class SourceNativeLocalImageCapabilityRuntimeTest : BasePlatformTestCase() {
             override fun buildBridgeGlueScript(): String = ""
             override fun setTransportMessageHandler(handler: (String) -> String?) = Unit
             override fun setReadinessMessageHandler(handler: (String) -> String?) = Unit
+            override fun setExternalNavigationMessageHandler(handler: (String) -> String?) = Unit
             override fun setLoadStartHandler(handler: () -> Unit) = Unit
             override fun setLoadEndHandler(handler: () -> Unit) = Unit
             override fun dispose() {

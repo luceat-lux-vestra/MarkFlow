@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The only production [SourceNativeRuntimeTransport]: exactly one [JBCefBrowser] realm and exactly
- * two [JBCefJSQuery] objects (mutation/recovery transport, readiness handshake) for one owning
- * [SourceNativeEditorRuntime]'s current lifetime.
+ * three [JBCefJSQuery] objects (mutation/recovery transport, readiness handshake and isolated
+ * external navigation) for one owning [SourceNativeEditorRuntime]'s current lifetime.
  *
  * This class is never pooled, never reused across runtime owners, and never shared with the
  * legacy `MarkFlowBrowserLeasePool`. It does not read or interpret wire messages itself; it only
@@ -27,6 +27,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
     private val browser: JBCefBrowser
     private val transportQuery: JBCefJSQuery
     private val readinessQuery: JBCefJSQuery
+    private val externalNavigationQuery: JBCefJSQuery
 
     @Volatile
     private var disposed = false
@@ -36,20 +37,22 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         val createdTransportQuery = try {
             JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
         } catch (failure: Throwable) {
-            cleanupConstructionFailure(
-                failure = failure,
-                browser = createdBrowser,
-                transportQuery = null,
-            )
+            cleanupConstructionFailure(failure, createdBrowser, emptyList())
             throw failure
         }
         val createdReadinessQuery = try {
             JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
         } catch (failure: Throwable) {
+            cleanupConstructionFailure(failure, createdBrowser, listOf(createdTransportQuery))
+            throw failure
+        }
+        val createdExternalNavigationQuery = try {
+            JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
+        } catch (failure: Throwable) {
             cleanupConstructionFailure(
-                failure = failure,
-                browser = createdBrowser,
-                transportQuery = createdTransportQuery,
+                failure,
+                createdBrowser,
+                listOf(createdReadinessQuery, createdTransportQuery),
             )
             throw failure
         }
@@ -57,6 +60,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         browser = createdBrowser
         transportQuery = createdTransportQuery
         readinessQuery = createdReadinessQuery
+        externalNavigationQuery = createdExternalNavigationQuery
         liveInstances.incrementAndGet()
     }
 
@@ -90,6 +94,11 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
             "window.__markflowSNReadyOnSuccess",
             "window.__markflowSNReadyOnFailure",
         )
+        val externalNavigationSnippet = externalNavigationQuery.inject(
+            "window.__markflowSNExternalNavigationRequest",
+            "window.__markflowSNExternalNavigationOnSuccess",
+            "window.__markflowSNExternalNavigationOnFailure",
+        )
         return """
             window.__markflowSourceNativeSend = function(raw, onSuccess, onFailure) {
                 window.__markflowSNTransportRequest = raw;
@@ -102,6 +111,12 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
                 window.__markflowSNReadyOnSuccess = onSuccess;
                 window.__markflowSNReadyOnFailure = onFailure;
                 $readySnippet
+            };
+            window.__markflowSourceNativeOpenExternal = function(raw, onSuccess, onFailure) {
+                window.__markflowSNExternalNavigationRequest = raw;
+                window.__markflowSNExternalNavigationOnSuccess = onSuccess;
+                window.__markflowSNExternalNavigationOnFailure = onFailure;
+                $externalNavigationSnippet
             };
             window.__markflowHostGlueInstalled = true;
             if (typeof window.__markflowSourceNativeInit === 'function') {
@@ -116,6 +131,10 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
 
     override fun setReadinessMessageHandler(handler: (String) -> String?) {
         readinessQuery.addHandler { raw -> toResponse(handler(raw)) }
+    }
+
+    override fun setExternalNavigationMessageHandler(handler: (String) -> String?) {
+        externalNavigationQuery.addHandler { raw -> toResponse(handler(raw)) }
     }
 
     override fun setLoadStartHandler(handler: () -> Unit) {
@@ -164,6 +183,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
             }
         }
 
+        release { externalNavigationQuery.dispose() }
         release { readinessQuery.dispose() }
         release { transportQuery.dispose() }
         release { browser.dispose() }
@@ -189,7 +209,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
         private fun cleanupConstructionFailure(
             failure: Throwable,
             browser: JBCefBrowser,
-            transportQuery: JBCefJSQuery?,
+            queries: List<JBCefJSQuery>,
         ) {
             fun release(action: () -> Unit) {
                 try {
@@ -199,7 +219,7 @@ internal class JcefSourceNativeRuntimeTransport : SourceNativeRuntimeTransport {
                 }
             }
 
-            transportQuery?.let { release(it::dispose) }
+            queries.forEach { query -> release(query::dispose) }
             release { browser.dispose() }
         }
     }
