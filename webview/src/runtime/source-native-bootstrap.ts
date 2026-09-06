@@ -1,6 +1,7 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
 import {installSourceNativeLocalImagePreview} from "../trust/source-native-local-image-preview.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
+import {readSourceNativeCspNonce, SourceNativeCspNonceError} from "../trust/source-native-csp.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -60,14 +61,36 @@ function readIdentityParam(search: string, name: string): string {
     return value;
 }
 
+function requireProductionCspNonce(parent: Element): string {
+    try {
+        return readSourceNativeCspNonce(parent.ownerDocument);
+    } catch (error) {
+        if (error instanceof SourceNativeCspNonceError) {
+            throw new SourceNativeBootstrapError("missing or invalid CSP nonce");
+        }
+        throw error;
+    }
+}
+
 /**
- * Installs one [SourceNativeAttachment] bound to the current browser realm's host bridge.
+ * Production composition gate. CSP response identity is validated before attachment identity,
+ * bridge functions or CodeMirror ownership are created.
+ */
+export function installProductionSourceNativeBootstrap(
+    parent: Element,
+    hostWindow: SourceNativeBootstrapWindow,
+    locationSearch: string,
+    onStateTransition?: (transition: SourceNativeStateTransition) => void
+): SourceNativeAttachment {
+    const cspNonce = requireProductionCspNonce(parent);
+    return installSourceNativeBootstrap(parent, hostWindow, locationSearch, onStateTransition, cspNonce);
+}
+
+/**
+ * Lower-level attachment bootstrap used by deterministic protocol/lifecycle tests.
  *
- * The production source-native entry validates its response CSP nonce before calling this seam and
- * passes that nonce as [cspNonce]. Deterministic sync/bootstrap tests may omit the nonce because
- * they do not execute as the production browser entry. This path sends only target
- * mutation/recovery wire messages and has zero correctness dependency on Crepe/Milkdown or the
- * legacy bridge/session.
+ * Production must enter through [installProductionSourceNativeBootstrap]. Keeping this seam free of
+ * browser-document assumptions lets the source-sync state machine remain independently testable.
  */
 export function installSourceNativeBootstrap(
     parent: Element,
