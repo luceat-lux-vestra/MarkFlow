@@ -173,37 +173,6 @@ internal class MarkFlowBrowserLeasePool {
         }
     }
 
-    fun pushMarkdownFromEditor(editor: MarkFlowEditor, markdown: String) {
-        val lease = leaseForEditor(editor) ?: return
-        if (!lease.webViewLoaded) return
-
-        val seq = ++lease.intelliJToWebPushSequence
-        val markdownLiteral = gson.toJson(markdown)
-        val sourceRevisionLiteral = gson.toJson(editor.currentSourceRevision())
-        val sessionLiteral = gson.toJson(lease.sessionId)
-        val script = """
-            (function syncIntelliJMarkdown(seq, payload, sourceRevision) {
-                if (window.__markflowSessionId !== $sessionLiteral) {
-                    return;
-                }
-                window.__markflowIntelliJUpdateSeq = Math.max(window.__markflowIntelliJUpdateSeq || 0, seq);
-                (function applyMarkdown(attempt) {
-                    if ((window.__markflowIntelliJUpdateSeq || 0) !== seq) {
-                        return;
-                    }
-                    if (typeof window.updateFromIntelliJ === 'function') {
-                        window.updateFromIntelliJ({ rawMarkdown: payload, sourceRevision: sourceRevision, leaseSessionId: $sessionLiteral });
-                        return;
-                    }
-                    if (attempt < 20) {
-                        setTimeout(function() { applyMarkdown(attempt + 1); }, 25);
-                    }
-                })(0);
-            })($seq, $markdownLiteral, $sourceRevisionLiteral);
-        """.trimIndent()
-        lease.browser.cefBrowser.executeJavaScript(script, lease.browser.cefBrowser.url, 0)
-    }
-
     fun executeForEditor(editor: MarkFlowEditor, script: String): Boolean {
         val lease = leaseForEditor(editor) ?: return false
         if (!lease.webViewLoaded) return false
@@ -813,7 +782,6 @@ internal class MarkFlowBrowserLeasePool {
     }
 
     private fun ignoredResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Ignored")
-    private fun successResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("Success")
     private fun okResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response("OK")
     private fun errorResponse(): JBCefJSQuery.Response = JBCefJSQuery.Response(null, BRIDGE_ERROR_STATUS, "Error parsing request")
     private fun jsonResponse(value: Any): JBCefJSQuery.Response = JBCefJSQuery.Response(gson.toJson(value))

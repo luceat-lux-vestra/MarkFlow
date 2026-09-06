@@ -36,11 +36,13 @@ object FontFamilyOptions {
         }
         val options = mutableListOf(FontFamilyOption(value = "", displayName = defaultDisplayName))
         options += installedFamilies
+            .asSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinctBy { it.lowercase(Locale.ROOT) }
             .sortedWith(String.CASE_INSENSITIVE_ORDER)
             .map { FontFamilyOption(value = it, displayName = it) }
+            .toList()
         return options
     }
 

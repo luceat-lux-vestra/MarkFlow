@@ -28,7 +28,7 @@ import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.editor.state.MarkFlowEditorState
 import com.algorist.markflow.editor.state.SourceRevisionGate
 
-class MarkFlowEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
+class MarkFlowEditor(project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
 
     private val hostPanel = JPanel(BorderLayout())
     private val document: Document? = FileDocumentManager.getInstance().getDocument(file)
@@ -81,19 +81,20 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
         if (disposed) return
         val shouldAttach = hostPanel.isShowing
         val hasLease = sharedBrowserService.hasLease(this)
-        if (shouldAttach && !hasLease) {
-            isAttachedToSharedBrowser = sharedBrowserService.attach(this, hostPanel)
-            return
-        }
-        if (shouldAttach) {
-            isAttachedToSharedBrowser = hasLease
-            return
-        }
-        if (!shouldAttach && hasLease) {
-            sharedBrowserService.detach(this, hostPanel)
-            isAttachedToSharedBrowser = false
-        } else if (!shouldAttach) {
-            isAttachedToSharedBrowser = false
+        when {
+            shouldAttach && !hasLease -> {
+                isAttachedToSharedBrowser = sharedBrowserService.attach(this, hostPanel)
+            }
+            shouldAttach -> {
+                isAttachedToSharedBrowser = true
+            }
+            hasLease -> {
+                sharedBrowserService.detach(this, hostPanel)
+                isAttachedToSharedBrowser = false
+            }
+            else -> {
+                isAttachedToSharedBrowser = false
+            }
         }
     }
 
@@ -240,7 +241,7 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
                         val edit = DocumentContentDiff.compute(currentText, newContent)
                             ?: return@runWriteAction
                         if (edit.startOffset == 0 && edit.endOffset == currentText.length) {
-                            currentDocument.setText(edit.replacement)
+                            DocumentWholeTextReplacement.apply(currentDocument, edit.replacement)
                         } else {
                             currentDocument.replaceString(edit.startOffset, edit.endOffset, edit.replacement)
                         }
@@ -412,12 +413,6 @@ class MarkFlowEditor(private val project: Project, private val file: VirtualFile
             LOG.info("MARKFLOW_UI editor dispose: ${file.path}")
         }
     }
-
-    internal fun onSharedBrowserDetachedByPool() {
-        isAttachedToSharedBrowser = false
-    }
-
-    internal fun isShowingInHost(): Boolean = hostPanel.isShowing
 
     internal fun currentSourceRevision(): Long = sourceRevisionGate.current()
 

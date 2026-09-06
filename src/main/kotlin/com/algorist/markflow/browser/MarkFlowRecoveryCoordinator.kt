@@ -25,9 +25,8 @@ internal object MarkFlowRecoveryCoordinator {
                 return RecoveryBridgeResponse(role = "leader", epoch = nextEpoch, reason = reason)
             }
 
-            val active = current
-            if (active.leader === editor || active.leaseId == leaseId) {
-                val nextEpoch = active.epoch
+            if (current.leader === editor || current.leaseId == leaseId) {
+                val nextEpoch = current.epoch
                 val updated = RecoveryLease(epoch = nextEpoch, leader = editor, leaseId = leaseId)
                 recoveryLeasesByFile[filePath] = updated
                 if (MarkFlowDiagnostics.enabled) {
@@ -37,9 +36,9 @@ internal object MarkFlowRecoveryCoordinator {
             }
 
             if (MarkFlowDiagnostics.enabled) {
-                LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${active.epoch} reason=$reason")
+                LOG.info("MARKFLOW_UI recovery:claim follower role=$leaseId epoch=${current.epoch} reason=$reason")
             }
-            return RecoveryBridgeResponse(role = "follower", epoch = active.epoch, reason = reason)
+            return RecoveryBridgeResponse(role = "follower", epoch = current.epoch, reason = reason)
         }
     }
 
@@ -53,7 +52,15 @@ internal object MarkFlowRecoveryCoordinator {
         synchronized(lock) {
             val filePath = editor.getFile().path
             val current = recoveryLeasesByFile[filePath]
-            if (current?.leader === editor && current.leaseId == leaseId && current.epoch == epoch) {
+            val mismatchStatus = when {
+                current == null -> "noActiveLease"
+                current.leader !== editor -> "editorMismatch"
+                current.leaseId != leaseId -> "leaseMismatch"
+                current.epoch != epoch -> "epochMismatch"
+                else -> null
+            }
+
+            if (mismatchStatus == null) {
                 recoveryLeasesByFile.remove(filePath)
                 if (MarkFlowDiagnostics.enabled) {
                     LOG.info("MARKFLOW_UI recovery:complete leaseId=$leaseId epoch=$epoch success=$success")
@@ -61,15 +68,8 @@ internal object MarkFlowRecoveryCoordinator {
                 return RecoveryBridgeResponse(role = reason, epoch = epoch, reason = reason)
             }
 
-            val logStatus = when {
-                current == null -> "noActiveLease"
-                current.leader !== editor -> "editorMismatch"
-                current.leaseId != leaseId -> "leaseMismatch"
-                current.epoch != epoch -> "epochMismatch"
-                else -> "unknown"
-            }
             if (MarkFlowDiagnostics.enabled) {
-                LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$logStatus")
+                LOG.info("MARKFLOW_UI recovery:complete ignored leaseId=$leaseId epoch=$epoch status=$mismatchStatus")
             }
         }
         return RecoveryBridgeResponse(role = "ignored", epoch = epoch, reason = reason)

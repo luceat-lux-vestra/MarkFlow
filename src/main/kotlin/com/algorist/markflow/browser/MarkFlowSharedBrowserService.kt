@@ -7,7 +7,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.util.IdentityHashMap
 import java.util.concurrent.TimeUnit
@@ -15,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JPanel
 
 @Service(Service.Level.PROJECT)
-class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Project) : Disposable {
+class MarkFlowSharedBrowserService : Disposable {
 
     private val browserLeasePool = MarkFlowBrowserLeasePool()
     private val gson = Gson()
@@ -63,10 +62,6 @@ class MarkFlowSharedBrowserService(@Suppress("UNUSED_PARAMETER") _project: Proje
     fun detach(editor: MarkFlowEditor, host: JPanel?) {
         clearLocalDocumentBinding(editor)
         browserLeasePool.detach(editor, host)
-    }
-
-    fun pushMarkdownFromEditor(editor: MarkFlowEditor, markdown: String) {
-        browserLeasePool.pushMarkdownFromEditor(editor, markdown)
     }
 
     fun executeForEditor(editor: MarkFlowEditor, script: String): Boolean {

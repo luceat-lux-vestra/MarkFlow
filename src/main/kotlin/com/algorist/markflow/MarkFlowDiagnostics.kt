@@ -8,8 +8,6 @@ internal object MarkFlowDiagnostics {
         if (enabled) return true
 
         val normalized = message.trim()
-        if (normalized.isEmpty()) return false
-
         return normalized.startsWith("MARKFLOW_UI bootError")
             || normalized.startsWith("MARKFLOW_UI window:error")
             || normalized.startsWith("MARKFLOW_UI window:unhandledrejection")
