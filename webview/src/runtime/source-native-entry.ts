@@ -1,7 +1,5 @@
-import {
-    installProductionSourceNativeBootstrap,
-    type SourceNativeBootstrapWindow
-} from "./source-native-bootstrap.ts";
+import {installProductionSourceNativeBootstrap} from "./source-native-production-bootstrap.ts";
+import type {SourceNativeBootstrapWindow} from "./source-native-bootstrap.ts";
 
 const parent = document.getElementById("app");
 if (parent === null) {
