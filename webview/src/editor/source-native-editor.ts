@@ -29,6 +29,8 @@ export interface SourceChangeTransaction {
 export interface SourceNativeEditorOptions {
     readonly parent: Element;
     readonly initialSource: string;
+    /** Presentation-only nonce used by CodeMirror when it mounts runtime styles. */
+    readonly cspNonce?: string;
     /**
      * Runs after the local transaction has been normalized but before CodeMirror applies it.
      * Returning false rejects the source projection mutation at the dispatch boundary.
@@ -620,6 +622,7 @@ export class SourceNativeEditorCore {
                     // logical-text boundary.
                     EditorState.lineSeparator.of("\n"),
                     EditorState.allowMultipleSelections.of(true),
+                    ...(options.cspNonce === undefined ? [] : [EditorView.cspNonce.of(options.cspNonce)]),
                     sourceNativeMarkdown,
                     createPreviewPlugin(options.onPreviewRangeScanned),
                     sourceNativeTheme,
