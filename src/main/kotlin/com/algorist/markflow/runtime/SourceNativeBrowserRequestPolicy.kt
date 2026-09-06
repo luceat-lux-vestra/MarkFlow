@@ -1,5 +1,6 @@
 package com.algorist.markflow.runtime
 
+import com.algorist.markflow.browser.SourceNativeWebviewRoutePolicy
 import org.cef.network.CefRequest
 import java.net.URI
 import java.util.Locale
@@ -8,10 +9,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Browser-level request policy for one source-native JCEF realm.
  *
- * This policy grants no generic same-origin entitlement. The one initial main-frame URL is exact,
- * static executable resources live only under the target-owned `source-native-assets/` namespace,
- * and document-local images remain isolated behind the existing source-native capability prefix.
- * Every other browser request shape fails closed before the network loader is allowed to proceed.
+ * This policy grants no generic same-origin entitlement. It shares the canonical route contract
+ * with the loopback HTTP boundary, while independently enforcing browser resource types,
+ * navigation state and exact origin/entry identity.
  */
 internal class SourceNativeBrowserRequestPolicy private constructor(
     private val entryUri: URI,
@@ -49,12 +49,12 @@ internal class SourceNativeBrowserRequestPolicy private constructor(
 
         val rawPath = candidate.rawPath ?: return false
         return when {
-            isSourceNativeAssetPath(rawPath) ->
+            SourceNativeWebviewRoutePolicy.isCanonicalAsset(rawPath) ->
                 candidate.rawQuery == null &&
                     resourceType != null &&
                     resourceType in ALLOWED_STATIC_RESOURCE_TYPES
-            SOURCE_NATIVE_IMAGE_PATH.matches(rawPath) ->
-                resourceType == CefRequest.ResourceType.RT_IMAGE
+            SourceNativeWebviewRoutePolicy.isCanonicalLocalImage(rawPath) ->
+                candidate.rawQuery == null && resourceType == CefRequest.ResourceType.RT_IMAGE
             else -> false
         }
     }
@@ -72,11 +72,6 @@ internal class SourceNativeBrowserRequestPolicy private constructor(
             candidate.rawFragment == null
 
     companion object {
-        private const val SOURCE_NATIVE_ENTRY_PATH = "/source-native.html"
-        private const val SOURCE_NATIVE_ASSET_PREFIX = "/source-native-assets/"
-        private val SOURCE_NATIVE_IMAGE_PATH =
-            Regex("^/__markflow_source_image__/[A-Za-z0-9_-]{43,128}/.+$")
-        private val SAFE_STATIC_PATH = Regex("^/source-native-assets/[A-Za-z0-9._/-]+$")
         private val ALLOWED_STATIC_RESOURCE_TYPES = setOf(
             CefRequest.ResourceType.RT_SCRIPT,
             CefRequest.ResourceType.RT_STYLESHEET,
@@ -85,7 +80,10 @@ internal class SourceNativeBrowserRequestPolicy private constructor(
 
         fun fromEntryUrl(url: String): SourceNativeBrowserRequestPolicy? {
             val uri = parseLoopbackHttp(url) ?: return null
-            if (uri.rawPath != SOURCE_NATIVE_ENTRY_PATH || uri.rawQuery.isNullOrBlank() || uri.rawFragment != null) {
+            if (uri.rawPath != SourceNativeWebviewRoutePolicy.ENTRY_PATH ||
+                uri.rawQuery.isNullOrBlank() ||
+                uri.rawFragment != null
+            ) {
                 return null
             }
             return SourceNativeBrowserRequestPolicy(uri)
@@ -110,12 +108,5 @@ internal class SourceNativeBrowserRequestPolicy private constructor(
         }
 
         private fun normalizedMethod(method: String): String = method.uppercase(Locale.ROOT)
-
-        private fun isSourceNativeAssetPath(rawPath: String): Boolean {
-            if (!rawPath.startsWith(SOURCE_NATIVE_ASSET_PREFIX) || !SAFE_STATIC_PATH.matches(rawPath)) {
-                return false
-            }
-            return rawPath.split('/').none { it == "." || it == ".." }
-        }
     }
 }
