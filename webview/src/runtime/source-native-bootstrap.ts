@@ -1,3 +1,4 @@
+import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
 import {
     SourceNativeAttachment,
     encodeAttachmentMessage,
@@ -73,6 +74,7 @@ export function installSourceNativeBootstrap(
         onSend: (message: AttachmentOutboundMessage) => sendToHost(hostWindow, attachment, message),
         onStateTransition
     });
+    installSourceNativeMarkdownPaste(attachment.editor.view);
 
     hostWindow.__markflowSourceNativeReceive = (raw: string) => {
         attachment.receiveRaw(raw);

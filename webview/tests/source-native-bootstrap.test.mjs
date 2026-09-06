@@ -7,6 +7,7 @@ import {test} from "node:test";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const corePath = resolve(repositoryRoot, "webview/src/editor/source-native-editor.ts");
+const pastePath = resolve(repositoryRoot, "webview/src/editor/source-native-paste.ts");
 const syncPath = resolve(repositoryRoot, "webview/src/sync/source-native-sync.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
 
@@ -61,11 +62,17 @@ function transpile(source, replacements = new Map()) {
 const coreUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(corePath, "utf8"), packageUrls)
 )}`;
+const pasteUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(pastePath, "utf8"), packageUrls)
+)}`;
 const syncUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(syncPath, "utf8"), new Map([["../editor/source-native-editor.ts", coreUrl]]))
 )}`;
 const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
-    transpile(readFileSync(bootstrapPath, "utf8"), new Map([["../sync/source-native-sync.ts", syncUrl]]))
+    transpile(readFileSync(bootstrapPath, "utf8"), new Map([
+        ["../editor/source-native-paste.ts", pasteUrl],
+        ["../sync/source-native-sync.ts", syncUrl]
+    ]))
 )}`;
 const bootstrap = await import(bootstrapUrl);
 
