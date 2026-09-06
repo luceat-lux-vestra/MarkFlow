@@ -41,15 +41,15 @@ class MarkFlowLocalImageCapabilityHardeningTest : BasePlatformTestCase() {
             assertTrue(tokenPattern.matches(second!!.token))
             assertFalse(first.token.contains(document.fileName.toString()))
             assertFalse(second.token.contains(document.fileName.toString()))
-            assertFalse(first.token == second.token)
-            assertTrue(first.baseUrl.contains("/${MarkFlowWebviewResourceManager.SOURCE_NATIVE_LOCAL_IMAGE_PREFIX}/"))
+            assertNotEquals(first.token, second.token)
+            assertTrue(first.baseUrl.contains(SourceNativeWebviewRoutePolicy.LOCAL_IMAGE_PREFIX))
         } finally {
             MarkFlowWebviewResourceManager.unregisterSourceNativeLocalImage(first?.token)
             MarkFlowWebviewResourceManager.unregisterSourceNativeLocalImage(second?.token)
         }
     }
 
-    fun testWrongAndStaleTargetTokensFailClosed() {
+    fun testWrongStaleAndQueryBearingTargetCapabilitiesFailClosed() {
         val document = createDocument()
         Files.write(document.parent.resolve("image.png"), byteArrayOf(1, 2, 3, 4))
         val registration = MarkFlowWebviewResourceManager.registerSourceNativeLocalImage(document.toString())!!
@@ -59,7 +59,9 @@ class MarkFlowLocalImageCapabilityHardeningTest : BasePlatformTestCase() {
         assertEquals(404, get(wrongUrl).statusCode())
 
         val validUrl = registration.baseUrl + "image.png"
+        assertTrue(SourceNativeWebviewRoutePolicy.isCanonicalLocalImage(URI.create(validUrl).rawPath))
         assertEquals(200, get(validUrl).statusCode())
+        assertEquals(404, get("$validUrl?unexpected=query").statusCode())
         MarkFlowWebviewResourceManager.unregisterSourceNativeLocalImage(registration.token)
         assertEquals(404, get(validUrl).statusCode())
     }
@@ -74,13 +76,13 @@ class MarkFlowLocalImageCapabilityHardeningTest : BasePlatformTestCase() {
             assertEquals(404, get(registration.baseUrl + "%252e%252e%252foutside.png").statusCode())
             assertEquals(404, get(registration.baseUrl + "%2foutside.png").statusCode())
 
-            assertNull(MarkFlowWebviewResourceManager.decodeSourceNativeLocalImagePath("bad%"))
-            assertNull(MarkFlowWebviewResourceManager.decodeSourceNativeLocalImagePath("%GG"))
-            assertNull(MarkFlowWebviewResourceManager.decodeSourceNativeLocalImagePath("%252e%252e%252foutside.png"))
-            assertNull(MarkFlowWebviewResourceManager.decodeSourceNativeLocalImagePath("%5coutside.png"))
-            assertNull(MarkFlowWebviewResourceManager.resolveSourceNativeLocalImagePath(document.parent, "../outside.png"))
-            assertNull(MarkFlowWebviewResourceManager.resolveSourceNativeLocalImagePath(document.parent, "nested/../image.png"))
-            assertNull(MarkFlowWebviewResourceManager.resolveSourceNativeLocalImagePath(document.parent, "C:\\outside.png"))
+            assertNull(SourceNativeLocalImagePolicy.decodeRawRelativePath("bad%"))
+            assertNull(SourceNativeLocalImagePolicy.decodeRawRelativePath("%GG"))
+            assertNull(SourceNativeLocalImagePolicy.decodeRawRelativePath("%252e%252e%252foutside.png"))
+            assertNull(SourceNativeLocalImagePolicy.decodeRawRelativePath("%5coutside.png"))
+            assertNull(SourceNativeLocalImagePolicy.resolve(document.parent, "../outside.png"))
+            assertNull(SourceNativeLocalImagePolicy.resolve(document.parent, "nested/../image.png"))
+            assertNull(SourceNativeLocalImagePolicy.resolve(document.parent, "C:\\outside.png"))
         } finally {
             MarkFlowWebviewResourceManager.unregisterSourceNativeLocalImage(registration.token)
         }
@@ -100,7 +102,7 @@ class MarkFlowLocalImageCapabilityHardeningTest : BasePlatformTestCase() {
             return
         }
 
-        assertNull(MarkFlowWebviewResourceManager.resolveSourceNativeLocalImagePath(document.parent, "link.png"))
+        assertNull(SourceNativeLocalImagePolicy.resolve(document.parent, "link.png"))
     }
 
     fun testTargetCapabilityAllowsOnlyGetAndHead() {
@@ -164,7 +166,7 @@ class MarkFlowLocalImageCapabilityHardeningTest : BasePlatformTestCase() {
 
         try {
             assertTrue(registration.baseUrl.contains("/__markflow_local__/"))
-            assertFalse(registration.baseUrl.contains("/${MarkFlowWebviewResourceManager.SOURCE_NATIVE_LOCAL_IMAGE_PREFIX}/"))
+            assertFalse(registration.baseUrl.contains(SourceNativeWebviewRoutePolicy.LOCAL_IMAGE_PREFIX))
             val response = get(registration.baseUrl + "legacy.png")
             assertEquals(200, response.statusCode())
             assertTrue(legacyBytes.contentEquals(response.body()))
