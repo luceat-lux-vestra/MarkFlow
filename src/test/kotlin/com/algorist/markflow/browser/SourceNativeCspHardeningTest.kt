@@ -33,9 +33,9 @@ class SourceNativeCspHardeningTest : BasePlatformTestCase() {
         assertEquals(200, second.statusCode())
         val firstNonce = assertNonceContract(first)
         val secondNonce = assertNonceContract(second)
-        assertNotSame(firstNonce, secondNonce)
-        assertFalse(first.body().contains(SourceNativeCspResourceHandler.NONCE_PLACEHOLDER))
-        assertFalse(second.body().contains(SourceNativeCspResourceHandler.NONCE_PLACEHOLDER))
+        assertNotEquals(firstNonce, secondNonce)
+        assertFalse(first.body().contains(SourceNativeContentSecurityPolicy.NONCE_PLACEHOLDER))
+        assertFalse(second.body().contains(SourceNativeContentSecurityPolicy.NONCE_PLACEHOLDER))
     }
 
     fun testSourceNativeCspDeniesExecutableAndNetworkFallbacks() {
@@ -97,48 +97,81 @@ class SourceNativeCspHardeningTest : BasePlatformTestCase() {
         assertEquals("", post.body())
     }
 
+    fun testSourceNativeAssetsUseDedicatedCanonicalNamespaceOnly() {
+        val entryUrl = MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl()!!
+        val entry = get(entryUrl)
+        assertEquals(200, entry.statusCode())
+        val relativeAsset = Regex("""<script\b[^>]*\bsrc="([^"]+)"[^>]*>""")
+            .find(entry.body())?.groupValues?.get(1)
+        assertNotNull("built source-native entry must reference its module asset", relativeAsset)
+        val assetUrl = URI.create(entryUrl).resolve(relativeAsset!!).toString()
+
+        val asset = get(assetUrl)
+        assertEquals(200, asset.statusCode())
+        assertEquals("no-store", asset.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals("nosniff", asset.headers().firstValue("X-Content-Type-Options").orElse(""))
+        assertFalse(asset.headers().firstValue("Content-Security-Policy").isPresent)
+
+        assertEquals(404, get("$assetUrl?unexpected=query").statusCode())
+        val encodedAlias = assetUrl.replace("/source-native-assets/", "/source%2Dnative-assets/")
+        assertEquals(404, get(encodedAlias).statusCode())
+    }
+
+    fun testEncodedEntryAliasCannotFallThroughToLegacyGenericStaticServing() {
+        val canonical = MarkFlowWebviewResourceManager.loadSourceNativeIndexUrl()!!
+        val encodedAlias = canonical.replace("/source-native.html", "/source%2Dnative.html")
+        assertEquals(404, get(encodedAlias).statusCode())
+    }
+
     fun testLegacyEntryDoesNotGainSourceNativeCspOrNonceSemantics() {
         val response = get(MarkFlowWebviewResourceManager.loadWebviewIndexUrl()!!)
         assertEquals(200, response.statusCode())
         assertFalse(response.headers().firstValue("Content-Security-Policy").isPresent)
         assertFalse(response.body().contains("property=\"csp-nonce\""))
-        assertFalse(response.body().contains(SourceNativeCspResourceHandler.NONCE_PLACEHOLDER))
+        assertFalse(response.body().contains(SourceNativeContentSecurityPolicy.NONCE_PLACEHOLDER))
         assertEquals("no-cache", response.headers().firstValue("Cache-Control").orElse(""))
     }
 
-    fun testTemplateTransformRejectsMalformedOrAmbiguousNonceAuthority() {
-        val placeholder = SourceNativeCspResourceHandler.NONCE_PLACEHOLDER
+    fun testTemplateTransformRejectsMalformedAmbiguousOrNonAsciiNonceAuthority() {
+        val placeholder = SourceNativeContentSecurityPolicy.NONCE_PLACEHOLDER
         val validNonce = "A".repeat(43)
         val valid = """
             <meta property="csp-nonce" nonce="$placeholder">
             <style nonce="$placeholder"></style>
             <script nonce="$placeholder"></script>
         """.trimIndent()
-        val rendered = SourceNativeCspResourceHandler.renderTemplate(valid, validNonce)
+        val rendered = SourceNativeContentSecurityPolicy.renderDocument(valid, validNonce)
         assertNotNull(rendered)
         assertFalse(rendered!!.contains(placeholder))
         assertTrue(htmlNonce.findAll(rendered).all { it.groupValues[1] == validNonce })
 
-        assertNull(SourceNativeCspResourceHandler.renderTemplate(valid.replaceFirst(placeholder, "foreign"), validNonce))
-        assertNull(SourceNativeCspResourceHandler.renderTemplate(valid + placeholder, validNonce))
-        assertNull(SourceNativeCspResourceHandler.renderTemplate(valid.replace("<style", "<meta property=\"csp-nonce\"", limit = 1), validNonce))
-        assertNull(SourceNativeCspResourceHandler.renderTemplate(valid, "short"))
+        assertNull(SourceNativeContentSecurityPolicy.renderDocument(valid.replaceFirst(placeholder, "foreign"), validNonce))
+        assertNull(SourceNativeContentSecurityPolicy.renderDocument(valid + placeholder, validNonce))
+        assertNull(SourceNativeContentSecurityPolicy.renderDocument(
+            valid.replaceFirst(
+                "<style",
+                "<meta property=\"csp-nonce\" nonce=\"$placeholder\"><style",
+            ),
+            validNonce,
+        ))
+        assertFalse(SourceNativeContentSecurityPolicy.isValidNonce("é".repeat(43)))
+        assertFalse(SourceNativeContentSecurityPolicy.isValidNonce("A".repeat(42)))
+        assertFalse(SourceNativeContentSecurityPolicy.isValidNonce(placeholder))
+        assertNull(SourceNativeContentSecurityPolicy.renderDocument(valid, "é".repeat(43)))
     }
 
-    private fun get(url: String): HttpResponse<String> {
-        return client.send(
-            HttpRequest.newBuilder(URI.create(url)).GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
-        )
-    }
+    private fun get(url: String): HttpResponse<String> = client.send(
+        HttpRequest.newBuilder(URI.create(url)).GET().build(),
+        HttpResponse.BodyHandlers.ofString(),
+    )
 
     private fun assertNonceContract(response: HttpResponse<String>): String {
         val headerNonces = policyNonce.findAll(
-            response.headers().firstValue("Content-Security-Policy").orElse("")
+            response.headers().firstValue("Content-Security-Policy").orElse(""),
         ).map { it.groupValues[1] }.toSet()
         assertEquals(1, headerNonces.size)
         val nonce = headerNonces.single()
-        assertTrue(SourceNativeCspResourceHandler.isValidNonce(nonce))
+        assertTrue(SourceNativeContentSecurityPolicy.isValidNonce(nonce))
 
         val bodyNonces = htmlNonce.findAll(response.body()).map { it.groupValues[1] }.toList()
         assertTrue("expected Vite meta/style/script nonce attributes", bodyNonces.size >= 3)
