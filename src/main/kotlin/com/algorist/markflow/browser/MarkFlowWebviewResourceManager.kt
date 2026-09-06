@@ -277,6 +277,11 @@ internal object MarkFlowWebviewResourceManager {
 
         try {
             val size = Files.size(target)
+            if (!isAllowedSourceNativeLocalImageSize(size)) {
+                sendStatus(exchange, 413)
+                return
+            }
+
             exchange.responseHeaders["Content-Type"] = contentType
             exchange.responseHeaders["Cache-Control"] = "no-store"
             exchange.responseHeaders["X-Content-Type-Options"] = "nosniff"
@@ -532,6 +537,10 @@ internal object MarkFlowWebviewResourceManager {
         }
     }
 
+    internal fun isAllowedSourceNativeLocalImageSize(size: Long): Boolean {
+        return size in 0..SOURCE_NATIVE_LOCAL_IMAGE_MAX_BYTES
+    }
+
     private fun mintSourceNativeLocalImageToken(): String {
         val bytes = ByteArray(SOURCE_NATIVE_LOCAL_IMAGE_TOKEN_BYTES)
         secureRandom.nextBytes(bytes)
@@ -550,6 +559,7 @@ internal object MarkFlowWebviewResourceManager {
     private const val WEBVIEW_ENTRY_RESOURCE = "webview/index.html"
     private const val LOCAL_DOCUMENT_PREFIX = "__markflow_local__"
     internal const val SOURCE_NATIVE_LOCAL_IMAGE_PREFIX = "__markflow_source_image__"
+    internal const val SOURCE_NATIVE_LOCAL_IMAGE_MAX_BYTES: Long = 64L * 1024L * 1024L
 }
 
 internal data class LocalDocumentRegistration(
