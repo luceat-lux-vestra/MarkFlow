@@ -9,6 +9,8 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const corePath = resolve(repositoryRoot, "webview/src/editor/source-native-editor.ts");
 const pastePath = resolve(repositoryRoot, "webview/src/editor/source-native-paste.ts");
 const syncPath = resolve(repositoryRoot, "webview/src/sync/source-native-sync.ts");
+const policyPath = resolve(repositoryRoot, "webview/src/trust/preview-trust-policy.ts");
+const localImagePath = resolve(repositoryRoot, "webview/src/trust/source-native-local-image.ts");
 const navigationGuardPath = resolve(repositoryRoot, "webview/src/trust/source-native-navigation-guard.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
 
@@ -69,12 +71,22 @@ const pasteUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
 const syncUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(syncPath, "utf8"), new Map([["../editor/source-native-editor.ts", coreUrl]]))
 )}`;
+const policyUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(policyPath, "utf8"))
+)}`;
+const localImageUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(localImagePath, "utf8"), new Map([
+        ...packageUrls,
+        ["./preview-trust-policy.ts", policyUrl]
+    ]))
+)}`;
 const navigationGuardUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(navigationGuardPath, "utf8"), packageUrls)
 )}`;
 const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(bootstrapPath, "utf8"), new Map([
         ["../editor/source-native-paste.ts", pasteUrl],
+        ["../trust/source-native-local-image.ts", localImageUrl],
         ["../trust/source-native-navigation-guard.ts", navigationGuardUrl],
         ["../sync/source-native-sync.ts", syncUrl]
     ]))
@@ -88,6 +100,7 @@ function makeHostWindow(overrides = {}) {
             __markflowSourceNativeReady: undefined,
             __markflowSourceNativeReceive: undefined,
             __markflowSourceNativeInit: undefined,
+            __markflowSourceNativeSetLocalImageCapability: undefined,
             __markflowHostGlueInstalled: undefined
         },
         overrides
@@ -109,6 +122,7 @@ test("missing attachmentId or runtimeToken in location.search fails closed witho
     );
     assert.equal(hostWindow.__markflowSourceNativeReceive, undefined);
     assert.equal(hostWindow.__markflowSourceNativeInit, undefined);
+    assert.equal(hostWindow.__markflowSourceNativeSetLocalImageCapability, undefined);
 
     assert.throws(
         () => bootstrap.installSourceNativeBootstrap(parent, hostWindow, "?attachmentId=a1"),
@@ -117,7 +131,7 @@ test("missing attachmentId or runtimeToken in location.search fails closed witho
     parent.remove();
 });
 
-test("install defines the receive/init seam and does not signal readiness before host glue arrives", () => {
+test("install defines receive/init/local-image seams and does not signal readiness before host glue arrives", () => {
     const hostWindow = makeHostWindow();
     const parent = makeParent();
 
@@ -125,9 +139,11 @@ test("install defines the receive/init seam and does not signal readiness before
 
     assert.equal(typeof hostWindow.__markflowSourceNativeReceive, "function");
     assert.equal(typeof hostWindow.__markflowSourceNativeInit, "function");
+    assert.equal(typeof hostWindow.__markflowSourceNativeSetLocalImageCapability, "function");
     assert.equal(attachment.state, "BOOTSTRAP");
 
     attachment.dispose();
+    assert.equal(hostWindow.__markflowSourceNativeSetLocalImageCapability, undefined);
     parent.remove();
 });
 

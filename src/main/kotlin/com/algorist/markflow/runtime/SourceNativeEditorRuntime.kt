@@ -31,19 +31,21 @@ import java.util.concurrent.atomic.AtomicInteger
  * - one [AttachmentSyncCoordinator] consuming an already-owned/shared [DocumentSessionLease];
  * - one [AttachmentHostUpdateBinding];
  * - one [DocumentSessionRegistry] consumer lease;
+ * - at most one document-scoped [SourceNativeLocalImageCapability];
  * - one webview-resource-manager reference when the default bundled source-native page is used.
  *
  * It does not own IntelliJ [Document] authority or [com.algorist.markflow.document.DocumentRevision]
  * advancement (owned by [com.algorist.markflow.document.DocumentSession]), does not pool browsers,
  * and does not derive [AttachmentId] from a browser/lease/session identity. Replacing a runtime
  * means disposing this instance and constructing a new one via [create]; the new instance always
- * has a fresh [AttachmentId] and a fresh transport.
+ * has a fresh [AttachmentId], a fresh transport and, when available, a fresh local-image capability.
  */
 internal class SourceNativeEditorRuntime private constructor(
     private val lease: DocumentSessionLease,
     val attachmentId: AttachmentId,
     private val runtimeToken: String,
     private val transport: SourceNativeRuntimeTransport,
+    private val localImageCapability: SourceNativeLocalImageCapability?,
     sourceNativeUrl: String,
     private val releaseWebviewResource: (() -> Unit)?,
 ) : Disposable {
@@ -162,6 +164,7 @@ internal class SourceNativeEditorRuntime private constructor(
         if (!isCurrentRuntime() || bootstrapSent) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         bootstrapSent = true
+        installLocalImageCapabilityIfAvailable()
         val snapshot = lease.session.authoritativeSnapshot()
         deliverToWeb(
             AttachmentWireCodec.encode(
@@ -172,6 +175,29 @@ internal class SourceNativeEditorRuntime private constructor(
                 ),
             ),
         )
+    }
+
+    /**
+     * Transfers only the opaque loopback capability URL into the trusted source-native module.
+     * A missing/older web seam or optional image-capability failure degrades image preview only;
+     * it must never block the authoritative source bootstrap.
+     */
+    private fun installLocalImageCapabilityIfAvailable() {
+        val capability = localImageCapability ?: return
+        val baseUrlLiteral = gson.toJson(capability.baseUrl)
+        try {
+            transport.executeJavaScript(
+                """
+                (function(baseUrl) {
+                    if (typeof window.__markflowSourceNativeSetLocalImageCapability === 'function') {
+                        window.__markflowSourceNativeSetLocalImageCapability(baseUrl);
+                    }
+                })($baseUrlLiteral);
+                """.trimIndent(),
+            )
+        } catch (_: Exception) {
+            // Image preview is optional presentation. Core source/bootstrap semantics remain usable.
+        }
     }
 
     private fun deliverHostIncrementalUpdate(update: AuthoritativeHostUpdate) {
@@ -243,6 +269,7 @@ internal class SourceNativeEditorRuntime private constructor(
         if (::coordinator.isInitialized) {
             release { coordinator.dispose() }
         }
+        localImageCapability?.let { release(it::dispose) }
         release { transport.dispose() }
         release { lease.dispose() }
         releaseWebviewResource?.let { release(it) }
@@ -272,6 +299,10 @@ internal class SourceNativeEditorRuntime private constructor(
          * suppliers (used by deterministic tests) are external/non-owned resources and therefore
          * have no corresponding manager release.
          *
+         * When [documentPath] is supplied, the runtime also attempts to create one independent,
+         * document-scoped local-image capability. Capability creation returning `null` is an
+         * intentional degraded-image path; it does not prevent source-native editing.
+         *
          * Any exception before ownership transfer rolls back every resource already acquired. If
          * runtime initialization fails after transfer (for example `loadUrl` throws), the runtime
          * constructor performs the same all-resources rollback before rethrowing.
@@ -279,9 +310,13 @@ internal class SourceNativeEditorRuntime private constructor(
         fun create(
             project: Project,
             document: Document,
+            documentPath: String? = null,
             sourceNativeBaseUrl: (() -> String?)? = null,
             isJcefAvailable: () -> Boolean = { MarkFlowJcefSupport.isAvailable },
             transportFactory: () -> SourceNativeRuntimeTransport = { JcefSourceNativeRuntimeTransport() },
+            localImageCapabilityFactory: (String) -> SourceNativeLocalImageCapability? = {
+                path -> SourceNativeLocalImageCapability.create(path)
+            },
         ): SourceNativeEditorRuntime? {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (!isJcefAvailable()) return null
@@ -300,10 +335,12 @@ internal class SourceNativeEditorRuntime private constructor(
 
             var lease: DocumentSessionLease? = null
             var transport: SourceNativeRuntimeTransport? = null
+            var localImageCapability: SourceNativeLocalImageCapability? = null
             var ownershipTransferred = false
 
             try {
                 lease = DocumentSessionRegistry.getInstance(project).acquire(document)
+                localImageCapability = documentPath?.let(localImageCapabilityFactory)
                 val attachmentId = SourceNativeRuntimeIdentity.freshAttachmentId()
                 val runtimeToken = SourceNativeRuntimeIdentity.freshRuntimeToken()
                 transport = transportFactory()
@@ -316,13 +353,18 @@ internal class SourceNativeEditorRuntime private constructor(
                     attachmentId = attachmentId,
                     runtimeToken = runtimeToken,
                     transport = transport,
+                    localImageCapability = localImageCapability,
                     sourceNativeUrl = sourceNativeUrl,
                     releaseWebviewResource = releaseWebviewResource,
                 )
             } catch (failure: Throwable) {
                 if (!ownershipTransferred) {
-                    cleanupBeforeOwnershipTransfer(transport, lease, releaseWebviewResource)
-                        ?.let(failure::addSuppressed)
+                    cleanupBeforeOwnershipTransfer(
+                        transport,
+                        localImageCapability,
+                        lease,
+                        releaseWebviewResource,
+                    )?.let(failure::addSuppressed)
                 }
                 throw failure
             }
@@ -330,6 +372,7 @@ internal class SourceNativeEditorRuntime private constructor(
 
         private fun cleanupBeforeOwnershipTransfer(
             transport: SourceNativeRuntimeTransport?,
+            localImageCapability: SourceNativeLocalImageCapability?,
             lease: DocumentSessionLease?,
             releaseWebviewResource: (() -> Unit)?,
         ): Throwable? {
@@ -349,6 +392,7 @@ internal class SourceNativeEditorRuntime private constructor(
             }
 
             transport?.let { release(it::dispose) }
+            localImageCapability?.let { release(it::dispose) }
             lease?.let { release(it::dispose) }
             releaseWebviewResource?.let { release(it) }
             return firstFailure

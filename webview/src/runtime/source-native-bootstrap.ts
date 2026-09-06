@@ -1,4 +1,8 @@
 import {installSourceNativeMarkdownPaste} from "../editor/source-native-paste.ts";
+import {
+    installSourceNativeLocalImagePreview,
+    type SourceNativeLocalImageHostBridge
+} from "../trust/source-native-local-image.ts";
 import {installSourceNativeNavigationGuard} from "../trust/source-native-navigation-guard.ts";
 import {
     SourceNativeAttachment,
@@ -18,7 +22,7 @@ const MAX_IDENTITY_LENGTH = 128;
  * host-side glue calls it directly once installed. Neither side polls or retries; whichever side
  * finishes setup second makes the single deterministic call into the other.
  */
-export interface SourceNativeHostBridge {
+export interface SourceNativeHostBridge extends SourceNativeLocalImageHostBridge {
     __markflowSourceNativeSend?: (
         raw: string,
         onSuccess: (response: string) => void,
@@ -77,6 +81,7 @@ export function installSourceNativeBootstrap(
     });
     installSourceNativeMarkdownPaste(attachment.editor.view);
     installSourceNativeNavigationGuard(attachment.editor.view, parent);
+    installSourceNativeLocalImagePreview(attachment.editor.view, hostWindow);
 
     hostWindow.__markflowSourceNativeReceive = (raw: string) => {
         attachment.receiveRaw(raw);
