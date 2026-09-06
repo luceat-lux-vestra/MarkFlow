@@ -9,6 +9,7 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const corePath = resolve(repositoryRoot, "webview/src/editor/source-native-editor.ts");
 const pastePath = resolve(repositoryRoot, "webview/src/editor/source-native-paste.ts");
 const syncPath = resolve(repositoryRoot, "webview/src/sync/source-native-sync.ts");
+const navigationGuardPath = resolve(repositoryRoot, "webview/src/trust/source-native-navigation-guard.ts");
 const bootstrapPath = resolve(repositoryRoot, "webview/src/runtime/source-native-bootstrap.ts");
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {pretendToBeVisual: true});
@@ -68,9 +69,13 @@ const pasteUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
 const syncUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(syncPath, "utf8"), new Map([["../editor/source-native-editor.ts", coreUrl]]))
 )}`;
+const navigationGuardUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
+    transpile(readFileSync(navigationGuardPath, "utf8"), packageUrls)
+)}`;
 const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(
     transpile(readFileSync(bootstrapPath, "utf8"), new Map([
         ["../editor/source-native-paste.ts", pasteUrl],
+        ["../trust/source-native-navigation-guard.ts", navigationGuardUrl],
         ["../sync/source-native-sync.ts", syncUrl]
     ]))
 )}`;
