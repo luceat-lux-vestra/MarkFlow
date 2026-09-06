@@ -133,10 +133,11 @@ internal object MarkFlowWebviewResourceManager {
     private fun ensureWebviewHttpServerLocked(root: Path): Int? {
         webviewServerPort?.let { return it }
 
-        var server: HttpServer? = null
+        var rollbackServer: HttpServer? = null
         return try {
             val sourceNative = SourceNativeWebviewHttpBoundary(root)
-            server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            rollbackServer = server
             server.createContext("/") { exchange ->
                 val requestUri = exchange.requestURI
                 val requestPath = requestUri?.path.orEmpty()
@@ -171,7 +172,7 @@ internal object MarkFlowWebviewResourceManager {
             server.address.port
         } catch (ex: Exception) {
             try {
-                server?.stop(0)
+                rollbackServer?.stop(0)
             } catch (stopFailure: Exception) {
                 ex.addSuppressed(stopFailure)
             }
