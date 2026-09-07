@@ -1,8 +1,8 @@
-# Repository hardening checks. The required-context candidate stays staged until
-# this job has been observed reliably on merged main and ordinary pull requests.
-# Scheduled/manual audit is credential-less by default. Privileged live GitHub
-# administration readback is an explicit opt-in boundary and is never inferred
-# from a successful offline audit.
+# Repository hardening checks. Same-repository PR/main reliability is proven; the
+# required-context candidate stays staged until an unprivileged fork PR proves this
+# exact context cannot wedge external contribution. Scheduled/manual audit is
+# credential-less by default. Privileged live GitHub administration readback remains
+# an explicit opt-in boundary and is never inferred from a successful offline audit.
 
 name: Hardening audit
 
@@ -22,9 +22,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # This is the staged candidate context. It never receives a repository-admin
-  # secret, so it is safe on pull requests and remains the default scheduled/
-  # manual drift check for repository-owned policy and workflow state.
   audit:
     name: Hardening audit
     runs-on: ubuntu-latest
@@ -40,6 +37,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.3
+          cache: false
 
       - name: Install actionlint
         env:
@@ -53,8 +51,6 @@ jobs:
       - name: Run actionlint across all workflows
         run: actionlint -color
 
-      # The action has no Advanced Security upload or online audits. Its read-only
-      # workflow token is only for the scanner invocation, never live administration.
       - name: Run zizmor across all workflows
         uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
         with:
@@ -105,13 +101,12 @@ jobs:
       - name: Run offline merge-gate audit
         run: bash .github/scripts/hardening-audit.sh --mode gate --no-network
 
+      - name: Verify repository hardening contract
+        run: bash .github/scripts/repository-hardening-contract.sh
+
       - name: Run release preflight fixtures
         run: bash .github/scripts/release-preflight-test.sh
 
-  # Optional privileged readback. It is disabled unless a maintainer deliberately
-  # opts in with repository variable HARDENING_LIVE_READBACK_ENABLED=true and
-  # separately provisions the scoped credential. The repository does not require
-  # either setting for normal PR, push, scheduled, or manual hardening audits.
   live-readback:
     name: Live hardening readback
     if: ${{ vars.HARDENING_LIVE_READBACK_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) }}

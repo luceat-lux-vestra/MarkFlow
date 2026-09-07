@@ -56,7 +56,7 @@ If more than one pending identity or more than one published identity asset exis
 Download the identity assets without modifying the release:
 
 ```bash
-repo="luceat-lux-vestra/MarkFlow-private"
+repo="luceat-lux-vestra/MarkFlow"
 version="YY.MM.DD.HHMMSS"
 
 gh api "repos/$repo/releases/tags/$version" > /tmp/markflow-release.json

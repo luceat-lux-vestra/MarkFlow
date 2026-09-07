@@ -20,7 +20,7 @@ Authority order is:
 4. focused target Tasks, including #143–#156;
 5. current implementation/tests/historical docs as evidence only.
 
-#139 is the architecture reset gate. It remains open until #141 migration classification/guidance/backlog reconciliation is merged and post-main verified. Closing #139 does not close #52.
+#139 architecture reset and #141 migration reconciliation are completed. #143 native editor shell proof is also completed; none of those completions closes #52 or authorizes production cutover. Runtime Leap implementation remains owned by the still-open target Tasks, with #153 as the production cutover owner and #154 as the old browser-editor/protocol purge owner.
 
 ## Maintainer responsibilities
 
@@ -42,6 +42,18 @@ The intended merge contract for `main` is pull-request-only, squash-only, linear
 A review PASS belongs to one exact PR HEAD SHA. If HEAD changes, review again. `UNKNOWN`, `UNVERIFIED`, or insufficient evidence are FAIL. Merge only the reviewed `expected_head_sha`, then verify resulting `main` SHA/tree/signature and post-main checks before closing the linked Task.
 
 Repository hardening is owned separately from runtime Leap work. Runtime architecture acceptance never follows from repository CI green alone.
+
+## Dependency update governance
+
+Dependabot is a discovery and maintenance mechanism, not authority to merge a dependency change. Dependency pull requests never auto-merge and remain subject to the same exact-final-HEAD proof obligation as maintainer-authored changes.
+
+- Security updates remain independent from routine version-update grouping unless a separately reviewed security-grouping policy explicitly says otherwise.
+- Major updates remain individually visible as migration signals; do not blanket-ignore them merely to reduce notification volume.
+- Gradle libraries/plugins/toolchain updates remain individually reviewable rather than being hidden in one generic batch.
+- In `/webview`, only explicitly listed low-risk development tools may share a minor/patch version-update group. TypeScript, Vite, production dependencies, editor dependencies, and renderer dependencies remain individual update signals.
+- GitHub Actions minor/patch version updates may be grouped as one workflow-maintenance unit; major updates remain individual.
+- A bump that requires code, configuration, behavior, compatibility, or architecture migration must move to a dedicated owned issue/work item instead of being merged as a routine bot bump.
+- Dependency grouping must never weaken Dependabot alert/security-update behavior, the merge gate, or release provenance.
 
 ## Release governance
 

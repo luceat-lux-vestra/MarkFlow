@@ -57,7 +57,7 @@
       "workflow": ".github/workflows/hardening-audit.yml",
       "job": "audit",
       "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
-      "promotion": "Only after this context is observed on merged main and ordinary pull requests, promote this exact context in this policy and the live main ruleset together."
+      "promotion": "Same-repository PR and merged-main reliability are proven. Promote only after an unprivileged fork PR proves this exact context is emitted and passes without privileged state, then re-read live administration state and update this policy and the live main ruleset atomically."
     }
   ],
 
@@ -82,7 +82,7 @@
       "gate checks are offline and run in the staged Hardening audit job on PR/push/schedule/manual events.",
       "report checks require authoritative live GitHub readback and are run only from an explicit admin-controlled audit path.",
       "The optional in-Actions live-readback job is disabled by default and requires an explicit repository-variable opt-in plus scoped credential.",
-      "The Hardening audit context itself remains staged_required until live promotion evidence exists."
+      "The Hardening audit context itself remains staged_required until fork execution evidence and an atomic live promotion are both proven."
     ],
     "policy_shape": "gate",
     "policy_producers": "gate",
@@ -103,9 +103,9 @@
   "staged": [
     {
       "check": "ruleset_sync",
-      "blocked_by": "Hardening audit remains staged until reliable ordinary-PR/merged-main evidence and authoritative external or explicitly enabled admin readback are both available.",
+      "blocked_by": "The staged Hardening audit is intentionally not present in the live required contexts until an unprivileged fork PR proves it cannot wedge external contributions; current required contexts are still compared exactly during authoritative readback.",
       "promote_to": "gate",
-      "when": "after authoritative live readback proves policy/live-main agreement and the staged context has reliable PR/main evidence; no long-lived Actions admin credential is required"
+      "when": "after fork execution evidence justifies Hardening audit promotion and the live ruleset/policy change is reviewed atomically; no long-lived Actions admin credential is required"
     },
     {
       "check": "release_tag_ruleset",
@@ -115,9 +115,9 @@
     },
     {
       "check": "required_context_promotion",
-      "blocked_by": "Hardening audit is intentionally staged until ordinary PR and merged-main reliability evidence exists.",
+      "blocked_by": "Same-repository PR/merged-main reliability and external live readback are proven; unprivileged fork-PR execution is not yet proven and the repository currently has no forks.",
       "promote_to": "ruleset",
-      "when": "after the context is observed on merged main and ordinary pull requests, add it to required and the live main ruleset in one reviewed change"
+      "when": "after an unprivileged fork PR proves Hardening audit execution on its exact head, followed by fresh ordinary-PR/main evidence and authoritative live readback; add the context to required and the live main ruleset in one reviewed change"
     }
   ]
 }
