@@ -1,6 +1,28 @@
 name: JCEF Transport Evidence
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/jcef-transport-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbe.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/JcefTransportEnvelopeProbeStarter.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeBrowserRequestPolicy.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeEditorRuntime.kt'
+      - 'src/main/kotlin/com/algorist/markflow/runtime/SourceNativeRuntimeTransport.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentIdentity.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentMutationProtocol.kt'
+      - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentWireProtocol.kt'
+      - 'webview/package.json'
+      - 'webview/source-native.html'
+      - 'webview/vite.config.ts'
+      - 'webview/vite.source-native.config.ts'
+      - 'webview/src/runtime/source-native-bootstrap.ts'
+      - 'webview/src/sync/source-native-sync.ts'
   pull_request:
     paths:
       - '.github/workflows/jcef-transport-evidence.yml'

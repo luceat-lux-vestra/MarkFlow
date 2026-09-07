@@ -12,7 +12,7 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines replacement-first Leap policy. Issue #139 is the architecture reset gate. #140 records the first-principles comparison. PR #142 merged ADR 0001 and ADR 0002. #141 owns repository-wide migration classification/stale-guidance/backlog reconciliation before #139 may close.
+Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. These completed gates do not authorize production cutover; #153 remains the cutover owner.
 
 ## Accepted target
 
@@ -56,7 +56,7 @@ Do not:
 
 ## Migration execution
 
-#141 defines the canonical execution graph:
+#141 defines the canonical execution graph. #143 is completed; the remaining nodes stay implementation/convergence work and are not part of repository hardening:
 
 - early parallel candidates: #143 native shell proof, #144 renderer extraction, #150 image-import product decision;
 - #143 -> #145 projection foundation;
@@ -72,7 +72,7 @@ Do not:
 - #155 -> #156 final compatibility/lifecycle/performance/release convergence;
 - #156 -> #84 eligible to close.
 
-#139 may close after #141 repository-reset evidence is merged/post-main verified. #52 remains open until implementation/convergence completes.
+#139 and #141 are completed. #52 remains open until implementation/convergence completes.
 
 ## When an ADR is required
 

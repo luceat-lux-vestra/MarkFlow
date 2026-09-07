@@ -3,8 +3,8 @@
 The `Hardening audit` workflow has two trust modes. The `audit` job performs
 static, producer, workflow-security, and fixture checks without an
 administration credential on pull requests, pushes, schedules, and manual
-runs. Its `Hardening audit` context is still staged and is not a required
-`main` context.
+runs. Its `Hardening audit` context is staged and is not a required `main`
+context.
 
 That credential-less job is the default scheduled drift detector. A successful
 run proves only repository-owned policy/workflow invariants that the job can
@@ -37,6 +37,57 @@ matched entry without an id stop the readback. The main ruleset must have
 `target=branch` and exactly `include=["~DEFAULT_BRANCH"]`, while the release
 ruleset must have `target=tag` and exactly `include=["~ALL"]`; both must have
 `exclude=[]`.
+
+## Staged-context re-evaluation — 2026-09-07
+
+The original staging reason has been re-evaluated against current evidence,
+not historical assumptions:
+
+- ordinary same-repository PR evidence exists on PR #158 exact HEAD
+  `7ca8cf38ed9bdc19eeb59215c4de5962aa312d70`; Hardening audit run
+  `34082389808` completed successfully on that HEAD;
+- merged-main evidence exists on exact `main`
+  `9f882f92f7e875ea9c1b14207a6eb020568ec750`; push run `34092433264`
+  completed successfully;
+- an authenticated external hardening readback on that same `main` confirmed
+  the live `main protection` and `release tag immutability` rulesets plus
+  repository merge settings still match the checked-in policy;
+- the repository currently has no forks, so there is no unprivileged fork-PR
+  execution proving this additional context cannot wedge a first external
+  contribution.
+
+Under the proof-obligation gate, missing fork evidence is not promoted to a
+claim of safety. `Hardening audit` therefore remains staged even though its
+same-repository PR/main reliability and the external live-readback procedure
+are proven. The explicit re-evaluation trigger is the first unprivileged fork
+PR: the context must be emitted for that PR's exact HEAD, complete without
+privileged repository state or secrets, and pass. Promotion then requires a
+fresh ordinary-PR/main reliability read, authoritative live administration
+readback, and one reviewed atomic change to both `.github/merge-gate-policy.json`
+and the live `main protection` required contexts. No long-lived Actions admin
+credential is required merely to reach parity.
+
+Specialized runtime evidence workflows are not global required contexts.
+Native-editor/JCEF probes are path/task-specific evidence producers whose
+availability depends on the affected subsystem and migration phase. They remain
+review obligations when applicable, not checks that every repository-only PR
+must emit.
+
+## Issue metadata automation disposition
+
+Repository issue forms already apply deterministic type metadata where the
+form itself establishes the classification: the bug form applies `type:bug`
+and the architecture-change form applies `type:research`. That is sufficient
+for reliable form-origin metadata without executing issue content.
+
+A generic issue-open/title classifier is intentionally not added. Maintainer
+created work items use a broader vocabulary whose type/area cannot be inferred
+reliably from arbitrary title text, and an additional `issues: write`
+automation would add mutation authority while risking incorrect maintainer-owned
+metadata. The trigger for revisiting this decision is a new deterministic form
+or other repository-owned structured field that maps one-to-one to an existing
+managed label. Validation and metadata automation must remain separate, and no
+issue or PR body may be executed as code.
 
 ## Credential contract
 
