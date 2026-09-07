@@ -31,6 +31,34 @@ if grep -Eq '^[[:space:]]+gradle[[:space:]]+runIdeForUiTests' .github/workflows/
 fi
 grep -q './gradlew runIdeForUiTests' .github/workflows/run-ui-tests.yml || die "UI workflow does not use the Gradle wrapper"
 
+build_workflow=".github/workflows/build.yml"
+if grep -qi 'codecov' "$build_workflow"; then
+  die "required Build workflow must not hide a non-authoritative external Codecov upload"
+fi
+test_job="$(awk '
+  /^  test:$/ { on=1 }
+  on && /^  inspectCode:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$test_job" ] || die "required Test job could not be located"
+coverage_count="$(grep -c '^[[:space:]]*- name: Upload Kover Coverage Report$' <<<"$test_job" || true)"
+[ "$coverage_count" = "1" ] || die "required Test job must contain exactly one Kover coverage artifact step"
+coverage_block="$(awk '
+  /^[[:space:]]*- name: Upload Kover Coverage Report$/ { on=1; start=NR }
+  on && NR > start && /^      - name:/ { exit }
+  on { print }
+' <<<"$test_job")"
+grep -q 'uses: actions/upload-artifact@' <<<"$coverage_block" || die "Kover coverage evidence is not uploaded as a GitHub artifact"
+grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artifact name is missing"
+grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
+grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
+if grep -q '^[[:space:]]*if:' <<<"$coverage_block"; then
+  die "Kover coverage artifact step must not be conditionally suppressed"
+fi
+if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
+  die "Kover coverage artifact upload must not continue on error"
+fi
+
 dependabot=".github/dependabot.yml"
 gradle_block="$(awk '/package-ecosystem: "gradle"/{on=1} /package-ecosystem: "npm"/{on=0} on' "$dependabot")"
 npm_block="$(awk '/package-ecosystem: "npm"/{on=1} /package-ecosystem: "github-actions"/{on=0} on' "$dependabot")"
