@@ -1,0 +1,171 @@
+name: Native Projection Evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/native-projection-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'docs/architecture/native-markdown-projection-foundation.md'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/0001-native-authority-projection-architecture.md'
+      - 'docs/architecture/README.md'
+  pull_request:
+    paths:
+      - '.github/workflows/native-projection-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'docs/architecture/native-markdown-projection-foundation.md'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/0001-native-authority-projection-architecture.md'
+      - 'docs/architecture/README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-projection-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native projection probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-projection-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native projection probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeProjectionProbe --stacktrace
+
+      - name: Validate native projection evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-projection-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native projection probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 2:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('parserStrategy') != 'JETBRAINS_BUNDLED_MARKDOWN':
+              raise SystemExit(f"unexpected parser strategy: {evidence.get('parserStrategy')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native projection proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-projection-path',
+              'authoritative-document-fixture',
+              'platform-text-and-markdown-coexistence',
+              'attach-no-edit-source-stability',
+              'parser-proven-projection-plan',
+              'inline-and-block-native-presentation',
+              'caret-and-selection-exact-source-reveal',
+              'stale-plan-rejected-before-apply',
+              'document-change-refresh',
+              'config-stale-plan-rejected-before-apply',
+              'typed-degradation-falls-back-to-source',
+              'split-editor-presentation-isolation',
+              'malformed-unsupported-source-degrades-safely',
+              'refresh-recreate-dispose-source-stability',
+              'final-lifecycle-ownership',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native projection evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native projection case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native projection required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native projection proof did not run inside a real opened project: {fixture_detail}')
+          stale_detail = str(by_id['stale-plan-rejected-before-apply'].get('detail', ''))
+          if 'staleRejected=true' not in stale_detail:
+              raise SystemExit(f'source-stale projection was not proven rejected: {stale_detail}')
+          config_stale_detail = str(by_id['config-stale-plan-rejected-before-apply'].get('detail', ''))
+          if 'configStaleRejected=true' not in config_stale_detail or 'recoveredGeneration=2' not in config_stale_detail:
+              raise SystemExit(f'config-stale projection contract incomplete: {config_stale_detail}')
+          degraded_detail = str(by_id['typed-degradation-falls-back-to-source'].get('detail', ''))
+          if 'exactSourceFallback=true' not in degraded_detail or 'recovered=true' not in degraded_detail:
+              raise SystemExit(f'typed degradation/recovery contract incomplete: {degraded_detail}')
+          reveal_detail = str(by_id['caret-and-selection-exact-source-reveal'].get('detail', ''))
+          if 'multicaretSelectionReveal=true' not in reveal_detail:
+              raise SystemExit(f'multicaret source-reveal evidence incomplete: {reveal_detail}')
+          lifecycle_detail = str(by_id['final-lifecycle-ownership'].get('detail', ''))
+          if 'controllers=0' not in lifecycle_detail or 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'projection lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          print(f"Native projection verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"Parser: {evidence['parserStrategy']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native projection evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-projection-evidence
+          path: |
+            build/native-projection-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-native-projection-xvfb.log
+          if-no-files-found: warn

@@ -8,6 +8,9 @@
     <!-- Since 2026.2 JCEF ships as a separate bundled plugin; without this dependency com.intellij.ui.jcef.*
          is not visible to the plugin classloader. #144/#155 own the target renderer dependency boundary. -->
     <depends>com.intellij.modules.jcef</depends>
+    <!-- #145 uses the bundled JetBrains Markdown parser on immutable Document snapshots.
+         This is a parser/range dependency only; the bundled Markdown editor remains free to coexist with MarkFlow. -->
+    <depends>org.intellij.plugins.markdown</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
@@ -24,6 +27,7 @@
                 internal="true"/>
         <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
     </extensions>
 
