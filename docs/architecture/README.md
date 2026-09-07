@@ -22,6 +22,8 @@ ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migr
 
 #143 resolves ADR 0001's lower-level shell choice: the target **augments the normal IntelliJ platform text editor** and attaches per-editor MarkFlow presentation through maintained native editor lifecycle APIs. A MarkFlow-owned replacement `FileEditor` shell is rejected because it adds provider/state/input/focus/lifecycle ownership without an independent product requirement. See `native-editor-shell-selection.md`. This selection does not itself cut production over; #153 remains the cutover owner.
 
+#145 establishes the next target foundation over that selected shell: **an immutable exact `Document` snapshot and source/config identity are parsed into an immutable `NativeProjectionPlan`, then applied by one source-neutral `NativePresentationController` per native editor**. The initial mechanism and evidence contract are recorded in `native-markdown-projection-foundation.md`. #145 is a projection foundation, not ordinary-Markdown parity and not production cutover.
+
 Target principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
@@ -37,7 +39,7 @@ Target principles:
 11. **Replacement includes already-merged Leap code.** Current CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation survives only where #141 independently justifies a responsibility.
 12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
-See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
+See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
 
 ## Architecture anti-goals
 
@@ -56,10 +58,12 @@ Do not:
 
 ## Migration execution
 
-#141 defines the canonical execution graph. #143 is completed; the remaining nodes stay implementation/convergence work and are not part of repository hardening:
+#141 defines the canonical dependency graph. Durable resolutions and ownership are:
 
-- early parallel candidates: #143 native shell proof, #144 renderer extraction, #150 image-import product decision;
-- #143 -> #145 projection foundation;
+- **#143 completed** — platform text-editor augmentation selected/proven;
+- **#145 owns** the native projection plan/per-editor controller foundation over completed #143;
+- #144 renderer extraction and #150 image-import product decision remain independently eligible work;
+- #145 completion is determined only by its Task's exact-final-HEAD and post-main proof gate; once complete, #146/#147/#149 become eligible according to their own dependencies/contracts, while #148 still requires #144 and #151 still requires #150 + #147;
 - #143 + #145 -> #146 native paste/actions/state;
 - #145 -> #147 host local-image/navigation;
 - #144 + #145 -> #148 Mermaid/KaTeX native inlays;
@@ -72,7 +76,7 @@ Do not:
 - #155 -> #156 final compatibility/lifecycle/performance/release convergence;
 - #156 -> #84 eligible to close.
 
-#139 and #141 are completed. #52 remains open until implementation/convergence completes.
+Transient Task state belongs in #52 and the individual Task issue rather than this architecture index. #139 and #141 are completed. #52 remains open until implementation/convergence completes.
 
 ## When an ADR is required
 

@@ -1,14 +1,21 @@
 # Leap migration inventory and execution map
 
-Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002
+Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through #145
 
-Audited base:
+Original #141 audited base:
 
 - `main`: `c130ceb2648e262414cd0aed9cc463c78d9b27ec`
 - tree: `971320e0a9fd77e8cc1bbcc82d25256fc5539a7c`
 - commit: `docs(leap): select native-authority projection architecture (#142)`
 
-This document contains **no production migration implementation**. It classifies current responsibilities, reconciles stale authority, and defines the target-derived backlog.
+The original inventory classified repository responsibilities without production migration implementation. Subsequent target Tasks may resolve lower-level choices recorded here; those resolutions are appended/reconciled rather than rewriting the audited base as if it had known the future.
+
+Current execution resolutions relevant to this inventory:
+
+- #139/#141 are completed;
+- #143 is completed and selected **`PLATFORM_TEXT_EDITOR_AUGMENTATION`** — normal IntelliJ platform text-editor augmentation, not a MarkFlow-owned replacement `FileEditor` shell;
+- #145 establishes the immutable snapshot/parser/projection-plan/per-editor-controller foundation over that selected shell, subject to its own exact-final-HEAD and post-main proof gate;
+- #153 remains the only production native-editor cutover owner, so the current browser editor/provider/protocol remain temporary until their explicit deletion criteria are met.
 
 ## Authority hierarchy
 
@@ -17,7 +24,7 @@ When sources disagree:
 1. #78 / `docs/product/leap-capability-fidelity-contract.md` — product/source-fidelity authority;
 2. accepted ADR 0001 and ADR 0002 — architecture authority;
 3. reconciled responsibility Tracks #79–#84;
-4. target-derived Tasks #143–#156;
+4. target-derived Tasks #143–#156, including completed resolution evidence from earlier Tasks;
 5. current code/tests/historical docs — evidence only.
 
 `docs/architecture/README.md` is the repository architecture index. `AGENTS.md`, contributor/review instructions, engineering/testing guidance and README must reflect this hierarchy. Historical `plans/*` remain historical context and are not rewritten as target plans merely because they mention current files.
@@ -54,14 +61,14 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | --- | --- | --- | --- |
 | #78 product/fidelity contract + hostile/fidelity corpus | `RETAIN` | Product/evidence authority independent of editor implementation | Permanent while capability remains supported |
 | `MarkFlowFileSupport` supported-file recognition | `RETAIN` | Host-level recognition | Revisit only by product-scope decision |
-| current browser-backed `MarkFlowEditor` | `REPLACE` + `TEMPORARY` | Evidence-selected native editor shell over same `Document` | #153 owns production cutover; #154 deletes old editor after cutover proof |
-| `MarkFlowEditorProvider` JCEF-gated takeover / `HIDE_DEFAULT_EDITOR` | `REPLACE` + `TEMPORARY` | #143 selects platform augmentation vs native-editor `FileEditor`; editing cannot depend on JCEF | #143 selects shell, #153 cuts over, #154 removes superseded provider path |
+| current browser-backed `MarkFlowEditor` | `REPLACE` + `TEMPORARY` | #143 selected normal platform text-editor augmentation over the same `Document` | #153 owns production cutover; #154 deletes old editor after cutover proof |
+| `MarkFlowEditorProvider` JCEF-gated takeover / `HIDE_DEFAULT_EDITOR` | `REPLACE` + `TEMPORARY` | #143 rejected target replacement-provider ownership; target augments the platform text editor and editing cannot depend on JCEF | Current provider remains migration-only until #153; #154 removes the superseded provider path |
 | browser-shaped `MarkFlowEditorState` (`scrollTop`, JS caret/selection injection) | `EXTRACT` / `REPLACE` + `TEMPORARY` | Native editor/FileEditor state semantics, preserving only justified user intent | #146 migrates native state; #155 removes obsolete persisted/browser shape |
 | `DocumentSession`/registry/custom web revision ownership | `REPLACE` / `DELETE` + `TEMPORARY` | Native `Document` command/write/undo semantics only | Current editor owns until #153; #154 deletes when browser editor is unreachable |
-| `SourceRevisionGate` | `DELETE` + `TEMPORARY` | No web source proposal in target; derived work uses source/config task identity | #154 after #153 |
+| `SourceRevisionGate` | `DELETE` + `TEMPORARY` | No web source proposal in target; derived work uses exact source/config identity | #154 after #153 |
 | `DocumentContentDiff` / whole-content web->Document replacement | `DELETE` + `TEMPORARY` | Native user edits already modify `Document` | #154 after last web-origin edit consumer |
 | `sync/AttachmentIdentity`, mutation/ACK/recovery/wire protocol | `DELETE` + `TEMPORARY` | No cross-runtime editable source | #154 after #153 |
-| `SourceNativeEditorRuntime`, readiness/edit transport | `DELETE` + `TEMPORARY` | Native editor owns editing | #154 after #153 |
+| `SourceNativeEditorRuntime`, readiness/edit transport | `DELETE` + `TEMPORARY` | Native platform editor owns editing | #154 after #153 |
 | `JcefSourceNativeRuntimeTransport` editor transport/query lifecycle | `DELETE` + `TEMPORARY` | Any retained JCEF is renderer-only behind separate adapter | #154 after #153; renderer-specific adapter belongs #144/#148/#149 if needed |
 | shared editor browser lease/pool/recovery/prewarm/idle eviction | `DELETE` + `TEMPORARY` | No browser editor lifecycle | Current runtime until #153; #154 deletes; never repurpose by default |
 | `MarkFlowJcefSupport` generic editor availability gate | `EXTRACT` / `REPLACE` + `TEMPORARY` | Narrow optional renderer-runtime capability check only if final renderer needs JCEF | #155 renames/relocates if retained, deletes if no renderer consumer |
@@ -70,8 +77,8 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | source-native/legacy browser local-image URL/token capability | `REPLACE` + `TEMPORARY` | Host resolver -> bounded inert image artifact | #147 proves target; #154 removes old routes after cutover |
 | browser external-navigation bridge | `REPLACE` + `TEMPORARY` | Explicit host navigation action | #147 proves target; #154 removes bridge after cutover |
 | legacy Crepe/Milkdown rich editor + source reconstruction/AST/LCS | `DELETE` + `TEMPORARY` | No rich semantic source authority/reconstruction | #144 first extracts renderers; #153 cutover; #154 purge |
-| CodeMirror/Lezer source-native editor/bootstrap/sync/live-preview integration | `DELETE` + `TEMPORARY` | Native editor + projection | #145/#152 prove target; #153 cutover; #154 purge |
-| Markdown parsing/source-range lessons independent of browser editor | `EXTRACT` | Immutable snapshot -> ProjectionPlan | #145 selects/implements maintained parser/projection strategy |
+| CodeMirror/Lezer source-native editor/bootstrap/sync/live-preview integration | `DELETE` + `TEMPORARY` | Native platform editor + source-neutral projection | #145/#152 prove target; #153 cutover; #154 purge |
+| Markdown parsing/source-range lessons independent of browser editor | `EXTRACT` -> target `RETAIN` responsibility | #145 selects immutable exact `Document` snapshot -> bundled JetBrains Markdown parser -> immutable `NativeProjectionPlan`; no second editable model | #145 proves initial parser/range/presentation boundary; later replacement requires current evidence |
 | Mermaid engine `11.17.2` | `RETAIN` | Single maintained Mermaid engine during migration | Replacement requires separate renderer decision |
 | Mermaid config/theme/palette/size/zoom/error/cache/stale-result semantics | `EXTRACT` | One editor-independent derived-renderer service | #144 extracts/proves before editor adapter deletion |
 | Mermaid `createCodeMirrorFeatureConfig`, `crepeSessionId`, DOM registry/IntersectionObserver/editor visibility coupling | `DELETE` after `EXTRACT` + `TEMPORARY` | Native inlay consumes extracted service | #144 extracts; #148 proves native consumer; #154 deletes old adapters |
@@ -100,9 +107,9 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 
 No temporary item may be retained merely for rollback comfort.
 
-- **#143** owns native shell selection evidence; it does not cut production over.
+- **#143 — COMPLETED**: owns the native shell selection evidence and selected platform text-editor augmentation; it does not cut production over.
 - **#144** owns renderer extraction while the old editor remains a migration consumer.
-- **#145–#152** own target capability proof needed before cutover.
+- **#145–#152** own target capability proof needed before cutover; #145 is the first downstream editor foundation over completed #143.
 - **#153** owns the production native-editor cutover and makes the old editor unreachable as a normal authority.
 - **#154** owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
 - **#155** owns dependency/toolchain/JCEF/settings convergence after actual retained consumers are known.
@@ -161,7 +168,7 @@ If a JCEF renderer requires CSP/request/network containment, create/prove render
 - #83 — native presentation/renderer settings + persistence migration;
 - #84 — convergence, compatibility, performance and mandatory superseded-code purge.
 
-#52 and #139 must describe the accepted target/current gate state consistently with these Tracks.
+#52 and the architecture index must describe the accepted target/current gate state consistently with these Tracks.
 
 ## Stale guidance reconciliation
 
@@ -182,21 +189,21 @@ Audited contributor/agent/engineering authority that could otherwise direct work
 | `SECURITY.md` | JCEF editor/protocol as generic target trust boundary | host resources + isolated renderer target; legacy editor surfaces explicitly temporary |
 | `docs/engineering/testing-strategy.md` | host↔web synchronization as permanent contract suite | native source/projection/renderer proof; old protocol suite migration-only until purge |
 | `README.md` | target described as browser custom editor + native fallback/coexistence | clearly distinguishes current JCEF runtime from accepted native-authority target |
-| `docs/architecture/README.md` | transitional wording around PR #142 | records #142 as merged accepted architecture and points to #141/#143–#156 |
+| `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records accepted architecture, completed #143 platform augmentation, and active #145 projection foundation |
 
 Historical `plans/*` and CHANGELOG entries are preserved as historical record rather than rewritten. Current source comments/tests that accurately describe temporary production mechanisms remain implementation evidence until their owner Task deletes them; they are not elevated into architecture authority.
 
 ## Target-derived backlog #143–#156
 
-### Early independent slices
+### Completed prerequisite / independently eligible slices
 
-- **#143** `task(editor): prove and select the native IntelliJ editor integration shell`
-- **#144** `task(renderer): extract one Mermaid and KaTeX derived-renderer service from editor coupling`
-- **#150** `task(product): ratify the image-file import contract from historical public report #4`
+- **#143 — COMPLETED** `task(editor): prove and select the native IntelliJ editor integration shell` — selected `PLATFORM_TEXT_EDITOR_AUGMENTATION`.
+- **#144** `task(renderer): extract one Mermaid and KaTeX derived-renderer service from editor coupling` — independently eligible.
+- **#150** `task(product): ratify the image-file import contract from historical public report #4` — independently eligible.
 
 ### Foundation/capability slices
 
-- **#145** `task(editor): establish the native Markdown projection engine and per-editor controller` — depends on #143.
+- **#145 — ACTIVE until exact-head merge/post-main verification** `task(editor): establish the native Markdown projection engine and per-editor controller` — depends on completed #143; baseline chooses immutable exact snapshots, bundled JetBrains Markdown parser, native markup/folding and per-editor presentation ownership.
 - **#146** `task(editor): move paste, editor state and rich edit actions onto native Document semantics` — depends on #143 + #145.
 - **#147** `task(trust): implement host-owned local image projection and external navigation` — depends on #145.
 - **#148** `task(renderer): render Mermaid and KaTeX through native editor inlays` — depends on #144 + #145 and uses the same renderer service.
@@ -216,7 +223,7 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 ```text
 #141 inventory / backlog reset
         |
-        +--> #143 native shell proof
+        +--> #143 native shell proof [COMPLETED: platform augmentation]
         |
         +--> #144 renderer extraction
         |
@@ -249,15 +256,19 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 #84 eligible to close
 ```
 
-#139 is an architecture-reset gate, not the full implementation gate. It may close after #141 is merged/post-main verified. #52 remains open through implementation/convergence.
+#139/#141 are completed architecture-reset gates, not the full implementation gate. #52 remains open through implementation/convergence.
 
-## Explicit UNRESOLVED choices
+## Resolved and unresolved lower-level choices
 
-These are lower-level proof tasks, not architecture-selection blockers:
+Resolved since the original #141 inventory:
 
-- normal platform editor augmentation vs MarkFlow-owned native-editor `FileEditor` shell (#143);
-- Markdown parser/incremental projection strategy (#145);
-- exact syntax reveal technique per construct (#145/#152);
+- **native integration shell (#143):** `PLATFORM_TEXT_EDITOR_AUGMENTATION`; a MarkFlow-owned native replacement `FileEditor` shell is rejected.
+- **#145 baseline parser/projection foundation:** immutable exact `Document` snapshot + source/config identity -> bundled JetBrains Markdown parser -> immutable projection plan -> per-editor native controller; native markup plus parser-proven safe folding supply the initial presentation/reveal proof. This resolution is effective only after #145's exact-final-HEAD/post-main gate completes.
+
+Still unresolved or intentionally deferred:
+
+- full incremental/changed-range parsing strategy beyond the synchronous #145 baseline; add complexity only with measured evidence;
+- exact syntax reveal/presentation technique per remaining construct (#152 and specialized Tasks);
 - renderer execution adapter, including whether isolated JCEF/TypeScript remains (#144/#155);
 - inert artifact representation for Mermaid/KaTeX/raw HTML (#144/#148/#149);
 - final raw-HTML sanitizer/render path (#149);
@@ -266,7 +277,7 @@ These are lower-level proof tasks, not architecture-selection blockers:
 - final Node/TypeScript/Vite/JCEF packaging (#155);
 - measured cache/concurrency strategy (#156 or focused evidence task if needed).
 
-No implementation may convert one of these UNKNOWNs into a fact merely by reusing current code.
+No implementation may convert an unresolved choice into a fact merely by reusing current code.
 
 ## #68 / #72 toolchain reconciliation
 
@@ -276,36 +287,22 @@ Node/TypeScript maintenance issues remain real signals but must not run as archi
 - If no consumer remains, close those migrations as superseded and remove dead toolchain state through #155.
 - Until #154/#155 establish actual consumers, current toolchain existence is not sufficient retention evidence.
 
-## #139 close criteria
+## Historical #139/#141 completion record
 
-#139 may close only after:
+The original #141 inventory required #142 acceptance, repository classification, stale-guidance reconciliation, Track/backlog consistency, #136/#137 disposition, explicit temporary ownership/deletion criteria, exact-final-HEAD CI/ruleset/thread review, squash merge with `expected_head_sha`, and post-main SHA/tree/signature/CI verification before #141/#139 completion.
 
-- #142 architecture decision is accepted/merged;
-- this repository classification is complete and repository-visible;
-- stale contributor/agent/engineering architecture guidance is reconciled;
-- #79–#84 and #52/#139 describe the accepted target consistently;
-- #136/#137 disposition is recorded;
-- #143–#156 dependency graph exists and matches issue bodies;
-- every temporary mechanism has owner/deletion criterion;
-- explicit lower-level UNKNOWNs remain visible;
-- #141 exact final HEAD passes strict review, CI, live ruleset/thread checks and mechanism-consistency search;
-- #141 is squash-merged with `expected_head_sha`;
-- resulting `main` SHA/tree/signature and post-main Build/Test/Inspect/Verify/Hardening checks are verified.
+Those gates were completed through #157. They are retained here as historical proof context, not as instructions to reopen #139/#141 or to treat already-resolved #143 as an UNKNOWN. Current Tasks #145–#156 each own their own exact-final-HEAD proof gate.
 
-Only then may #141 complete and #139 be closed. #52 must remain open.
+## Review obligations for ongoing reconciliation
 
-## Review obligations for this inventory
+Changes to this migration authority are architecture-significant prose and must be reviewed accordingly:
 
-This document/authority reconciliation must be reviewed as architecture, not as harmless prose:
-
-- audited base must still be current at final review;
-- branch must be one coherent direct child of fresh `main` if main has not moved;
-- diff must contain no production implementation;
+- preserve the original audited-base record when later Tasks resolve choices;
+- never convert a Task candidate into a completed fact before its exact-head merge/post-main gate passes;
 - no stale guidance may instruct contributors to recreate browser editing as target;
 - current-runtime README/history may describe temporary browser behavior only when clearly labeled as current/migration state;
 - renderer continuity must prevent deletion/reimplementation/double-engine migration;
 - temporary owner/deletion criteria must cover all major old-editor mechanisms;
-- issue graph #143–#156 must match actual issue contracts;
-- #139 must remain open until this merge/post-main verification completes;
-- unresolved review threads must be zero;
-- any exact HEAD movement invalidates prior PASS/evidence.
+- issue graph #143–#156 must match actual issue contracts/current completion state;
+- unresolved review threads must be zero for the PR changing this authority;
+- any exact HEAD movement invalidates prior PASS/evidence for that PR.
