@@ -1,0 +1,159 @@
+name: Native Editor Shell Evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/native-editor-shell-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/editor/MarkFlowEditorProvider.kt'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/0001-native-authority-projection-architecture.md'
+  pull_request:
+    paths:
+      - '.github/workflows/native-editor-shell-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/editor/MarkFlowEditorProvider.kt'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/0001-native-authority-projection-architecture.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-editor-shell-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native editor shell probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-shell-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editor shell probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeEditorShellProbe --stacktrace
+
+      - name: Validate native shell evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-editor-shell-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native editor shell probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 5:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native editor shell proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-runtime',
+              'authoritative-document-fixture',
+              'provider-and-bundled-markdown-coexistence',
+              'editor-factory-presentation-lifecycle',
+              'shared-document-splits',
+              'platform-keyboard-and-keymap',
+              'platform-clipboard',
+              'platform-ime-composition',
+              'caret-selection-scroll-file-editor-state',
+              'dirty-save-undo-redo',
+              'exact-source-fallback',
+              'create-recreate-dispose',
+              'owned-file-editor-rejection-boundary',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native shell evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native shell case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native shell required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native shell proof did not run inside a real opened project: {fixture_detail}')
+          undo_detail = str(by_id['dirty-save-undo-redo'].get('detail', ''))
+          if 'undoScope=project-text-editor' not in undo_detail:
+              raise SystemExit(f'undo proof did not use project TextEditor context: {undo_detail}')
+
+          providers = evidence.get('providerInventory') or []
+          selected = [p for p in providers if p.get('selectedPlatformTextProvider') is True]
+          if len(selected) != 1 or selected[0].get('accepted') is not True or selected[0].get('policy') != 'NONE':
+              raise SystemExit(f'invalid selected platform text provider evidence: {selected}')
+          temporary = [p for p in providers if p.get('markFlowTemporaryProvider') is True]
+          if len(temporary) != 1 or temporary[0].get('accepted') is not False:
+              raise SystemExit(f'temporary browser provider did not fail closed with JCEF disabled: {temporary}')
+          markdown = [p for p in providers if 'markdown' in str(p.get('className', '')).lower()]
+          if not markdown or not any(p.get('accepted') is True for p in markdown):
+              raise SystemExit(f'bundled Markdown provider did not coexist as an accepting provider: {markdown}')
+
+          print(f"Native shell verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native shell evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-editor-shell-evidence
+          path: |
+            build/native-editor-shell-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-native-shell-xvfb.log
+          if-no-files-found: warn

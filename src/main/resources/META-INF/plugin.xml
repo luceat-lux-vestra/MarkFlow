@@ -6,7 +6,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <!-- Since 2026.2 JCEF ships as a separate bundled plugin; without this dependency com.intellij.ui.jcef.*
-         is not visible to the plugin classloader. -->
+         is not visible to the plugin classloader. #144/#155 own the target renderer dependency boundary. -->
     <depends>com.intellij.modules.jcef</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
@@ -23,6 +23,7 @@
                 implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
                 internal="true"/>
         <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
     </extensions>
 

@@ -143,6 +143,8 @@ val webviewOutputDir = file("build/webview")
 val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val jcefTransportProbeOutput = layout.buildDirectory.file("jcef-transport-probe/evidence.json")
+val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
+val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -256,6 +258,28 @@ intellijPlatformTesting {
                 }
                 argumentProviders += CommandLineArgumentProvider {
                     listOf("markflow-jcef-transport-probe")
+                }
+            }
+        }
+
+        register("runIdeForNativeEditorShellProbe") {
+            task {
+                doFirst {
+                    nativeEditorShellProbeProjectDir.get().asFile.mkdirs()
+                }
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.nativeEditorShellProbe.output=${nativeEditorShellProbeOutput.get().asFile.absolutePath}",
+                        "-Dide.browser.jcef.enabled=false",
+                        "-Dide.browser.jcef.testMode.enabled=true",
+                        "-Didea.trust.all.projects=true",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.consents.confirmation.enabled=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf(nativeEditorShellProbeProjectDir.get().asFile.absolutePath)
                 }
             }
         }

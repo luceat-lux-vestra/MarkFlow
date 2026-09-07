@@ -20,10 +20,12 @@ ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, s
 
 ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migration**. Native editor migration removes the browser from source-editing correctness; it does not authorize reimplementing or dropping supported Mermaid/KaTeX rendering. Existing maintained renderer engines are extracted from editor-specific integration and reused behind the derived-render boundary.
 
+#143 resolves ADR 0001's lower-level shell choice: the target **augments the normal IntelliJ platform text editor** and attaches per-editor MarkFlow presentation through maintained native editor lifecycle APIs. A MarkFlow-owned replacement `FileEditor` shell is rejected because it adds provider/state/input/focus/lifecycle ownership without an independent product requirement. See `native-editor-shell-selection.md`. This selection does not itself cut production over; #153 remains the cutover owner.
+
 Target principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
-2. **Native editing is invariant; integration shell is evidence-selected.** #143 compares platform editor augmentation with a MarkFlow-owned `FileEditor` containing a native editor over the same `Document`.
+2. **Native editing uses the platform text-editor shell.** MarkFlow augments the normal native editor; it does not introduce a target replacement `FileEditorProvider`.
 3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews never become source authority.
 4. **Reveal exact source in active edit context.** Presentation may visually reduce syntax only when exact source remains recoverable and interaction is unambiguous.
 5. **Stale derived work is inert.** Parse/render results apply only to the exact current source/config identity they were produced from.
@@ -35,7 +37,7 @@ Target principles:
 11. **Replacement includes already-merged Leap code.** Current CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation survives only where #141 independently justifies a responsibility.
 12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
-See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
+See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
 
 ## Architecture anti-goals
 
