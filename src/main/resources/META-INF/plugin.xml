@@ -25,9 +25,16 @@
                 id="markflow-jcef-transport-probe"
                 implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
                 internal="true"/>
+        <copyPastePostProcessor
+                implementation="com.algorist.markflow.editor.native.NativePasteTransferableCapturePostProcessor"
+                order="last"/>
+        <copyPastePreProcessor
+                implementation="com.algorist.markflow.editor.native.NativeMarkdownPastePreProcessor"
+                order="last"/>
         <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditingProbeProjectActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
     </extensions>
 

@@ -147,6 +147,8 @@ val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-she
 val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
 val nativeProjectionProbeOutput = layout.buildDirectory.file("native-projection-probe/evidence.json")
 val nativeProjectionProbeProjectDir = layout.buildDirectory.dir("native-projection-probe/project")
+val nativeEditingProbeOutput = layout.buildDirectory.file("native-editing-probe/evidence.json")
+val nativeEditingProbeProjectDir = layout.buildDirectory.dir("native-editing-probe/project")
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -304,6 +306,28 @@ intellijPlatformTesting {
                 }
                 argumentProviders += CommandLineArgumentProvider {
                     listOf(nativeProjectionProbeProjectDir.get().asFile.absolutePath)
+                }
+            }
+        }
+
+        register("runIdeForNativeEditingProbe") {
+            task {
+                doFirst {
+                    nativeEditingProbeProjectDir.get().asFile.mkdirs()
+                }
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.nativeEditingProbe.output=${nativeEditingProbeOutput.get().asFile.absolutePath}",
+                        "-Dide.browser.jcef.enabled=false",
+                        "-Dide.browser.jcef.testMode.enabled=true",
+                        "-Didea.trust.all.projects=true",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.consents.confirmation.enabled=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf(nativeEditingProbeProjectDir.get().asFile.absolutePath)
                 }
             }
         }
