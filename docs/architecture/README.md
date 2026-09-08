@@ -24,6 +24,8 @@ ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migr
 
 #145 establishes the next target foundation over that selected shell: **an immutable exact `Document` snapshot and source/config identity are parsed into an immutable `NativeProjectionPlan`, then applied by one source-neutral `NativePresentationController` per native editor**. The initial mechanism and evidence contract are recorded in `native-markdown-projection-foundation.md`. #145 is a projection foundation, not ordinary-Markdown parity and not production cutover.
 
+#146 resolves native edit-ownership details above that foundation without creating a second editor authority: **IntelliJ's normal paste action, command/undo stack and opaque `FileEditorState` remain authoritative, while MarkFlow may preprocess only an inserted Markdown payload and apply narrowly source-local rich edit commands to explicit native selections**. The implementation/evidence contract is recorded in `native-edit-semantics.md`. #146 remains subject to its exact-final-HEAD and post-main proof gate and does not perform production cutover.
+
 Target principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
@@ -39,7 +41,7 @@ Target principles:
 11. **Replacement includes already-merged Leap code.** Current CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation survives only where #141 independently justifies a responsibility.
 12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
-See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
+See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `native-edit-semantics.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
 
 ## Architecture anti-goals
 
@@ -61,9 +63,10 @@ Do not:
 #141 defines the canonical dependency graph. Durable resolutions and ownership are:
 
 - **#143 completed** — platform text-editor augmentation selected/proven;
-- **#145 owns** the native projection plan/per-editor controller foundation over completed #143;
+- **#145 completed** — immutable snapshot/projection-plan/per-editor controller foundation proven over #143;
+- **#146 resolves** native paste/state/representative local-edit ownership through platform paste/command/undo/FileEditorState semantics plus bounded MarkFlow-specific payload/local-edit behavior; its implementation remains subject to the Task's exact-final-HEAD and post-main gate;
 - #144 renderer extraction and #150 image-import product decision remain independently eligible work;
-- #145 completion is determined only by its Task's exact-final-HEAD and post-main proof gate; once complete, #146/#147/#149 become eligible according to their own dependencies/contracts, while #148 still requires #144 and #151 still requires #150 + #147;
+- completed #145 makes #147/#149 eligible; #148 still requires #144 and #151 still requires #150 + #147;
 - #143 + #145 -> #146 native paste/actions/state;
 - #145 -> #147 host local-image/navigation;
 - #144 + #145 -> #148 Mermaid/KaTeX native inlays;

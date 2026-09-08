@@ -1,0 +1,176 @@
+name: Native Editing Evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/native-editing-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'docs/architecture/native-edit-semantics.md'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/native-markdown-projection-foundation.md'
+      - 'docs/architecture/README.md'
+  pull_request:
+    paths:
+      - '.github/workflows/native-editing-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'docs/architecture/native-edit-semantics.md'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/native-markdown-projection-foundation.md'
+      - 'docs/architecture/README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-editing-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native editing probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-editing-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editing probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeEditingProbe --stacktrace
+
+      - name: Validate native editing evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-editing-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native editing probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native editing proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-native-editing',
+              'authoritative-editing-fixture',
+              'platform-text-provider-boundary',
+              'native-paste-preprocessor-registered',
+              'markdown-mime-preferred-payload-only',
+              'markdown-like-plain-payload-only',
+              'code-block-paste-delegates-literal',
+              'multicaret-paste-delegates-platform',
+              'ordinary-plain-paste-delegates-unchanged',
+              'rich-edit-locality-undo-redo',
+              'multicaret-rich-edit-is-local-and-isolated',
+              'unsafe-rich-edit-fails-without-source-change',
+              'platform-state-roundtrip-source-stable',
+              'final-native-editing-lifecycle',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native editing evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native editing case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native editing required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-editing-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native editing proof did not run inside a real project: {fixture_detail}')
+          mime_detail = str(by_id['markdown-mime-preferred-payload-only'].get('detail', ''))
+          for flag in ('markdownMimePreferred=true', 'surroundingSourceStable=true', 'undoRedo=true'):
+              if flag not in mime_detail:
+                  raise SystemExit(f'Markdown MIME paste contract incomplete: {mime_detail}')
+          code_detail = str(by_id['code-block-paste-delegates-literal'].get('detail', ''))
+          if 'codeBlockDelegated=true' not in code_detail or 'markdownMimeSuppressed=true' not in code_detail:
+              raise SystemExit(f'code-block literal paste contract incomplete: {code_detail}')
+          multicaret_paste_detail = str(by_id['multicaret-paste-delegates-platform'].get('detail', ''))
+          for flag in ('multicaretPasteDelegated=true', 'markdownMimeSuppressed=true', 'platformCarets=2', 'undoRedo=true'):
+              if flag not in multicaret_paste_detail:
+                  raise SystemExit(f'platform multicaret paste contract incomplete: {multicaret_paste_detail}')
+          rich_detail = str(by_id['rich-edit-locality-undo-redo'].get('detail', ''))
+          for flag in ('sourceLocal=true', 'undo=true', 'redo=true'):
+              if flag not in rich_detail:
+                  raise SystemExit(f'rich-edit command contract incomplete: {rich_detail}')
+          multi_detail = str(by_id['multicaret-rich-edit-is-local-and-isolated'].get('detail', ''))
+          for flag in ('multicaret=2', 'secondEditorStateIsolated=true', 'trackedSourceDelta=true'):
+              if flag not in multi_detail:
+                  raise SystemExit(f'multicaret edit/isolation contract incomplete: {multi_detail}')
+          state_detail = str(by_id['platform-state-roundtrip-source-stable'].get('detail', ''))
+          for flag in ('legacyStateAuthority=false', 'splitIsolation=true', 'sourceStable=true'):
+              if flag not in state_detail:
+                  raise SystemExit(f'platform state contract incomplete: {state_detail}')
+          lifecycle_detail = str(by_id['final-native-editing-lifecycle'].get('detail', ''))
+          if 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'native editing lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          print(f"Native editing verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native editing evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-editing-evidence
+          path: |
+            build/native-editing-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-native-editing-xvfb.log
+          if-no-files-found: warn

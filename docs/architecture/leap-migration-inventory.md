@@ -1,6 +1,6 @@
 # Leap migration inventory and execution map
 
-Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through #145
+Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through #146 target ownership
 
 Original #141 audited base:
 
@@ -14,7 +14,8 @@ Current execution resolutions relevant to this inventory:
 
 - #139/#141 are completed;
 - #143 is completed and selected **`PLATFORM_TEXT_EDITOR_AUGMENTATION`** — normal IntelliJ platform text-editor augmentation, not a MarkFlow-owned replacement `FileEditor` shell;
-- #145 establishes the immutable snapshot/parser/projection-plan/per-editor-controller foundation over that selected shell, subject to its own exact-final-HEAD and post-main proof gate;
+- #145 is completed and establishes the immutable snapshot/parser/projection-plan/per-editor-controller foundation over that selected shell;
+- #146 resolves the target paste/state/representative-rich-edit ownership as platform paste/command/undo/`FileEditorState` semantics plus narrowly scoped MarkFlow payload/local-edit behavior, subject to #146's own exact-final-HEAD and post-main proof gate;
 - #153 remains the only production native-editor cutover owner, so the current browser editor/provider/protocol remain temporary until their explicit deletion criteria are met.
 
 ## Authority hierarchy
@@ -63,7 +64,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | `MarkFlowFileSupport` supported-file recognition | `RETAIN` | Host-level recognition | Revisit only by product-scope decision |
 | current browser-backed `MarkFlowEditor` | `REPLACE` + `TEMPORARY` | #143 selected normal platform text-editor augmentation over the same `Document` | #153 owns production cutover; #154 deletes old editor after cutover proof |
 | `MarkFlowEditorProvider` JCEF-gated takeover / `HIDE_DEFAULT_EDITOR` | `REPLACE` + `TEMPORARY` | #143 rejected target replacement-provider ownership; target augments the platform text editor and editing cannot depend on JCEF | Current provider remains migration-only until #153; #154 removes the superseded provider path |
-| browser-shaped `MarkFlowEditorState` (`scrollTop`, JS caret/selection injection) | `EXTRACT` / `REPLACE` + `TEMPORARY` | Native editor/FileEditor state semantics, preserving only justified user intent | #146 migrates native state; #155 removes obsolete persisted/browser shape |
+| browser-shaped `MarkFlowEditorState` (`scrollTop`, JS caret/selection injection) | `EXTRACT` / `REPLACE` + `TEMPORARY` | #146 keeps platform `TextEditor`/opaque `FileEditorState` as target state authority; no new MarkFlow native state DTO | #146 proves target state ownership; #155 removes obsolete persisted/browser shape after cutover/purge |
 | `DocumentSession`/registry/custom web revision ownership | `REPLACE` / `DELETE` + `TEMPORARY` | Native `Document` command/write/undo semantics only | Current editor owns until #153; #154 deletes when browser editor is unreachable |
 | `SourceRevisionGate` | `DELETE` + `TEMPORARY` | No web source proposal in target; derived work uses exact source/config identity | #154 after #153 |
 | `DocumentContentDiff` / whole-content web->Document replacement | `DELETE` + `TEMPORARY` | Native user edits already modify `Document` | #154 after last web-origin edit consumer |
@@ -84,13 +85,13 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | Mermaid `createCodeMirrorFeatureConfig`, `crepeSessionId`, DOM registry/IntersectionObserver/editor visibility coupling | `DELETE` after `EXTRACT` + `TEMPORARY` | Native inlay consumes extracted service | #144 extracts; #148 proves native consumer; #154 deletes old adapters |
 | KaTeX `^0.18.4`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
 | `Crepe.Feature.Latex` | `REPLACE` + `TEMPORARY` | Thin direct KaTeX adapter, no TeX reimplementation | #144 replaces service ownership; #154 deletes old adapter after #148/cutover |
-| runtime Mermaid size/zoom/error, KaTeX density, theme/font/palette settings | `RETAIN` / `EXTRACT` | Native presentation + renderer settings | #146/#148/#155 migrate shape while preserving approved semantics |
+| runtime Mermaid size/zoom/error, KaTeX density, theme/font/palette settings | `RETAIN` / `EXTRACT` | Native presentation + renderer settings | #148/#155 migrate shape while preserving approved semantics |
 | browser settings payload/revision notifications | `REPLACE` + `TEMPORARY` | Typed host settings + presentation/renderer invalidation | #155 after actual consumers converge |
 | `previewOnlyByDefault` browser meaning | `REPLACE` / `UNRESOLVED` | Explicit native projection/source-reveal UX meaning | #83/#155 must decide before old meaning removed |
 | `idleEvictAfterMs`, editor pool/prewarm/retry/debounce knobs | `DELETE` + `TEMPORARY` | No target browser-editor pool | #155 after #154 |
 | `DiagramSecurityLevel` | `EXTRACT` / security review | Retain only if #82 proves a safe meaningful renderer policy | #82/#149/#155; otherwise remove safely |
 | IDE palette/font discovery | `RETAIN` / `EXTRACT` | Native presentation and renderer config | Remove only browser/CSS transport shape |
-| web Markdown-aware clipboard behavior | `REPLACE` + `TEMPORARY` | Native IntelliJ paste/action semantics | #146 proves target; #154 removes web implementation after cutover |
+| web Markdown-aware clipboard behavior | `REPLACE` + `TEMPORARY` | #146 uses native IntelliJ paste ownership plus inserted-payload-only Markdown preprocessing; no browser edit authority | #146 proves target; #154 removes web implementation after cutover |
 | raw HTML exact source-preservation invariant | `RETAIN` | Source remains untouched | Permanent |
 | browser raw-HTML preview integration | `REPLACE` + `TEMPORARY` | Sanitized/isolated derived renderer -> inert artifact | #149 proves target; #154 removes old integration after cutover |
 | Node/TypeScript/Vite | `TEMPORARY` / conditional `RETAIN` | Keep only for actual Mermaid/KaTeX/raw-HTML renderer execution | #155 after #154 decides final consumers; #68/#72 reconcile here |
@@ -109,7 +110,8 @@ No temporary item may be retained merely for rollback comfort.
 
 - **#143 — COMPLETED**: owns the native shell selection evidence and selected platform text-editor augmentation; it does not cut production over.
 - **#144** owns renderer extraction while the old editor remains a migration consumer.
-- **#145–#152** own target capability proof needed before cutover; #145 is the first downstream editor foundation over completed #143.
+- **#145 — COMPLETED**: owns the initial immutable snapshot/projection/controller foundation over #143.
+- **#146–#152** own remaining target capability proof needed before cutover; #146 resolves native edit ownership but remains subject to its own exact-final-HEAD/post-main completion gate.
 - **#153** owns the production native-editor cutover and makes the old editor unreachable as a normal authority.
 - **#154** owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
 - **#155** owns dependency/toolchain/JCEF/settings convergence after actual retained consumers are known.
@@ -189,7 +191,7 @@ Audited contributor/agent/engineering authority that could otherwise direct work
 | `SECURITY.md` | JCEF editor/protocol as generic target trust boundary | host resources + isolated renderer target; legacy editor surfaces explicitly temporary |
 | `docs/engineering/testing-strategy.md` | host↔web synchronization as permanent contract suite | native source/projection/renderer proof; old protocol suite migration-only until purge |
 | `README.md` | target described as browser custom editor + native fallback/coexistence | clearly distinguishes current JCEF runtime from accepted native-authority target |
-| `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records accepted architecture, completed #143 platform augmentation, and active #145 projection foundation |
+| `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records accepted architecture, completed #143/#145 foundations, and #146 native edit ownership resolution without claiming pre-gate completion |
 
 Historical `plans/*` and CHANGELOG entries are preserved as historical record rather than rewritten. Current source comments/tests that accurately describe temporary production mechanisms remain implementation evidence until their owner Task deletes them; they are not elevated into architecture authority.
 
@@ -199,12 +201,12 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 
 - **#143 — COMPLETED** `task(editor): prove and select the native IntelliJ editor integration shell` — selected `PLATFORM_TEXT_EDITOR_AUGMENTATION`.
 - **#144** `task(renderer): extract one Mermaid and KaTeX derived-renderer service from editor coupling` — independently eligible.
+- **#145 — COMPLETED** `task(editor): establish the native Markdown projection engine and per-editor controller` — immutable exact snapshots, bundled JetBrains Markdown parser, native markup/folding and per-editor presentation ownership are proven over #143.
 - **#150** `task(product): ratify the image-file import contract from historical public report #4` — independently eligible.
 
 ### Foundation/capability slices
 
-- **#145 — ACTIVE until exact-head merge/post-main verification** `task(editor): establish the native Markdown projection engine and per-editor controller` — depends on completed #143; baseline chooses immutable exact snapshots, bundled JetBrains Markdown parser, native markup/folding and per-editor presentation ownership.
-- **#146** `task(editor): move paste, editor state and rich edit actions onto native Document semantics` — depends on #143 + #145.
+- **#146 — ACTIVE until exact-head merge/post-main verification** `task(editor): move paste, editor state and rich edit actions onto native Document semantics` — depends on completed #143 + #145; target ownership uses platform paste/command/undo/`FileEditorState` semantics, inserted-payload-only Markdown preprocessing and source-local representative rich edits.
 - **#147** `task(trust): implement host-owned local image projection and external navigation` — depends on #145.
 - **#148** `task(renderer): render Mermaid and KaTeX through native editor inlays` — depends on #144 + #145 and uses the same renderer service.
 - **#149** `task(trust): add source-preserved sanitized raw-HTML derived rendering` — depends on #145; may reuse #144 renderer execution boundary.
@@ -229,7 +231,7 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
         |
         +--> #150 image-import product decision
 
-#143 --> #145 projection foundation
+#143 --> #145 projection foundation [COMPLETED]
 #143 + #145 --> #146 native editing/actions/state
 
 #145 --> #147 host image/navigation
@@ -263,7 +265,8 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 Resolved since the original #141 inventory:
 
 - **native integration shell (#143):** `PLATFORM_TEXT_EDITOR_AUGMENTATION`; a MarkFlow-owned native replacement `FileEditor` shell is rejected.
-- **#145 baseline parser/projection foundation:** immutable exact `Document` snapshot + source/config identity -> bundled JetBrains Markdown parser -> immutable projection plan -> per-editor native controller; native markup plus parser-proven safe folding supply the initial presentation/reveal proof. This resolution is effective only after #145's exact-final-HEAD/post-main gate completes.
+- **#145 baseline parser/projection foundation:** immutable exact `Document` snapshot + source/config identity -> bundled JetBrains Markdown parser -> immutable projection plan -> per-editor native controller; native markup plus parser-proven safe folding supply the initial presentation/reveal proof.
+- **#146 native edit ownership:** platform `TextEditor` retains actual paste insertion, input, caret/multicaret, command/undo/dirty/save and opaque `FileEditorState` ownership. MarkFlow may prefer/normalize only the inserted Markdown payload through `CopyPastePreProcessor` outside parser-proven code blocks and may perform explicitly selected, source-local representative rich edits through one native write command. Historical browser-shaped `MarkFlowEditorState` is not promoted to target authority. This resolution is implementation-complete only after #146's exact-final-HEAD/post-main gate passes.
 
 Still unresolved or intentionally deferred:
 
@@ -291,7 +294,7 @@ Node/TypeScript maintenance issues remain real signals but must not run as archi
 
 The original #141 inventory required #142 acceptance, repository classification, stale-guidance reconciliation, Track/backlog consistency, #136/#137 disposition, explicit temporary ownership/deletion criteria, exact-final-HEAD CI/ruleset/thread review, squash merge with `expected_head_sha`, and post-main SHA/tree/signature/CI verification before #141/#139 completion.
 
-Those gates were completed through #157. They are retained here as historical proof context, not as instructions to reopen #139/#141 or to treat already-resolved #143 as an UNKNOWN. Current Tasks #145–#156 each own their own exact-final-HEAD proof gate.
+Those gates were completed through #157. They are retained here as historical proof context, not as instructions to reopen #139/#141 or to treat already-resolved #143/#145 as an UNKNOWN. Current Tasks #146–#156 each own their own exact-final-HEAD proof gate.
 
 ## Review obligations for ongoing reconciliation
 
