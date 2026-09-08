@@ -21,7 +21,7 @@
     "@codemirror/state": "^6.7.2",
     "@codemirror/view": "^6.43.10",
     "@milkdown/crepe": "^7.22.1",
-    "katex": "^0.18.4",
+    "katex": "^0.18.5",
     "mermaid": "11.17.2"
   }
 }
