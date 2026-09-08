@@ -41,6 +41,8 @@ The intended merge contract for `main` is pull-request-only, squash-only, linear
 
 A review PASS belongs to one exact PR HEAD SHA. If HEAD changes, review again. `UNKNOWN`, `UNVERIFIED`, or insufficient evidence are FAIL. Merge only the reviewed `expected_head_sha`, then verify resulting `main` SHA/tree/signature and post-main checks before closing the linked Task.
 
+Because repository squash commits use PR metadata, PR titles and bodies must not contain GitHub Actions skip directives. Required Build validation fails closed on recognized skip markers and `skip-checks: true` trailers. Automated/API squash merges must also provide an explicitly sanitized commit message instead of inheriting arbitrary PR body text. If post-main validation is ever suppressed before a run exists, use the exact-SHA `workflow_dispatch` recovery input and treat the original missing run as an audit anomaly rather than as PASS.
+
 Repository hardening is owned separately from runtime Leap work. Runtime architecture acceptance never follows from repository CI green alone.
 
 ## Dependency update governance

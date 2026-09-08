@@ -8,12 +8,19 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact trusted main commit SHA to validate; defaults to the dispatch ref.
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -28,11 +35,44 @@ jobs:
           tool-cache: false
           large-packages: false
 
+      - name: Validate dispatched target
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Recovery target is not an exact 40-hex commit SHA."; exit 1; }
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$TARGET_SHA...$DEFAULT_BRANCH")"
+          status="$(jq -r '.status // empty' <<<"$comparison")"
+          base_sha="$(jq -r '.base_commit.sha // empty' <<<"$comparison")"
+          merge_base_sha="$(jq -r '.merge_base_commit.sha // empty' <<<"$comparison")"
+          if [[ "$base_sha" != "$TARGET_SHA" || "$merge_base_sha" != "$TARGET_SHA" || ( "$status" != "ahead" && "$status" != "identical" ) ]]; then
+            echo "::error::Recovery target is not the current default branch or one of its ancestors."
+            exit 1
+          fi
+          printf 'Validated main-history target: %s\n' "$TARGET_SHA"
+
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
+
+      - name: Reject squash CI-skip directives
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: python3 .github/scripts/check-squash-message-safety.py
+
+      - name: Record dispatched validation target
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+        run: |
+          printf 'Validation target: %s\n' "$TARGET_SHA"
 
       - name: Setup Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
@@ -83,7 +123,7 @@ jobs:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
@@ -144,7 +184,7 @@ jobs:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -196,7 +236,7 @@ jobs:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
