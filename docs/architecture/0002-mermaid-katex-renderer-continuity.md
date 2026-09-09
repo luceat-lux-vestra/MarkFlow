@@ -19,7 +19,7 @@ That decision does **not** remove MarkFlow's supported derived-rendering capabil
 Current `main` already carries maintained JavaScript renderer dependencies:
 
 - `mermaid` `11.17.2`;
-- `katex` `^0.18.4`.
+- `katex` `^0.18.5`.
 
 The current Mermaid implementation also contains MarkFlow-specific renderer behavior worth preserving independently of the editor shell: Mermaid configuration, IDE theme/palette mapping, security level, size/zoom semantics, cache identity, stale-render protection, error behavior, and fidelity fixtures. However `MarkFlowMermaidRenderer` currently mixes those concerns with Crepe/CodeMirror preview callbacks, `crepeSessionId`, DOM preview registries, visibility observers, editor telemetry, and editor-session lifecycle.
 

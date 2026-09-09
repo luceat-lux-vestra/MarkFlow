@@ -33,7 +33,7 @@ Target principles:
 3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews never become source authority.
 4. **Reveal exact source in active edit context.** Presentation may visually reduce syntax only when exact source remains recoverable and interaction is unambiguous.
 5. **Stale derived work is inert.** Parse/render results apply only to the exact current source/config identity they were produced from.
-6. **Mermaid and KaTeX remain supported renderer capabilities.** Mermaid `11.17.2` and KaTeX `^0.18.4` are extracted/reused; editor adapters are replaceable.
+6. **Mermaid and KaTeX remain supported renderer capabilities.** Mermaid `11.17.2` and KaTeX `^0.18.5` are extracted/reused; editor adapters are replaceable.
 7. **Derived renderer execution is isolated from editing.** TypeScript/Vite/Node/JCEF may remain for real renderer consumers, but JCEF never owns source editing or gates it.
 8. **Trust surfaces are minimized first.** Local resources/navigation are host-owned. Browser origin/network/CSP machinery is deleted with superseded editor surfaces; retained renderer runtimes receive narrower renderer-specific containment.
 9. **Lifecycle ownership is explicit.** Per-editor presentation controllers and renderer runtimes have separate deterministic owners and bounded resources.
