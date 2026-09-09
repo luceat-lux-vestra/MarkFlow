@@ -8,7 +8,7 @@ The web stack is no longer an editor authority. Mermaid/KaTeX/raw-HTML work belo
 
 Responsibilities:
 1. Preserve/extract Mermaid 11.17.2 engine behavior, configuration, IDE theme/palette mapping, size/zoom/error semantics, justified cache identity and stale-result rules without retaining editor-session ownership.
-2. Preserve KaTeX ^0.18.4, CSS/fonts and compatible inline/display semantics; replace Crepe.Feature.Latex with a thin direct KaTeX adapter rather than implementing TeX layout.
+2. Preserve KaTeX ^0.18.5, CSS/fonts and compatible inline/display semantics; replace Crepe.Feature.Latex with a thin direct KaTeX adapter rather than implementing TeX layout.
 3. Expose bounded renderer kind/source/config input and inert artifact or typed/redacted failure output. The renderer has no Document mutation authority and no browser-editor session identity.
 4. Ensure the current production consumer uses the extracted service before native inlays consume the same service. Never create a second Mermaid or KaTeX engine for migration.
 5. Treat raw HTML source as exact preserved Markdown data; sanitize/isolate only derived output and fail closed on active content.

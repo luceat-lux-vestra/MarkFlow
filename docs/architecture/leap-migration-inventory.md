@@ -50,7 +50,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 5. Dirty/save/undo/redo and source durability use IntelliJ semantics, not browser flush/debounce/retry.
 6. Stale parse/projection/render results apply only to the exact current source/config identity.
 7. Unsupported/ambiguous/malformed/renderer-failed content degrades to exact source.
-8. Mermaid `11.17.2` and KaTeX `^0.18.4` remain supported engines during editor migration.
+8. Mermaid `11.17.2` and KaTeX `^0.18.5` remain supported engines during editor migration.
 9. Local resources and external navigation are host-owned capabilities.
 10. Optional renderer/JCEF failure never makes source editing unavailable.
 11. Every temporary old-editor mechanism has an explicit owner and deletion criterion.
@@ -83,7 +83,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | Mermaid engine `11.17.2` | `RETAIN` | Single maintained Mermaid engine during migration | Replacement requires separate renderer decision |
 | Mermaid config/theme/palette/size/zoom/error/cache/stale-result semantics | `EXTRACT` | One editor-independent derived-renderer service | #144 extracts/proves before editor adapter deletion |
 | Mermaid `createCodeMirrorFeatureConfig`, `crepeSessionId`, DOM registry/IntersectionObserver/editor visibility coupling | `DELETE` after `EXTRACT` + `TEMPORARY` | Native inlay consumes extracted service | #144 extracts; #148 proves native consumer; #154 deletes old adapters |
-| KaTeX `^0.18.4`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
+| KaTeX `^0.18.5`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
 | `Crepe.Feature.Latex` | `REPLACE` + `TEMPORARY` | Thin direct KaTeX adapter, no TeX reimplementation | #144 replaces service ownership; #154 deletes old adapter after #148/cutover |
 | runtime Mermaid size/zoom/error, KaTeX density, theme/font/palette settings | `RETAIN` / `EXTRACT` | Native presentation + renderer settings | #148/#155 migrate shape while preserving approved semantics |
 | browser settings payload/revision notifications | `REPLACE` + `TEMPORARY` | Typed host settings + presentation/renderer invalidation | #155 after actual consumers converge |

@@ -37,7 +37,7 @@ The target has these non-negotiable properties:
 - optional renderer/JCEF failure cannot make source editing unavailable;
 - local resources and external navigation are host-owned capabilities.
 
-ADR 0002 preserves renderer continuity during migration: Mermaid `11.17.2` and KaTeX `^0.18.4` are extracted from editor-specific integration, reused behind one derived-renderer service, and then consumed by native inlays. They are not deleted and recreated as collateral editor work.
+ADR 0002 preserves renderer continuity during migration: Mermaid `11.17.2` and KaTeX `^0.18.5` are extracted from editor-specific integration, reused behind one derived-renderer service, and then consumed by native inlays. They are not deleted and recreated as collateral editor work.
 
 JCEF/TypeScript/Vite/Node may remain only for actual isolated renderer consumers after editor migration. They do not become editor authority again.
 

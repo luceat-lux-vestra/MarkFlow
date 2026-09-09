@@ -56,7 +56,7 @@ Migration order is fixed:
 5. cut over production consumption;
 6. only then delete Crepe/CodeMirror-specific renderer adapters.
 
-Mermaid `11.17.2` and KaTeX `^0.18.4` remain the migration engines unless a separate accepted renderer decision replaces them. Do not reimplement Mermaid or TeX layout merely because the editor is native/Kotlin. Do not keep duplicate production renderer engines.
+Mermaid `11.17.2` and KaTeX `^0.18.5` remain the migration engines unless a separate accepted renderer decision replaces them. Do not reimplement Mermaid or TeX layout merely because the editor is native/Kotlin. Do not keep duplicate production renderer engines.
 
 TypeScript/Vite/Node/JCEF may remain only for an actual isolated renderer consumer. JCEF below the renderer boundary never owns source editing and never gates typing/save/undo/source fallback.
 
