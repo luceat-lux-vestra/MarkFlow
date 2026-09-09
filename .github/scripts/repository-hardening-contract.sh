@@ -22,9 +22,21 @@ if [ "$wrapper_gradle" = "9.7.1" ] && [ "$wrapper_sha" != "acd53f1edaf02f1a8ff99
   die "Gradle 9.7.1 distribution checksum does not match the reviewed upstream checksum"
 fi
 
+assert_recovery_target_validation() {
+  local workflow="$1" label="$2"
+  grep -q 'name: Validate dispatched target' "$workflow" || die "$label has no pre-checkout recovery target validation"
+  grep -q 'Recovery target is not an exact 40-hex commit SHA' "$workflow" || die "$label does not require an exact commit SHA"
+  grep -q 'merge_base_commit.sha' "$workflow" || die "$label does not prove recovery target ancestry"
+  grep -q 'Recovery target is not the current default branch or one of its ancestors' "$workflow" || die "$label does not fail closed on non-main recovery targets"
+}
+
 jcef_workflow=".github/workflows/jcef-transport-evidence.yml"
 grep -q '^  push:$' "$jcef_workflow" || die "JCEF evidence has no push trigger"
 grep -q '^    branches: \[ main \]$' "$jcef_workflow" || die "JCEF evidence push trigger is not scoped to main"
+grep -q '^  workflow_dispatch:$' "$jcef_workflow" || die "JCEF evidence has no manual exact-SHA recovery trigger"
+grep -q '^      target_sha:$' "$jcef_workflow" || die "JCEF evidence recovery trigger has no target_sha input"
+grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$jcef_workflow" || die "JCEF evidence does not checkout the requested recovery SHA"
+assert_recovery_target_validation "$jcef_workflow" "JCEF evidence"
 
 if grep -Eq '^[[:space:]]+gradle[[:space:]]+runIdeForUiTests' .github/workflows/run-ui-tests.yml; then
   die "UI workflow invokes runner Gradle instead of the repository wrapper"
@@ -35,6 +47,27 @@ build_workflow=".github/workflows/build.yml"
 if grep -qi 'codecov' "$build_workflow"; then
   die "required Build workflow must not hide a non-authoritative external Codecov upload"
 fi
+squash_guard=".github/scripts/check-squash-message-safety.py"
+[ -f "$squash_guard" ] || die "squash message safety guard is missing"
+python3 "$squash_guard" --self-test >/dev/null || die "squash message safety guard fixtures failed"
+grep -Fq 'types: [opened, synchronize, reopened, edited]' "$build_workflow" || die "required Build workflow does not revalidate squash metadata edits"
+grep -q '^  workflow_dispatch:$' "$build_workflow" || die "required Build workflow has no exact-SHA recovery trigger"
+grep -q '^      target_sha:$' "$build_workflow" || die "required Build recovery trigger has no target_sha input"
+grep -q 'Reject squash CI-skip directives' "$build_workflow" || die "required Build workflow does not reject unsafe squash metadata"
+grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' "$build_workflow" || die "squash guard does not inspect PR title"
+grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" "$build_workflow" || die "squash guard does not inspect PR body"
+grep -q 'python3 .github/scripts/check-squash-message-safety.py' "$build_workflow" || die "required Build workflow does not invoke squash message safety guard"
+grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"
+assert_recovery_target_validation "$build_workflow" "required Build workflow"
+
+hardening_workflow=".github/workflows/hardening-audit.yml"
+grep -q '^  workflow_dispatch:$' "$hardening_workflow" || die "hardening audit has no manual recovery trigger"
+grep -q '^      target_sha:$' "$hardening_workflow" || die "hardening recovery trigger has no target_sha input"
+grep -q 'Verify squash message guard fixtures' "$hardening_workflow" || die "hardening audit does not execute squash guard fixtures"
+grep -q 'check-squash-message-safety.py --self-test' "$hardening_workflow" || die "hardening audit does not enforce squash guard negative controls"
+grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$hardening_workflow" || die "hardening audit does not checkout the requested recovery SHA"
+assert_recovery_target_validation "$hardening_workflow" "hardening audit"
+
 test_job="$(awk '
   /^  test:$/ { on=1 }
   on && /^  inspectCode:$/ { exit }
@@ -93,5 +126,7 @@ if grep -q 'MarkFlow-private' docs/release/recovery.md; then
 fi
 grep -q '#139 and #141 are completed' docs/architecture/README.md || die "architecture index does not record completed reset/reconciliation gates"
 grep -q '^## Dependency update governance$' GOVERNANCE.md || die "dependency update governance contract is missing"
+grep -q 'PR titles and bodies must not contain GitHub Actions skip directives' GOVERNANCE.md || die "squash message safety governance is missing"
+grep -q 'exact-SHA `workflow_dispatch` recovery input' GOVERNANCE.md || die "exact-SHA post-main recovery governance is missing"
 
 echo "repository hardening contract checks passed"
