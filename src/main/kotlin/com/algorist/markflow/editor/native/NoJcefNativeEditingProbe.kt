@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.algorist.markflow.renderer.DerivedRendererRuntimeFactory
 import com.algorist.markflow.settings.MarkFlowIdeThemeService
 import com.algorist.markflow.settings.MarkFlowRuntimeSettingsNotifier
 import com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink
@@ -87,7 +88,10 @@ internal object NoJcefNativeEditingProbe {
                     check(MarkFlowRuntimeSettingsSink.EP_NAME.extensionList.isEmpty()) {
                         "JCEF runtime-settings sink was registered without JCEF"
                     }
-                    "temporaryProvider=false runtimeSettingsSinks=0"
+                    check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty()) {
+                        "isolated JCEF renderer runtime factory was registered without JCEF"
+                    }
+                    "temporaryProvider=false runtimeSettingsSinks=0 rendererRuntimeFactories=0"
                 }
 
                 case("base-native-paste-extension-present") {
@@ -104,7 +108,8 @@ internal object NoJcefNativeEditingProbe {
                     check(MarkFlowIdeThemeService.getInstance().getSnapshot().fonts.isNotEmpty())
                     MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
                     check(MarkFlowRuntimeSettingsSink.EP_NAME.extensionList.isEmpty())
-                    "settingsAvailable=true themeAvailable=true rendererSinkCount=0"
+                    check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty())
+                    "settingsAvailable=true themeAvailable=true rendererSinkCount=0 rendererRuntimeFactoryCount=0"
                 }
 
                 case("authoritative-native-edit-undo-redo-save") {

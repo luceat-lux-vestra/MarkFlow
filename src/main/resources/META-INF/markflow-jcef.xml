@@ -6,6 +6,10 @@
                 id="markflow-jcef-transport-probe"
                 implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
                 internal="true"/>
+        <appStarter
+                id="markflow-derived-renderer-probe"
+                implementation="com.algorist.markflow.renderer.jcef.DerivedRendererProbeStarter"
+                internal="true"/>
         <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
@@ -15,5 +19,6 @@
 
     <extensions defaultExtensionNs="com.algorist.markflow">
         <runtimeSettingsSink implementation="com.algorist.markflow.browser.MarkFlowBrowserRuntimeSettingsSink"/>
+        <derivedRendererRuntimeFactory implementation="com.algorist.markflow.renderer.jcef.JcefDerivedRendererRuntimeFactory"/>
     </extensions>
 </idea-plugin>

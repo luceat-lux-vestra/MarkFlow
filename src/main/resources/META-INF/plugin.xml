@@ -19,6 +19,10 @@
                 name="runtimeSettingsSink"
                 interface="com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink"
                 dynamic="true"/>
+        <extensionPoint
+                name="derivedRendererRuntimeFactory"
+                interface="com.algorist.markflow.renderer.DerivedRendererRuntimeFactory"
+                dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
