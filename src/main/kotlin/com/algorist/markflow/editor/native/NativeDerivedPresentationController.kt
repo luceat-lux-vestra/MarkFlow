@@ -542,7 +542,7 @@ private class NativeRasterInlayRenderer(
 
 private class NativeDerivedErrorInlayRenderer(
     private val editor: Editor,
-    private val message: String,
+    message: String,
 ) : EditorCustomElementRenderer {
     private val displayText = "Mermaid: $message"
 
