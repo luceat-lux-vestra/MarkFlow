@@ -36,13 +36,15 @@ internal data class NativePresentationEvidence(
 /**
  * One disposable, source-neutral presentation owner for one native IntelliJ [Editor].
  *
- * It owns only highlighters, fold regions and listeners. It has no source write path and no
- * browser/JCEF dependency. Plans are accepted only for the exact current source/config identity.
+ * It owns only highlighters, fold regions and listeners. Optional #148 derived presentation is
+ * composed through a backend-neutral owner. This class has no browser/JCEF dependency and no
+ * source write path. Plans are accepted only for the exact current source/config identity.
  */
 internal class NativePresentationController(
     private val editor: Editor,
     private val configGeneration: () -> Long = { 0L },
     private val planner: (ProjectionSnapshot) -> NativeProjectionPlan = NativeMarkdownProjectionPlanner::plan,
+    private val derivedPresentation: NativeDerivedPresentationController? = null,
 ) : Disposable {
     private val highlighters = mutableListOf<OwnedHighlighter>()
     private val folds = mutableListOf<OwnedFold>()
@@ -116,6 +118,7 @@ internal class NativePresentationController(
             installInlineHighlighters(plan)
             installHeadingFolds(plan)
         }
+        derivedPresentation?.applyPlan(plan)
         refreshesApplied += 1
 
         check(document.modificationStamp == stampBefore) {
@@ -141,6 +144,9 @@ internal class NativePresentationController(
         refreshesApplied = refreshesApplied,
         refreshesScheduled = refreshesScheduled,
     )
+
+    fun derivedEvidenceSnapshot(): NativeDerivedPresentationEvidence? =
+        derivedPresentation?.evidenceSnapshot()
 
     private fun scheduleRefresh() {
         if (disposed) return
@@ -213,6 +219,7 @@ internal class NativePresentationController(
                 }
             }
         }
+        derivedPresentation?.refreshActivity(plan)
 
         check(document.modificationStamp == stampBefore)
         check(document.immutableCharSequence.toString() == sourceBefore)
@@ -260,6 +267,7 @@ internal class NativePresentationController(
         if (disposed) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         refreshRequestGeneration += 1
+        derivedPresentation?.dispose()
         clearOwnedPresentation()
         currentPlan = null
         disposed = true
