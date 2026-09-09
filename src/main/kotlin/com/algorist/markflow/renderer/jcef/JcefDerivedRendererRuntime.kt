@@ -1,7 +1,6 @@
 package com.algorist.markflow.renderer.jcef
 
 import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
-import com.algorist.markflow.renderer.DerivedRendererIdentity
 import com.algorist.markflow.renderer.DerivedRendererKind
 import com.algorist.markflow.renderer.DerivedRendererRuntime
 import com.algorist.markflow.renderer.DerivedRendererRuntimeRequest
@@ -48,7 +47,6 @@ class JcefDerivedRendererRuntime(
 
     private var requestHandler: CefRequestHandlerAdapter? = null
     private val blockedNavigationCounter = AtomicInteger(0)
-    private val blockedResourceCounter = AtomicInteger(0)
 
     private val blockingResourceRequestHandler = object : CefResourceRequestHandlerAdapter() {
         override fun onBeforeResourceLoad(browser: CefBrowser?, frame: CefFrame?, request: CefRequest?): Boolean = true
@@ -170,9 +168,6 @@ class JcefDerivedRendererRuntime(
 
     internal val blockedNavigationCountForDiagnostics: Int
         get() = blockedNavigationCounter.get()
-
-    internal val blockedResourceCountForDiagnostics: Int
-        get() = blockedResourceCounter.get()
 
     private fun installMessageHandler() {
         messageQuery.addHandler { raw ->
@@ -335,7 +330,6 @@ class JcefDerivedRendererRuntime(
                 val allowed = request != null && !isDownload &&
                     request.method.equals("GET", ignoreCase = true) && isAllowedResource(request.url, entry)
                 if (allowed) return null
-                blockedResourceCounter.incrementAndGet()
                 return blockingResourceRequestHandler
             }
         }

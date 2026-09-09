@@ -115,7 +115,7 @@ internal object DerivedRendererProbe {
                     check(result.status == "success")
                     check(result.mediaType == "text/html")
                     check(result.content?.contains("katex") == true)
-                    check(result.content?.contains("katex-display") != true)
+                    check(!result.content.contains("katex-display"))
                 },
                 next = ::runKatexDisplay,
             )
