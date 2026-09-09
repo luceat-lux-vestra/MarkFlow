@@ -15,6 +15,7 @@ import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
 import java.awt.RenderingHints
@@ -400,18 +401,19 @@ private class NativeRasterInlayRenderer(
 
     override fun paint(
         inlay: Inlay<*>,
+        g: Graphics,
         targetRegion: Rectangle,
-        g: Graphics2D,
         textAttributes: TextAttributes,
     ) {
         val (width, height) = dimensions()
         val x = targetRegion.x
         val y = targetRegion.y + max(0, (targetRegion.height - height) / 2)
-        val previousInterpolation = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION)
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        val graphics2D = g as? Graphics2D
+        val previousInterpolation = graphics2D?.getRenderingHint(RenderingHints.KEY_INTERPOLATION)
+        graphics2D?.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
         g.drawImage(image, x, y, width, height, null)
         if (previousInterpolation != null) {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation)
+            graphics2D.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation)
         }
     }
 
