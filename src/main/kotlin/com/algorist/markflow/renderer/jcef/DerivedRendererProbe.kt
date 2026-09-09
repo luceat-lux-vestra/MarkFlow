@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.Base64
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -79,6 +80,7 @@ internal object DerivedRendererProbe {
                     check(result.status == "success")
                     check(result.mediaType == "image/svg+xml")
                     check(result.content?.contains("<svg") == true)
+                    checkPresentationArtifact(result)
                 },
                 next = ::runMermaidFailure,
             )
@@ -97,6 +99,7 @@ internal object DerivedRendererProbe {
                     check(result.status == "failure")
                     check(result.code == "RENDER_FAILED")
                     check(result.content == null)
+                    check(result.presentationArtifact == null)
                 },
                 next = ::runKatexInline,
             )
@@ -109,13 +112,14 @@ internal object DerivedRendererProbe {
                     id = "katex-inline-success",
                     kind = DerivedRendererKind.KATEX,
                     source = "a^2 + b^2 = c^2",
-                    configJson = "{\"displayMode\":false}",
+                    configJson = KATEX_INLINE_CONFIG,
                 ),
                 verify = { result ->
                     check(result.status == "success")
                     check(result.mediaType == "text/html")
                     check(result.content?.contains("katex") == true)
                     check(!result.content.contains("katex-display"))
+                    checkPresentationArtifact(result)
                 },
                 next = ::runKatexDisplay,
             )
@@ -128,12 +132,13 @@ internal object DerivedRendererProbe {
                     id = "katex-display-success",
                     kind = DerivedRendererKind.KATEX,
                     source = "\\int_0^1 x^2\\,dx = \\frac{1}{3}",
-                    configJson = "{\"displayMode\":true}",
+                    configJson = KATEX_DISPLAY_CONFIG,
                 ),
                 verify = { result ->
                     check(result.status == "success")
                     check(result.mediaType == "text/html")
                     check(result.content?.contains("katex-display") == true)
+                    checkPresentationArtifact(result)
                 },
                 next = ::runKatexFailure,
             )
@@ -146,12 +151,13 @@ internal object DerivedRendererProbe {
                     id = "katex-malformed-degradation",
                     kind = DerivedRendererKind.KATEX,
                     source = "\\frac{1}{",
-                    configJson = "{\"displayMode\":true}",
+                    configJson = KATEX_DISPLAY_CONFIG,
                 ),
                 verify = { result ->
                     check(result.status == "success")
                     check(result.mediaType == "text/html")
                     check(result.content?.contains("katex-error") == true)
+                    checkPresentationArtifact(result)
                 },
                 next = ::runNavigationBoundary,
             )
@@ -229,6 +235,17 @@ internal object DerivedRendererProbe {
                         failCase(id, failure)
                     }
                 }
+            }
+        }
+
+        private fun checkPresentationArtifact(result: DerivedRendererRuntimeResult) {
+            val artifact = requireNotNull(result.presentationArtifact) { "native presentation artifact missing" }
+            check(artifact.mediaType == "image/png")
+            check(artifact.width > 0 && artifact.height > 0)
+            val bytes = Base64.getDecoder().decode(artifact.contentBase64)
+            check(bytes.size >= PNG_SIGNATURE.size)
+            check(PNG_SIGNATURE.indices.all { index -> bytes[index] == PNG_SIGNATURE[index] }) {
+                "native presentation artifact is not PNG"
             }
         }
 
@@ -311,8 +328,11 @@ internal object DerivedRendererProbe {
             ),
         )
 
-        private fun resultSummary(result: DerivedRendererRuntimeResult): String =
-            "status=${result.status} mediaType=${result.mediaType ?: "none"} code=${result.code ?: "none"}"
+        private fun resultSummary(result: DerivedRendererRuntimeResult): String {
+            val artifact = result.presentationArtifact
+            val presentation = if (artifact == null) "none" else "${artifact.mediaType}:${artifact.width}x${artifact.height}"
+            return "status=${result.status} mediaType=${result.mediaType ?: "none"} presentation=$presentation code=${result.code ?: "none"}"
+        }
     }
 
     private data class CaseResult(
@@ -334,5 +354,8 @@ internal object DerivedRendererProbe {
     private const val PROBE_TIMEOUT_SECONDS = 60L
     private const val NAVIGATION_OBSERVATION_MILLIS = 500L
     private const val REPEATED_DISPOSAL_CYCLES = 3
-    private const val MERMAID_CONFIG = """{"runtimeSettings":{"themeSource":"LIGHT","ideColorScheme":{},"ideDark":false,"diagramSecurityLevel":"STRICT","mermaidSizeMode":"FIT_TO_VIEWPORT"}}"""
+    private const val MERMAID_CONFIG = """{"runtimeSettings":{"themeSource":"LIGHT","ideColorScheme":{"foreground":"#112233"},"ideDark":false,"diagramSecurityLevel":"STRICT","mermaidSizeMode":"FIT_TO_VIEWPORT","mermaidZoomPercent":100}}"""
+    private const val KATEX_INLINE_CONFIG = """{"displayMode":false,"displayDensity":"COMPACT","baseFontSizePx":16,"foreground":"#112233"}"""
+    private const val KATEX_DISPLAY_CONFIG = """{"displayMode":true,"displayDensity":"COMFORTABLE","baseFontSizePx":16,"foreground":"#112233"}"""
+    private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
 }

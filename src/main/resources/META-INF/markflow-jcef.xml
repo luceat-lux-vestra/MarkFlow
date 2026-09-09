@@ -14,6 +14,7 @@
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditingProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.renderer.jcef.NativeDerivedPresentationProbeProjectActivity"/>
         <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
     </extensions>
 

@@ -2,6 +2,7 @@ package com.algorist.markflow.renderer.jcef
 
 import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
 import com.algorist.markflow.renderer.DerivedRendererKind
+import com.algorist.markflow.renderer.DerivedRendererPresentationArtifact
 import com.algorist.markflow.renderer.DerivedRendererRuntime
 import com.algorist.markflow.renderer.DerivedRendererRuntimeRequest
 import com.algorist.markflow.renderer.DerivedRendererRuntimeResult
@@ -101,24 +102,36 @@ class JcefDerivedRendererRuntime(
                 callback(disposedResult(request))
                 return@onEdt
             }
-            val invalid = validate(request)
-            if (invalid != null) {
+            validate(request)?.let { invalid ->
                 callback(failureResult(request, "INVALID_REQUEST", retryable = false, invalid))
                 return@onEdt
             }
-
             if (activeRequests.containsKey(request.requestId)) {
-                callback(failureResult(request, "INVALID_REQUEST", retryable = false, "renderer request id is already active"))
+                callback(
+                    failureResult(
+                        request,
+                        "INVALID_REQUEST",
+                        retryable = false,
+                        "renderer request id is already active",
+                    )
+                )
                 return@onEdt
             }
+
             activeRequests[request.requestId] = request
             callbacks[request.requestId] = callback
-
             if (!ready) {
                 if (queuedRequests.size >= MAX_PENDING_REQUESTS) {
                     callbacks.remove(request.requestId)
                     activeRequests.remove(request.requestId)
-                    callback(failureResult(request, "BACKEND_UNAVAILABLE", retryable = true, "renderer runtime is not ready"))
+                    callback(
+                        failureResult(
+                            request,
+                            "BACKEND_UNAVAILABLE",
+                            retryable = true,
+                            "renderer runtime is not ready",
+                        )
+                    )
                     return@onEdt
                 }
                 queuedRequests[request.requestId] = request
@@ -248,6 +261,7 @@ class JcefDerivedRendererRuntime(
             callback(failureResult(request, "RENDER_FAILED", retryable = true, "renderer response identity mismatch"))
             return
         }
+
         val status = envelope.status ?: "failure"
         val mediaMatches = status != "success" || when (request.kind) {
             DerivedRendererKind.MERMAID -> envelope.mediaType == "image/svg+xml"
@@ -257,6 +271,7 @@ class JcefDerivedRendererRuntime(
             callback(failureResult(request, "RENDER_FAILED", retryable = true, "renderer response media type mismatch"))
             return
         }
+
         callback(
             DerivedRendererRuntimeResult(
                 requestId = requestId,
@@ -265,10 +280,28 @@ class JcefDerivedRendererRuntime(
                 identity = request.identity,
                 mediaType = envelope.mediaType,
                 content = envelope.content,
+                presentationArtifact = presentationArtifactOrNull(envelope),
                 code = envelope.code,
                 retryable = envelope.retryable == true,
                 message = envelope.message,
             )
+        )
+    }
+
+    private fun presentationArtifactOrNull(envelope: WireEnvelope): DerivedRendererPresentationArtifact? {
+        val mediaType = envelope.presentationMediaType ?: return null
+        val contentBase64 = envelope.presentationContentBase64 ?: return null
+        val width = envelope.presentationWidth ?: return null
+        val height = envelope.presentationHeight ?: return null
+        if (mediaType != "image/png") return null
+        if (contentBase64.isBlank() || contentBase64.length > MAX_PRESENTATION_BASE64_CHARS) return null
+        if (width !in 1..MAX_PRESENTATION_DIMENSION || height !in 1..MAX_PRESENTATION_DIMENSION) return null
+        if (width.toLong() * height.toLong() > MAX_PRESENTATION_PIXELS) return null
+        return DerivedRendererPresentationArtifact(
+            mediaType = mediaType,
+            contentBase64 = contentBase64,
+            width = width,
+            height = height,
         )
     }
 
@@ -365,7 +398,11 @@ class JcefDerivedRendererRuntime(
         if (request.identity.sourceGeneration.isBlank() || request.identity.configGeneration.isBlank()) {
             return "renderer identity is required"
         }
-        val sourceLimit = if (request.kind == DerivedRendererKind.MERMAID) MAX_MERMAID_SOURCE_CHARS else MAX_KATEX_SOURCE_CHARS
+        val sourceLimit = if (request.kind == DerivedRendererKind.MERMAID) {
+            MAX_MERMAID_SOURCE_CHARS
+        } else {
+            MAX_KATEX_SOURCE_CHARS
+        }
         if (request.source.length > sourceLimit) return "renderer source exceeds configured bound"
         if (request.configJson.length > MAX_CONFIG_CHARS) return "renderer config exceeds configured bound"
         return null
@@ -412,6 +449,10 @@ class JcefDerivedRendererRuntime(
         val configGeneration: String? = null,
         val mediaType: String? = null,
         val content: String? = null,
+        val presentationMediaType: String? = null,
+        val presentationContentBase64: String? = null,
+        val presentationWidth: Int? = null,
+        val presentationHeight: Int? = null,
         val code: String? = null,
         val retryable: Boolean? = null,
         val message: String? = null,
@@ -422,6 +463,9 @@ class JcefDerivedRendererRuntime(
         private const val MAX_MERMAID_SOURCE_CHARS = 64 * 1024
         private const val MAX_KATEX_SOURCE_CHARS = 32 * 1024
         private const val MAX_CONFIG_CHARS = 16 * 1024
+        private const val MAX_PRESENTATION_DIMENSION = 4096
+        private const val MAX_PRESENTATION_PIXELS = 8L * 1024L * 1024L
+        private const val MAX_PRESENTATION_BASE64_CHARS = 48 * 1024 * 1024
         private val liveInstances = AtomicInteger(0)
 
         internal val liveInstanceCountForDiagnostics: Int

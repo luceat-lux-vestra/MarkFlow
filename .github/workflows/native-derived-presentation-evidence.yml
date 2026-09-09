@@ -1,0 +1,176 @@
+name: Native Derived Presentation Evidence
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/native-derived-presentation-evidence.yml'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/resources/META-INF/markflow-jcef.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/renderer/**'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
+      - 'webview/derived-renderer.html'
+      - 'webview/vite.derived-renderer.config.ts'
+      - 'webview/src/renderer/**'
+      - 'webview/src/app/derived-renderer-service.ts'
+      - 'webview/src/app/browser-derived-renderer-backends.ts'
+  pull_request:
+    paths:
+      - '.github/workflows/native-derived-presentation-evidence.yml'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/resources/META-INF/markflow-jcef.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/renderer/**'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
+      - 'webview/derived-renderer.html'
+      - 'webview/vite.derived-renderer.config.ts'
+      - 'webview/src/renderer/**'
+      - 'webview/src/app/derived-renderer-service.ts'
+      - 'webview/src/app/browser-derived-renderer-backends.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-derived-presentation-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native derived presentation probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-derived-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native derived presentation probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build/native-derived-presentation-probe/project"
+          export JAVA_TOOL_OPTIONS="-Dmarkflow.nativeDerivedPresentationProbe.output=$GITHUB_WORKSPACE/build/native-derived-presentation-probe/evidence.json -Didea.trust.all.projects=true -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIde --args="$GITHUB_WORKSPACE/build/native-derived-presentation-probe/project" --stacktrace
+
+      - name: Validate native derived presentation evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-derived-presentation-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native derived presentation probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedSurface') != 'PLATFORM_TEXT_EDITOR_DERIVED_INLAYS':
+              raise SystemExit(f"unexpected native derived surface: {evidence.get('selectedSurface')}")
+          if evidence.get('jcefSupported') is not True:
+              raise SystemExit(f"real JCEF proof did not run with JCEF: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native derived presentation verdict is not PASS: {evidence.get('verdict')}")
+          if evidence.get('baselineLiveRuntimes') != evidence.get('finalLiveRuntimes'):
+              raise SystemExit('derived renderer runtime count did not return to baseline')
+
+          required = {
+              'jcef-runtime-available',
+              'authoritative-document-fixture',
+              'platform-text-editor-selected',
+              'derived-projection-contract',
+              'real-mermaid-katex-inert-inlays',
+              'caret-selection-exact-source-reveal',
+              'split-editor-presentation-isolation',
+              'renderer-unavailable-source-fallback',
+              'renderer-failure-source-fallback',
+              'missing-artifact-source-fallback',
+              'stale-renderer-identity-rejected',
+              'final-source-and-lifecycle-stability',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate #148 evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"#148 evidence case mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'#148 required cases failed: {failed}')
+
+          def detail(case_id):
+              return str(by_id[case_id].get('detail', ''))
+
+          if 'projectDefault=false' not in detail('authoritative-document-fixture') or 'insideProject=true' not in detail('authoritative-document-fixture'):
+              raise SystemExit('native derived proof did not run in a real opened project')
+          real = detail('real-mermaid-katex-inert-inlays')
+          if 'decodedPng=6' not in real or 'inlays=6' not in real or 'sourceStable=true' not in real:
+              raise SystemExit(f'real renderer-to-inlay proof incomplete: {real}')
+          reveal = detail('caret-selection-exact-source-reveal')
+          if not all(marker in reveal for marker in ('inlineCaretReveal=true', 'displaySelectionReveal=true', 'restored=true')):
+              raise SystemExit(f'exact-source reveal proof incomplete: {reveal}')
+          split = detail('split-editor-presentation-isolation')
+          if 'sharedDocument=true' not in split or 'independentInlays=true' not in split or 'independentReveal=true' not in split:
+              raise SystemExit(f'split-editor isolation proof incomplete: {split}')
+          for case_id in ('renderer-unavailable-source-fallback', 'renderer-failure-source-fallback', 'missing-artifact-source-fallback'):
+              if 'exactSourceFallback=true' not in detail(case_id):
+                  raise SystemExit(f'{case_id} did not prove exact source fallback: {detail(case_id)}')
+          stale = detail('stale-renderer-identity-rejected')
+          if 'staleResultsRejected=3' not in stale or 'staleOverwrite=false' not in stale:
+              raise SystemExit(f'stale renderer rejection proof incomplete: {stale}')
+          final = detail('final-source-and-lifecycle-stability')
+          if not all(marker in final for marker in ('controllers=0', 'editors=0', 'runtimeBaselineRestored=true', 'sourceStable=true')):
+              raise SystemExit(f'final #148 lifecycle proof incomplete: {final}')
+
+          print(f"Native derived presentation PASS on IDE {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')} - {detail(case_id)}")
+          PY
+
+      - name: Upload native derived presentation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-derived-presentation-evidence
+          path: |
+            build/native-derived-presentation-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-native-derived-xvfb.log
+          if-no-files-found: warn

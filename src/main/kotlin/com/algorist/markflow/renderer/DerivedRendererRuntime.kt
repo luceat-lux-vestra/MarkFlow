@@ -32,6 +32,20 @@ data class DerivedRendererIdentity(
     val configGeneration: String,
 )
 
+/**
+ * Optional inert artifact already converted into a bounded host-paintable representation.
+ *
+ * The selected #144 runtime emits PNG bytes as Base64 so native presentation never needs JCEF,
+ * DOM, Mermaid, KaTeX, navigation, or filesystem authority. The original SVG/HTML artifact remains
+ * available on [DerivedRendererRuntimeResult] for fidelity/evidence and non-native consumers.
+ */
+data class DerivedRendererPresentationArtifact(
+    val mediaType: String,
+    val contentBase64: String,
+    val width: Int,
+    val height: Int,
+)
+
 data class DerivedRendererRuntimeResult(
     val requestId: String,
     val status: String,
@@ -39,6 +53,7 @@ data class DerivedRendererRuntimeResult(
     val identity: DerivedRendererIdentity,
     val mediaType: String? = null,
     val content: String? = null,
+    val presentationArtifact: DerivedRendererPresentationArtifact? = null,
     val code: String? = null,
     val retryable: Boolean = false,
     val message: String? = null,
