@@ -2,7 +2,6 @@ package com.algorist.markflow.settings
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
-import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsManager
@@ -14,10 +13,9 @@ import java.awt.Color
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * App-scoped source of truth for the active IDE editor palette + font, surfaced to the webview as a
- * stable `name -> "#RRGGBB"` map (`ideColorScheme`) plus font hints. This is Approach C (IDE palette
- * sync): the IDE is an opaque color/font provider and the webview owns the design system (mapping,
- * contrast guards, typography).
+ * App-scoped source of truth for the active IDE editor palette + font, surfaced to presentation as a
+ * stable `name -> "#RRGGBB"` map (`ideColorScheme`) plus font hints. The optional renderer sink owns
+ * browser delivery; palette capture itself remains available without JCEF.
  *
  * The editor colors are read from stable `EditorColors` color keys (the plan's `SchemeColor` /
  * `schemeColors` API does not exist on platform 2026.2), so the map keys are ours and version-stable.
@@ -57,7 +55,7 @@ class MarkFlowIdeThemeService : Disposable {
 
     fun getSnapshot(): Snapshot = current.get()
 
-    /** Re-reads the active scheme, stores the snapshot, and re-pushes runtime settings. */
+    /** Re-reads the active scheme, stores the snapshot, and notifies available presentation sinks. */
     fun refresh(): Snapshot {
         val snapshot = captureFromCurrentScheme()
         current.set(snapshot)
@@ -66,7 +64,7 @@ class MarkFlowIdeThemeService : Disposable {
                 "fonts=${snapshot.fonts.keys.sorted()}"
         )
         MarkFlowSettingsService.bumpRuntimeSettingsRevision()
-        MarkFlowSharedBrowserService.notifyRuntimeSettingsChanged(forceReload = false)
+        MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
         return snapshot
     }
 

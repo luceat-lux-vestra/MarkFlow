@@ -210,3 +210,22 @@ Before the old editor renderer path is deleted, prove:
 This ADR corrects any reading of ADR 0001 or #140 that would treat Mermaid/KaTeX support, their maintained renderer engines, or the complete TypeScript renderer stack as collateral deletion targets of the browser-editor migration.
 
 Editor architecture and derived-renderer implementation are separate replacement decisions.
+
+## #144 tested runtime selection
+
+Issue #144 keeps **Candidate A, isolated IntelliJ JCEF/TypeScript execution, as the selected renderer backend** for the migration boundary.
+
+The decision is intentionally conservative:
+
+- Mermaid remains `11.17.2` and KaTeX remains `^0.18.5`; there is no renderer-engine rewrite.
+- The MarkFlow `DerivedRendererService` owns bounded source/config input, explicit source/config generation identity, timeout/retry, cancellation/disposal, cache bounds, typed/redacted failures, and inert SVG/HTML artifacts independently of Crepe/CodeMirror/editor-session identity.
+- Mermaid engine invocation and direct KaTeX `renderToString` invocation have one MarkFlow production owner in the browser renderer backend. The temporary Crepe/CodeMirror adapters consume the service and remain presentation/editor adapters only until #153/#154.
+- KaTeX uses direct `renderToString` with `trust: false` and `throwOnError: false`; existing KaTeX CSS/fonts remain the presentation assets. No custom TeX layout is introduced.
+- `com.intellij.mermaid` is **unused** because IntelliJ 2026.2 exposes no maintained public source-to-inert-SVG service suitable for third-party consumption; MarkFlow does not call or reflect into its private/internal preview/export implementation.
+- Browserless Mermaid and alternate JS runtimes remain unselected because no candidate has demonstrated a fidelity, package-size, lifecycle, platform-coverage, or operational advantage over the already-supported JCEF baseline.
+- JCEF is **optional at the MarkFlow plugin descriptor boundary**. `com.intellij.modules.jcef` registrations live in `META-INF/markflow-jcef.xml`; base settings/native editing registrations contain no JCEF/browser class link. A dedicated real-IDE proof disables the bundled JCEF plugin itself and requires plugin load, settings/theme access, platform TextEditor ownership, authoritative `Document` edit/undo/redo/save, and lifecycle cleanup to pass.
+- Renderer/browser failure therefore degrades rich presentation only. It cannot decide whether the base plugin loads or whether exact Markdown source editing works.
+
+Security/resource boundary: the service itself has no `Document`, editor, navigation, network, or filesystem authority. The selected JCEF execution remains below the renderer/browser descriptor; host/JCEF request and navigation containment remains governed by the existing trust boundary and later convergence tasks. Native inlay consumption is still owned by #148, production editor cutover by #153, and browser editor/protocol deletion by #154.
+
+The evidence for this selection is the #144 exact-HEAD renderer contract/architecture tests, existing representative Mermaid/KaTeX regression corpus, maintained IntelliJ Plugin Verifier matrix, the existing JCEF-disabled native probes, and the new JCEF-plugin-disabled package/native-editing probe. If those exact-candidate proofs do not pass, this selection is not considered proven.
