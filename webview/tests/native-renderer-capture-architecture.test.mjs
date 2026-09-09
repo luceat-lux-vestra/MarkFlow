@@ -23,8 +23,13 @@ test("capture is bounded before raster allocation", () => {
     assert.match(bootstrap, /canvas\.height = height/);
 });
 
-test("KaTeX capture reuses packaged KaTeX CSS without a second rendering engine", () => {
+test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentation settings", () => {
     assert.match(bootstrap, /import "katex\/dist\/katex\.min\.css"/);
+    assert.match(bootstrap, /wrapper\.style\.color = safeHexColor\(config\.foreground\) \?\? "currentColor"/);
+    assert.match(bootstrap, /config\.displayDensity === "COMPACT"/);
+    assert.match(bootstrap, /setProperty\("margin", "0\.6em 0"\)/);
+    assert.match(bootstrap, /setProperty\("line-height", "1\.1"\)/);
+    assert.match(bootstrap, /#\[0-9a-fA-F\]\{3\}/);
     assert.equal(bootstrap.includes("renderToString"), false);
     assert.equal(bootstrap.includes("mermaid.render"), false);
     assert.equal(packageJson.dependencies.katex, "^0.18.5");
