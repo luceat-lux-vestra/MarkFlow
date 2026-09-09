@@ -37,7 +37,14 @@ after
     }
 
     fun testEscapedDollarInlineCodeAndFencedCodeAreNotMath() {
-        val source = "Escaped \\$not-math and `\$code\$`.\n\n```text\n\$fenced\$\n```\n\nReal \$ok\$.\n"
+        val source = """Escaped \${'$'}not-math and `${'$'}code${'$'}`.
+
+```text
+${'$'}fenced${'$'}
+```
+
+Real ${'$'}ok${'$'}.
+"""
         val derived = derived(source)
 
         val math = derived.filter { it.kind == NativeDerivedProjectionKind.KATEX_INLINE }
