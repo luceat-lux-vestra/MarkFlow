@@ -10,11 +10,13 @@ import com.algorist.markflow.settings.state.MarkFlowRuntimeSettings
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.util.ui.accessibility.ScreenReader
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
@@ -36,9 +38,11 @@ internal data class NativeDerivedPresentationEvidence(
     val decodedArtifacts: Int,
     val ownedInlays: Int,
     val ownedFolds: Int,
+    val ownedErrorInlays: Int,
     val staleResultsRejected: Long,
     val rendererFailures: Long,
     val missingArtifacts: Long,
+    val accessibilityFallbacks: Long,
 )
 
 /**
@@ -47,7 +51,8 @@ internal data class NativeDerivedPresentationEvidence(
  * It consumes only [DerivedRendererRuntime] and bounded inert PNG artifacts. It never imports JCEF,
  * Mermaid, KaTeX, browser, navigation, filesystem, or source-mutation APIs. The authoritative
  * Document stays visible until a valid artifact for the exact current source/config generation is
- * available. Active caret/selection ranges always reveal exact source.
+ * available. Active caret/selection ranges always reveal exact source. Screen-reader mode keeps the
+ * authoritative Markdown visible and does not request rich presentation artifacts.
  */
 internal class NativeDerivedPresentationController(
     private val editor: Editor,
@@ -55,28 +60,38 @@ internal class NativeDerivedPresentationController(
     private val settingsProvider: () -> MarkFlowRuntimeSettings = {
         MarkFlowSettingsService.getInstance().runtimeSettings()
     },
+    private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
 ) : Disposable {
     private val gson = Gson()
     private val pending = LinkedHashMap<String, PendingRequest>()
     private val decoded = LinkedHashMap<ProjectionKey, DecodedArtifact>()
     private val owned = LinkedHashMap<ProjectionKey, OwnedPresentation>()
+    private val errorMessages = LinkedHashMap<ProjectionKey, String>()
+    private val errorInlays = LinkedHashMap<ProjectionKey, Inlay<*>>()
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentDerived = emptyList<NativeDerivedProjection>()
     private var disposed = false
     private var staleResultsRejected = 0L
     private var rendererFailures = 0L
     private var missingArtifacts = 0L
+    private var accessibilityFallbacks = 0L
 
     fun applyPlan(plan: NativeProjectionPlan) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
         cancelPending()
         clearOwnedPresentation()
+        clearErrorPresentation()
         decoded.clear()
+        errorMessages.clear()
         currentPlanIdentity = plan.identity
         currentDerived = NativeDerivedProjectionPlanner.plan(plan)
 
         if (plan.status != ProjectionPlanStatus.READY || currentDerived.isEmpty()) return
+        if (!runCatching(richPresentationEnabled).getOrDefault(false)) {
+            accessibilityFallbacks += currentDerived.size
+            return
+        }
         val selectedRuntime = runtime ?: run {
             rendererFailures += currentDerived.size
             return
@@ -100,8 +115,10 @@ internal class NativeDerivedPresentationController(
             val key = ProjectionKey.of(projection)
             if (isActive(projection)) {
                 removeOwned(key)
+                removeErrorInlay(key)
             } else {
                 decoded[key]?.let { artifact -> installIfCurrent(plan.identity, projection, artifact) }
+                errorMessages[key]?.let { message -> installErrorIfCurrent(plan.identity, projection, message) }
             }
         }
     }
@@ -113,9 +130,11 @@ internal class NativeDerivedPresentationController(
         decodedArtifacts = decoded.size,
         ownedInlays = owned.values.count { it.inlay.isValid },
         ownedFolds = owned.values.count { it.fold.isValid },
+        ownedErrorInlays = errorInlays.values.count { it.isValid },
         staleResultsRejected = staleResultsRejected,
         rendererFailures = rendererFailures,
         missingArtifacts = missingArtifacts,
+        accessibilityFallbacks = accessibilityFallbacks,
     )
 
     private fun request(
@@ -159,6 +178,8 @@ internal class NativeDerivedPresentationController(
             planIdentity = planIdentity,
             projection = projection,
             rendererIdentity = rendererIdentity,
+            mermaidErrorDisplay = settings.mermaidErrorDisplay,
+            mermaidErrorMessage = settings.mermaidSyntaxErrorMessage,
         )
         selectedRuntime.render(request) { result -> onRendererResult(requestId, result) }
     }
@@ -173,6 +194,21 @@ internal class NativeDerivedPresentationController(
             }
             if (result.status != "success") {
                 rendererFailures += 1
+                LOG.warn(
+                    "MarkFlow native derived renderer failed kind=${expected.projection.kind} " +
+                        "code=${result.code ?: "unknown"} retryable=${result.retryable}"
+                )
+                if (
+                    expected.projection.kind == NativeDerivedProjectionKind.MERMAID &&
+                    expected.mermaidErrorDisplay == MERMAID_INLINE_ERROR_BOX
+                ) {
+                    val key = ProjectionKey.of(expected.projection)
+                    val message = expected.mermaidErrorMessage.take(MAX_ERROR_MESSAGE_CHARS)
+                    errorMessages[key] = message
+                    if (!isActive(expected.projection)) {
+                        installErrorIfCurrent(expected.planIdentity, expected.projection, message)
+                    }
+                }
                 return@onEdt
             }
             val artifact = result.presentationArtifact
@@ -228,6 +264,7 @@ internal class NativeDerivedPresentationController(
         if (!isCurrent(planIdentity) || isActive(projection)) return
         val key = ProjectionKey.of(projection)
         if (owned[key]?.let { it.fold.isValid && it.inlay.isValid } == true) return
+        removeErrorInlay(key)
         removeOwned(key)
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
@@ -287,6 +324,25 @@ internal class NativeDerivedPresentationController(
         }
     }
 
+    private fun installErrorIfCurrent(
+        planIdentity: ProjectionSourceIdentity,
+        projection: NativeDerivedProjection,
+        message: String,
+    ) {
+        if (!isCurrent(planIdentity) || isActive(projection)) return
+        val key = ProjectionKey.of(projection)
+        if (errorInlays[key]?.isValid == true) return
+        removeErrorInlay(key)
+        val inlay = editor.inlayModel.addBlockElement(
+            projection.sourceRange.endOffset,
+            true,
+            true,
+            0,
+            NativeDerivedErrorInlayRenderer(editor, message),
+        ) ?: return
+        errorInlays[key] = inlay
+    }
+
     private fun isCurrent(identity: ProjectionSourceIdentity): Boolean =
         currentPlanIdentity == identity && matchesCurrentIdentity(identity)
 
@@ -313,6 +369,10 @@ internal class NativeDerivedPresentationController(
         owned.keys.toList().forEach(::removeOwned)
     }
 
+    private fun clearErrorPresentation() {
+        errorInlays.keys.toList().forEach(::removeErrorInlay)
+    }
+
     private fun removeOwned(key: ProjectionKey) {
         val presentation = owned.remove(key) ?: return
         if (presentation.inlay.isValid) presentation.inlay.dispose()
@@ -323,6 +383,11 @@ internal class NativeDerivedPresentationController(
                 }
             }
         }
+    }
+
+    private fun removeErrorInlay(key: ProjectionKey) {
+        val inlay = errorInlays.remove(key) ?: return
+        if (inlay.isValid) inlay.dispose()
     }
 
     private fun requireAlive() {
@@ -339,7 +404,9 @@ internal class NativeDerivedPresentationController(
         }
         cancelPending()
         clearOwnedPresentation()
+        clearErrorPresentation()
         decoded.clear()
+        errorMessages.clear()
         currentDerived = emptyList()
         currentPlanIdentity = null
         disposed = true
@@ -355,6 +422,8 @@ internal class NativeDerivedPresentationController(
         val planIdentity: ProjectionSourceIdentity,
         val projection: NativeDerivedProjection,
         val rendererIdentity: DerivedRendererIdentity,
+        val mermaidErrorDisplay: String,
+        val mermaidErrorMessage: String,
     )
 
     private data class ProjectionKey(
@@ -381,12 +450,52 @@ internal class NativeDerivedPresentationController(
     )
 
     companion object {
+        private val LOG = Logger.getInstance(NativeDerivedPresentationController::class.java)
         private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
+        private const val MERMAID_INLINE_ERROR_BOX = "INLINE_ERROR_BOX"
+        private const val MAX_ERROR_MESSAGE_CHARS = 240
         private const val MAX_ARTIFACT_DIMENSION = 4096
         private const val MAX_ARTIFACT_PIXELS = 8L * 1024L * 1024L
         private const val MAX_DECODED_PNG_BYTES = 48 * 1024 * 1024
         private val REQUEST_SEQUENCE = AtomicLong(0)
     }
+}
+
+internal fun calculateNativeRasterDimensions(
+    kind: NativeDerivedProjectionKind,
+    imageWidth: Int,
+    imageHeight: Int,
+    viewportWidth: Int,
+    lineHeight: Int,
+    mermaidSizeMode: String = "FIT_TO_VIEWPORT",
+    mermaidZoomPercent: Int = 100,
+): Pair<Int, Int> {
+    require(imageWidth > 0 && imageHeight > 0)
+    val boundedViewportWidth = max(1, viewportWidth)
+    val boundedLineHeight = max(1, lineHeight)
+    val baseScale = when (kind) {
+        NativeDerivedProjectionKind.MERMAID -> {
+            val zoom = mermaidZoomPercent.coerceIn(50, 200) / 100.0
+            val widthScale = when (mermaidSizeMode) {
+                "ACTUAL_SIZE_SCROLL" -> 1.0
+                "SHRINK_TO_FIT" -> min(1.0, boundedViewportWidth.toDouble() / imageWidth.toDouble())
+                else -> boundedViewportWidth.toDouble() / imageWidth.toDouble()
+            }
+            widthScale * zoom
+        }
+
+        NativeDerivedProjectionKind.KATEX_INLINE ->
+            min(1.0, boundedLineHeight.toDouble() / imageHeight.toDouble())
+
+        NativeDerivedProjectionKind.KATEX_DISPLAY ->
+            min(1.0, boundedViewportWidth.toDouble() / imageWidth.toDouble())
+    }
+    val maxHeight = if (kind.block) 1024 else boundedLineHeight
+    val scaledWidth = max(1, (imageWidth * baseScale).roundToInt())
+    val scaledHeight = max(1, (imageHeight * baseScale).roundToInt())
+    if (scaledHeight <= maxHeight) return scaledWidth to scaledHeight
+    val heightScale = maxHeight.toDouble() / scaledHeight.toDouble()
+    return max(1, (scaledWidth * heightScale).roundToInt()) to maxHeight
 }
 
 private class NativeRasterInlayRenderer(
@@ -419,29 +528,44 @@ private class NativeRasterInlayRenderer(
 
     private fun dimensions(): Pair<Int, Int> {
         val settings = runCatching(settingsProvider).getOrNull()
-        val viewportWidth = max(1, editor.scrollingModel.visibleArea.width - 24)
-        val baseScale = when (projection.kind) {
-            NativeDerivedProjectionKind.MERMAID -> {
-                val zoom = (settings?.mermaidZoomPercent ?: 100).coerceIn(50, 200) / 100.0
-                val widthScale = when (settings?.mermaidSizeMode ?: "FIT_TO_VIEWPORT") {
-                    "ACTUAL_SIZE_SCROLL" -> 1.0
-                    "SHRINK_TO_FIT" -> min(1.0, viewportWidth.toDouble() / image.width.toDouble())
-                    else -> viewportWidth.toDouble() / image.width.toDouble()
-                }
-                widthScale * zoom
-            }
+        return calculateNativeRasterDimensions(
+            kind = projection.kind,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            viewportWidth = max(1, editor.scrollingModel.visibleArea.width - 24),
+            lineHeight = editor.lineHeight,
+            mermaidSizeMode = settings?.mermaidSizeMode ?: "FIT_TO_VIEWPORT",
+            mermaidZoomPercent = settings?.mermaidZoomPercent ?: 100,
+        )
+    }
+}
 
-            NativeDerivedProjectionKind.KATEX_INLINE ->
-                min(1.0, editor.lineHeight.toDouble() / image.height.toDouble())
+private class NativeDerivedErrorInlayRenderer(
+    private val editor: Editor,
+    private val message: String,
+) : EditorCustomElementRenderer {
+    private val displayText = "Mermaid: $message"
 
-            NativeDerivedProjectionKind.KATEX_DISPLAY ->
-                min(1.0, viewportWidth.toDouble() / image.width.toDouble())
-        }
-        val maxHeight = if (projection.block) 1024 else editor.lineHeight
-        val scaledWidth = max(1, (image.width * baseScale).roundToInt())
-        val scaledHeight = max(1, (image.height * baseScale).roundToInt())
-        if (scaledHeight <= maxHeight) return scaledWidth to scaledHeight
-        val heightScale = maxHeight.toDouble() / scaledHeight.toDouble()
-        return max(1, (scaledWidth * heightScale).roundToInt()) to maxHeight
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+        val font = editor.contentComponent.font
+        val metrics = editor.contentComponent.getFontMetrics(font)
+        val available = max(1, editor.scrollingModel.visibleArea.width - 24)
+        return min(available, max(1, metrics.stringWidth(displayText) + 16))
+    }
+
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int = editor.lineHeight + 8
+
+    override fun paint(
+        inlay: Inlay<*>,
+        g: Graphics,
+        targetRegion: Rectangle,
+        textAttributes: TextAttributes,
+    ) {
+        val font = editor.contentComponent.font
+        g.font = font
+        g.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+        val metrics = g.getFontMetrics(font)
+        val baseline = targetRegion.y + max(metrics.ascent, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
+        g.drawString(displayText, targetRegion.x + 8, baseline)
     }
 }
