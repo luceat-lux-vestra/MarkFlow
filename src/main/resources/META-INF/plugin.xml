@@ -5,14 +5,21 @@
     <vendor>algorist</vendor>
 
     <depends>com.intellij.modules.platform</depends>
-    <!-- Since 2026.2 JCEF ships as a separate bundled plugin; without this dependency com.intellij.ui.jcef.*
-         is not visible to the plugin classloader. #144/#155 own the target renderer dependency boundary. -->
-    <depends>com.intellij.modules.jcef</depends>
+    <!-- Renderer/browser integration is optional. Native source editing and settings remain loadable
+         when IntelliJ 2026.2's separately bundled JCEF plugin is disabled. -->
+    <depends optional="true" config-file="markflow-jcef.xml">com.intellij.modules.jcef</depends>
     <!-- #145 uses the bundled JetBrains Markdown parser on immutable Document snapshots.
          This is a parser/range dependency only; the bundled Markdown editor remains free to coexist with MarkFlow. -->
     <depends>org.intellij.plugins.markdown</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
+
+    <extensionPoints>
+        <extensionPoint
+                name="runtimeSettingsSink"
+                interface="com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink"
+                dynamic="true"/>
+    </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.algorist.markflow.settings.MarkFlowSettingsService"/>
@@ -21,21 +28,13 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
-        <appStarter
-                id="markflow-jcef-transport-probe"
-                implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
-                internal="true"/>
         <copyPastePostProcessor
                 implementation="com.algorist.markflow.editor.native.NativePasteTransferableCapturePostProcessor"
                 order="last"/>
         <copyPastePreProcessor
                 implementation="com.algorist.markflow.editor.native.NativeMarkdownPastePreProcessor"
                 order="last"/>
-        <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
-        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
-        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
-        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditingProbeProjectActivity"/>
-        <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
+        <!-- #144 package-isolation proof: this activity has no JCEF/browser class references. -->
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NoJcefNativeEditingProbeProjectActivity"/>
     </extensions>
-
 </idea-plugin>

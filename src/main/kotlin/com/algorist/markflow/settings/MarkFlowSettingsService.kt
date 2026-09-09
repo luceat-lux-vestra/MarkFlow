@@ -11,7 +11,6 @@ import java.awt.GraphicsEnvironment
 import java.util.concurrent.atomic.AtomicInteger
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.MyBundle
-import com.algorist.markflow.browser.MarkFlowSharedBrowserService
 import com.algorist.markflow.settings.state.DiagramSecurityLevel
 import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MarkFlowRuntimeSettings
@@ -54,7 +53,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             )
         }
         if (changed) {
-            MarkFlowSharedBrowserService.notifyRuntimeSettingsChanged(forceReload = false)
+            MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
         }
     }
 

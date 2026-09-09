@@ -1,0 +1,164 @@
+name: No-JCEF Native Editing Evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/no-jcef-native-editing-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/resources/META-INF/markflow-jcef.xml'
+      - 'src/main/kotlin/com/algorist/markflow/settings/**'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowBrowserRuntimeSettingsSink.kt'
+      - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
+  pull_request:
+    paths:
+      - '.github/workflows/no-jcef-native-editing-evidence.yml'
+      - 'build.gradle.kts'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/resources/META-INF/markflow-jcef.xml'
+      - 'src/main/kotlin/com/algorist/markflow/settings/**'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowBrowserRuntimeSettingsSink.kt'
+      - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: no-jcef-native-editing-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native editing without JCEF plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-no-jcef-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editing probe with JCEF plugin disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNoJcefNativeEditingProbe --stacktrace
+
+      - name: Validate no-JCEF evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/no-jcef-native-editing-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('no-JCEF native editing probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"no-JCEF proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-plugin-class-absent',
+              'real-project-authoritative-document',
+              'platform-text-provider-owns-source',
+              'optional-browser-registrations-absent',
+              'base-native-paste-extension-present',
+              'settings-degrade-without-renderer',
+              'authoritative-native-edit-undo-redo-save',
+              'final-native-lifecycle',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate no-JCEF evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"no-JCEF case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'no-JCEF required cases failed: {failed}')
+
+          jcef_detail = str(by_id['jcef-plugin-class-absent'].get('detail', ''))
+          if 'classPresent=false' not in jcef_detail or 'supported=false' not in jcef_detail:
+              raise SystemExit(f'JCEF plugin was not actually absent from the MarkFlow classloader: {jcef_detail}')
+          registration_detail = str(by_id['optional-browser-registrations-absent'].get('detail', ''))
+          if 'temporaryProvider=false' not in registration_detail or 'runtimeSettingsSinks=0' not in registration_detail:
+              raise SystemExit(f'optional browser registrations leaked into base plugin: {registration_detail}')
+          editing_detail = str(by_id['authoritative-native-edit-undo-redo-save'].get('detail', ''))
+          for flag in ('sameDocument=true', 'dirty=true', 'undo=true', 'redo=true', 'save=true'):
+              if flag not in editing_detail:
+                  raise SystemExit(f'native source-editing proof incomplete: {editing_detail}')
+          lifecycle_detail = str(by_id['final-native-lifecycle'].get('detail', ''))
+          if 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'no-JCEF lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          print(f"No-JCEF native editing verdict: {evidence['verdict']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Reject hidden MarkFlow/JCEF class-loading failures
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t logs < <(find build/idea-sandbox -type f -name idea.log -print 2>/dev/null || true)
+          if ((${#logs[@]} == 0)); then
+            echo 'No idea.log found; evidence file remains the primary proof.'
+            exit 0
+          fi
+          if grep -E 'PluginException.*com\.algorist\.markflow|Cannot load.*com\.algorist\.markflow|NoClassDefFoundError: com/intellij/ui/jcef' "${logs[@]}"; then
+            echo 'Hidden MarkFlow/JCEF class-loading failure detected.' >&2
+            exit 1
+          fi
+
+      - name: Upload no-JCEF evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: no-jcef-native-editing-evidence
+          path: |
+            build/no-jcef-native-editing-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-no-jcef-xvfb.log
+          if-no-files-found: warn

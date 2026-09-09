@@ -7,6 +7,7 @@ import {applyEditorUiState, captureEditorUiState, focusEditorView, recoverEditor
 import {emitDiagnosticsLog, emitToIntelliJLog as baseEmitToIntelliJLog, markFlowStage, showBootError} from "./editor-telemetry";
 import {createRecoveryController} from "./recovery";
 import {MarkFlowMermaidRenderer} from "./mermaid-renderer";
+import {installLegacyCrepeKatexAdapter} from "./legacy-crepe-katex-adapter";
 import {updateRawMarkdownFromSerialized} from "./markdown-source-buffer";
 import {configureSourcePreservingMarkdown} from "./source-preserving-markdown";
 import {rawHtmlMarkdownFeature} from "./raw-html-support";
@@ -26,6 +27,7 @@ export class MarkFlowEditorSession {
     private pendingSourceRevisionFromIntelliJ: number | null = null;
     private pendingEditorStateFromIntelliJ: EditorUiState | null = null;
     private removeMarkdownPasteHandler: (() => void) | null = null;
+    private disposeKatexAdapter: (() => void) | null = null;
     private isEditorActive = true;
     private activeCrepe: Crepe | null = null;
     private pendingSettingsRerenderRevision: number | null = null;
@@ -57,6 +59,7 @@ export class MarkFlowEditorSession {
             emitToIntelliJLog: this.emitToIntelliJLog,
             onFlushNow: () => this.flushPendingMarkdownSync()
         });
+        window.addEventListener("beforeunload", this.disposeRendererIntegration, {once: true});
     }
 
     public readonly initEditor = async () => {
@@ -134,7 +137,6 @@ export class MarkFlowEditorSession {
         // 3) Create the Crepe editor instance.
         const crepeSessionId = ++this.crepeSessionSequence;
         const crepe = await this.createCrepeInstance(initialText, crepeSessionId);
-        this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         this.activeCrepe = crepe;
         this.attachCrepeBridge(crepe, crepeSessionId);
         markFlowStage("crepe:constructed", this.emitToIntelliJLog);
@@ -343,6 +345,8 @@ export class MarkFlowEditorSession {
 
             this.removeMarkdownPasteHandler?.();
             this.removeMarkdownPasteHandler = null;
+            this.disposeKatexAdapter?.();
+            this.disposeKatexAdapter = null;
 
             try {
                 (current as unknown as { destroy?: () => void }).destroy?.();
@@ -359,7 +363,6 @@ export class MarkFlowEditorSession {
             this.mermaidRenderer.invalidateMermaidPreviewLifecycle(`recreate:${reason}`);
             const nextSessionId = ++this.crepeSessionSequence;
             const next = await this.createCrepeInstance(markdown, nextSessionId);
-            this.mermaidRenderer.setActiveCrepeSessionId(nextSessionId);
             this.activeCrepe = next;
             this.attachCrepeBridge(next, nextSessionId);
 
@@ -541,21 +544,28 @@ export class MarkFlowEditorSession {
         return this.crepeModulePromise;
     }
 
-    private async createCrepeInstance(initialText: string, crepeSessionId: number): Promise<Crepe> {
+    private async createCrepeInstance(initialText: string, _crepeSessionId: number): Promise<Crepe> {
         const {Crepe} = await this.ensureCrepeModule();
-        this.mermaidRenderer.setActiveCrepeSessionId(crepeSessionId);
         const crepe = new Crepe({
             root: document.getElementById("app"),
             defaultValue: initialText,
             featureConfigs: {
-                [Crepe.Feature.CodeMirror]: this.mermaidRenderer.createCodeMirrorFeatureConfig(crepeSessionId),
+                [Crepe.Feature.CodeMirror]: this.mermaidRenderer.createCodeMirrorFeatureConfig(),
                 [Crepe.Feature.Latex]: {}
             }
         });
+        this.disposeKatexAdapter?.();
+        this.disposeKatexAdapter = installLegacyCrepeKatexAdapter(crepe, this.mermaidRenderer.getRendererService());
         crepe.addFeature(rawHtmlMarkdownFeature);
         configureSourcePreservingMarkdown(crepe, initialText);
         return crepe;
     }
+
+    private readonly disposeRendererIntegration = () => {
+        this.disposeKatexAdapter?.();
+        this.disposeKatexAdapter = null;
+        this.mermaidRenderer.dispose();
+    };
 
     private syncSourceRevision(sourceRevision: number) {
         const normalized = Number.isFinite(sourceRevision) ? Math.max(1, Math.floor(sourceRevision)) : this.currentSourceRevision;

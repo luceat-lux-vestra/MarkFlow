@@ -1,0 +1,19 @@
+<idea-plugin>
+    <!-- Temporary browser editor/runtime registrations stay reachable only when JCEF is available.
+         #153 owns production native cutover; #154 owns deletion of this migration surface. -->
+    <extensions defaultExtensionNs="com.intellij">
+        <appStarter
+                id="markflow-jcef-transport-probe"
+                implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
+                internal="true"/>
+        <postStartupActivity implementation="com.algorist.markflow.MarkFlowStartupActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditingProbeProjectActivity"/>
+        <fileEditorProvider implementation="com.algorist.markflow.editor.MarkFlowEditorProvider" order="first"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.algorist.markflow">
+        <runtimeSettingsSink implementation="com.algorist.markflow.browser.MarkFlowBrowserRuntimeSettingsSink"/>
+    </extensions>
+</idea-plugin>
