@@ -73,6 +73,34 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         Disposer.dispose(controller)
     }
 
+    fun testConfigGenerationChangeCancelsPendingGenerationAndLateSuccessCannotOverwrite() {
+        myFixture.configureByText("config-stale.md", representativeSource())
+        myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("Plain body") + 2)
+        val sourceBefore = myFixture.editor.document.text
+        val runtime = DeferredRuntime()
+        val controller = NativeDerivedPresentationController(
+            editor = myFixture.editor,
+            runtime = runtime,
+            settingsProvider = { runtimeSettings() },
+            richPresentationEnabled = { true },
+        )
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        val oldRequests = runtime.rendered.toList()
+        controller.applyPlan(plan(configGeneration = 2L))
+
+        assertEquals(oldRequests.map { it.request.requestId }.toSet(), runtime.cancelled.toSet())
+        assertEquals(3, controller.evidenceSnapshot().pendingRequests)
+        oldRequests.forEach { rendered -> rendered.callback(successWithPng(rendered.request)) }
+
+        val evidence = controller.evidenceSnapshot()
+        assertEquals(0, evidence.decodedArtifacts)
+        assertEquals(0, evidence.ownedInlays)
+        assertEquals(0, evidence.ownedFolds)
+        assertEquals(sourceBefore, myFixture.editor.document.text)
+        Disposer.dispose(controller)
+    }
+
     fun testMermaidInlineErrorBoxKeepsSourceVisibleAndUsesNativeErrorInlay() {
         myFixture.configureByText("mermaid-error.md", representativeSource())
         myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("Plain body") + 2)
