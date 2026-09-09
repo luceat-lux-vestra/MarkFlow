@@ -133,7 +133,7 @@ const captureKatex = async (
     wrapper.style.width = "max-content";
     wrapper.style.maxWidth = "none";
     wrapper.style.background = "transparent";
-    wrapper.style.color = "currentColor";
+    wrapper.style.color = safeHexColor(config.foreground) ?? "currentColor";
     const baseFontSizePx = finiteNumber(config.baseFontSizePx);
     if (baseFontSizePx != null) wrapper.style.fontSize = `${Math.min(Math.max(baseFontSizePx, 8), 96)}px`;
     wrapper.innerHTML = source;
@@ -244,6 +244,11 @@ const parseViewBox = (raw: string | null): {width: number; height: number} | nul
 
 const finiteNumber = (value: unknown): number | null =>
     typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const safeHexColor = (value: unknown): string | null =>
+    typeof value === "string" && /^(?:#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{8})$/.test(value)
+        ? value
+        : null;
 
 const boundedDimensions = (rawWidth: number, rawHeight: number): {width: number; height: number} => {
     let width = Math.max(1, rawWidth);
