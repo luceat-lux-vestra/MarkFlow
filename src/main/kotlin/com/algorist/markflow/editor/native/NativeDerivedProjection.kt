@@ -120,7 +120,7 @@ internal object NativeDerivedProjectionPlanner {
         val output = mutableListOf<NativeDerivedProjection>()
         var index = 0
         while (index < source.length) {
-            val excludedRange = excluded.firstOrNull { range -> range.contains(index) }
+            val excludedRange = excluded.firstOrNull { range -> range.covers(index) }
             if (excludedRange != null) {
                 index = excludedRange.endOffset
                 continue
@@ -133,7 +133,8 @@ internal object NativeDerivedProjectionPlanner {
             val display = index + 1 < source.length && source[index + 1] == '$'
             val delimiterLength = if (display) 2 else 1
             val contentStart = index + delimiterLength
-            val closing = findMathClosing(source, contentStart, display, excluded) ?: run {
+            val closing = findMathClosing(source, contentStart, display, excluded)
+            if (closing == null) {
                 index += delimiterLength
                 continue
             }
@@ -165,8 +166,7 @@ internal object NativeDerivedProjectionPlanner {
     ): Int? {
         var index = start
         while (index < source.length) {
-            val excludedRange = excluded.firstOrNull { range -> range.contains(index) }
-            if (excludedRange != null) return null
+            if (excluded.any { range -> range.covers(index) }) return null
             if (!display && source[index] == '\n') return null
             if (source[index] == '$' && !isEscaped(source, index)) {
                 if (display) {
@@ -179,6 +179,9 @@ internal object NativeDerivedProjectionPlanner {
         }
         return null
     }
+
+    private fun ProjectionRange.covers(offset: Int): Boolean =
+        offset >= startOffset && offset < endOffset
 
     private fun isEscaped(source: String, offset: Int): Boolean {
         var slashes = 0
