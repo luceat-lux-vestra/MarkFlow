@@ -119,7 +119,7 @@ internal object NoJcefNativeEditingProbe {
                     val sourceBefore = document.text
                     val inserted = "native-without-jcef "
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #144 no-JCEF native edit proof")
+                        .withName("MarkFlow #144 No-JCEF Native Edit Proof")
                         .run<RuntimeException> {
                             document.insertString(0, inserted)
                         }
