@@ -334,9 +334,9 @@ internal object NativeImageImportService {
                     }
                 }
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 if (sourceChangeObserved) {
-                    throw
+                    throw failure
                 }
                 val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
                 return if (rollback.isEmpty()) {
