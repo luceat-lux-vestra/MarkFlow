@@ -39,6 +39,9 @@ internal sealed interface NativeLocalImageResult {
  * rejected after resolution. Format, encoded size, dimensions and pixel count are bounded before
  * full decode. The returned [BufferedImage] is inert host memory; no URL/token/browser authority is
  * exposed to presentation code.
+ *
+ * #151 also consumes [validateLocalFile] so import and presentation share one media/resource
+ * admission boundary. Import still owns explicit-user-authority, destination and transaction rules.
  */
 internal object NativeLocalImageResolver {
     internal const val MAX_TARGET_LENGTH = 4096
@@ -58,7 +61,19 @@ internal object NativeLocalImageResolver {
             ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.INVALID_TARGET)
         val target = resolveContained(root, relative)
             ?: return missingOrOutside(root, relative)
+        return validateLocalFile(target)
+    }
 
+    /**
+     * Validate one already-authorized local path with exactly the same bounded raster rules used by
+     * [resolve]. The caller is responsible for deciding whether that path was explicitly authorized
+     * and whether symlinks are acceptable for its operation; #151 deliberately rejects symlink
+     * import sources before calling this method.
+     */
+    internal fun validateLocalFile(target: Path): NativeLocalImageResult {
+        if (!isRegularFile(target)) {
+            return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.NOT_FOUND)
+        }
         val size = try {
             Files.size(target)
         } catch (_: IOException) {
@@ -99,7 +114,7 @@ internal object NativeLocalImageResolver {
         return decoded
     }
 
-    private fun documentRoot(documentPath: Path): Path? {
+    internal fun documentRoot(documentPath: Path): Path? {
         return try {
             val document = documentPath.toAbsolutePath().normalize().toRealPath()
             if (!Files.isRegularFile(document)) null else document.parent?.toRealPath()
@@ -144,6 +159,12 @@ internal object NativeLocalImageResolver {
         }
     } catch (_: Exception) {
         NativeLocalImageResult.Failure(NativeLocalImageFailureCode.INVALID_TARGET)
+    }
+
+    private fun isRegularFile(target: Path): Boolean = try {
+        Files.isRegularFile(target)
+    } catch (_: SecurityException) {
+        false
     }
 
     private fun expectedFormat(target: Path): ExpectedFormat? {
