@@ -17,6 +17,7 @@ import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.Image
@@ -87,21 +88,7 @@ class NativeInsertImageAction : AnAction() {
 
         val files = FileChooser.chooseFiles(descriptor, project, null)
         if (files.isEmpty()) return
-        val inputs = files.mapNotNull { file ->
-            if (!file.isInLocalFileSystem || file.isDirectory) null
-            else runCatching { NativeImageImportInput.LocalFile(file.toNioPath()) }.getOrNull()
-        }
-        if (inputs.size != files.size) {
-            showFailure(
-                editor,
-                NativeImageImportResult.Failure(
-                    NativeImageImportFailureCode.INVALID_SOURCE,
-                    "Every selected image must be a local regular file.",
-                ),
-            )
-            return
-        }
-        showFailure(editor, NativeImageImportService.import(editor, inputs))
+        showFailure(editor, importChosenFiles(editor, files))
     }
 
     override fun update(e: AnActionEvent) {
@@ -110,6 +97,21 @@ class NativeInsertImageAction : AnAction() {
     }
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+}
+
+/** Chooser-return seam: explicit selection order is carried unchanged into the shared import transaction. */
+internal fun importChosenFiles(editor: Editor, files: List<VirtualFile>): NativeImageImportResult {
+    val inputs = files.mapNotNull { file ->
+        if (!file.isInLocalFileSystem || file.isDirectory) null
+        else runCatching { NativeImageImportInput.LocalFile(file.toNioPath()) }.getOrNull()
+    }
+    if (inputs.size != files.size) {
+        return NativeImageImportResult.Failure(
+            NativeImageImportFailureCode.INVALID_SOURCE,
+            "Every selected image must be a local regular file.",
+        )
+    }
+    return NativeImageImportService.import(editor, inputs)
 }
 
 internal object NativeImageImportTransferable {
