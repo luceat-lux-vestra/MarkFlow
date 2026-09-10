@@ -175,6 +175,7 @@ jobs:
               'vfs-visible-collision-reservation': ('vfsVisibleCollision=true', 'suffix=-2', 'overwrite=false', 'preexistingBytesStable=true'),
               'post-commit-ui-failure-does-not-rollback': ('postCommitFailureResultSuccess=true', 'sourceReferencePresent=true', 'assetPersists=true', 'rollbackAfterCommit=false'),
               'listener-pce-after-commit-preserves-transaction': ('pcePropagated=true', 'sourceCommitted=true', 'assetPersists=true', 'rollbackAfterObservedCommit=false'),
+              'precommit-pce-propagates-after-cleanup': ('copyPcePropagated=true', 'copyRollbackComplete=true', 'sourcePcePropagated=true', 'sourceRollbackComplete=true', 'sourceStable=true'),
           }
           hardening_cases = hardening.get('cases') or []
           hardening_by_id = {case.get('id'): case for case in hardening_cases}
