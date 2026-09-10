@@ -62,6 +62,7 @@ internal class NativeImageImportTestHooks(
     val beforeAssetContentWrite: (String) -> Unit = {},
     val afterAssetsCreated: () -> Unit = {},
     val beforeSourceEdit: () -> Unit = {},
+    val afterSourceEdit: () -> Unit = {},
     val beforeRollbackDelete: (String) -> Unit = {},
 ) {
     companion object {
@@ -181,7 +182,7 @@ internal object NativeImageImportService {
         }
 
         val plans = try {
-            planDestinations(root, preparedInputs)
+            planDestinations(parentFile, preparedInputs)
         } catch (_: IOException) {
             return failure(
                 NativeImageImportFailureCode.DESTINATION_UNAVAILABLE,
@@ -302,8 +303,6 @@ internal object NativeImageImportService {
                     hooks.beforeSourceEdit()
                     check(sourceIdentity.matches(editor)) { "source identity changed before image import command" }
                     document.replaceString(sourceIdentity.startOffset, sourceIdentity.endOffset, payload)
-                    caret.removeSelection()
-                    caret.moveToOffset(sourceIdentity.startOffset + payload.length)
                 }
         } catch (_: Exception) {
             val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
@@ -319,6 +318,15 @@ internal object NativeImageImportService {
                     rollback,
                 )
             }
+        }
+
+        // The authoritative source edit is committed at this point. Caret/selection cosmetics are
+        // deliberately outside the rollback boundary: a UI post-processing failure must never delete
+        // the asset while leaving an already-committed Markdown reference behind.
+        runCatching {
+            hooks.afterSourceEdit()
+            caret.removeSelection()
+            caret.moveToOffset(sourceIdentity.startOffset + payload.length)
         }
 
         return NativeImageImportResult.Success(
@@ -421,13 +429,17 @@ internal object NativeImageImportService {
     }
 
     @Throws(IOException::class)
-    private fun planDestinations(root: Path, inputs: List<PreparedInput>): List<ImportPlan> {
-        val assetsPath = root.resolve(ASSETS_DIRECTORY)
+    private fun planDestinations(parent: VirtualFile, inputs: List<PreparedInput>): List<ImportPlan> {
         val reserved = linkedSetOf<String>()
-        if (Files.isDirectory(assetsPath, LinkOption.NOFOLLOW_LINKS)) {
-            Files.newDirectoryStream(assetsPath).use { stream ->
-                stream.forEach { child -> reserved += child.fileName.toString().lowercase(Locale.ROOT) }
+        val assets = parent.findChild(ASSETS_DIRECTORY)
+        if (assets != null) {
+            if (
+                !assets.isValid || !assets.isDirectory || !assets.isWritable ||
+                assets.`is`(VFileProperty.SYMLINK)
+            ) {
+                throw IOException("unsafe assets directory")
             }
+            assets.children.forEach { child -> reserved += child.name.lowercase(Locale.ROOT) }
         }
 
         return inputs.map { input ->
