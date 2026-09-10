@@ -1,10 +1,12 @@
 # Image-file import product contract
 
-Status: accepted target product contract for Leap Task #150
+Status: accepted by PR #187, effective on merge
 
-This document resolves the image-file **import/insertion** choices intentionally
-left open by #78, #99, and ADR 0001. Existing Markdown image-reference rendering
-is a separate capability implemented by #147. Implementation belongs to #151.
+This document is the normative #150 addendum to the #78 Leap capability and
+fidelity contract. It resolves the image-file **import/insertion** choices
+intentionally left open by #78, #99, and ADR 0001. Existing Markdown
+image-reference rendering is a separate capability implemented by #147.
+Implementation belongs to #151.
 
 The historical public report only establishes that image insertion/display was a
 user-visible problem; its original detail is no longer available. The gesture and
@@ -76,20 +78,26 @@ The default managed import directory is `assets/` directly beneath the
 Markdown document's parent directory.
 
 A successful import must always produce a path resolvable by the #147
-document-root policy.
+document-root and target-syntax policy.
 
 - If a selected/dropped/pasted local file already exists as a safe regular file
-  beneath the current Markdown document's real parent directory and satisfies
-  the admitted media/bounds, MarkFlow **links it in place** instead of copying it.
+  beneath the current Markdown document's real parent directory, satisfies the
+  admitted media/bounds, **and its contained relative target is accepted by the
+  #147 target decoder**, MarkFlow links it in place instead of copying it.
+- A contained file whose existing relative path cannot be represented by #147
+  is not linked in place; it follows the normal sanitized copy path below.
 - Otherwise MarkFlow copies/materializes the image into the document-local
   `assets/` directory.
 - MarkFlow does not search the wider project for a "better" asset location and
   does not gain authority to arbitrary files merely because a project is open.
 
 The destination filename preserves the source basename where safely portable.
-Characters unsafe for portable filenames or incompatible with the #147 target
-policy are replaced deterministically. An empty result falls back to `image`.
-Clipboard image bytes use basename `image.png`.
+Characters unsafe for portable filenames **or rejected after decoding by the
+#147 target policy** are replaced deterministically before Markdown-path
+encoding. In particular, copied names must not retain path separators, control
+characters, `?`, `#`, traversal segments, or any syntax that #147 would reject.
+An empty result falls back to `image`. Clipboard image bytes use basename
+`image.png`.
 
 The first available filename wins. Existing files are never overwritten by
 default. Collisions use a deterministic numeric suffix before the extension,
@@ -108,12 +116,16 @@ Path rules:
 - relative to the Markdown document's parent directory;
 - `/` separators regardless of host platform;
 - no `..` segments;
-- URL-style UTF-8 percent encoding for path-segment characters that would be
-  ambiguous or unsafe in Markdown/URLs;
+- URL-style UTF-8 percent encoding for path-segment characters that are safe for
+  #147 after decoding but would otherwise be ambiguous in Markdown/URLs;
+- no encoded escape intended to reintroduce a character or segment rejected by
+  #147;
 - no absolute path, `file:` URL, capability token, query, or fragment.
 
 For a copied image the normal form is `assets/<name>`. A safely linkable image
 already below the document parent keeps its shortest contained relative path.
+Before source insertion, the final generated target must round-trip through the
+same #147 target-decoding/containment acceptance used by presentation.
 
 Default alt text is the original source filename stem, with Markdown-significant
 characters escaped and line breaks removed. Clipboard image bytes use `image`.
@@ -136,7 +148,8 @@ The product contract requires this ordering; exact API calls belong to #151:
    without mutating source;
 3. create/copy only the required new assets through maintained host/VFS write
    semantics;
-4. verify the created/linkable `VirtualFile` state needed by the operation;
+4. verify the created/linkable `VirtualFile` state and final #147-resolvable
+   relative target needed by the operation;
 5. perform **one IntelliJ command** that replaces/inserts the complete generated
    Markdown payload into the authoritative `Document`;
 6. refresh normal #147 host-owned image presentation from the resulting source.
@@ -263,10 +276,12 @@ The implementation Task must prove at minimum:
 - clipboard local-file list import;
 - clipboard image-byte -> PNG import;
 - stable multi-image ordering;
-- already-contained image links in place without copying;
+- already-contained **#147-representable** image links in place without copying;
+- contained but #147-unrepresentable relative path copies to a sanitized
+  `assets/` target rather than emitting an unloadable reference;
 - external image copy to `assets/`;
 - deterministic collision suffixing and no overwrite;
-- safe filename/path generation and reopen;
+- safe filename/path generation, final #147 target round-trip, and reopen;
 - PNG/JPEG/GIF/BMP valid cases;
 - unsupported extension, media mismatch, oversize, excessive dimensions/pixels;
 - read-only, unsaved and non-local targets;
@@ -276,7 +291,7 @@ The implementation Task must prove at minimum:
 - undo/redo changes Markdown only and never deletes imported/pre-existing files;
 - source outside the insertion/replacement range remains lexically identical;
 - multi-caret import is not silently multiplied;
-- traversal/symlink/authority hostile cases fail closed;
+- traversal/symlink/encoded-target/authority hostile cases fail closed;
 - no browser upload/loopback/file token path is introduced;
 - JCEF-unavailable native editing/import behavior where the gesture does not
   require a renderer;
