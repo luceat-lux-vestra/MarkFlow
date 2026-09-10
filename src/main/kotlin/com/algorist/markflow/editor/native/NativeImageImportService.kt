@@ -220,7 +220,7 @@ internal object NativeImageImportService {
                                 ?: throw IOException("authorized source disappeared")
                             if (
                                 !source.isInLocalFileSystem || !source.isValid || source.isDirectory ||
-                                source.is(VFileProperty.SYMLINK)
+                                source.`is`(VFileProperty.SYMLINK)
                             ) {
                                 throw IOException("authorized source is no longer a safe local regular file")
                             }
@@ -452,7 +452,7 @@ internal object NativeImageImportService {
         if (existing != null) {
             if (
                 !existing.isValid || !existing.isDirectory || !existing.isWritable ||
-                existing.is(VFileProperty.SYMLINK)
+                existing.`is`(VFileProperty.SYMLINK)
             ) {
                 throw IOException("unsafe assets directory")
             }
@@ -488,7 +488,9 @@ internal object NativeImageImportService {
                 }
             }
         } catch (_: Exception) {
-            created.filterTo(orphaned) { it.file.isValid }.forEach { }
+            created.filter { it.file.isValid }.forEach { asset ->
+                if (asset.relativeTarget !in orphaned) orphaned += asset.relativeTarget
+            }
             if (createdAssetsDirectory?.isValid == true && "$ASSETS_DIRECTORY/" !in orphaned) {
                 orphaned += "$ASSETS_DIRECTORY/"
             }
