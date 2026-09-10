@@ -47,7 +47,7 @@ jobs:
           large-packages: false
 
       - name: Fetch Sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825a01610c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -71,6 +71,7 @@ jobs:
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportService.kt
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportGestures.kt
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportProbe.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportTransactionProbe.kt
             src/main/kotlin/com/algorist/markflow/trust/NativeLocalImageResolver.kt
           )
           if grep -En 'JBCef|com\.intellij\.ui\.jcef|MarkFlowWebviewResourceManager|127\.0\.0\.1|__markflow_source_image__|file.?token|upload' "${files[@]}"; then
@@ -164,10 +165,36 @@ jobs:
               if missing:
                   raise SystemExit(f'{case_id} missing evidence markers {missing}: {detail}')
 
+          hardening_path = Path('build/native-image-import-probe/transaction-hardening.json')
+          if not hardening_path.is_file():
+              raise SystemExit('transaction hardening probe did not produce transaction-hardening.json')
+          hardening = json.loads(hardening_path.read_text(encoding='utf-8'))
+          if hardening.get('schemaVersion') != 1 or hardening.get('verdict') != 'PASS':
+              raise SystemExit(f'transaction hardening verdict is not PASS: {hardening}')
+          hardening_required = {
+              'vfs-visible-collision-reservation': ('vfsVisibleCollision=true', 'suffix=-2', 'overwrite=false', 'preexistingBytesStable=true'),
+              'post-commit-ui-failure-does-not-rollback': ('postCommitFailureResultSuccess=true', 'sourceReferencePresent=true', 'assetPersists=true', 'rollbackAfterCommit=false'),
+          }
+          hardening_cases = hardening.get('cases') or []
+          hardening_by_id = {case.get('id'): case for case in hardening_cases}
+          if set(hardening_by_id) != set(hardening_required):
+              raise SystemExit(f'transaction hardening case contract mismatch: {hardening_by_id}')
+          for case_id, markers in hardening_required.items():
+              case = hardening_by_id[case_id]
+              if case.get('outcome') != 'PASS':
+                  raise SystemExit(f'transaction hardening case failed: {case_id}: {case}')
+              detail = str(case.get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing hardening markers {missing}: {detail}')
+
           print(f"Native image import verdict: {evidence['verdict']}")
           print(f"IDE build: {evidence.get('ideBuild')}")
           for case_id in sorted(required):
               print(f"{case_id}: {by_id[case_id].get('outcome')} :: {by_id[case_id].get('detail')}")
+          print(f"Transaction hardening verdict: {hardening['verdict']}")
+          for case_id in sorted(hardening_required):
+              print(f"{case_id}: {hardening_by_id[case_id].get('outcome')} :: {hardening_by_id[case_id].get('detail')}")
           PY
 
       - name: Upload native image import evidence
@@ -177,6 +204,7 @@ jobs:
           name: native-image-import-evidence
           path: |
             build/native-image-import-probe/evidence.json
+            build/native-image-import-probe/transaction-hardening.json
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-native-image-import-xvfb.log
           if-no-files-found: warn
