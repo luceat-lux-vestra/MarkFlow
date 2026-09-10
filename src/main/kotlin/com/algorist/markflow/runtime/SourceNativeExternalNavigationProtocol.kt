@@ -1,6 +1,7 @@
 package com.algorist.markflow.runtime
 
 import com.algorist.markflow.sync.AttachmentId
+import com.algorist.markflow.trust.ExternalNavigationPolicy
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
@@ -15,15 +16,15 @@ internal data class SourceNativeExternalNavigationRequest(
 )
 
 /**
- * Strict decoder and host-side URL policy for the #82 external-navigation capability.
+ * Strict decoder for the temporary source-native browser navigation bridge.
  *
- * This protocol is intentionally independent from AttachmentWireCodec: navigation carries no
- * source revision, mutation, request/recovery identity, or document authority. Browser-side URL
- * checks are defense in depth only; this host policy is the final authorization boundary.
+ * URL authorization delegates to the host-owned #147 policy so the migration bridge and native
+ * editor cannot drift on scheme/credential/host rules. The protocol still carries no source
+ * mutation or document authority and remains temporary until #154.
  */
 internal object SourceNativeExternalNavigationProtocol {
     private const val MESSAGE_TYPE = "openExternal"
-    internal const val MAX_URL_LENGTH = 4096
+    internal const val MAX_URL_LENGTH = ExternalNavigationPolicy.MAX_URL_LENGTH
     internal const val MAX_MESSAGE_LENGTH = 8192
     private const val MAX_RUNTIME_TOKEN_LENGTH = 128
     private val EXPECTED_KEYS = setOf("type", "attachmentId", "runtimeToken", "url")
@@ -57,22 +58,8 @@ internal object SourceNativeExternalNavigationProtocol {
         }
     }
 
-    /** Return a host-authorized absolute HTTP(S) URI, or null without guessing/canonicalizing. */
-    fun validateHttpUrl(raw: String): URI? {
-        if (raw.isEmpty() || raw.length > MAX_URL_LENGTH) return null
-        if (raw.any { Character.isISOControl(it) || Character.isWhitespace(it) }) return null
-
-        return try {
-            val uri = URI(raw)
-            val scheme = uri.scheme?.lowercase() ?: return null
-            if (scheme != "http" && scheme != "https") return null
-            if (!uri.isAbsolute || uri.isOpaque || uri.host.isNullOrBlank()) return null
-            if (uri.rawUserInfo != null) return null
-            uri
-        } catch (_: Exception) {
-            null
-        }
-    }
+    /** Compatibility delegate for temporary browser-runtime callers/tests. */
+    fun validateHttpUrl(raw: String): URI? = ExternalNavigationPolicy.validateHttpUrl(raw)
 
     private fun isValidRuntimeToken(value: String): Boolean =
         value.isNotBlank()

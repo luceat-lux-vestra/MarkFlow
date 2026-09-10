@@ -151,6 +151,8 @@ val nativeEditingProbeOutput = layout.buildDirectory.file("native-editing-probe/
 val nativeEditingProbeProjectDir = layout.buildDirectory.dir("native-editing-probe/project")
 val noJcefNativeEditingProbeOutput = layout.buildDirectory.file("no-jcef-native-editing-probe/evidence.json")
 val noJcefNativeEditingProbeProjectDir = layout.buildDirectory.dir("no-jcef-native-editing-probe/project")
+val nativeHostResourcesProbeOutput = layout.buildDirectory.file("native-host-resources-probe/evidence.json")
+val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-resources-probe/project")
 
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
@@ -330,6 +332,29 @@ intellijPlatformTesting {
                 }
                 argumentProviders += CommandLineArgumentProvider {
                     listOf(nativeEditingProbeProjectDir.get().asFile.absolutePath)
+                }
+            }
+        }
+
+        register("runIdeForNativeHostResourcesProbe") {
+            plugins {
+                disablePlugin("com.intellij.modules.jcef")
+            }
+            task {
+                doFirst {
+                    nativeHostResourcesProbeProjectDir.get().asFile.mkdirs()
+                }
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.nativeHostResourcesProbe.output=${nativeHostResourcesProbeOutput.get().asFile.absolutePath}",
+                        "-Didea.trust.all.projects=true",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.consents.confirmation.enabled=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf(nativeHostResourcesProbeProjectDir.get().asFile.absolutePath)
                 }
             }
         }

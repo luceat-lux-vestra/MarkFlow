@@ -36,15 +36,17 @@ internal data class NativePresentationEvidence(
 /**
  * One disposable, source-neutral presentation owner for one native IntelliJ [Editor].
  *
- * It owns only highlighters, fold regions and listeners. Optional #148 derived presentation is
- * composed through a backend-neutral owner. This class has no browser/JCEF dependency and no
- * source write path. Plans are accepted only for the exact current source/config identity.
+ * It owns only source-neutral editor presentation and listeners. Optional #147 host resources and
+ * #148 derived renderer presentation are composed behind independent owners. This class has no
+ * browser/JCEF dependency and no source write path. Plans are accepted only for the exact current
+ * source/config identity.
  */
 internal class NativePresentationController(
     private val editor: Editor,
     private val configGeneration: () -> Long = { 0L },
     private val planner: (ProjectionSnapshot) -> NativeProjectionPlan = NativeMarkdownProjectionPlanner::plan,
     private val derivedPresentation: NativeDerivedPresentationController? = null,
+    private val hostResources: NativeHostResourcePresentationController? = null,
 ) : Disposable {
     private val highlighters = mutableListOf<OwnedHighlighter>()
     private val folds = mutableListOf<OwnedFold>()
@@ -118,6 +120,7 @@ internal class NativePresentationController(
             installInlineHighlighters(plan)
             installHeadingFolds(plan)
         }
+        hostResources?.applyPlan(plan)
         derivedPresentation?.applyPlan(plan)
         refreshesApplied += 1
 
@@ -219,6 +222,7 @@ internal class NativePresentationController(
                 }
             }
         }
+        hostResources?.refreshActivity(plan)
         derivedPresentation?.refreshActivity(plan)
 
         check(document.modificationStamp == stampBefore)
@@ -267,6 +271,7 @@ internal class NativePresentationController(
         if (disposed) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         refreshRequestGeneration += 1
+        hostResources?.dispose()
         derivedPresentation?.dispose()
         clearOwnedPresentation()
         currentPlan = null
