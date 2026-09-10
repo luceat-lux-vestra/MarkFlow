@@ -245,7 +245,7 @@ internal object NativeHostResourcesProbe {
 
                 val projectBase = project.basePath?.let(Paths::get) ?: error("project base unavailable")
                 val outside = Files.createTempDirectory(projectBase, ".markflow-native-host-outside-")
-                extraRoots += outside
+                extraRoots.add(outside)
                 val outsideImage = outside.resolve("outside.png")
                 writeImage(outsideImage, "png", 4, 4)
                 val escapeLink = fixture.root.resolve("images/escape.png")
