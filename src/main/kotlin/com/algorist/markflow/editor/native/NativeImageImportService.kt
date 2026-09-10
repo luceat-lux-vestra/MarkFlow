@@ -8,8 +8,9 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VFileProperty
 import com.intellij.openapi.vfs.VirtualFile
 import java.awt.Graphics2D
 import java.awt.Image
@@ -56,6 +57,18 @@ internal sealed interface NativeImageImportInput {
     data class ClipboardImage(val image: Image) : NativeImageImportInput
 }
 
+/** Deterministic fault seam used only by the #151 runtime proof. Production callers use [NONE]. */
+internal class NativeImageImportTestHooks(
+    val beforeAssetContentWrite: (String) -> Unit = {},
+    val afterAssetsCreated: () -> Unit = {},
+    val beforeSourceEdit: () -> Unit = {},
+    val beforeRollbackDelete: (String) -> Unit = {},
+) {
+    companion object {
+        val NONE = NativeImageImportTestHooks()
+    }
+}
+
 /**
  * #151 host/VFS image-file import transaction.
  *
@@ -72,6 +85,7 @@ internal object NativeImageImportService {
         editor: Editor,
         inputs: List<NativeImageImportInput>,
         insertionOffsetOverride: Int? = null,
+        hooks: NativeImageImportTestHooks = NativeImageImportTestHooks.NONE,
     ): NativeImageImportResult {
         ApplicationManager.getApplication().assertIsDispatchThread()
         if (inputs.isEmpty()) {
@@ -140,7 +154,7 @@ internal object NativeImageImportService {
             modificationStamp = document.modificationStamp,
             startOffset = insertionStart,
             endOffset = insertionEnd,
-            replacedText = document.getText(com.intellij.openapi.util.TextRange(insertionStart, insertionEnd)),
+            replacedText = document.getText(TextRange(insertionStart, insertionEnd)),
         )
 
         val assetsPath = root.resolve(ASSETS_DIRECTORY)
@@ -181,36 +195,49 @@ internal object NativeImageImportService {
         }
 
         val created = mutableListOf<CreatedAsset>()
+        var createdAssetsDirectory: VirtualFile? = null
         try {
             ApplicationManager.getApplication().runWriteAction {
-                val assetsDir = if (plans.any { it.copyRequired }) {
+                val assetsState = if (plans.any { it.copyRequired }) {
                     ensureAssetsDirectory(parentFile)
                 } else {
                     null
                 }
+                if (assetsState?.created == true) createdAssetsDirectory = assetsState.directory
                 for (plan in plans) {
                     if (!plan.copyRequired) continue
-                    val directory = assetsDir ?: error("assets directory missing for copy plan")
-                    val createdFile = when (val prepared = plan.input) {
+                    val directory = assetsState?.directory ?: error("assets directory missing for copy plan")
+                    val destinationName = plan.destinationName ?: error("copy plan missing destination name")
+                    if (directory.findChild(destinationName) != null) {
+                        throw IOException("destination collision changed after preflight")
+                    }
+                    val child = directory.createChildData(this, destinationName)
+                    created += CreatedAsset(plan.target, child)
+                    hooks.beforeAssetContentWrite(plan.target)
+                    when (val prepared = plan.input) {
                         is PreparedInput.File -> {
                             val source = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(prepared.realPath)
                                 ?: throw IOException("authorized source disappeared")
-                            if (!source.isInLocalFileSystem || !source.isValid || source.isDirectory) {
-                                throw IOException("authorized source is no longer a local regular file")
+                            if (
+                                !source.isInLocalFileSystem || !source.isValid || source.isDirectory ||
+                                source.is(VFileProperty.SYMLINK)
+                            ) {
+                                throw IOException("authorized source is no longer a safe local regular file")
                             }
-                            VfsUtil.copyFile(this, source, directory, plan.destinationName!!)
+                            val sourceReal = runCatching { source.toNioPath().toRealPath() }.getOrNull()
+                            if (sourceReal != prepared.realPath) throw IOException("authorized source identity changed")
+                            source.inputStream.use { input ->
+                                child.getOutputStream(this).use { output -> input.copyTo(output) }
+                            }
                         }
                         is PreparedInput.PngBytes -> {
-                            val child = directory.createChildData(this, plan.destinationName!!)
-                            child.setBinaryContent(prepared.bytes)
-                            child
+                            child.getOutputStream(this).use { output -> output.write(prepared.bytes) }
                         }
                     }
-                    created += CreatedAsset(plan.target, createdFile)
                 }
             }
         } catch (_: Exception) {
-            val rollback = rollbackCreated(created)
+            val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
             return if (rollback.isEmpty()) {
                 failure(NativeImageImportFailureCode.COPY_FAILED, "The image file could not be copied into the document assets directory.")
             } else {
@@ -222,10 +249,19 @@ internal object NativeImageImportService {
             }
         }
 
-        // Revalidate the exact final presentation targets after VFS creation but before source edit.
+        // Revalidate exact final targets from VFS-visible bytes before source edit. Linked-in-place
+        // assets continue through #147's full real-path containment resolver.
+        val createdByTarget = created.associateBy { it.relativeTarget }
         for (plan in plans) {
-            if (NativeLocalImageResolver.resolve(documentPath, plan.target) !is NativeLocalImageResult.Success) {
-                val rollback = rollbackCreated(created)
+            val validation = if (plan.copyRequired) {
+                val file = createdByTarget[plan.target]?.file
+                if (file == null) NativeLocalImageResult.Failure(NativeLocalImageFailureCode.NOT_FOUND)
+                else NativeLocalImageResolver.validateVirtualFile(file)
+            } else {
+                NativeLocalImageResolver.resolve(documentPath, plan.target)
+            }
+            if (validation !is NativeLocalImageResult.Success) {
+                val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
                 return if (rollback.isEmpty()) {
                     failure(
                         NativeImageImportFailureCode.DESTINATION_UNAVAILABLE,
@@ -241,8 +277,9 @@ internal object NativeImageImportService {
             }
         }
 
+        hooks.afterAssetsCreated()
         if (!sourceIdentity.matches(editor)) {
-            val rollback = rollbackCreated(created)
+            val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
             return if (rollback.isEmpty()) {
                 failure(
                     NativeImageImportFailureCode.SOURCE_CHANGED,
@@ -262,13 +299,14 @@ internal object NativeImageImportService {
             WriteCommandAction.writeCommandAction(project)
                 .withName(COMMAND_NAME)
                 .run<RuntimeException> {
+                    hooks.beforeSourceEdit()
                     check(sourceIdentity.matches(editor)) { "source identity changed before image import command" }
                     document.replaceString(sourceIdentity.startOffset, sourceIdentity.endOffset, payload)
                     caret.removeSelection()
                     caret.moveToOffset(sourceIdentity.startOffset + payload.length)
                 }
         } catch (_: Exception) {
-            val rollback = rollbackCreated(created)
+            val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
             return if (rollback.isEmpty()) {
                 failure(
                     NativeImageImportFailureCode.SOURCE_EDIT_FAILED,
@@ -409,30 +447,53 @@ internal object NativeImageImportService {
         }
     }
 
-    private fun ensureAssetsDirectory(parent: VirtualFile): VirtualFile {
+    private fun ensureAssetsDirectory(parent: VirtualFile): AssetsDirectoryState {
         val existing = parent.findChild(ASSETS_DIRECTORY)
         if (existing != null) {
-            if (!existing.isValid || !existing.isDirectory || !existing.isWritable || existing.is(VirtualFile.PROP_SYMLINK)) {
+            if (
+                !existing.isValid || !existing.isDirectory || !existing.isWritable ||
+                existing.is(VFileProperty.SYMLINK)
+            ) {
                 throw IOException("unsafe assets directory")
             }
-            return existing
+            return AssetsDirectoryState(existing, created = false)
         }
-        return parent.createChildDirectory(this, ASSETS_DIRECTORY)
+        return AssetsDirectoryState(parent.createChildDirectory(this, ASSETS_DIRECTORY), created = true)
     }
 
-    private fun rollbackCreated(created: List<CreatedAsset>): List<String> {
-        if (created.isEmpty()) return emptyList()
+    private fun rollbackCreated(
+        created: List<CreatedAsset>,
+        createdAssetsDirectory: VirtualFile?,
+        hooks: NativeImageImportTestHooks,
+    ): List<String> {
+        if (created.isEmpty() && createdAssetsDirectory == null) return emptyList()
         val orphaned = mutableListOf<String>()
-        ApplicationManager.getApplication().runWriteAction {
-            created.asReversed().forEach { asset ->
-                try {
-                    if (asset.file.isValid) asset.file.delete(this)
-                } catch (_: Exception) {
-                    orphaned += asset.relativeTarget
+        try {
+            ApplicationManager.getApplication().runWriteAction {
+                created.asReversed().forEach { asset ->
+                    try {
+                        hooks.beforeRollbackDelete(asset.relativeTarget)
+                        if (asset.file.isValid) asset.file.delete(this)
+                    } catch (_: Exception) {
+                        orphaned += asset.relativeTarget
+                    }
+                }
+                if (createdAssetsDirectory?.isValid == true && createdAssetsDirectory.children.isEmpty()) {
+                    try {
+                        hooks.beforeRollbackDelete("$ASSETS_DIRECTORY/")
+                        createdAssetsDirectory.delete(this)
+                    } catch (_: Exception) {
+                        orphaned += "$ASSETS_DIRECTORY/"
+                    }
                 }
             }
+        } catch (_: Exception) {
+            created.filterTo(orphaned) { it.file.isValid }.forEach { }
+            if (createdAssetsDirectory?.isValid == true && "$ASSETS_DIRECTORY/" !in orphaned) {
+                orphaned += "$ASSETS_DIRECTORY/"
+            }
         }
-        return orphaned
+        return orphaned.distinct()
     }
 
     private fun mapRasterFailure(code: NativeLocalImageFailureCode): NativeImageImportResult.Failure = when (code) {
@@ -486,6 +547,11 @@ internal object NativeImageImportService {
         val file: VirtualFile,
     )
 
+    private data class AssetsDirectoryState(
+        val directory: VirtualFile,
+        val created: Boolean,
+    )
+
     private data class SourceIdentity(
         val modificationStamp: Long,
         val startOffset: Int,
@@ -496,7 +562,7 @@ internal object NativeImageImportService {
             val document = editor.document
             if (editor.isDisposed || document.modificationStamp != modificationStamp) return false
             if (startOffset !in 0..document.textLength || endOffset !in startOffset..document.textLength) return false
-            return document.getText(com.intellij.openapi.util.TextRange(startOffset, endOffset)) == replacedText
+            return document.getText(TextRange(startOffset, endOffset)) == replacedText
         }
     }
 }
@@ -506,15 +572,21 @@ internal object NativeImageImportPolicy {
     private val unsafeFilenameChar = Regex("[<>:\"/\\\\|?*#%\\p{Cc}]")
     private val trailingDotsOrSpaces = Regex("[. ]+$")
     private val windowsReserved = Regex("(?i)^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$")
+    private val admittedExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp")
 
     fun sanitizeFilename(original: String): String {
-        val candidate = original
+        val dot = original.lastIndexOf('.')
+        val rawExtension = if (dot > 0 && dot < original.lastIndex) original.substring(dot + 1) else ""
+        val extension = rawExtension.lowercase(Locale.ROOT).takeIf { it in admittedExtensions }.orEmpty()
+        val rawStem = if (extension.isNotEmpty()) original.substring(0, dot) else original
+        val sanitizedStem = rawStem
             .replace(unsafeFilenameChar, "_")
             .replace(trailingDotsOrSpaces, "")
             .trim()
-            .take(180)
-        val nonEmpty = candidate.takeUnless { it.isBlank() || it == "." || it == ".." } ?: fallbackName(original)
-        return if (windowsReserved.matches(nonEmpty)) "image-$nonEmpty" else nonEmpty
+            .let { stem -> truncateUtf8(stem, if (extension.isEmpty()) 190 else 184) }
+            .ifBlank { "image" }
+        val candidate = if (extension.isEmpty()) sanitizedStem else "$sanitizedStem.$extension"
+        return if (windowsReserved.matches(candidate)) "image-$candidate" else candidate
     }
 
     fun firstAvailableName(preferred: String, reservedLowercase: Set<String>): String {
@@ -567,12 +639,20 @@ internal object NativeImageImportPolicy {
         }
     }
 
-    private fun fallbackName(original: String): String {
-        val extension = original.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return when (extension) {
-            "png", "jpg", "jpeg", "gif", "bmp" -> "image.$extension"
-            else -> "image"
+    private fun truncateUtf8(value: String, maxBytes: Int): String {
+        if (value.toByteArray(StandardCharsets.UTF_8).size <= maxBytes) return value
+        val builder = StringBuilder()
+        val codePoints = value.codePoints().iterator()
+        while (codePoints.hasNext()) {
+            val codePoint = codePoints.nextInt()
+            val before = builder.length
+            builder.appendCodePoint(codePoint)
+            if (builder.toString().toByteArray(StandardCharsets.UTF_8).size > maxBytes) {
+                builder.setLength(before)
+                break
+            }
         }
+        return builder.toString()
     }
 
     private const val HEX = "0123456789ABCDEF"
