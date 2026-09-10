@@ -529,7 +529,7 @@ internal object NativeImageImportService {
             override val containedTarget: String?,
         ) : PreparedInput
 
-        data class PngBytes(
+        class PngBytes(
             val bytes: ByteArray,
             override val originalName: String,
             override val altText: String,
