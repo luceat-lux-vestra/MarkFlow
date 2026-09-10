@@ -1,5 +1,6 @@
 package com.algorist.markflow.trust
 
+import com.intellij.openapi.vfs.VirtualFile
 import java.awt.image.BufferedImage
 import java.io.IOException
 import java.net.URLDecoder
@@ -9,6 +10,7 @@ import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.Locale
 import javax.imageio.ImageIO
+import javax.imageio.stream.ImageInputStream
 
 internal data class NativeLocalImageArtifact(
     val image: BufferedImage,
@@ -40,8 +42,10 @@ internal sealed interface NativeLocalImageResult {
  * full decode. The returned [BufferedImage] is inert host memory; no URL/token/browser authority is
  * exposed to presentation code.
  *
- * #151 also consumes [validateLocalFile] so import and presentation share one media/resource
- * admission boundary. Import still owns explicit-user-authority, destination and transaction rules.
+ * #151 also consumes [validateLocalFile] and [validateVirtualFile] so import and presentation share
+ * one media/resource admission boundary. Import still owns explicit-user-authority, destination and
+ * transaction rules. The VirtualFile variant exists because IntelliJ 2026.2 may make a successful
+ * VFS write visible before raw-disk persistence is observable through NIO.
  */
 internal object NativeLocalImageResolver {
     internal const val MAX_TARGET_LENGTH = 4096
@@ -64,12 +68,7 @@ internal object NativeLocalImageResolver {
         return validateLocalFile(target)
     }
 
-    /**
-     * Validate one already-authorized local path with exactly the same bounded raster rules used by
-     * [resolve]. The caller is responsible for deciding whether that path was explicitly authorized
-     * and whether symlinks are acceptable for its operation; #151 deliberately rejects symlink
-     * import sources before calling this method.
-     */
+    /** Validate one already-authorized local NIO path with the shared bounded raster rules. */
     internal fun validateLocalFile(target: Path): NativeLocalImageResult {
         if (!isRegularFile(target)) {
             return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.NOT_FOUND)
@@ -85,9 +84,43 @@ internal object NativeLocalImageResolver {
             return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.FILE_TOO_LARGE)
         }
 
-        val expectedFormat = expectedFormat(target)
+        val expectedFormat = expectedFormat(target.fileName?.toString().orEmpty())
             ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
-        return decode(target, expectedFormat)
+        val stream = try {
+            ImageIO.createImageInputStream(target.toFile())
+        } catch (_: IOException) {
+            null
+        } ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+        stream.use { input ->
+            return decode(input, expectedFormat)
+        }
+    }
+
+    /**
+     * Validate exactly the bytes visible through IntelliJ VFS. This is used for #151's post-create
+     * verification so source insertion never depends on an immediate raw-filesystem flush.
+     */
+    internal fun validateVirtualFile(target: VirtualFile): NativeLocalImageResult {
+        if (!target.isValid || !target.isInLocalFileSystem || target.isDirectory) {
+            return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.NOT_FOUND)
+        }
+        val size = target.length
+        if (size <= 0L || size > MAX_FILE_BYTES) {
+            return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.FILE_TOO_LARGE)
+        }
+        val expectedFormat = expectedFormat(target.name)
+            ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
+        return try {
+            target.inputStream.use { raw ->
+                val imageInput = ImageIO.createImageInputStream(raw)
+                    ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+                imageInput.use { input -> decode(input, expectedFormat) }
+            }
+        } catch (_: IOException) {
+            NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+        } catch (_: SecurityException) {
+            NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+        }
     }
 
     internal fun decodeRelativeTarget(rawTarget: String): String? {
@@ -167,9 +200,8 @@ internal object NativeLocalImageResolver {
         false
     }
 
-    private fun expectedFormat(target: Path): ExpectedFormat? {
-        val extension = target.fileName?.toString()?.substringAfterLast('.', "")?.lowercase(Locale.ROOT)
-            ?: return null
+    private fun expectedFormat(filename: String): ExpectedFormat? {
+        val extension = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return when (extension) {
             "png" -> ExpectedFormat("png", "image/png")
             "jpg", "jpeg" -> ExpectedFormat("jpeg", "image/jpeg")
@@ -179,45 +211,37 @@ internal object NativeLocalImageResolver {
         }
     }
 
-    private fun decode(target: Path, expected: ExpectedFormat): NativeLocalImageResult {
-        val stream = try {
-            ImageIO.createImageInputStream(target.toFile())
-        } catch (_: IOException) {
-            null
-        } ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
-
-        stream.use { input ->
-            val readers = ImageIO.getImageReaders(input)
-            if (!readers.hasNext()) {
+    private fun decode(input: ImageInputStream, expected: ExpectedFormat): NativeLocalImageResult {
+        val readers = ImageIO.getImageReaders(input)
+        if (!readers.hasNext()) {
+            return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
+        }
+        val reader = readers.next()
+        try {
+            reader.input = input
+            val actualFormat = runCatching { reader.formatName.lowercase(Locale.ROOT) }.getOrNull()
+                ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
+            if (!formatMatches(expected.format, actualFormat)) {
                 return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
             }
-            val reader = readers.next()
-            try {
-                reader.input = input
-                val actualFormat = runCatching { reader.formatName.lowercase(Locale.ROOT) }.getOrNull()
-                    ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
-                if (!formatMatches(expected.format, actualFormat)) {
-                    return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.UNSUPPORTED_MEDIA)
-                }
-                val width = runCatching { reader.getWidth(0) }.getOrNull()
-                    ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
-                val height = runCatching { reader.getHeight(0) }.getOrNull()
-                    ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
-                if (width !in 1..MAX_DIMENSION || height !in 1..MAX_DIMENSION) {
-                    return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DIMENSIONS_TOO_LARGE)
-                }
-                if (width.toLong() * height.toLong() > MAX_PIXELS) {
-                    return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DIMENSIONS_TOO_LARGE)
-                }
-                val image = runCatching { reader.read(0) }.getOrNull()
-                    ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
-                if (image.width != width || image.height != height) {
-                    return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
-                }
-                return NativeLocalImageResult.Success(NativeLocalImageArtifact(image, expected.mediaType))
-            } finally {
-                reader.dispose()
+            val width = runCatching { reader.getWidth(0) }.getOrNull()
+                ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+            val height = runCatching { reader.getHeight(0) }.getOrNull()
+                ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+            if (width !in 1..MAX_DIMENSION || height !in 1..MAX_DIMENSION) {
+                return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DIMENSIONS_TOO_LARGE)
             }
+            if (width.toLong() * height.toLong() > MAX_PIXELS) {
+                return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DIMENSIONS_TOO_LARGE)
+            }
+            val image = runCatching { reader.read(0) }.getOrNull()
+                ?: return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+            if (image.width != width || image.height != height) {
+                return NativeLocalImageResult.Failure(NativeLocalImageFailureCode.DECODE_FAILED)
+            }
+            return NativeLocalImageResult.Success(NativeLocalImageArtifact(image, expected.mediaType))
+        } finally {
+            reader.dispose()
         }
     }
 
