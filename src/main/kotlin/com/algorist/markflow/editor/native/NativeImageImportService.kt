@@ -240,6 +240,16 @@ internal object NativeImageImportService {
                     }
                 }
             }
+        } catch (cancelled: ProcessCanceledException) {
+            val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
+            if (rollback.isNotEmpty()) {
+                cancelled.addSuppressed(
+                    IllegalStateException(
+                        "Image import cancellation cleanup left orphaned relative paths: ${rollback.joinToString(", ")}",
+                    ),
+                )
+            }
+            throw cancelled
         } catch (_: Exception) {
             val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
             return if (rollback.isEmpty()) {
