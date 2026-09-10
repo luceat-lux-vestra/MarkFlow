@@ -1,0 +1,182 @@
+name: Native Image Import Evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/native-image-import-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/trust/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/trust/**'
+      - 'docs/product/image-file-import-contract.md'
+  pull_request:
+    paths:
+      - '.github/workflows/native-image-import-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/main/kotlin/com/algorist/markflow/trust/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/trust/**'
+      - 'docs/product/image-file-import-contract.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-image-import-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Real IntelliJ native image import probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825a01610c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Assert image import remains host-owned and browser-free
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportService.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportGestures.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportProbe.kt
+            src/main/kotlin/com/algorist/markflow/trust/NativeLocalImageResolver.kt
+          )
+          if grep -En 'JBCef|com\.intellij\.ui\.jcef|MarkFlowWebviewResourceManager|127\.0\.0\.1|__markflow_source_image__|file.?token|upload' "${files[@]}"; then
+            echo 'native image import depends on forbidden browser/JCEF/loopback capability surface' >&2
+            exit 1
+          fi
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-image-import-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native image import probe with JCEF plugin disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Dmarkflow.nativeImageImportProbe.output=$GITHUB_WORKSPACE/build/native-image-import-probe/evidence.json"
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNoJcefNativeEditingProbe --stacktrace
+
+      - name: Validate native image import evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-image-import-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native image import probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedSurface') != 'PLATFORM_TEXT_EDITOR_NATIVE_IMAGE_IMPORT':
+              raise SystemExit(f"unexpected selected surface: {evidence.get('selectedSurface')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native image import verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-plugin-absent-import-path',
+              'authoritative-saved-local-document',
+              'chooser-single-multi-raster-matrix-and-order',
+              'contained-link-and-unrepresentable-copy',
+              'collision-no-overwrite',
+              'clipboard-file-and-image-transferables',
+              'file-drop-platform-caret-position',
+              'validation-failures-source-stable',
+              'context-rejections-and-multicaret',
+              'hostile-authority-and-symlink-rejections',
+              'vfs-and-source-failure-rollback',
+              'rollback-failure-orphan-diagnostic',
+              'undo-redo-assets-persist',
+              'reopen-rename-and-host-presentation-feed',
+              'final-lifecycle-stability',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native image import evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"image-import case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              details = {case_id: by_id[case_id].get('detail') for case_id in failed}
+              raise SystemExit(f'native image import required cases failed: {details}')
+
+          required_markers = {
+              'jcef-plugin-absent-import-path': ('jcefClassPresent=false', 'jcefSupported=false'),
+              'chooser-single-multi-raster-matrix-and-order': ('chooserSingle=true', 'chooserMulti=4', 'formats=PNG,JPEG,GIF,BMP', 'lexicalOutsideRegion=true'),
+              'contained-link-and-unrepresentable-copy': ('containedLinked=true', 'copiedWhenDecoderRejects=true', 'finalTargetRoundTrip=true'),
+              'collision-no-overwrite': ('overwrite=false', 'preexistingBytesStable=true'),
+              'clipboard-file-and-image-transferables': ('activeFileTransferable=true', 'activeImageTransferable=true', 'plainTextAuthority=false'),
+              'file-drop-platform-caret-position': ('insertedAtResolvedCaret=true',),
+              'validation-failures-source-stable': ('unsupported=true', 'mismatch=true', 'oversize=true', 'dimensionBomb=true', 'pixelBomb=true', 'filesCreated=0'),
+              'context-rejections-and-multicaret': ('readOnlyRejected=true', 'unsavedRejected=true', 'nonLocalRejected=true', 'multicaretRejected=true'),
+              'vfs-and-source-failure-rollback': ('vfsWriteFailureRolledBack=true', 'sourceCommandFailureRolledBack=true', 'partialAssets=false'),
+              'rollback-failure-orphan-diagnostic': ('safeOrphan=assets/orphan.png', 'inconsistencySilent=false'),
+              'undo-redo-assets-persist': ('undoMarkdownOnly=true', 'assetPersists=true', 'recopy=false'),
+              'reopen-rename-and-host-presentation-feed': ('reopenSourceExact=true', 'hostProjectionTarget=true', 'resolverSuccess=true'),
+              'final-lifecycle-stability': ('leak=false',),
+          }
+          for case_id, markers in required_markers.items():
+              detail = str(by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing evidence markers {missing}: {detail}')
+
+          print(f"Native image import verdict: {evidence['verdict']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')} :: {by_id[case_id].get('detail')}")
+          PY
+
+      - name: Upload native image import evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-image-import-evidence
+          path: |
+            build/native-image-import-probe/evidence.json
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-native-image-import-xvfb.log
+          if-no-files-found: warn
