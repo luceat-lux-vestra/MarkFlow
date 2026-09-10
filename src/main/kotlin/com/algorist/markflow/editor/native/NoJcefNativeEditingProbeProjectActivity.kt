@@ -9,6 +9,7 @@ class NoJcefNativeEditingProbeProjectActivity : ProjectActivity {
         val imageImportRequested = System.getProperty(NativeImageImportProbe.OUTPUT_PROPERTY)
             ?.isNotBlank() == true
         if (imageImportRequested) {
+            NativeImageImportTransactionProbe.runIfRequested(project)
             NativeImageImportProbe.runIfRequested(project)
         } else {
             NoJcefNativeEditingProbe.startIfRequested(project)
