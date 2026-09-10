@@ -7,7 +7,10 @@ import com.algorist.markflow.trust.NativeLocalImageResult
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VFileProperty
@@ -296,28 +299,61 @@ internal object NativeImageImportService {
         }
 
         val payload = plans.joinToString("\n") { plan -> "![${plan.input.altText}](${plan.target})" }
-        try {
-            WriteCommandAction.writeCommandAction(project)
-                .withName(COMMAND_NAME)
-                .run<RuntimeException> {
-                    hooks.beforeSourceEdit()
-                    check(sourceIdentity.matches(editor)) { "source identity changed before image import command" }
-                    document.replaceString(sourceIdentity.startOffset, sourceIdentity.endOffset, payload)
+        var sourceChangeObserved = false
+        val sourceObserver = object : DocumentListener {
+            override fun documentChanged(event: DocumentEvent) {
+                if (
+                    event.document === document &&
+                    event.offset == sourceIdentity.startOffset &&
+                    event.oldFragment.toString() == sourceIdentity.replacedText &&
+                    event.newFragment.toString() == payload
+                ) {
+                    sourceChangeObserved = true
                 }
-        } catch (_: Exception) {
-            val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
-            return if (rollback.isEmpty()) {
-                failure(
-                    NativeImageImportFailureCode.SOURCE_EDIT_FAILED,
-                    "The image files were prepared, but the Markdown reference could not be inserted.",
-                )
-            } else {
-                NativeImageImportResult.Failure(
-                    NativeImageImportFailureCode.ROLLBACK_FAILED,
-                    "The Markdown reference was not inserted and cleanup left an orphan asset.",
-                    rollback,
-                )
             }
+        }
+        document.addDocumentListener(sourceObserver)
+        try {
+            try {
+                WriteCommandAction.writeCommandAction(project)
+                    .withName(COMMAND_NAME)
+                    .run<RuntimeException> {
+                        hooks.beforeSourceEdit()
+                        check(sourceIdentity.matches(editor)) { "source identity changed before image import command" }
+                        document.replaceString(sourceIdentity.startOffset, sourceIdentity.endOffset, payload)
+                    }
+            } catch (cancelled: ProcessCanceledException) {
+                if (!sourceChangeObserved) {
+                    val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
+                    if (rollback.isNotEmpty()) {
+                        cancelled.addSuppressed(
+                            IllegalStateException(
+                                "Image import cancellation cleanup left orphaned relative paths: ${rollback.joinToString(", ")}",
+                            ),
+                        )
+                    }
+                }
+                throw cancelled
+            } catch (_: Exception) {
+                if (sourceChangeObserved) {
+                    throw
+                }
+                val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)
+                return if (rollback.isEmpty()) {
+                    failure(
+                        NativeImageImportFailureCode.SOURCE_EDIT_FAILED,
+                        "The image files were prepared, but the Markdown reference could not be inserted.",
+                    )
+                } else {
+                    NativeImageImportResult.Failure(
+                        NativeImageImportFailureCode.ROLLBACK_FAILED,
+                        "The Markdown reference was not inserted and cleanup left an orphan asset.",
+                        rollback,
+                    )
+                }
+            }
+        } finally {
+            document.removeDocumentListener(sourceObserver)
         }
 
         // The authoritative source edit is committed at this point. Caret/selection cosmetics are
