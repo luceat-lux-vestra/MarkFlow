@@ -263,8 +263,17 @@ internal object NativeHostResourcesProbe {
                 }
                 val oversizedResult = NativeLocalImageResolver.resolve(fixture.path, "images/oversized.png")
                 check(oversizedResult is NativeLocalImageResult.Failure && oversizedResult.code == NativeLocalImageFailureCode.FILE_TOO_LARGE)
+
+                val dimensionBomb = fixture.root.resolve("images/dimension-bomb.png")
+                writeImage(dimensionBomb, "png", NativeLocalImageResolver.MAX_DIMENSION + 1, 1)
+                val dimensionResult = NativeLocalImageResolver.resolve(fixture.path, "images/dimension-bomb.png")
+                check(
+                    dimensionResult is NativeLocalImageResult.Failure &&
+                        dimensionResult.code == NativeLocalImageFailureCode.DIMENSIONS_TOO_LARGE
+                )
+
                 checkSourceStable()
-                "hostileTargets=${hostile.size} symlinkEscapeRejected=true mediaMismatchRejected=true oversizeRejected=true sourceStable=true"
+                "hostileTargets=${hostile.size} symlinkEscapeRejected=true mediaMismatchRejected=true oversizeRejected=true dimensionBombRejected=true sourceStable=true"
             }
         }
 
@@ -339,7 +348,7 @@ internal object NativeHostResourcesProbe {
             check(firstStarted.await(5, TimeUnit.SECONDS)) { "stale resolver did not start" }
 
             WriteCommandAction.writeCommandAction(project)
-                .withName("MarkFlow #147 stale image proof")
+                .withName("MarkFlow #147 Stale Image Proof")
                 .run<RuntimeException> {
                     staleDocument.insertString(staleDocument.textLength, "\nnew generation\n")
                 }

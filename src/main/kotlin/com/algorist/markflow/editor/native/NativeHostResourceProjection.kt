@@ -25,7 +25,7 @@ internal data class NativeHostResourceProjection(
  */
 internal object NativeHostResourceProjectionPlanner {
     private val definitionPattern = Regex(
-        pattern = """(?m)^[ \t]{0,3}\[([^\]\r\n]+)]\s*:\s*(?:<([^>\r\n]+)>|([^\s\r\n]+))(?:[ \t]+(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\([^\)\r\n]*\)))?[ \t]*$"""
+        pattern = """(?m)^[ \t]{0,3}\[([^\x5D\r\n]+)]\s*:\s*(?:<([^>\r\n]+)>|([^\s\r\n]+))(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^\x29\r\n]*\)))?[ \t]*$"""
     )
     private val labelWhitespace = Regex("\\s+")
     private val schemePrefix = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")

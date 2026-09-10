@@ -151,9 +151,6 @@ internal class NativePresentationController(
     fun derivedEvidenceSnapshot(): NativeDerivedPresentationEvidence? =
         derivedPresentation?.evidenceSnapshot()
 
-    fun hostResourceEvidenceSnapshot(): NativeHostResourcePresentationEvidence? =
-        hostResources?.evidenceSnapshot()
-
     private fun scheduleRefresh() {
         if (disposed) return
         val request = ++refreshRequestGeneration
