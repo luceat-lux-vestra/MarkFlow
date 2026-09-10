@@ -31,9 +31,10 @@ class NativeImageImportPolicyTest {
     }
 
     @Test
-    fun avoidsPortableReservedNamesAndFallsBackForEmptyNames() {
+    fun avoidsPortableReservedNamesAndFallsBackWhenSanitizationIsEmpty() {
         assertEquals("image-CON.png", NativeImageImportPolicy.sanitizeFilename("CON.png"))
-        assertEquals("image.png", NativeImageImportPolicy.sanitizeFilename("%%%.png"))
+        assertEquals("___.png", NativeImageImportPolicy.sanitizeFilename("%%%.png"))
+        assertEquals("image", NativeImageImportPolicy.sanitizeFilename("..."))
     }
 
     @Test
