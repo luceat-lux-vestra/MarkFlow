@@ -88,7 +88,7 @@ class NativeInsertImageAction : AnAction() {
 
         val files = FileChooser.chooseFiles(descriptor, project, null)
         if (files.isEmpty()) return
-        showFailure(editor, importChosenFiles(editor, files))
+        showFailure(editor, importChosenFiles(editor, files.asIterable()))
     }
 
     override fun update(e: AnActionEvent) {
@@ -100,12 +100,13 @@ class NativeInsertImageAction : AnAction() {
 }
 
 /** Chooser-return seam: explicit selection order is carried unchanged into the shared import transaction. */
-internal fun importChosenFiles(editor: Editor, files: List<VirtualFile>): NativeImageImportResult {
-    val inputs = files.mapNotNull { file ->
+internal fun importChosenFiles(editor: Editor, files: Iterable<VirtualFile>): NativeImageImportResult {
+    val selected = files.toList()
+    val inputs = selected.mapNotNull { file ->
         if (!file.isInLocalFileSystem || file.isDirectory) null
         else runCatching { NativeImageImportInput.LocalFile(file.toNioPath()) }.getOrNull()
     }
-    if (inputs.size != files.size) {
+    if (inputs.size != selected.size) {
         return NativeImageImportResult.Failure(
             NativeImageImportFailureCode.INVALID_SOURCE,
             "Every selected image must be a local regular file.",
