@@ -52,6 +52,7 @@ internal object NativeImageImportTransactionProbe {
             case("vfs-visible-collision-reservation") { vfsCollisionCase() }
             case("post-commit-ui-failure-does-not-rollback") { postCommitFailureCase() }
             case("listener-pce-after-commit-preserves-transaction") { listenerPceAfterCommitCase() }
+            case("precommit-pce-propagates-after-cleanup") { precommitPceCase() }
             val verdict = if (cases.all { it.outcome == "PASS" }) "PASS" else "FAIL"
             output.parent?.let(Files::createDirectories)
             Files.writeString(
@@ -166,6 +167,60 @@ internal object NativeImageImportTransactionProbe {
                 }
                 "pcePropagated=true sourceCommitted=true assetPersists=true rollbackAfterObservedCommit=false"
             }
+        }
+
+        private fun precommitPceCase(): String {
+            val external = newRoot("precommit-pce-source-")
+            val copySource = external.resolve("copy-cancelled.png")
+            val sourceEditSource = external.resolve("source-cancelled.png")
+            writeImage(copySource, 4, 4)
+            writeImage(sourceEditSource, 4, 4)
+
+            withFixture("copy pce\n") { fixture ->
+                val before = fixture.document.text
+                var propagated = false
+                try {
+                    NativeImageImportService.import(
+                        fixture.editor,
+                        listOf(NativeImageImportInput.LocalFile(copySource)),
+                        hooks = NativeImageImportTestHooks(
+                            beforeAssetContentWrite = { throw ProcessCanceledException() },
+                        ),
+                    )
+                    error("copy-phase ProcessCanceledException was swallowed")
+                } catch (_: ProcessCanceledException) {
+                    propagated = true
+                }
+                check(propagated)
+                check(fixture.document.text == before)
+                check(fixture.file.parent.findChild("assets") == null) {
+                    "copy-phase cancellation left a created asset or directory"
+                }
+            }
+
+            withFixture("source pce\n") { fixture ->
+                val before = fixture.document.text
+                var propagated = false
+                try {
+                    NativeImageImportService.import(
+                        fixture.editor,
+                        listOf(NativeImageImportInput.LocalFile(sourceEditSource)),
+                        hooks = NativeImageImportTestHooks(
+                            beforeSourceEdit = { throw ProcessCanceledException() },
+                        ),
+                    )
+                    error("pre-source-edit ProcessCanceledException was swallowed")
+                } catch (_: ProcessCanceledException) {
+                    propagated = true
+                }
+                check(propagated)
+                check(fixture.document.text == before)
+                check(fixture.file.parent.findChild("assets") == null) {
+                    "source-phase cancellation left a created asset or directory"
+                }
+            }
+
+            return "copyPcePropagated=true copyRollbackComplete=true sourcePcePropagated=true sourceRollbackComplete=true sourceStable=true"
         }
 
         private fun <T> withFixture(source: String, block: (Fixture) -> T): T {
