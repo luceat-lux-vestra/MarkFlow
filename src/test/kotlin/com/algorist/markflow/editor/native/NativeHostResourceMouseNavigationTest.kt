@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.Point
 import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
 
@@ -22,12 +23,15 @@ class NativeHostResourceMouseNavigationTest : BasePlatformTestCase() {
         )
         try {
             val editor = myFixture.editor
-            val offset = source.indexOf("allowed") + 2
-            val textPoint = editor.offsetToXY(offset)
-            val x = textPoint.x + 1
+            val labelStart = source.indexOf("allowed")
+            val targetOffset = labelStart + 2
+            val textPoint = editor.offsetToXY(targetOffset)
+            val x = textPoint.x
             val y = textPoint.y + editor.lineHeight / 2
+            val resolvedOffset = editor.logicalPositionToOffset(editor.xyToLogicalPosition(Point(x, y)))
+            assertTrue(resolvedOffset in labelStart until labelStart + "allowed".length)
 
-            fun dispatchClick(modifiers: Int, button: Int): MouseEvent {
+            fun deliverClick(modifiers: Int, button: Int): MouseEvent {
                 val event = MouseEvent(
                     editor.contentComponent,
                     MouseEvent.MOUSE_CLICKED,
@@ -39,22 +43,26 @@ class NativeHostResourceMouseNavigationTest : BasePlatformTestCase() {
                     false,
                     button,
                 )
-                editor.contentComponent.dispatchEvent(event)
+                host.handleExplicitNavigation(event)
                 return event
             }
 
-            val plainLeft = dispatchClick(0, MouseEvent.BUTTON1)
+            val plainLeft = deliverClick(0, MouseEvent.BUTTON1)
             assertFalse(plainLeft.isConsumed)
             assertTrue(opened.isEmpty())
 
-            val modifiedRight = dispatchClick(InputEvent.CTRL_DOWN_MASK, MouseEvent.BUTTON3)
+            val modifiedRight = deliverClick(InputEvent.CTRL_DOWN_MASK, MouseEvent.BUTTON3)
             assertFalse(modifiedRight.isConsumed)
             assertTrue(opened.isEmpty())
 
-            val modifiedLeft = dispatchClick(InputEvent.CTRL_DOWN_MASK, MouseEvent.BUTTON1)
-            assertTrue(modifiedLeft.isConsumed)
+            val controlLeft = deliverClick(InputEvent.CTRL_DOWN_MASK, MouseEvent.BUTTON1)
+            assertTrue(controlLeft.isConsumed)
             assertEquals(listOf("https://example.com/docs"), opened)
-            assertEquals(1L, host.evidenceSnapshot().navigationAccepted)
+
+            val metaLeft = deliverClick(InputEvent.META_DOWN_MASK, MouseEvent.BUTTON1)
+            assertTrue(metaLeft.isConsumed)
+            assertEquals(listOf("https://example.com/docs", "https://example.com/docs"), opened)
+            assertEquals(2L, host.evidenceSnapshot().navigationAccepted)
         } finally {
             Disposer.dispose(controller)
         }

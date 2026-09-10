@@ -78,7 +78,7 @@ internal class NativeHostResourcePresentationController(
 
     private val mouseListener = object : EditorMouseListener {
         override fun mouseClicked(event: EditorMouseEvent) {
-            handleExplicitNavigation(event)
+            handleExplicitNavigation(event.mouseEvent)
         }
     }
 
@@ -189,9 +189,8 @@ internal class NativeHostResourcePresentationController(
         }
     }
 
-    private fun handleExplicitNavigation(event: EditorMouseEvent) {
+    internal fun handleExplicitNavigation(mouse: MouseEvent) {
         if (disposed || editor.isDisposed) return
-        val mouse = event.mouseEvent
         if (mouse.button != MouseEvent.BUTTON1 || (!mouse.isControlDown && !mouse.isMetaDown)) return
         val offset = editor.logicalPositionToOffset(editor.xyToLogicalPosition(mouse.point))
         if (activateExternalLinkAt(offset, explicitUserGesture = true)) {
