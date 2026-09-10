@@ -23,7 +23,6 @@ import java.awt.Image
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.io.File
-import java.nio.file.Path
 import java.util.Locale
 
 /** Exact-active-transferable clipboard adapter for #151. Plain text never grants file authority. */
