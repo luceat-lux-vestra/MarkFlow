@@ -52,6 +52,8 @@
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NoJcefNativeEditingProbeProjectActivity"/>
         <!-- #147 host-resource proof also lives in the base plugin and runs with JCEF disabled. -->
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeHostResourcesProbeProjectActivity"/>
+        <!-- #151 import proof lives in the base plugin and runs with JCEF disabled. -->
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeImageImportProbeProjectActivity"/>
     </extensions>
 
     <actions>
