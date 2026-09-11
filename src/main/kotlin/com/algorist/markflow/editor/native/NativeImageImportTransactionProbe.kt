@@ -145,20 +145,17 @@ internal object NativeImageImportTransactionProbe {
                     }
                 }
                 fixture.document.addDocumentListener(throwingListener)
-                var propagated = false
                 try {
-                    NativeImageImportService.import(
-                        fixture.editor,
-                        listOf(NativeImageImportInput.LocalFile(source)),
-                    )
-                    error("delayed listener ProcessCanceledException was swallowed")
-                } catch (_: ProcessCanceledException) {
-                    propagated = true
+                    expectProcessCanceled("delayed listener ProcessCanceledException was swallowed") {
+                        NativeImageImportService.import(
+                            fixture.editor,
+                            listOf(NativeImageImportInput.LocalFile(source)),
+                        )
+                    }
                 } finally {
                     fixture.document.removeDocumentListener(throwingListener)
                 }
 
-                check(propagated)
                 check(fixture.document.text == before + expectedPayload) {
                     "Document listener PCE escaped before the authoritative source snapshot remained committed"
                 }
@@ -178,8 +175,7 @@ internal object NativeImageImportTransactionProbe {
 
             withFixture("copy pce\n") { fixture ->
                 val before = fixture.document.text
-                var propagated = false
-                try {
+                expectProcessCanceled("copy-phase ProcessCanceledException was swallowed") {
                     NativeImageImportService.import(
                         fixture.editor,
                         listOf(NativeImageImportInput.LocalFile(copySource)),
@@ -187,11 +183,7 @@ internal object NativeImageImportTransactionProbe {
                             beforeAssetContentWrite = { throw ProcessCanceledException() },
                         ),
                     )
-                    error("copy-phase ProcessCanceledException was swallowed")
-                } catch (_: ProcessCanceledException) {
-                    propagated = true
                 }
-                check(propagated)
                 check(fixture.document.text == before)
                 check(fixture.file.parent.findChild("assets") == null) {
                     "copy-phase cancellation left a created asset or directory"
@@ -200,8 +192,7 @@ internal object NativeImageImportTransactionProbe {
 
             withFixture("source pce\n") { fixture ->
                 val before = fixture.document.text
-                var propagated = false
-                try {
+                expectProcessCanceled("pre-source-edit ProcessCanceledException was swallowed") {
                     NativeImageImportService.import(
                         fixture.editor,
                         listOf(NativeImageImportInput.LocalFile(sourceEditSource)),
@@ -209,11 +200,7 @@ internal object NativeImageImportTransactionProbe {
                             beforeSourceEdit = { throw ProcessCanceledException() },
                         ),
                     )
-                    error("pre-source-edit ProcessCanceledException was swallowed")
-                } catch (_: ProcessCanceledException) {
-                    propagated = true
                 }
-                check(propagated)
                 check(fixture.document.text == before)
                 check(fixture.file.parent.findChild("assets") == null) {
                     "source-phase cancellation left a created asset or directory"
@@ -270,6 +257,15 @@ internal object NativeImageImportTransactionProbe {
                 check(ImageIO.write(image, "png", output))
                 output.toByteArray()
             }
+        }
+
+        private fun expectProcessCanceled(message: String, block: () -> Unit) {
+            try {
+                block()
+            } catch (_: ProcessCanceledException) {
+                return
+            }
+            error(message)
         }
 
         private fun case(id: String, block: () -> String) {
