@@ -476,27 +476,36 @@ internal object NativeImageImportProbe {
                     fixture.editor,
                     listOf(NativeImageImportInput.LocalFile(source)),
                 )
-                check(result is NativeImageImportResult.Success)
+                check(result is NativeImageImportResult.Success) { "reopen fixture import failed: $result" }
                 val target = result.markdownTargets.single()
                 val expectedSource = fixture.document.text
                 FileDocumentManager.getInstance().saveDocument(fixture.document)
                 fixture.reopen()
-                check(fixture.document.text == expectedSource)
+                check(fixture.document.text == expectedSource) { "reopened TextEditor did not retain exact saved Markdown source" }
+                check(FileDocumentManager.getInstance().getFile(fixture.document) === fixture.file) {
+                    "reopened TextEditor Document is no longer backed by the fixture VirtualFile"
+                }
                 val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(fixture.document, 1L))
-                check(plan.status == ProjectionPlanStatus.READY)
+                check(plan.status == ProjectionPlanStatus.READY) { "reopened source projection degraded: ${plan.status}" }
                 val resources = NativeHostResourceProjectionPlanner.plan(plan)
                 val imported = resources.singleOrNull { resource ->
                     resource.kind == NativeHostResourceKind.LOCAL_IMAGE && resource.target == target
-                } ?: error("imported reference did not feed #147 host-resource projection")
-                check(imported.sourceRange.startOffset >= 0)
-                check(NativeLocalImageResolver.resolve(fixture.file.toNioPath(), target) is NativeLocalImageResult.Success)
+                } ?: error("imported reference did not feed #147 host-resource projection: target=$target resources=$resources")
+                check(imported.sourceRange.startOffset >= 0) { "projected image source range is invalid: ${imported.sourceRange}" }
+                val reopenedResolution = NativeLocalImageResolver.resolve(fixture.file.toNioPath(), target)
+                check(reopenedResolution is NativeLocalImageResult.Success) {
+                    "imported target did not resolve after reopen: $reopenedResolution"
+                }
 
                 ApplicationManager.getApplication().runWriteAction {
                     fixture.file.rename(this, "renamed.md")
                 }
                 val renamedPath = fixture.file.toNioPath()
                 check(fixture.document.text == expectedSource) { "same-parent rename rewrote source" }
-                check(NativeLocalImageResolver.resolve(renamedPath, target) is NativeLocalImageResult.Success)
+                val renamedResolution = NativeLocalImageResolver.resolve(renamedPath, target)
+                check(renamedResolution is NativeLocalImageResult.Success) {
+                    "imported target did not resolve after same-parent Markdown rename: $renamedResolution"
+                }
                 "reopenSourceExact=true hostProjectionTarget=true resolverSuccess=true sameParentRenameSourceStable=true"
             }
         }
@@ -521,7 +530,7 @@ internal object NativeImageImportProbe {
             val provider = selectPlatformTextProvider(file)
             val created = provider.createEditor(project, file)
             check(created is TextEditor) { "platform text provider returned ${created.javaClass.name}" }
-            val fixture = Fixture(root, path, file, document, provider, created, created.editor)
+            val fixture = Fixture(root, path, file, document, project, provider, created, created.editor)
             return try {
                 block(fixture)
             } finally {
@@ -535,11 +544,7 @@ internal object NativeImageImportProbe {
             } ?: error("platform text editor provider did not accept #151 Markdown fixture")
 
         private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
-            }
+            ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
         }.getOrElse { false }
 
         private fun vFile(path: Path): VirtualFile =
@@ -619,25 +624,36 @@ internal object NativeImageImportProbe {
         val root: Path,
         val path: Path,
         val file: VirtualFile,
-        val document: Document,
+        var document: Document,
+        private val project: Project,
         private val provider: FileEditorProvider,
         var fileEditor: TextEditor,
         var editor: Editor,
     ) {
         private var disposed = false
+        private var currentEditorDisposed = false
 
         fun reopen() {
             provider.disposeEditor(fileEditor)
-            val reopened = provider.createEditor(editor.project ?: error("project lost during reopen"), file)
-            check(reopened is TextEditor)
+            currentEditorDisposed = true
+            val reopened = provider.createEditor(project, file)
+            if (reopened !is TextEditor) {
+                provider.disposeEditor(reopened)
+                error("platform text provider returned ${reopened.javaClass.name} during reopen")
+            }
             fileEditor = reopened
             editor = reopened.editor
+            document = editor.document
+            currentEditorDisposed = false
         }
 
         fun dispose() {
             if (disposed) return
             disposed = true
-            provider.disposeEditor(fileEditor)
+            if (!currentEditorDisposed) {
+                provider.disposeEditor(fileEditor)
+                currentEditorDisposed = true
+            }
         }
     }
 
