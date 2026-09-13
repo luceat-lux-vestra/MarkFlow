@@ -103,9 +103,13 @@ internal object NativeDeferredMarkdownPaste {
         }
 
         val caretState = CaretStateTransferableData.getFrom(transferable)
-        if (caretState != null && caretState.caretCount > 1) {
-            // Its offsets index the original string flavor. Replacing that string would make
-            // ClipboardTextPerCaretSplitter slice a different payload with stale boundaries.
+        if (editor.caretModel.caretCount > 1 && caretState?.caretCount != 1) {
+            // EditorCopyPasteHelper uses ClipboardTextPerCaretSplitter for an already-multicaret
+            // destination. With no source-caret metadata it splits by newlines; with 2+ source
+            // carets it slices by offsets into the original string flavor. Replacing that flavor
+            // would therefore change platform distribution semantics or leave stale boundaries.
+            // A single-source-caret payload is safe because IntelliJ duplicates the whole string to
+            // every destination caret and does not slice by the recorded offsets.
             return NativeDeferredPastePreparation(
                 transferable,
                 NativeDeferredPasteDisposition.DELEGATE_SOURCE_MULTICARET_PAYLOAD,
