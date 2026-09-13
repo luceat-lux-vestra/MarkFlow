@@ -2,13 +2,14 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.EditorCopyPasteHelper
+import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.awt.datatransfer.UnsupportedFlavorException
 
 class NativeMarkdownDeferredPasteHandlerTest : BasePlatformTestCase() {
-    fun testMulticaretMarkdownMimeIsTransformedThenPlatformSplitsPerCaret() {
+    fun testMulticaretWithoutSourceCaretMetadataDelegatesPlatformSegmentation() {
         val file = myFixture.tempDirFixture.createFile("multi.md", "first\nsecond\n")
         myFixture.configureFromExistingVirtualFile(file)
         val editor = myFixture.editor
@@ -16,15 +17,13 @@ class NativeMarkdownDeferredPasteHandlerTest : BasePlatformTestCase() {
         requireNotNull(editor.caretModel.addCaret(editor.offsetToVisualPosition(6)))
         assertEquals(2, editor.caretModel.caretCount)
 
-        val preparation = NativeDeferredMarkdownPaste.prepare(
-            editor,
-            TestTransferable(markdown = "# one\r\n# two\r\n", plain = "plain fallback"),
-        )
+        val original = TestTransferable(markdown = "# one\r\n# two\r\n", plain = "plain fallback")
+        val preparation = NativeDeferredMarkdownPaste.prepare(editor, original)
 
-        assertEquals(NativeDeferredPasteDisposition.TRANSFORMED, preparation.disposition)
-        assertEquals("# one\n# two\n", preparation.transferable.getTransferData(DataFlavor.stringFlavor))
-        EditorCopyPasteHelper.getInstance().pasteTransferable(editor, preparation.transferable)
-        assertEquals("# onefirst\n# twosecond\n", editor.document.text)
+        assertEquals(NativeDeferredPasteDisposition.DELEGATE_SOURCE_MULTICARET_PAYLOAD, preparation.disposition)
+        assertSame(original, preparation.transferable)
+        assertEquals("plain fallback", preparation.transferable.getTransferData(DataFlavor.stringFlavor))
+        assertEquals("first\nsecond\n", editor.document.text)
     }
 
     fun testSingleSourceCaretMetadataKeepsPlatformDuplicateSemantics() {
@@ -77,7 +76,8 @@ tail
         editor.caretModel.moveToOffset(outside)
         requireNotNull(editor.caretModel.addCaret(editor.offsetToVisualPosition(inside)))
 
-        val original = TestTransferable("**rich**", "plain")
+        val caretData = CaretStateTransferableData(intArrayOf(0), intArrayOf("plain".length))
+        val original = TestTransferable("**rich**", "plain", caretData)
         val preparation = NativeDeferredMarkdownPaste.prepare(editor, original)
 
         assertEquals(NativeDeferredPasteDisposition.DELEGATE_CODE_CONTEXT, preparation.disposition)
@@ -95,7 +95,7 @@ tail
         val file = myFixture.tempDirFixture.createFile("column.md", source)
         myFixture.configureFromExistingVirtualFile(file)
         val editor = myFixture.editor
-        editor.isColumnMode = true
+        (editor as EditorEx).setColumnMode(true)
         editor.caretModel.moveToLogicalPosition(com.intellij.openapi.editor.LogicalPosition(0, 1))
 
         val locations = NativeDeferredMarkdownPaste.deferredDestinationLocations(editor, "# one\n# two\n# three")
