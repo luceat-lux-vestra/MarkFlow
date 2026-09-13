@@ -53,14 +53,14 @@ internal data class ProjectionRange(
     fun intersects(start: Int, end: Int): Boolean = start < endOffset && end > startOffset
 
     /** Parser/document ranges are half-open: [startOffset, endOffset). */
-    fun contains(offset: Int): Boolean = offset >= startOffset && offset < endOffset
+    fun contains(offset: Int): Boolean = offset in startOffset until endOffset
 
     /**
      * Presentation reveal is intentionally boundary-inclusive. A caret immediately before/after a
      * concealed delimiter must not sit against a hidden fold and be pushed by editor folding.
      * Semantic/parser containment remains [contains]'s half-open contract.
      */
-    fun touches(offset: Int): Boolean = offset >= startOffset && offset <= endOffset
+    fun touches(offset: Int): Boolean = offset in startOffset..endOffset
 }
 
 internal enum class NativeProjectionKind {
@@ -261,7 +261,23 @@ internal object NativeMarkdownProjectionPlanner {
             else -> emptySet()
         }
         if (syntaxTypes.isEmpty()) return emptyList()
-        return directChildRanges(node, syntaxTypes, source, sourceRange)
+        val parserRanges = directChildRanges(node, syntaxTypes, source, sourceRange)
+        return if (kind == NativeProjectionKind.LIST_ITEM || kind == NativeProjectionKind.BLOCK_QUOTE) {
+            parserRanges.mapNotNull { range -> trimMarkerSeparator(range, source) }
+        } else {
+            parserRanges
+        }
+    }
+
+    /**
+     * LIST_BULLET/LIST_NUMBER/BLOCK_QUOTE tokens can include the separator whitespace following the
+     * marker. Presentation owns only the actual marker: preserve the parser-proven separator bytes
+     * exactly rather than folding them into a placeholder.
+     */
+    private fun trimMarkerSeparator(range: ProjectionRange, source: String): ProjectionRange? {
+        var end = range.endOffset
+        while (end > range.startOffset && source[end - 1].isWhitespace()) end -= 1
+        return projectionRangeOrNull(range.startOffset, end, source)
     }
 
     /**
