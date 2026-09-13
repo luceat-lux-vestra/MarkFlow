@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.accessibility.ScreenReader
@@ -108,7 +109,7 @@ internal class NativeTablePresentationController(
 
     private val mouseListener = object : EditorMouseListener {
         override fun mouseClicked(event: EditorMouseEvent) {
-            handleMouseReveal(event.mouseEvent)
+            handleMouseReveal(event)
         }
     }
 
@@ -157,8 +158,27 @@ internal class NativeTablePresentationController(
     internal fun revealTableAt(point: java.awt.Point): Boolean {
         if (disposed || editor.isDisposed) return false
         val inlay = editor.inlayModel.getElementAt(point, NativeTableInlayRenderer::class.java) ?: return false
-        val renderer = inlay.renderer
+        val renderer = inlay.renderer as? NativeTableInlayRenderer ?: return false
+        return reveal(renderer)
+    }
+
+    /**
+     * Uses the public EditorMouseEvent inlay identity that IntelliJ computes before dispatch. This
+     * avoids re-deriving editor geometry after earlier mouse listeners may have changed folding or
+     * inlay state, while still accepting only an owned MarkFlow table renderer.
+     */
+    internal fun revealTableAt(event: EditorMouseEvent): Boolean {
+        if (disposed || editor.isDisposed) return false
+        if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
+        if (event.mouseEvent.button != MouseEvent.BUTTON1) return false
+        val renderer = event.inlay?.renderer as? NativeTableInlayRenderer ?: return false
+        return reveal(renderer)
+    }
+
+    private fun reveal(renderer: NativeTableInlayRenderer): Boolean {
         val key = TableKey(renderer.sourceRange.startOffset, renderer.sourceRange.endOffset)
+        val presentation = owned[key] ?: return false
+        if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
         removeOwned(key)
         editor.selectionModel.removeSelection()
         editor.caretModel.primaryCaret.moveToOffset(renderer.firstContentOffset)
@@ -166,9 +186,8 @@ internal class NativeTablePresentationController(
         return true
     }
 
-    private fun handleMouseReveal(mouse: MouseEvent) {
-        if (mouse.button != MouseEvent.BUTTON1) return
-        if (revealTableAt(mouse.point)) mouse.consume()
+    private fun handleMouseReveal(event: EditorMouseEvent) {
+        if (revealTableAt(event)) event.consume()
     }
 
     private fun installIfCurrent(identity: ProjectionSourceIdentity, model: NativeTableModel) {
