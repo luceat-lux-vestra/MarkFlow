@@ -186,8 +186,11 @@ internal class NativeTablePresentationController(
         return true
     }
 
-    private fun handleMouseReveal(event: EditorMouseEvent) {
-        if (revealTableAt(event)) event.consume()
+    /** Exact callback path used by the registered [EditorMouseListener], exposed internally for real-IDE proof. */
+    internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
+        val revealed = revealTableAt(event)
+        if (revealed) event.consume()
+        return revealed
     }
 
     private fun installIfCurrent(identity: ProjectionSourceIdentity, model: NativeTableModel) {
