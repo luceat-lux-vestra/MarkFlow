@@ -58,6 +58,39 @@ internal object NativeMarkdownParityProbe {
                 check(plan.status == ProjectionPlanStatus.READY)
                 val tableModel = NativeTableProjectionPlanner.plan(plan).single()
 
+                case("fidelity-corpus-runtime-mapping") {
+                    val root = repositoryRoot().resolve("fixtures/markdown-fidelity/cases")
+                    check(Files.isDirectory(root)) { "#78 fidelity corpus root unavailable: $root" }
+                    var tableModels = 0
+                    FIDELITY_FIXTURES.forEachIndexed { index, id ->
+                        val source = Files.readString(root.resolve("$id.md"), StandardCharsets.UTF_8)
+                        val fixturePlan = NativeMarkdownProjectionPlanner.plan(
+                            ProjectionSnapshot(
+                                ProjectionSourceIdentity(index.toLong() + 1L, source, 0L)
+                            )
+                        )
+                        check(fixturePlan.status == ProjectionPlanStatus.READY) { "$id degraded unexpectedly" }
+                        check(fixturePlan.identity.source == source) { "$id lost exact source identity" }
+                        fixturePlan.projections.forEach { projection ->
+                            check(projection.sourceRange.isInside(source)) { "$id source range escaped fixture" }
+                            projection.syntaxRanges.forEach { check(it.isInside(source)) { "$id syntax range escaped fixture" } }
+                            projection.contentRanges.forEach { check(it.isInside(source)) { "$id content range escaped fixture" } }
+                        }
+                        if (id == "table-lexical-variants") {
+                            tableModels = NativeTableProjectionPlanner.plan(fixturePlan).size
+                            check(tableModels > 0) { "table fidelity fixture produced no parser-proven model" }
+                        }
+                        if (id == "links-and-references") {
+                            val links = fixturePlan.projections.filter { it.kind == NativeProjectionKind.LINK }
+                            check(links.isNotEmpty())
+                            check(links.none { link ->
+                                source.substring(link.sourceRange.startOffset, link.sourceRange.endOffset).startsWith("![")
+                            }) { "image link subtree leaked into ordinary link projection" }
+                        }
+                    }
+                    "fixtures=${FIDELITY_FIXTURES.size} exactIdentity=true rangesInBounds=true tableModels=$tableModels imageBoundary=true"
+                }
+
                 case("ordinary-parser-table-boundary") {
                     val source = fixture.editor.document.text
                     val kinds = plan.projections.map { it.kind }.toSet()
@@ -87,16 +120,93 @@ internal object NativeMarkdownParityProbe {
                         projection.syntaxRanges.forEach { check(it.isInside(source)) }
                         projection.contentRanges.forEach { check(it.isInside(source)) }
                     }
+                    val link = plan.projections.single { it.kind == NativeProjectionKind.LINK }
+                    check(link.syntaxRanges.size == 2)
+                    check(link.contentRanges.size == 1)
                     check(tableModel.sourceRange.contains(tableModel.sourceRange.startOffset))
                     check(tableModel.sourceRange.contains(tableModel.sourceRange.endOffset - 1))
                     check(!tableModel.sourceRange.contains(tableModel.sourceRange.endOffset)) {
                         "table parser range end must remain outside the active construct"
                     }
-                    "allKinds=true parserRanges=true halfOpenBoundary=true tableRows=${tableModel.rows.size}"
+                    "allKinds=true parserRanges=true linkSyntax=true halfOpenBoundary=true tableRows=${tableModel.rows.size}"
                 }
 
                 val sourceBefore = fixture.editor.document.text
                 val stampBefore = fixture.editor.document.modificationStamp
+
+                case("ordinary-native-presentation-source-neutral") {
+                    fixture.editor.caretModel.moveToOffset(fixture.afterTableOffset)
+                    fixture.editor.selectionModel.removeSelection()
+                    val tableFallback = NativeTablePresentationController(
+                        fixture.editor,
+                        richPresentationEnabled = { false },
+                    )
+                    val controller = NativePresentationController(
+                        editor = fixture.editor,
+                        richPresentationEnabled = { true },
+                        tablePresentation = tableFallback,
+                    )
+                    try {
+                        val evidence = controller.evidenceSnapshot()
+                        check(evidence.planStatus == ProjectionPlanStatus.READY)
+                        check(evidence.ownedFolds > 0) { "ordinary fallback installed no owned folds" }
+                        check(evidence.ownedHighlighters > 0) { "ordinary fallback installed no highlighters" }
+                        val placeholders = fixture.editor.foldingModel.allFoldRegions
+                            .filter { it.isValid && !it.isExpanded }
+                            .map { it.placeholderText }
+                        check("•" in placeholders) { "unordered list marker was not projected" }
+                        check("│" in placeholders) { "blockquote marker was not projected" }
+                        check("────────" in placeholders) { "thematic break was not projected" }
+
+                        val link = requireNotNull(controller.currentPlan)
+                            .projections
+                            .single { it.kind == NativeProjectionKind.LINK }
+                        check(link.syntaxRanges.size == 2)
+                        link.syntaxRanges.forEach { range ->
+                            check(fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset) != null) {
+                                "link syntax range was not concealed: $range"
+                            }
+                        }
+                        fixture.editor.caretModel.moveToOffset(link.sourceRange.endOffset)
+                        link.syntaxRanges.forEach { range ->
+                            check(fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)?.isExpanded == true) {
+                                "link boundary caret did not reveal exact source: $range"
+                            }
+                        }
+                        check(fixture.editor.document.text == sourceBefore)
+                        check(fixture.editor.document.modificationStamp == stampBefore)
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} markers=true linkConceal=true boundaryReveal=true sourceStable=true"
+                    } finally {
+                        controller.dispose()
+                    }
+                }
+
+                case("ordinary-accessibility-source-fallback") {
+                    fixture.editor.caretModel.moveToOffset(fixture.afterTableOffset)
+                    fixture.editor.selectionModel.removeSelection()
+                    val tableFallback = NativeTablePresentationController(
+                        fixture.editor,
+                        richPresentationEnabled = { false },
+                    )
+                    val controller = NativePresentationController(
+                        editor = fixture.editor,
+                        richPresentationEnabled = { false },
+                        tablePresentation = tableFallback,
+                    )
+                    try {
+                        val evidence = controller.evidenceSnapshot()
+                        check(evidence.planStatus == ProjectionPlanStatus.READY)
+                        check(evidence.ownedFolds == 0)
+                        check(evidence.ownedHighlighters == 0)
+                        check(evidence.sourceFallbacks == 1L)
+                        check(fixture.editor.document.text == sourceBefore)
+                        check(fixture.editor.document.modificationStamp == stampBefore)
+                        "sourceFallback=true folds=0 highlighters=0 sourceStable=true stampStable=true"
+                    } finally {
+                        controller.dispose()
+                    }
+                }
+
                 fixture.editor.caretModel.moveToOffset(fixture.afterTableOffset)
                 val table = NativeTablePresentationController(fixture.editor)
                 try {
@@ -274,6 +384,12 @@ internal object NativeMarkdownParityProbe {
             }
         }
 
+        private fun repositoryRoot(): Path {
+            val absoluteOutput = output.toAbsolutePath().normalize()
+            return absoluteOutput.parent?.parent?.parent
+                ?: error("cannot derive repository root from parity output path: $absoluteOutput")
+        }
+
         private fun createFixture(): Fixture {
             val base = project.basePath?.let(Paths::get) ?: error("#152 parity project base unavailable")
             val root = Files.createTempDirectory(base, ".markflow-native-parity-")
@@ -396,4 +512,19 @@ After table
     )
 
     private class ProbeCaseFailure(id: String, detail: String) : RuntimeException("$id: $detail")
+
+    private val FIDELITY_FIXTURES = listOf(
+        "mixed-list-markers",
+        "headings-and-delimiters",
+        "code-forms-and-fences",
+        "thematic-break-variants",
+        "links-and-references",
+        "table-lexical-variants",
+        "whitespace-and-blank-lines",
+        "line-endings-lf",
+        "line-endings-crlf",
+        "line-endings-no-trailing-newline",
+        "repeated-similar-blocks",
+        "paste-boundaries",
+    )
 }
