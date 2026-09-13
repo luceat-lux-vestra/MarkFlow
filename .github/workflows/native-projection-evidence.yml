@@ -151,12 +151,62 @@ jobs:
           if 'controllers=0' not in lifecycle_detail or 'editors=0' not in lifecycle_detail:
               raise SystemExit(f'projection lifecycle cleanup incomplete: {lifecycle_detail}')
 
+          parity_path = Path('build/native-projection-probe/parity.json')
+          if not parity_path.is_file():
+              raise SystemExit('#152 native Markdown parity probe did not produce parity.json')
+          parity = json.loads(parity_path.read_text(encoding='utf-8'))
+          if parity.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected parity schema: {parity.get('schemaVersion')}")
+          if parity.get('verdict') != 'PASS':
+              raise SystemExit(f"native Markdown parity verdict is not PASS: {parity.get('verdict')}")
+          parity_required = {
+              'ordinary-parser-table-boundary',
+              'table-native-presentation-source-neutral',
+              'table-caret-selection-and-end-boundary-reveal',
+              'table-mouse-inlay-reveal',
+              'table-accessibility-source-fallback',
+              'rapid-edit-caret-regeneration',
+              'large-representative-document-baseline',
+          }
+          parity_cases = parity.get('cases') or []
+          parity_by_id = {case.get('id'): case for case in parity_cases}
+          if len(parity_by_id) != len(parity_cases):
+              raise SystemExit('duplicate native Markdown parity case ids')
+          if set(parity_by_id) != parity_required:
+              raise SystemExit(
+                  f"native Markdown parity case contract mismatch: missing={sorted(parity_required - set(parity_by_id))}, "
+                  f"unexpected={sorted(set(parity_by_id) - parity_required)}"
+              )
+          parity_failed = sorted(
+              case_id for case_id in parity_required if parity_by_id[case_id].get('outcome') != 'PASS'
+          )
+          if parity_failed:
+              raise SystemExit(f'native Markdown parity required cases failed: {parity_failed}')
+
+          marker_contract = {
+              'ordinary-parser-table-boundary': ('allKinds=true', 'halfOpenBoundary=true'),
+              'table-native-presentation-source-neutral': ('inlays=1', 'folds=1', 'sourceStable=true'),
+              'table-caret-selection-and-end-boundary-reveal': ('caretReveal=true', 'selectionReveal=true', 'endBoundaryInactive=true'),
+              'table-mouse-inlay-reveal': ('mouseEvent=true', 'mouseReveal=true', 'sourceStable=true'),
+              'table-accessibility-source-fallback': ('sourceVisible=true', 'accessibilityFallback=1'),
+              'rapid-edit-caret-regeneration': ('iterations=20', 'exactIdentity=true', 'caretMovement=true'),
+              'large-representative-document-baseline': ('rangesInBounds=true', 'table=1'),
+          }
+          for case_id, markers in marker_contract.items():
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing parity markers {missing}: {detail}')
+
           print(f"Native projection verdict: {evidence['verdict']}")
           print(f"Selected shell: {evidence['selectedShell']}")
           print(f"Parser: {evidence['parserStrategy']}")
           print(f"IDE build: {evidence.get('ideBuild')}")
           for case_id in sorted(required):
               print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          print(f"Native Markdown parity verdict: {parity['verdict']}")
+          for case_id in sorted(parity_required):
+              print(f"parity/{case_id}: {parity_by_id[case_id].get('outcome')}")
           PY
 
       - name: Upload native projection evidence
@@ -166,6 +216,7 @@ jobs:
           name: native-projection-evidence
           path: |
             build/native-projection-probe/evidence.json
+            build/native-projection-probe/parity.json
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-native-projection-xvfb.log
           if-no-files-found: warn
