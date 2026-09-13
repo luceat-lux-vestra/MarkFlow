@@ -16,6 +16,7 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.FileDropEvent
 import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
@@ -23,6 +24,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.Producer
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.Image
@@ -479,7 +481,11 @@ internal object NativeImageImportProbe {
                 check(result is NativeImageImportResult.Success) { "reopen fixture import failed: $result" }
                 val target = result.markdownTargets.single()
                 val expectedSource = fixture.document.text
-                FileDocumentManager.getInstance().saveDocument(fixture.document)
+                val fileDocumentManager = FileDocumentManager.getInstance()
+                fileDocumentManager.saveDocument(fixture.document)
+                check(!fileDocumentManager.isDocumentUnsaved(fixture.document)) {
+                    "fixture Document remained dirty after explicit save before reopen"
+                }
                 fixture.reopen()
                 check(fixture.document.text == expectedSource) { "reopened TextEditor did not retain exact saved Markdown source" }
                 check(FileDocumentManager.getInstance().getFile(fixture.document) === fixture.file) {
@@ -515,13 +521,15 @@ internal object NativeImageImportProbe {
                 .add(CommonDataKeys.PROJECT, project)
                 .add(CommonDataKeys.EDITOR, fixture.editor)
                 .add(CommonDataKeys.VIRTUAL_FILE, fixture.file)
-                .add(PasteAction.TRANSFERABLE_PROVIDER, Producer<Transferable> { transferable })
+                .add(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
                 .build()
 
         private suspend fun <T> withFixture(source: String, block: suspend (Fixture) -> T): T {
             val root = newRoot("document-")
             val path = root.resolve("document.md")
-            Files.writeString(path, source, StandardCharsets.UTF_8)
+            withContext(Dispatchers.IO) {
+                Files.writeString(path, source, StandardCharsets.UTF_8)
+            }
             val file = vFile(path)
             val document = ReadAction.computeBlocking<Document, RuntimeException> {
                 FileDocumentManager.getInstance().getDocument(file)
@@ -530,6 +538,9 @@ internal object NativeImageImportProbe {
             val provider = selectPlatformTextProvider(file)
             val created = provider.createEditor(project, file)
             check(created is TextEditor) { "platform text provider returned ${created.javaClass.name}" }
+            check(created.editor.document === document) {
+                "platform text provider did not bind the authoritative fixture Document"
+            }
             val fixture = Fixture(root, path, file, document, project, provider, created, created.editor)
             return try {
                 block(fixture)
@@ -631,29 +642,47 @@ internal object NativeImageImportProbe {
         var editor: Editor,
     ) {
         private var disposed = false
-        private var currentEditorDisposed = false
+        private var owner = EditorOwner.PROVIDER
 
-        fun reopen() {
+        suspend fun reopen() {
+            check(owner == EditorOwner.PROVIDER) { "fixture reopen requires the provider-owned initial editor" }
             provider.disposeEditor(fileEditor)
-            currentEditorDisposed = true
-            val reopened = provider.createEditor(project, file)
-            if (reopened !is TextEditor) {
-                provider.disposeEditor(reopened)
-                error("platform text provider returned ${reopened.javaClass.name} during reopen")
-            }
+            owner = EditorOwner.NONE
+
+            val manager = FileEditorManager.getInstance(project)
+            check(!manager.isFileOpen(file)) { "fixture file unexpectedly already open through FileEditorManager" }
+            val reopened = manager.openFile(file, false)
+                .filterIsInstance<TextEditor>()
+                .firstOrNull()
+                ?: run {
+                    manager.closeFile(file)
+                    error("FileEditorManager did not reopen the fixture with a TextEditor")
+                }
+            owner = EditorOwner.FILE_EDITOR_MANAGER
+            val loaded = CompletableDeferred<Unit>()
+            manager.runWhenLoaded(reopened.editor) { loaded.complete(Unit) }
+            loaded.await()
+
             fileEditor = reopened
             editor = reopened.editor
             document = editor.document
-            currentEditorDisposed = false
         }
 
         fun dispose() {
             if (disposed) return
             disposed = true
-            if (!currentEditorDisposed) {
-                provider.disposeEditor(fileEditor)
-                currentEditorDisposed = true
+            when (owner) {
+                EditorOwner.PROVIDER -> provider.disposeEditor(fileEditor)
+                EditorOwner.FILE_EDITOR_MANAGER -> FileEditorManager.getInstance(project).closeFile(file)
+                EditorOwner.NONE -> Unit
             }
+            owner = EditorOwner.NONE
+        }
+
+        private enum class EditorOwner {
+            PROVIDER,
+            FILE_EDITOR_MANAGER,
+            NONE,
         }
     }
 
