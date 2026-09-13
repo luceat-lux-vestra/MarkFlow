@@ -1,6 +1,7 @@
 package com.algorist.markflow.editor.native
 
 import com.algorist.markflow.file.MarkFlowFileSupport
+import com.intellij.openapi.actionSystem.CustomizedDataContext
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Caret
 import com.intellij.openapi.editor.CaretStateTransferableData
@@ -69,14 +70,23 @@ class NativeMarkdownDeferredPasteHandler(
     }
 
     private fun delegateCaptured(editor: Editor, dataContext: DataContext?, transferable: Transferable) {
-        val base = baseHandler
+        val base = baseHandler ?: return
         if (base is EditorTextInsertHandler) {
             base.execute(editor, dataContext, Producer { transferable })
-        } else {
-            // EditorPaste's maintained chain is EditorTextInsertHandler-based. If that invariant ever
-            // changes, prefer unchanged platform behavior over installing a second paste owner.
-            base?.execute(editor, null, dataContext)
+            return
         }
+
+        // Some maintained handlers in EditorPaste's dynamic chain are ordinary EditorActionHandler
+        // wrappers rather than EditorTextInsertHandler implementations. Preserve the transformed
+        // Transferable through that branch by overriding only PasteAction's documented provider in
+        // the delegated context. This keeps the downstream platform handler responsible for the
+        // actual insertion, multicaret distribution, column semantics, guarded blocks and undo.
+        val delegatedContext = dataContext?.let { context ->
+            CustomizedDataContext.withSnapshot(context) { sink ->
+                sink.set(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
+            }
+        }
+        base.execute(editor, null, delegatedContext ?: dataContext)
     }
 
     private fun captureExactTransferable(
