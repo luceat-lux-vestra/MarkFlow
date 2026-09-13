@@ -7,6 +7,7 @@ import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.plugins.markdown.lang.parser.MarkdownParserManager
 
 /** Immutable identity for one projection input generation. */
@@ -76,6 +77,7 @@ internal data class NativeProjection(
     val kind: NativeProjectionKind,
     val sourceRange: ProjectionRange,
     val syntaxRanges: List<ProjectionRange> = emptyList(),
+    val contentRanges: List<ProjectionRange> = emptyList(),
     val block: Boolean,
 )
 
@@ -202,6 +204,7 @@ internal object NativeMarkdownProjectionPlanner {
             kind = kind,
             sourceRange = sourceRange,
             syntaxRanges = syntaxRangesFor(kind, node, source, sourceRange),
+            contentRanges = contentRangesFor(kind, node, source, sourceRange),
             block = kind in BLOCK_KINDS,
         )
     }
@@ -237,10 +240,35 @@ internal object NativeMarkdownProjectionPlanner {
             else -> emptySet()
         }
         if (syntaxTypes.isEmpty()) return emptyList()
+        return directChildRanges(node, syntaxTypes, source, sourceRange)
+    }
 
-        return node.children
+    /**
+     * Structured content ranges are parser-owned semantic children, not guessed text splits.
+     * Currently they are used for GFM table cells so native table presentation can consume the
+     * same maintained AST shape as JetBrains' own table generating provider.
+     */
+    private fun contentRangesFor(
+        kind: NativeProjectionKind,
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): List<ProjectionRange> = when (kind) {
+        NativeProjectionKind.TABLE_HEADER,
+        NativeProjectionKind.TABLE_ROW,
+        -> directChildRanges(node, setOf(GFMTokenTypes.CELL), source, sourceRange)
+        else -> emptyList()
+    }
+
+    private fun directChildRanges(
+        node: ASTNode,
+        acceptedTypes: Set<org.intellij.markdown.IElementType>,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): List<ProjectionRange> =
+        node.children
             .asSequence()
-            .filter { child -> child.type in syntaxTypes && child.endOffset > child.startOffset }
+            .filter { child -> child.type in acceptedTypes && child.endOffset > child.startOffset }
             .map { child -> ProjectionRange(child.startOffset, child.endOffset) }
             .filter { range ->
                 range.isInside(source) &&
@@ -250,7 +278,6 @@ internal object NativeMarkdownProjectionPlanner {
             .distinct()
             .sortedBy(ProjectionRange::startOffset)
             .toList()
-    }
 
     private fun validateTree(root: ASTNode, sourceLength: Int) {
         fun validate(node: ASTNode, parent: ASTNode?) {
