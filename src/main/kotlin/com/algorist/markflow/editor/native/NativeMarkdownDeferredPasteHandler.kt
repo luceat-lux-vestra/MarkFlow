@@ -83,10 +83,10 @@ class NativeMarkdownDeferredPasteHandler(
         // actual insertion, multicaret distribution, column semantics, guarded blocks and undo.
         val delegatedContext = dataContext?.let { context ->
             CustomizedDataContext.withSnapshot(context) { sink ->
-                sink.set(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
+                sink[PasteAction.TRANSFERABLE_PROVIDER] = Producer { transferable }
             }
         }
-        base.execute(editor, null, delegatedContext ?: dataContext)
+        base.execute(editor, null, delegatedContext)
     }
 
     private fun captureExactTransferable(
