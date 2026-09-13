@@ -84,7 +84,7 @@ class NativeMarkdownFidelityCorpusTest : BasePlatformTestCase() {
         assertEquals(source, plan.identity.source)
     }
 
-    fun testRepeatedSimilarBlocksNeverRequireSourceMatchingForProjectionIdentity() {
+    fun testRepeatedSimilarBlocksKeepDistinctParserRangesWithoutSourceMatching() {
         val source = readFixture("repeated-similar-blocks")
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot(ProjectionSourceIdentity(41L, source, 7L))
@@ -94,13 +94,17 @@ class NativeMarkdownFidelityCorpusTest : BasePlatformTestCase() {
         assertEquals(41L, plan.identity.modificationStamp)
         assertEquals(7L, plan.identity.configGeneration)
         assertEquals(source, plan.identity.source)
-        plan.projections.zipWithNext().forEach { (left, right) ->
-            assertTrue(
-                left.sourceRange.startOffset < right.sourceRange.startOffset ||
-                    left.sourceRange.startOffset == right.sourceRange.startOffset &&
-                    left.sourceRange.endOffset <= right.sourceRange.endOffset ||
-                    left.sourceRange.startOffset <= right.sourceRange.startOffset
-            )
+
+        val repeatedHeadings = plan.projections.filter { projection ->
+            projection.kind == NativeProjectionKind.HEADING &&
+                source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
+                    .startsWith("## Same heading")
+        }
+        assertEquals(3, repeatedHeadings.size)
+        assertEquals(3, repeatedHeadings.map { it.sourceRange.startOffset }.toSet().size)
+        repeatedHeadings.forEach { heading ->
+            assertTrue(heading.sourceRange.isInside(source))
+            assertTrue(heading.syntaxRanges.isNotEmpty())
         }
     }
 
