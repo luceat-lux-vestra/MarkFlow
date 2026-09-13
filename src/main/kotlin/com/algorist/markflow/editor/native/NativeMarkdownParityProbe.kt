@@ -59,7 +59,7 @@ internal object NativeMarkdownParityProbe {
                 case("ordinary-parser-table-boundary") {
                     val source = fixture.editor.document.text
                     val kinds = plan.projections.map { it.kind }.toSet()
-                    check(kinds.containsAll(setOf(
+                    val requiredKinds = setOf(
                         NativeProjectionKind.PARAGRAPH,
                         NativeProjectionKind.HEADING,
                         NativeProjectionKind.EMPHASIS,
@@ -76,7 +76,10 @@ internal object NativeMarkdownParityProbe {
                         NativeProjectionKind.TABLE,
                         NativeProjectionKind.TABLE_HEADER,
                         NativeProjectionKind.TABLE_ROW,
-                    )))
+                    )
+                    check(kinds.containsAll(requiredKinds)) {
+                        "missing parity projection kinds: ${requiredKinds - kinds}"
+                    }
                     plan.projections.forEach { projection ->
                         check(projection.sourceRange.isInside(source))
                         projection.syntaxRanges.forEach { check(it.isInside(source)) }
@@ -268,11 +271,11 @@ Paragraph with *emphasis*, **strong**, `code`, and [link](https://example.invali
 
 1. ordered
 
-    indented code
-
 ```kotlin
 val fenced = true
 ```
+
+    val indented = 2
 
 ---
 
