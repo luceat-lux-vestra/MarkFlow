@@ -1,7 +1,9 @@
 # MarkFlow - Seamless WYSIWYG Markdown Editor
 
-![Build](https://github.com/luceat-lux-vestra/MarkFlow/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/badge/Marketplace-pending-lightgrey)](https://plugins.jetbrains.com/)
+[![Build](https://github.com/luceat-lux-vestra/MarkFlow/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/luceat-lux-vestra/MarkFlow/actions/workflows/build.yml)
+[![Marketplace Version](https://img.shields.io/jetbrains/plugin/v/com.algorist.markflow)](https://plugins.jetbrains.com/plugin/index?xmlId=com.algorist.markflow)
+[![Downloads](https://img.shields.io/jetbrains/plugin/d/com.algorist.markflow)](https://plugins.jetbrains.com/plugin/index?xmlId=com.algorist.markflow)
+[![License](https://img.shields.io/github/license/luceat-lux-vestra/MarkFlow)](LICENSE)
 
 MarkFlow is an IntelliJ IDEA plugin for WYSIWYG-first Markdown editing.
 
