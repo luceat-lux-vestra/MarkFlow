@@ -51,7 +51,8 @@ internal data class ProjectionRange(
 
     fun intersects(start: Int, end: Int): Boolean = start < endOffset && end > startOffset
 
-    fun contains(offset: Int): Boolean = offset in startOffset..endOffset
+    /** Parser/document ranges are half-open: [startOffset, endOffset). */
+    fun contains(offset: Int): Boolean = offset >= startOffset && offset < endOffset
 }
 
 internal enum class NativeProjectionKind {
