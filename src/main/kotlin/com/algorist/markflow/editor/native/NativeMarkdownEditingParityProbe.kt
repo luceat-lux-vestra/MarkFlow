@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionUiKind
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
@@ -16,19 +17,18 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.actionSystem.EditorAction
 import com.intellij.openapi.editor.actionSystem.EditorActionHandlerBean
-import com.intellij.openapi.editor.actions.PasteAction
+import com.intellij.openapi.editor.actionSystem.EditorActionManager
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
-import com.intellij.util.Producer
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.awt.datatransfer.UnsupportedFlavorException
@@ -103,7 +103,7 @@ internal object NativeMarkdownEditingParityProbe {
                             "prepared transferable lost single-source-caret metadata: ${preparedCaretData?.caretCount}"
                         }
 
-                        performPaste(editor, fixture.file, transferable)
+                        performPaste(editor, transferable)
                         val after = "**rich**A\n**rich**B\n"
                         val actual = editor.document.text
                         check(actual == after) {
@@ -129,7 +129,7 @@ internal object NativeMarkdownEditingParityProbe {
                         val prepared = NativeDeferredMarkdownPaste.prepare(editor, noMetadata)
                         check(prepared.disposition == NativeDeferredPasteDisposition.DELEGATE_SOURCE_MULTICARET_PAYLOAD)
                         check(prepared.transferable === noMetadata)
-                        performPaste(editor, fixture.file, noMetadata)
+                        performPaste(editor, noMetadata)
                         check(editor.document.text == "plain-oneA\nplain-twoB\n") {
                             "null source-caret metadata did not preserve IntelliJ newline segmentation"
                         }
@@ -145,7 +145,7 @@ internal object NativeMarkdownEditingParityProbe {
                         val sourcePrepared = NativeDeferredMarkdownPaste.prepare(editor, sourceMulti)
                         check(sourcePrepared.disposition == NativeDeferredPasteDisposition.DELEGATE_SOURCE_MULTICARET_PAYLOAD)
                         check(sourcePrepared.transferable === sourceMulti)
-                        performPaste(editor, fixture.file, sourceMulti)
+                        performPaste(editor, sourceMulti)
                         check(editor.document.text == "xA\nyB\n") {
                             "multi-source-caret offsets were not delegated to the platform unchanged"
                         }
@@ -164,7 +164,7 @@ internal object NativeMarkdownEditingParityProbe {
                         )
                         val prepared = NativeDeferredMarkdownPaste.prepare(editor, transferable)
                         check(prepared.disposition == NativeDeferredPasteDisposition.TRANSFORMED)
-                        performPaste(editor, fixture.file, transferable)
+                        performPaste(editor, transferable)
                         check(editor.document.text == "# onefirst\n# twosecond\nthird\n") {
                             "column-mode Markdown payload did not preserve platform per-line clone/distribution semantics"
                         }
@@ -245,18 +245,15 @@ internal object NativeMarkdownEditingParityProbe {
                     bean.implementationClass == DEFERRED_PASTE_HANDLER_CLASS
             }
 
-        private fun performPaste(editor: Editor, file: VirtualFile, transferable: Transferable) {
-            val context = SimpleDataContext.builder()
-                .add(CommonDataKeys.PROJECT, project)
-                .add(CommonDataKeys.EDITOR, editor)
-                .add(CommonDataKeys.VIRTUAL_FILE, file)
-                .add(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
-                .build()
-            val action = ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_PASTE) as? EditorAction
-                ?: error("EditorPaste action unavailable or not an EditorAction for #152 parity proof")
-            // This is the same maintained public invocation path used by IntelliJ's own
-            // EditorCopyPastProvider for editor copy/paste commands.
-            action.actionPerformed(editor, context)
+        private fun performPaste(editor: Editor, transferable: Transferable) {
+            CopyPasteManager.getInstance().setContents(transferable)
+            WriteCommandAction.writeCommandAction(project)
+                .withName("MarkFlow #152 Parity Paste")
+                .run<RuntimeException> {
+                    EditorActionManager.getInstance()
+                        .getActionHandler(IdeActions.ACTION_EDITOR_PASTE)
+                        .execute(editor, null, DataContext.EMPTY_CONTEXT)
+                }
         }
 
         private fun performBundledAction(
