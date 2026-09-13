@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.EditorCopyPasteHelper
 import com.intellij.openapi.editor.ex.EditorEx
@@ -40,7 +41,13 @@ class NativeMarkdownDeferredPasteHandlerTest : BasePlatformTestCase() {
         )
 
         assertEquals(NativeDeferredPasteDisposition.TRANSFORMED, preparation.disposition)
-        EditorCopyPasteHelper.getInstance().pasteTransferable(editor, preparation.transferable)
+        assertEquals("**rich**", preparation.transferable.getTransferData(DataFlavor.stringFlavor))
+        assertEquals(1, CaretStateTransferableData.getFrom(preparation.transferable)?.caretCount)
+        WriteCommandAction.writeCommandAction(project)
+            .withName("MarkFlow #152 Multicaret Paste Unit Proof")
+            .run<RuntimeException> {
+                EditorCopyPasteHelper.getInstance().pasteTransferable(editor, preparation.transferable)
+            }
         assertEquals("**rich**a\n**rich**b\n", editor.document.text)
     }
 
