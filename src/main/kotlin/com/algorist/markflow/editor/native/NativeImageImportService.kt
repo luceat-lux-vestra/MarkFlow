@@ -62,6 +62,7 @@ internal sealed interface NativeImageImportInput {
 
 /** Deterministic fault seam used only by the #151 runtime proof. Production callers use [NONE]. */
 internal class NativeImageImportTestHooks(
+    val beforeDestinationCreate: (String) -> Unit = {},
     val beforeAssetContentWrite: (String) -> Unit = {},
     val afterAssetsCreated: () -> Unit = {},
     val beforeSourceEdit: () -> Unit = {},
@@ -214,7 +215,9 @@ internal object NativeImageImportService {
                     if (!plan.copyRequired) continue
                     val directory = assetsState?.directory ?: error("assets directory missing for copy plan")
                     val destinationName = plan.destinationName ?: error("copy plan missing destination name")
-                    if (directory.findChild(destinationName) != null) {
+                    hooks.beforeDestinationCreate(destinationName)
+                    val destinationKey = destinationName.lowercase(Locale.ROOT)
+                    if (directory.children.any { child -> child.name.lowercase(Locale.ROOT) == destinationKey }) {
                         throw IOException("destination collision changed after preflight")
                     }
                     val child = directory.createChildData(this, destinationName)
