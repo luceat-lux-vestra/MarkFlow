@@ -2,9 +2,12 @@ package com.algorist.markflow.editor.native
 
 import com.google.gson.GsonBuilder
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionUiKind
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.IdeActions
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
@@ -13,9 +16,11 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.actionSystem.EditorActionHandlerBean
 import com.intellij.openapi.editor.actionSystem.EditorActionManager
 import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
@@ -40,6 +45,10 @@ internal object NativeMarkdownEditingParityProbe {
     private const val BOLD_ACTION = "org.intellij.plugins.markdown.ui.actions.styling.ToggleBoldAction"
     private const val ITALIC_ACTION = "org.intellij.plugins.markdown.ui.actions.styling.ToggleItalicAction"
     private const val CODE_ACTION = "org.intellij.plugins.markdown.ui.actions.styling.ToggleCodeSpanAction"
+    private const val DEFERRED_PASTE_HANDLER_CLASS =
+        "com.algorist.markflow.editor.native.NativeMarkdownDeferredPasteHandler"
+    private val editorActionHandlerEp =
+        ExtensionPointName.create<EditorActionHandlerBean>("com.intellij.editorActionHandler")
     private val started = AtomicBoolean(false)
 
     fun runIfRequested(project: Project): Boolean {
@@ -78,14 +87,33 @@ internal object NativeMarkdownEditingParityProbe {
                             plain = "plain",
                             caretState = CaretStateTransferableData(intArrayOf(0), intArrayOf(5)),
                         )
+                        check(deferredPasteHandlerRegistered()) {
+                            "MarkFlow deferred EditorPaste handler is absent from the runtime extension inventory"
+                        }
+                        val preparation = NativeDeferredMarkdownPaste.prepare(editor, transferable)
+                        check(preparation.disposition == NativeDeferredPasteDisposition.TRANSFORMED) {
+                            "safe multicaret payload was not classified TRANSFORMED: ${preparation.disposition}"
+                        }
+                        val transformedPlain = preparation.transferable.getTransferData(DataFlavor.stringFlavor) as? String
+                        check(transformedPlain == "**rich**") {
+                            "prepared transferable did not replace only platform stringFlavor: $transformedPlain"
+                        }
+                        val preparedCaretData = CaretStateTransferableData.getFrom(preparation.transferable)
+                        check(preparedCaretData?.caretCount == 1) {
+                            "prepared transferable lost single-source-caret metadata: ${preparedCaretData?.caretCount}"
+                        }
+
                         performPaste(editor, fixture.file, transferable)
                         val after = "**rich**A\n**rich**B\n"
-                        check(editor.document.text == after) {
-                            "safe source-single-caret Markdown payload did not preserve platform destination duplication"
+                        val actual = editor.document.text
+                        check(actual == after) {
+                            "full EditorPaste chain mismatch; actual=${actual.escapeForEvidence()} expected=${after.escapeForEvidence()} " +
+                                "handlerRegistered=true policyTransformed=true transformedPlain=true sourceCarets=1"
                         }
                         check(editor.caretModel.caretCount == 2)
                         proveUndoRedo(fixture, before, after)
-                        "markdownPreferred=true sourceCarets=1 destinationCarets=2 platformDuplication=true undoRedo=true"
+                        "markdownPreferred=true sourceCarets=1 destinationCarets=2 platformDuplication=true undoRedo=true " +
+                            "handlerRegistered=true policyTransformed=true transformedPlain=true"
                     }
                 }
 
@@ -211,6 +239,12 @@ internal object NativeMarkdownEditingParityProbe {
             }
         }
 
+        private fun deferredPasteHandlerRegistered(): Boolean =
+            editorActionHandlerEp.extensionList.any { bean ->
+                bean.action == IdeActions.ACTION_EDITOR_PASTE &&
+                    bean.implementationClass == DEFERRED_PASTE_HANDLER_CLASS
+            }
+
         private fun performPaste(editor: Editor, file: VirtualFile, transferable: Transferable) {
             val context = SimpleDataContext.builder()
                 .add(CommonDataKeys.PROJECT, project)
@@ -242,10 +276,16 @@ internal object NativeMarkdownEditingParityProbe {
                 .build()
             val action = ActionManager.getInstance().getAction(actionId)
                 ?: error("bundled Markdown action unavailable: $actionId")
-            val event = AnActionEvent.createFromDataContext("MarkFlow #152 parity probe", null, context)
-            action.update(event)
+            val event = AnActionEvent.createEvent(
+                context,
+                action.templatePresentation.clone(),
+                ActionPlaces.UNKNOWN,
+                ActionUiKind.NONE,
+                null,
+            )
+            ActionUtil.updateAction(action, event)
             check(event.presentation.isEnabled) { "bundled Markdown action disabled for native editor: $actionId" }
-            action.actionPerformed(event)
+            ActionUtil.performAction(action, event)
         }
 
         private fun assertLocalWrap(
@@ -343,6 +383,9 @@ internal object NativeMarkdownEditingParityProbe {
             roots.asReversed().forEach { root -> runCatching { root.toFile().deleteRecursively() } }
             roots.clear()
         }
+
+        private fun String.escapeForEvidence(): String =
+            replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
 
         private fun failureDetail(failure: Throwable): String = buildString {
             append(failure.javaClass.name)
