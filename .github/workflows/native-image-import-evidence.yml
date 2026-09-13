@@ -73,6 +73,7 @@ jobs:
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportProbe.kt
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportGestureProbe.kt
             src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportTransactionProbe.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportDestinationRaceProbe.kt
             src/main/kotlin/com/algorist/markflow/trust/NativeLocalImageResolver.kt
           )
           if grep -En 'JBCef|com\.intellij\.ui\.jcef|MarkFlowWebviewResourceManager|127\.0\.0\.1|__markflow_source_image__|file.?token|upload' "${files[@]}"; then
@@ -190,6 +191,31 @@ jobs:
               if missing:
                   raise SystemExit(f'{case_id} missing gesture markers {missing}: {detail}')
 
+          race_path = Path('build/native-image-import-probe/destination-race.json')
+          if not race_path.is_file():
+              raise SystemExit('destination race probe did not produce destination-race.json')
+          race = json.loads(race_path.read_text(encoding='utf-8'))
+          if race.get('schemaVersion') != 1 or race.get('verdict') != 'PASS':
+              raise SystemExit(f'destination race verdict is not PASS: {race}')
+          race_cases = race.get('cases') or []
+          if len(race_cases) != 1 or race_cases[0].get('id') != 'case-insensitive-post-preflight-collision':
+              raise SystemExit(f'destination race case contract mismatch: {race_cases}')
+          race_case = race_cases[0]
+          if race_case.get('outcome') != 'PASS':
+              raise SystemExit(f'destination race case failed: {race_case}')
+          race_detail = str(race_case.get('detail', ''))
+          race_markers = (
+              'raceInjected=true',
+              'caseInsensitiveRecheck=true',
+              'copyRejected=true',
+              'sourceStable=true',
+              'competingFilePreserved=true',
+              'operationFileCreated=false',
+          )
+          missing = [marker for marker in race_markers if marker not in race_detail]
+          if missing:
+              raise SystemExit(f'destination race case missing markers {missing}: {race_detail}')
+
           hardening_path = Path('build/native-image-import-probe/transaction-hardening.json')
           if not hardening_path.is_file():
               raise SystemExit('transaction hardening probe did not produce transaction-hardening.json')
@@ -224,6 +250,8 @@ jobs:
           print(f"Gesture hardening verdict: {gesture['verdict']}")
           for case_id in sorted(gesture_required):
               print(f"{case_id}: {gesture_by_id[case_id].get('outcome')} :: {gesture_by_id[case_id].get('detail')}")
+          print(f"Destination race verdict: {race['verdict']}")
+          print(f"case-insensitive-post-preflight-collision: {race_case.get('outcome')} :: {race_case.get('detail')}")
           print(f"Transaction hardening verdict: {hardening['verdict']}")
           for case_id in sorted(hardening_required):
               print(f"{case_id}: {hardening_by_id[case_id].get('outcome')} :: {hardening_by_id[case_id].get('detail')}")
@@ -237,6 +265,7 @@ jobs:
           path: |
             build/native-image-import-probe/evidence.json
             build/native-image-import-probe/gesture-hardening.json
+            build/native-image-import-probe/destination-race.json
             build/native-image-import-probe/transaction-hardening.json
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-native-image-import-xvfb.log
