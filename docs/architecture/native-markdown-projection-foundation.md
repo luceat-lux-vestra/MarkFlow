@@ -1,148 +1,158 @@
 # Native Markdown projection foundation
 
-Status: #145 implementation contract under accepted ADR 0001 and completed shell proof #143
+Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity under ADR 0001
 
 ## Decision
 
-The first native projection foundation uses the **normal IntelliJ platform text editor** selected by #143, the authoritative IntelliJ `Document`, the bundled JetBrains Markdown parser, and per-editor native presentation ownership.
+MarkFlow augments the normal IntelliJ platform text editor selected by #143. The open IntelliJ `Document` remains the sole live mutable Markdown authority. Presentation is derived from immutable exact snapshots and may never write source merely because it is created, refreshed, revealed, degraded or disposed.
 
-The data flow is:
+The target flow is:
 
 ```text
 IntelliJ Document
-      │ immutable exact snapshot captured under read action
+      │ immutable exact snapshot under read action
       ▼
 ProjectionSourceIdentity(source + modificationStamp + configGeneration)
       │
       ▼
-JetBrains Markdown parser
+bundled JetBrains Markdown/GFM parser
       │ parser-proven ranges only
       ▼
 NativeProjectionPlan
       │ exact-current identity gate
       ▼
 NativePresentationController (one per Editor)
-      ├── native markup for inline derived presentation
-      └── native folding for a parser-proven heading syntax marker
+      ├── source-neutral ordinary Markdown folds/highlighters
+      ├── NativeTablePresentationController
+      ├── #147 host-resource presentation
+      └── #148 derived renderer presentation
 ```
 
-This foundation does **not** register a new production editor provider and does not cut normal MarkFlow opening over from the temporary browser editor. #153 owns production cutover; #154 owns browser editor/protocol deletion.
+There is no second editable Markdown representation, browser/JS authority, serializer write-back or AST/LCS source reconstruction in this architecture.
 
 ## Parser boundary
 
-#145 declares `org.intellij.plugins.markdown` as an explicit bundled-plugin dependency and uses `MarkdownParserManager.createMarkdownParser(MarkdownParserManager.FLAVOUR)` with inline parsing enabled.
+`org.intellij.plugins.markdown` is an explicit bundled-plugin dependency. MarkFlow uses `MarkdownParserManager.createMarkdownParser(MarkdownParserManager.FLAVOUR)` with inline parsing enabled against an immutable source string.
 
-Reasons:
+The dependency is a maintained parser/range dependency. MarkFlow does **not** call JetBrains' internal live-preview reconciler/spec APIs. IntelliJ's bundled Markdown live preview may coexist on the same platform editor, but MarkFlow's correctness cannot require `@ApiStatus.Internal` implementation contracts or a user setting being enabled.
 
-- #143 already proved the bundled Markdown plugin coexists with the selected platform text editor;
-- the parser is maintained by JetBrains and exposes exact source offsets;
-- the default JetBrains Markdown flavour avoids inventing a second MarkFlow grammar at this boundary;
-- parsing an immutable string snapshot keeps live PSI/editor state out of projection ownership;
-- a custom parser or semantic rich-document serializer would add correctness surface without product value.
+Parser/tree ranges are validated against the exact snapshot before becoming projection intent. `ProcessCanceledException` propagates. Other parser failures become typed `DEGRADED_TO_SOURCE` plans with no projected ranges; only the failure class name is retained.
 
-The Markdown dependency is a **parser/range dependency**, not a second source authority and not a renderer dependency. JCEF remains a temporary packaging/runtime dependency because the current production browser editor still exists; #155 owns final dependency convergence after cutover/purge and retained renderer consumers are known.
+## Immutable source identity and stale rejection
 
-## Immutable source identity
+Every plan carries:
 
-Every plan carries all of:
+- exact snapshot source;
+- the `Document.modificationStamp` captured with it;
+- projection configuration generation.
 
-- the exact snapshot source string;
-- the IntelliJ `Document.modificationStamp` captured with that source;
-- the relevant projection configuration generation.
+Before presentation changes, the controller captures the current identity again. Any source, stamp or configuration mismatch returns `STALE_REJECTED` before current MarkFlow-owned presentation is touched.
 
-The source string and modification stamp are captured together under an IntelliJ read action. Before any plan may replace current presentation, the controller captures the current exact snapshot identity again and compares it with the plan identity. A source, modification-stamp, or configuration-generation mismatch returns `STALE_REJECTED` **before** any MarkFlow-owned highlighter or fold is removed or added.
+Document changes schedule an EDT refresh with controller-local generation coalescing. Disposal invalidates pending callbacks. A later valid plan may recover from `DEGRADED_TO_SOURCE` without any source mutation.
 
-The initial planner is synchronous. This is intentional: #145 has no measured need for incremental parsing, background work, cache, pooling or debounce. Keeping the identity gate even in the synchronous baseline makes later asynchronous optimization unable to bypass the stale-result contract accidentally.
+## Ordinary Markdown projection set (#152)
 
-## Initial projection slice
+The #145 representative slice has been expanded to parser-proven projections for:
 
-The planner recognizes only the representative #145 foundation set:
+- paragraphs and ATX/Setext headings;
+- emphasis and strong;
+- inline/reference/shortcut/autolinks where a stable visible label/range is parser-proven;
+- unordered/ordered lists and list-item markers;
+- block quotes;
+- inline code, fenced code and indented code;
+- thematic breaks;
+- GFM tables, headers, rows and cell ranges.
 
-- ATX headings;
-- emphasis;
-- strong emphasis;
-- inline code;
-- fenced code classification.
+Image `IMAGE` subtrees are deliberately not reinterpreted as ordinary links: #147 owns local-image/resource presentation. Raw HTML remains owned by #149. Mermaid/KaTeX remain #148 responsibilities.
 
-Other constructs are not guessed into this plan. Raw HTML, unknown extensions and malformed/unsupported structures remain exact source unless a later capability Task adds a parser-proven presentation contract.
+Marker syntax is never reconstructed from semantic text. List and block-quote marker ranges originate in parser tokens; when JetBrains' token includes following separator whitespace, MarkFlow excludes only that trailing whitespace from the presentation-owned marker range so the original separator bytes remain visible/preserved.
 
-`NativeProjectionPlan` is immutable derived intent. It contains source ranges and, where needed, parser-proven syntax-marker ranges. It contains no mutable rich Markdown document and has no source write API.
+Link projection similarly uses parser-proven link text/label children. If a stable visible content range cannot be proven, MarkFlow does not invent one.
 
-## Native presentation ownership
+## Source-neutral ordinary presentation
 
-One `NativePresentationController` owns one native IntelliJ `Editor` presentation lifecycle.
+`NativePresentationController` owns only presentation it creates. It never calls a `Document` mutation API.
 
-It owns only:
+Inactive supported constructs may use public editor highlighters and folding to conceal parser-proven syntax while leaving the authoritative source unchanged. Current #152 presentation includes:
 
-- listeners registered against that controller disposable;
-- MarkFlow-created `RangeHighlighter`s;
-- MarkFlow-created `FoldRegion`s;
-- its current immutable plan and refresh scheduling generation.
+- heading/emphasis/strong/inline-code/fence syntax concealment;
+- link syntax concealment around a parser-proven visible label;
+- source-neutral list marker placeholders;
+- source-neutral block-quote marker placeholders;
+- thematic-break presentation;
+- syntax-aware highlighting for supported ordinary constructs.
 
-It never calls a `Document` mutation API.
+Caret/selection source reveal is boundary-inclusive for presentation purposes: a caret touching either edge of a projected construct reveals its exact syntax so a hidden fold never owns the caret boundary. Parser containment itself remains half-open `[start,end)`.
 
-Inline emphasis/strong/code presentation uses editor markup with `TextAttributesKey` fallbacks so the platform color scheme remains authoritative. The minimal block proof folds only the parser-proven ATX heading marker to a zero-width placeholder. Caret or selection entering the heading expands that fold; leaving the active construct may collapse it again. Active-state reads honor IntelliJ's read-action contract and inspect every caret, including secondary-caret selections. Inline derived styling is suppressed while its construct is active, leaving exact Markdown unadorned for editing.
+If another owner, including bundled Markdown live preview, already owns the exact same fold range, MarkFlow does not create a conflicting duplicate. MarkFlow still relies only on public platform folding/markup APIs and can provide its own fallback presentation when that platform-owned fold is absent.
 
-The controller removes only the highlighters/folds it created. It never calls global `removeAllHighlighters` or changes unrelated folding ownership.
+When rich presentation is disabled for accessibility/screen-reader disposition, ordinary MarkFlow folds/highlighters are not installed and exact Markdown source remains visible.
 
-## Refresh and stale behavior
+## Table presentation
 
-A real `Document` change schedules a projection refresh on the IDE event queue. Multiple pending changes coalesce by controller-local request generation. Disposal invalidates queued callbacks.
+Supported GFM table structure is derived only from parser-proven TABLE/HEADER/ROW/CELL ranges. There is no pipe-splitting source parser and no table serializer.
 
-The required order is:
+An inactive supported table is represented by a native block inlay while its exact source range is source-neutrally folded. Any caret or selection touching the table reveals exact source. A left click is handled from IntelliJ's public `EditorMouseEvent.inlay` identity and moves the primary caret to the first parser-proven cell after removing MarkFlow's table presentation.
 
-1. document change occurs through normal IntelliJ editing/command semantics;
-2. controller schedules a derived refresh;
-3. planner captures the new immutable exact snapshot under read action;
-4. the resulting plan is accepted only if its exact source/modification/config identity is still current;
-5. source-stale or config-stale plans are discarded before presentation mutation;
-6. current presentation is rebuilt without changing source or source undo history.
+Screen-reader/accessibility disposition installs no table fold/inlay. Failed or unproven table models remain exact source.
 
-No browser ACK/revision/recovery concept participates.
+The table inlay proves supported table structure and source/reveal ownership; #152 does not introduce an independent general-purpose Markdown renderer engine inside table cells.
 
-## Failure and recovery behavior
+## Fidelity and ownership invariants
 
-Parser failure is typed as `DEGRADED_TO_SOURCE` with no projected ranges. Only the failure class name is retained; source text is not copied into the diagnostic reason.
+For ordinary Markdown projection:
 
-Applying a current-identity degraded plan removes only MarkFlow-owned derived presentation, leaves exact source visible/editable, and does not dirty or mutate the `Document`. A later successful refresh may replace that degraded plan with a current `READY` plan without source changes. The runtime evidence explicitly proves both the degraded fallback and recovery path.
+- attach/open/refresh/reveal/recreate/dispose without a source edit must leave source and modification stamp unchanged;
+- projected ranges come from the exact immutable source generation;
+- unrelated whitespace, delimiter choice, fences, list markers, line endings and final newline are not normalized by presentation;
+- stale work cannot replace newer presentation or source;
+- malformed/unsupported/ambiguous constructs remain exact source;
+- split editors own independent presentation over one shared authoritative `Document`;
+- MarkFlow removes only folds/highlighters/inlays it owns.
 
-Malformed, unsupported, out-of-bounds or unproven ranges do not receive derived presentation. Parser tree ranges are validated against the immutable snapshot before they become projection intent.
+These are lexical-fidelity constraints, not merely visual-equivalence claims.
 
-Optional JCEF state is not consulted anywhere in the planner/controller. The dedicated runtime probe runs with `JBCefApp.isSupported=false`. Because the current package still declares the JCEF bundled plugin for temporary browser code, this proves **runtime-disabled projection independence**, not package load with the JCEF plugin physically absent.
+## Runtime evidence
 
-## Evidence
+`Native Projection Evidence` launches a real supported IntelliJ runtime under Xvfb with JCEF runtime support disabled. The base #145 proof covers:
 
-The dedicated `Native Projection Evidence` workflow runs a real IntelliJ 2026.2 platform editor inside a non-default opened project with JCEF runtime support disabled. It fails closed unless all required cases are present and PASS:
+- real project/VFS/Document authority;
+- platform text editor + bundled Markdown coexistence;
+- no-edit attachment stability;
+- parser-proven plan/ranges;
+- native inline/block presentation and multicaret source reveal;
+- source/config stale-plan rejection;
+- document refresh and degraded-plan recovery;
+- split-editor isolation;
+- malformed/unsupported fallback;
+- lifecycle cleanup.
 
-- JCEF-disabled projection path;
-- authoritative document fixture;
-- platform text editor + bundled Markdown coexistence with `FileEditorProvider.acceptRequiresReadAction()` respected;
-- attach/no-edit source, modification-stamp, dirty and undo-availability stability;
-- representative parser-proven plan and exact heading syntax range;
-- both native inline markup and native block folding;
-- primary caret, primary selection, and secondary-caret selection exact-source reveal;
-- deliberate source-stale plan rejection before apply;
-- automatic refresh after a real `Document` change;
-- deliberate config-stale plan rejection before apply plus recovery to the new generation;
-- typed `DEGRADED_TO_SOURCE` exact-source fallback plus successful recovery;
-- split-editor presentation isolation over one shared `Document`;
-- malformed/unsupported source-safe degradation;
-- repeated refresh/create/dispose source stability;
-- final zero owned controller/editor lifecycle state.
+#152 adds mandatory parity evidence for:
 
-Normal Build/Test/Inspect code/Verify plugin, repository Hardening, and the already-retained #143 Native Editor Shell Evidence remain independent required review evidence when their path filters select this change.
+- the actual #78 ordinary fidelity corpus files mapped through the runtime parser/projection path with exact source identity;
+- the expanded ordinary projection kinds and parser ranges;
+- source-neutral list/quote/link/thematic ordinary presentation plus boundary reveal;
+- exact-source accessibility fallback;
+- maintained-API native table presentation and mouse/caret/selection reveal;
+- table accessibility fallback;
+- rapid source edits/caret movement with exact-current regeneration;
+- a large representative document baseline.
+
+The workflow validator fails closed on missing/unexpected cases or missing detail markers. Changes to `fixtures/markdown-fidelity/**` select this workflow because those files are runtime evidence inputs.
+
+Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editing Evidence and the retained shell/resource/derived evidence workflows remain independent gates when selected by the diff.
 
 ## Migration ownership
 
-- #143 shell proof: completed, retained as evidence.
-- #145 projection plan/controller: target responsibility established here but not yet normal production opening.
-- #146: native paste/actions/editor-state semantics.
-- #147: host local-image/navigation projection.
-- #148: Mermaid/KaTeX native consumers over #144's shared renderer service.
-- #149: sanitized raw-HTML derived rendering.
-- #152: ordinary Markdown/table capability and fidelity parity.
-- #153: production native cutover.
-- #154: mandatory old browser editor/protocol/trust purge.
-- #155: dependency/toolchain/JCEF/settings convergence based on actual retained consumers.
+- #143: platform text-editor shell, retained;
+- #145: immutable native projection authority and lifecycle foundation, retained;
+- #146: native editing/paste/state foundation, retained;
+- #147: host local-image/navigation projection;
+- #148: Mermaid/KaTeX derived presentation;
+- #149: sanitized raw-HTML presentation;
+- #152: ordinary Markdown/table fidelity parity described here;
+- #153: production native cutover;
+- #154: mandatory browser editor/protocol/trust purge;
+- #155: final dependency/toolchain/JCEF/settings convergence.
 
-No part of this foundation authorizes skipping those Tasks.
+No part of #145/#152 authorizes production cutover or browser deletion before #153/#154.
