@@ -118,7 +118,7 @@ There is no browser ACK/revision/recovery, debounce/flush, delayed autosave, glo
 - source-local rich edits and rejection paths;
 - lifecycle cleanup.
 
-#152 adds a supplemental real-IDE parity document that must prove through the actual `EditorPaste` action path:
+#152 adds a supplemental real-IDE parity document that must prove through the runtime `EditorPaste` dynamic handler chain:
 
 - one-source-caret Markdown transformed once and duplicated by IntelliJ to multiple destination carets;
 - missing/multiple source-caret metadata delegated unchanged with platform segmentation preserved;
