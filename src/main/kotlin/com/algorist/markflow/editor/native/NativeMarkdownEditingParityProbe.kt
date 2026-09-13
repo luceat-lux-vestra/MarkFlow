@@ -16,6 +16,7 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.actionSystem.EditorAction
 import com.intellij.openapi.editor.actionSystem.EditorActionHandlerBean
 import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.editor.ex.EditorEx
@@ -251,18 +252,11 @@ internal object NativeMarkdownEditingParityProbe {
                 .add(CommonDataKeys.VIRTUAL_FILE, file)
                 .add(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
                 .build()
-            val action = ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_PASTE)
-                ?: error("EditorPaste action unavailable for #152 parity proof")
-            val event = AnActionEvent.createEvent(
-                context,
-                action.templatePresentation.clone(),
-                ActionPlaces.UNKNOWN,
-                ActionUiKind.NONE,
-                null,
-            )
-            ActionUtil.updateAction(action, event)
-            check(event.presentation.isEnabled) { "EditorPaste action disabled for #152 parity fixture" }
-            ActionUtil.performAction(action, event)
+            val action = ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_PASTE) as? EditorAction
+                ?: error("EditorPaste action unavailable or not an EditorAction for #152 parity proof")
+            // This is the same maintained public invocation path used by IntelliJ's own
+            // EditorCopyPastProvider for editor copy/paste commands.
+            action.actionPerformed(editor, context)
         }
 
         private fun performBundledAction(
