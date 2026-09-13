@@ -1,5 +1,7 @@
 package com.algorist.markflow.editor.native
 
+import com.algorist.markflow.trust.NativeLocalImageResolver
+import com.algorist.markflow.trust.NativeLocalImageResult
 import com.google.gson.GsonBuilder
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
@@ -53,6 +55,8 @@ internal object NativeImageImportTransactionProbe {
             case("post-commit-ui-failure-does-not-rollback") { postCommitFailureCase() }
             case("listener-pce-after-commit-preserves-transaction") { listenerPceAfterCommitCase() }
             case("precommit-pce-propagates-after-cleanup") { precommitPceCase() }
+            case("preexisting-assets-directory-preserved-on-rollback") { preexistingAssetsDirectoryCase() }
+            case("document-path-change-boundary") { documentPathChangeBoundaryCase() }
             val verdict = if (cases.all { it.outcome == "PASS" }) "PASS" else "FAIL"
             output.parent?.let(Files::createDirectories)
             Files.writeString(
@@ -208,6 +212,94 @@ internal object NativeImageImportTransactionProbe {
             }
 
             return "copyPcePropagated=true copyRollbackComplete=true sourcePcePropagated=true sourceRollbackComplete=true sourceStable=true"
+        }
+
+        private fun preexistingAssetsDirectoryCase(): String {
+            val external = newRoot("preexisting-assets-source-")
+            val source = external.resolve("rollback.png")
+            writeImage(source, 4, 4)
+            return withFixture("preexisting assets\n") { fixture ->
+                val before = fixture.document.text
+                val assets = ApplicationManager.getApplication().runWriteAction<VirtualFile> {
+                    fixture.file.parent.createChildDirectory(this, "assets")
+                }
+                val result = NativeImageImportService.import(
+                    fixture.editor,
+                    listOf(NativeImageImportInput.LocalFile(source)),
+                    hooks = NativeImageImportTestHooks(
+                        beforeSourceEdit = { error("injected source failure after copy") },
+                    ),
+                )
+                check(result is NativeImageImportResult.Failure && result.code == NativeImageImportFailureCode.SOURCE_EDIT_FAILED)
+                check(fixture.document.text == before)
+                check(assets.isValid) { "rollback deleted the pre-existing assets directory" }
+                check(assets.children.isEmpty()) { "rollback left an operation-owned asset in the pre-existing directory" }
+                "preexistingDirectoryPreserved=true operationAssetRemoved=true sourceStable=true"
+            }
+        }
+
+        private fun documentPathChangeBoundaryCase(): String {
+            val external = newRoot("path-change-source-")
+            val renameSource = external.resolve("rename.png")
+            val moveSource = external.resolve("move.png")
+            writeImage(renameSource, 4, 4)
+            writeImage(moveSource, 4, 4)
+
+            withFixture("rename boundary\n") { fixture ->
+                val before = fixture.document.text
+                fixture.editor.caretModel.moveToOffset(fixture.document.textLength)
+                val result = NativeImageImportService.import(
+                    fixture.editor,
+                    listOf(NativeImageImportInput.LocalFile(renameSource)),
+                    hooks = NativeImageImportTestHooks(
+                        afterAssetsCreated = {
+                            ApplicationManager.getApplication().runWriteAction {
+                                fixture.file.rename(this, "renamed-during-import.md")
+                            }
+                        },
+                    ),
+                )
+                check(result is NativeImageImportResult.Success) {
+                    "same-parent rename incorrectly invalidated image import: $result"
+                }
+                check(fixture.document.text == before + "![rename](assets/rename.png)")
+                check(
+                    NativeLocalImageResolver.resolve(
+                        fixture.file.toNioPath(),
+                        result.markdownTargets.single(),
+                    ) is NativeLocalImageResult.Success
+                ) { "same-parent rename broke the committed relative target" }
+            }
+
+            withFixture("move boundary\n") { fixture ->
+                val before = fixture.document.text
+                val originalParent = fixture.file.parent
+                val movedRoot = newRoot("moved-document-")
+                val movedParent = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(movedRoot)
+                    ?: error("moved document destination VirtualFile unavailable")
+                fixture.editor.caretModel.moveToOffset(fixture.document.textLength)
+                val result = NativeImageImportService.import(
+                    fixture.editor,
+                    listOf(NativeImageImportInput.LocalFile(moveSource)),
+                    hooks = NativeImageImportTestHooks(
+                        afterAssetsCreated = {
+                            ApplicationManager.getApplication().runWriteAction {
+                                fixture.file.move(this, movedParent)
+                            }
+                        },
+                    ),
+                )
+                check(result is NativeImageImportResult.Failure && result.code == NativeImageImportFailureCode.SOURCE_CHANGED) {
+                    "cross-parent document move was not rejected before source commit: $result"
+                }
+                check(fixture.document.text == before) { "cross-parent move left a stale relative reference in source" }
+                check(fixture.file.parent === movedParent) { "document move fixture did not reach the alternate parent" }
+                check(originalParent.findChild("assets") == null) {
+                    "cross-parent move rollback left an operation-owned asset in the original root"
+                }
+            }
+
+            return "sameParentRenameAllowed=true crossParentMoveRejected=true rollbackOnMove=true sourceStableOnMove=true"
         }
 
         private fun <T> withFixture(source: String, block: (Fixture) -> T): T {
