@@ -198,7 +198,7 @@ internal object NativeImageImportGestureProbe {
             val root = withContext(Dispatchers.IO) {
                 Files.createTempDirectory(base, ".markflow-$prefix")
             }
-            roots += root
+            roots.add(root)
             return root
         }
 
