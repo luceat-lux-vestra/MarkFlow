@@ -154,7 +154,7 @@ internal object NativeMarkdownEditingParityProbe {
                 }
 
                 case("column-mode-markdown-platform-semantics") {
-                    withFixture("first\nsecond\nthird\n") { fixture ->
+                    val safeDetail = withFixture("first\nsecond\nthird\n") { fixture ->
                         val editor = fixture.editor as EditorEx
                         editor.isColumnMode = true
                         editor.caretModel.moveToLogicalPosition(com.intellij.openapi.editor.LogicalPosition(0, 0))
@@ -172,7 +172,7 @@ internal object NativeMarkdownEditingParityProbe {
                         "columnMode=true markdownPreferred=true platformClones=2 perLineDistribution=true"
                     }
 
-                    withFixture("outside\n```text\ncode\n```\ntail\n") { fixture ->
+                    val codeDetail = withFixture("outside\n```text\ncode\n```\ntail\n") { fixture ->
                         val editor = fixture.editor as EditorEx
                         editor.isColumnMode = true
                         editor.caretModel.moveToLogicalPosition(com.intellij.openapi.editor.LogicalPosition(0, 1))
@@ -185,6 +185,7 @@ internal object NativeMarkdownEditingParityProbe {
                         check(prepared.transferable === transferable)
                         "prospectiveCodeDestinationDelegated=true"
                     }
+                    "$safeDetail $codeDetail"
                 }
 
                 case("bundled-markdown-actions-source-local") {
