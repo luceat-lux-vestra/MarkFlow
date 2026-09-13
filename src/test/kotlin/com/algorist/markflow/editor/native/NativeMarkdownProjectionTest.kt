@@ -15,13 +15,33 @@ class NativeMarkdownProjectionTest : BasePlatformTestCase() {
     }
 
     fun testRepresentativePlanUsesOnlyExactParserRanges() {
-        val source = """# Heading
+        val source = """# ATX Heading
 
-Paragraph with *emphasis*, **strong**, and `code`.
+Setext heading
+==============
+
+Paragraph with *emphasis*, **strong**, `code`, and [a link](https://example.com).
+
+- unordered item
+- second item
+
+1. ordered item
+2. second ordered item
+
+> quoted paragraph
 
 ```kotlin
-val value = 1
+val fenced = 1
 ```
+
+    val indented = 2
+
+---
+
+| Name | Value |
+| --- | ---: |
+| alpha | 1 |
+| beta | 2 |
 """
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot(
@@ -36,7 +56,11 @@ val value = 1
         assertEquals(ProjectionPlanStatus.READY, plan.status)
         assertEquals(source, plan.identity.source)
         assertTrue(plan.projections.isNotEmpty())
-        assertTrue(plan.projections.map { it.kind }.toSet().containsAll(NativeProjectionKind.entries.toSet()))
+        val kinds = plan.projections.map { it.kind }.toSet()
+        assertTrue(
+            "missing representative kinds: ${NativeProjectionKind.entries.toSet() - kinds}",
+            kinds.containsAll(NativeProjectionKind.entries.toSet()),
+        )
 
         plan.projections.forEach { projection ->
             assertTrue(projection.sourceRange.isInside(source))
@@ -47,9 +71,30 @@ val value = 1
             }
         }
 
-        val heading = plan.projections.first { it.kind == NativeProjectionKind.HEADING }
-        val syntax = heading.syntaxRanges.single()
-        assertEquals("#", source.substring(syntax.startOffset, syntax.endOffset))
+        val atxHeading = plan.projections.first {
+            it.kind == NativeProjectionKind.HEADING &&
+                source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset).startsWith("# ATX")
+        }
+        assertEquals("#", source.substring(atxHeading.syntaxRanges.single().startOffset, atxHeading.syntaxRanges.single().endOffset))
+
+        val setextHeading = plan.projections.first {
+            it.kind == NativeProjectionKind.HEADING &&
+                source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset).startsWith("Setext")
+        }
+        assertTrue(setextHeading.syntaxRanges.isNotEmpty())
+        assertTrue(
+            setextHeading.syntaxRanges.any { range ->
+                source.substring(range.startOffset, range.endOffset).all { it == '=' }
+            }
+        )
+
+        val table = plan.projections.single { it.kind == NativeProjectionKind.TABLE }
+        assertEquals(
+            "| Name | Value |\n| --- | ---: |\n| alpha | 1 |\n| beta | 2 |",
+            source.substring(table.sourceRange.startOffset, table.sourceRange.endOffset).trimEnd(),
+        )
+        assertTrue(plan.projections.any { it.kind == NativeProjectionKind.TABLE_HEADER })
+        assertTrue(plan.projections.count { it.kind == NativeProjectionKind.TABLE_ROW } >= 2)
     }
 
     fun testUnsupportedRawHtmlNeverBecomesAProjectedConstruct() {
