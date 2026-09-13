@@ -14,6 +14,16 @@ class NativeMarkdownProjectionTest : BasePlatformTestCase() {
         assertEquals(9L, snapshot.identity.configGeneration)
     }
 
+    fun testProjectionRangeContainsUsesHalfOpenParserSemantics() {
+        val range = ProjectionRange(3, 7)
+
+        assertTrue(range.contains(3))
+        assertTrue(range.contains(6))
+        assertFalse(range.contains(2))
+        assertFalse(range.contains(7))
+        assertFalse(range.contains(8))
+    }
+
     fun testRepresentativePlanUsesOnlyExactParserRanges() {
         val source = """# ATX Heading
 
@@ -98,6 +108,10 @@ val fenced = 1
             "| Name | Value |\n| --- | ---: |\n| alpha | 1 |\n| beta | 2 |",
             source.substring(table.sourceRange.startOffset, table.sourceRange.endOffset).trimEnd(),
         )
+        assertTrue(table.sourceRange.contains(table.sourceRange.startOffset))
+        assertTrue(table.sourceRange.contains(table.sourceRange.endOffset - 1))
+        assertFalse(table.sourceRange.contains(table.sourceRange.endOffset))
+
         val header = plan.projections.single { it.kind == NativeProjectionKind.TABLE_HEADER }
         assertEquals(2, header.contentRanges.size)
         assertEquals(
