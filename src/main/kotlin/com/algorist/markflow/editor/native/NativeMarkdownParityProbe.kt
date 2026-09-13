@@ -6,6 +6,8 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
@@ -160,14 +162,30 @@ internal object NativeMarkdownParityProbe {
                             false,
                             MouseEvent.BUTTON1,
                         )
-                        fixture.editor.contentComponent.dispatchEvent(click)
+                        val inlayOffset = inlay.offset.coerceIn(0, fixture.editor.document.textLength)
+                        val editorEvent = EditorMouseEvent(
+                            fixture.editor,
+                            click,
+                            EditorMouseEventArea.EDITING_AREA,
+                            inlayOffset,
+                            fixture.editor.offsetToLogicalPosition(inlayOffset),
+                            fixture.editor.offsetToVisualPosition(inlayOffset),
+                            false,
+                            null,
+                            inlay,
+                            null,
+                        )
+                        check(table.handleMouseReveal(editorEvent)) {
+                            "registered table mouse handler path did not reveal the runtime inlay"
+                        }
                         val evidence = table.evidenceSnapshot()
-                        check(evidence.mouseReveals == 1L) { "editor mouse listener did not reveal the table inlay" }
+                        check(click.isConsumed) { "table mouse handler did not consume the handled left click" }
+                        check(evidence.mouseReveals == 1L)
                         check(evidence.ownedInlays == 0 && evidence.ownedFolds == 0)
                         check(fixture.editor.caretModel.primaryCaret.offset == tableModel.firstContentOffset)
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "mouseEvent=true mouseReveal=true caretAtFirstCell=true sourceStable=true"
+                        "mouseEvent=true runtimeInlay=true listenerHandlerPath=true eventConsumed=true mouseReveal=true caretAtFirstCell=true sourceStable=true"
                     }
                 } finally {
                     table.dispose()
