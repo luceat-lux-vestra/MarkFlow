@@ -9,7 +9,7 @@ class NativeTablePresentationControllerTest : BasePlatformTestCase() {
 | Name | Value |
 | --- | ---: |
 | alpha | 1 |
-| beta | `2|3` |
+| beta | `2\|3` |
 
 After
 """
@@ -31,7 +31,7 @@ After
         assertEquals(listOf("Name", "Value"), model.rows.first().cells)
         assertEquals(listOf("alpha", "1"), model.rows[1].cells)
         assertFalse(model.rows[2].header)
-        assertTrue(model.rows[2].cells.last().contains("`2|3`"))
+        assertEquals(listOf("beta", "`2\\|3`"), model.rows[2].cells)
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
     }
 
