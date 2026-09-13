@@ -155,13 +155,6 @@ internal class NativeTablePresentationController(
         mouseReveals = mouseReveals,
     )
 
-    internal fun revealTableAt(point: java.awt.Point): Boolean {
-        if (disposed || editor.isDisposed) return false
-        val inlay = editor.inlayModel.getElementAt(point, NativeTableInlayRenderer::class.java) ?: return false
-        val renderer = inlay.renderer as? NativeTableInlayRenderer ?: return false
-        return reveal(renderer)
-    }
-
     /**
      * Uses the public EditorMouseEvent inlay identity that IntelliJ computes before dispatch. This
      * avoids re-deriving editor geometry after earlier mouse listeners may have changed folding or
