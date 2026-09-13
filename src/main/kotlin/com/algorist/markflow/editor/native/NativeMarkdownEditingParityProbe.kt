@@ -17,7 +17,6 @@ import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.CaretStateTransferableData
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.actionSystem.EditorActionHandlerBean
-import com.intellij.openapi.editor.actionSystem.EditorActionManager
 import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.extensions.ExtensionPointName
@@ -156,7 +155,7 @@ internal object NativeMarkdownEditingParityProbe {
                 case("column-mode-markdown-platform-semantics") {
                     withFixture("first\nsecond\nthird\n") { fixture ->
                         val editor = fixture.editor as EditorEx
-                        editor.setColumnMode(true)
+                        editor.isColumnMode = true
                         editor.caretModel.moveToLogicalPosition(com.intellij.openapi.editor.LogicalPosition(0, 0))
                         val transferable = MarkdownTransferable(
                             markdown = "# one\n# two",
@@ -174,7 +173,7 @@ internal object NativeMarkdownEditingParityProbe {
 
                     withFixture("outside\n```text\ncode\n```\ntail\n") { fixture ->
                         val editor = fixture.editor as EditorEx
-                        editor.setColumnMode(true)
+                        editor.isColumnMode = true
                         editor.caretModel.moveToLogicalPosition(com.intellij.openapi.editor.LogicalPosition(0, 1))
                         val transferable = MarkdownTransferable(
                             markdown = "# one\n# two\n# three",
@@ -252,13 +251,18 @@ internal object NativeMarkdownEditingParityProbe {
                 .add(CommonDataKeys.VIRTUAL_FILE, file)
                 .add(PasteAction.TRANSFERABLE_PROVIDER, Producer { transferable })
                 .build()
-            WriteCommandAction.writeCommandAction(project)
-                .withName("MarkFlow #152 Deferred Paste Proof")
-                .run<RuntimeException> {
-                    EditorActionManager.getInstance()
-                        .getActionHandler(IdeActions.ACTION_EDITOR_PASTE)
-                        .execute(editor, null, context)
-                }
+            val action = ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_PASTE)
+                ?: error("EditorPaste action unavailable for #152 parity proof")
+            val event = AnActionEvent.createEvent(
+                context,
+                action.templatePresentation.clone(),
+                ActionPlaces.UNKNOWN,
+                ActionUiKind.NONE,
+                null,
+            )
+            ActionUtil.updateAction(action, event)
+            check(event.presentation.isEnabled) { "EditorPaste action disabled for #152 parity fixture" }
+            ActionUtil.performAction(action, event)
         }
 
         private fun performBundledAction(
@@ -320,7 +324,7 @@ internal object NativeMarkdownEditingParityProbe {
             fixture.editor.selectionModel.removeSelection()
             WriteCommandAction.writeCommandAction(project)
                 .withName("MarkFlow #152 Parity Restore")
-                .run<RuntimeException> { fixture.editor.document.setText(source) }
+                .run<RuntimeException> { fixture.editor.document.text = source }
             FileDocumentManager.getInstance().saveDocument(fixture.editor.document)
             check(!FileDocumentManager.getInstance().isDocumentUnsaved(fixture.editor.document))
         }
@@ -414,10 +418,10 @@ internal object NativeMarkdownEditingParityProbe {
 
         override fun getTransferDataFlavors(): Array<DataFlavor> = flavors.copyOf()
         override fun isDataFlavorSupported(flavor: DataFlavor): Boolean = flavors.any { it == flavor }
-        override fun getTransferData(flavor: DataFlavor): Any = when {
-            flavor == markdownFlavor -> markdown
-            flavor == DataFlavor.stringFlavor -> plain
-            flavor == CaretStateTransferableData.FLAVOR && caretState != null -> caretState
+        override fun getTransferData(flavor: DataFlavor): Any = when (flavor) {
+            markdownFlavor -> markdown
+            DataFlavor.stringFlavor -> plain
+            CaretStateTransferableData.FLAVOR -> caretState ?: throw UnsupportedFlavorException(flavor)
             else -> throw UnsupportedFlavorException(flavor)
         }
     }
