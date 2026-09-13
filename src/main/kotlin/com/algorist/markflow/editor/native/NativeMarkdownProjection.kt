@@ -3,6 +3,7 @@ package com.algorist.markflow.editor.native
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.progress.ProcessCanceledException
+import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
@@ -53,6 +54,13 @@ internal data class ProjectionRange(
 
     /** Parser/document ranges are half-open: [startOffset, endOffset). */
     fun contains(offset: Int): Boolean = offset >= startOffset && offset < endOffset
+
+    /**
+     * Presentation reveal is intentionally boundary-inclusive. A caret immediately before/after a
+     * concealed delimiter must not sit against a hidden fold and be pushed by editor folding.
+     * Semantic/parser containment remains [contains]'s half-open contract.
+     */
+    fun touches(offset: Int): Boolean = offset >= startOffset && offset <= endOffset
 }
 
 internal enum class NativeProjectionKind {
@@ -169,6 +177,11 @@ internal object NativeMarkdownProjectionPlanner {
         source: String,
         output: MutableList<NativeProjection>,
     ) {
+        // #147 owns image/resource presentation. An IMAGE contains an INLINE_LINK subtree, but that
+        // is image syntax rather than an ordinary clickable link. Do not let the ordinary #152
+        // projection fold the image's source out from under the dedicated resource owner.
+        if (node.type == MarkdownElementTypes.IMAGE) return
+
         projectionFor(node, source)?.let(output::add)
         node.children.forEach { child -> collect(child, source, output) }
     }
@@ -216,6 +229,13 @@ internal object NativeMarkdownProjectionPlanner {
         source: String,
         sourceRange: ProjectionRange,
     ): List<ProjectionRange> {
+        if (kind == NativeProjectionKind.LINK) {
+            return linkSyntaxRanges(node, source, sourceRange)
+        }
+        if (kind == NativeProjectionKind.THEMATIC_BREAK) {
+            return listOf(sourceRange)
+        }
+
         val syntaxTypes = when (kind) {
             NativeProjectionKind.HEADING -> setOf(
                 MarkdownTokenTypes.ATX_HEADER,
@@ -246,8 +266,8 @@ internal object NativeMarkdownProjectionPlanner {
 
     /**
      * Structured content ranges are parser-owned semantic children, not guessed text splits.
-     * Currently they are used for GFM table cells so native table presentation can consume the
-     * same maintained AST shape as JetBrains' own table generating provider.
+     * Tables use CELL ranges. Links use the text/label content inside parser-proven brackets so the
+     * presentation can conceal only the syntax around the visible label.
      */
     private fun contentRangesFor(
         kind: NativeProjectionKind,
@@ -258,12 +278,69 @@ internal object NativeMarkdownProjectionPlanner {
         NativeProjectionKind.TABLE_HEADER,
         NativeProjectionKind.TABLE_ROW,
         -> directChildRanges(node, setOf(GFMTokenTypes.CELL), source, sourceRange)
+        NativeProjectionKind.LINK -> linkVisibleRange(node, source, sourceRange)?.let(::listOf).orEmpty()
         else -> emptyList()
+    }
+
+    private fun linkSyntaxRanges(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): List<ProjectionRange> {
+        val visible = linkVisibleRange(node, source, sourceRange)
+        if (visible != null) {
+            return buildList {
+                projectionRangeOrNull(sourceRange.startOffset, visible.startOffset, source)?.let(::add)
+                projectionRangeOrNull(visible.endOffset, sourceRange.endOffset, source)?.let(::add)
+            }
+        }
+
+        // Wrapped autolinks are a parser-proven LINK range whose exact source starts/ends in angle
+        // brackets. Bare GFM autolinks intentionally keep no conceal ranges.
+        if (
+            node.type == MarkdownElementTypes.AUTOLINK &&
+            sourceRange.endOffset - sourceRange.startOffset >= 2 &&
+            source[sourceRange.startOffset] == '<' &&
+            source[sourceRange.endOffset - 1] == '>'
+        ) {
+            return listOf(
+                ProjectionRange(sourceRange.startOffset, sourceRange.startOffset + 1),
+                ProjectionRange(sourceRange.endOffset - 1, sourceRange.endOffset),
+            )
+        }
+        return emptyList()
+    }
+
+    private fun linkVisibleRange(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): ProjectionRange? {
+        val textContainer = node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
+            ?: if (node.type == MarkdownElementTypes.SHORT_REFERENCE_LINK) {
+                node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
+            } else {
+                null
+            }
+            ?: return null
+
+        val children = textContainer.children
+        val first = children.firstOrNull() ?: return null
+        val last = children.lastOrNull() ?: return null
+        if (first.type != MarkdownTokenTypes.LBRACKET || last.type != MarkdownTokenTypes.RBRACKET) return null
+        val range = projectionRangeOrNull(first.endOffset, last.startOffset, source) ?: return null
+        if (range.startOffset < sourceRange.startOffset || range.endOffset > sourceRange.endOffset) return null
+        return range
+    }
+
+    private fun projectionRangeOrNull(start: Int, end: Int, source: String): ProjectionRange? {
+        if (end <= start) return null
+        return ProjectionRange(start, end).takeIf { it.isInside(source) }
     }
 
     private fun directChildRanges(
         node: ASTNode,
-        acceptedTypes: Set<org.intellij.markdown.IElementType>,
+        acceptedTypes: Set<IElementType>,
         source: String,
         sourceRange: ProjectionRange,
     ): List<ProjectionRange> =
