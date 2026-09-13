@@ -103,22 +103,54 @@ internal object NativeProjectionProbe {
                     val plan = requireNotNull(firstController.currentPlan)
                     check(plan.status == ProjectionPlanStatus.READY)
                     check(plan.identity.source == fixture.document.text)
-                    val kinds = plan.projections.map { it.kind }.toSet()
-                    check(kinds.containsAll(NativeProjectionKind.entries.toSet())) {
-                        "missing representative projection kinds: ${NativeProjectionKind.entries.toSet() - kinds}"
-                    }
-                    plan.projections.forEach { projection ->
-                        check(projection.sourceRange.isInside(plan.identity.source))
-                        projection.syntaxRanges.forEach { range ->
-                            check(range.isInside(plan.identity.source))
-                            check(range.startOffset >= projection.sourceRange.startOffset)
-                            check(range.endOffset <= projection.sourceRange.endOffset)
-                        }
-                    }
+                    plan.projections.forEach { projection -> validateProjectionRanges(plan.identity.source, projection) }
+
                     val heading = plan.projections.first { it.kind == NativeProjectionKind.HEADING }
                     val syntax = heading.syntaxRanges.single()
                     check(plan.identity.source.substring(syntax.startOffset, syntax.endOffset) == "#")
-                    "kinds=${kinds.sortedBy { it.ordinal }} ranges=${plan.projections.size} headingSyntax=#"
+
+                    val representativeSource = """# Heading
+
+Paragraph with *emphasis*, **strong**, `code`, and [link](https://example.invalid/).
+
+> quoted paragraph
+
+- unordered item
+
+1. ordered item
+
+Indented block follows:
+
+    val indented = true
+
+```kotlin
+val fenced = true
+```
+
+---
+
+| Name | Value |
+| --- | --- |
+| alpha | beta |
+"""
+                    val representativePlan = NativeMarkdownProjectionPlanner.plan(
+                        ProjectionSnapshot(
+                            ProjectionSourceIdentity(
+                                modificationStamp = 1L,
+                                source = representativeSource,
+                                configGeneration = 0L,
+                            )
+                        )
+                    )
+                    check(representativePlan.status == ProjectionPlanStatus.READY)
+                    val representativeKinds = representativePlan.projections.map { it.kind }.toSet()
+                    check(representativeKinds.containsAll(NativeProjectionKind.entries.toSet())) {
+                        "missing representative projection kinds: ${NativeProjectionKind.entries.toSet() - representativeKinds}"
+                    }
+                    representativePlan.projections.forEach { projection ->
+                        validateProjectionRanges(representativeSource, projection)
+                    }
+                    "kinds=${representativeKinds.sortedBy { it.ordinal }} ranges=${representativePlan.projections.size} headingSyntax=#"
                 }
 
                 case("inline-and-block-native-presentation") {
@@ -127,13 +159,13 @@ internal object NativeProjectionProbe {
                         "expected emphasis/strong/inline-code markup, observed ${evidence.ownedHighlighters}"
                     }
                     check(evidence.ownedFolds >= 1) {
-                        "expected parser-proven heading fold, observed ${evidence.ownedFolds}"
+                        "expected parser-proven syntax folds, observed ${evidence.ownedFolds}"
                     }
-                    check(evidence.collapsedFolds >= 1) {
+                    check(headingSyntaxFoldCollapsed(first.editor, firstController)) {
                         "heading syntax marker was not visually reduced outside active context"
                     }
                     check(first.editor.document === second.editor.document)
-                    "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} sharedDocument=true"
+                    "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} headingCollapsed=true sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
@@ -144,30 +176,30 @@ internal object NativeProjectionProbe {
                     first.editor.caretModel.removeSecondaryCarets()
                     first.editor.selectionModel.removeSelection()
                     first.editor.caretModel.moveToOffset(fixture.headingContentOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds == 0) {
+                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
                         "active heading did not reveal its exact Markdown marker"
                     }
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds >= 1)
+                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
 
                     first.editor.selectionModel.setSelection(0, fixture.headingEndOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds == 0) {
+                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
                         "selection intersecting heading did not reveal exact Markdown"
                     }
                     first.editor.selectionModel.removeSelection()
-                    check(firstController.evidenceSnapshot().collapsedFolds >= 1)
+                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
 
                     val secondaryOffset = fixture.bodyOffset + 4
                     val secondary = requireNotNull(
                         first.editor.caretModel.addCaret(first.editor.offsetToVisualPosition(secondaryOffset))
                     ) { "secondary caret unavailable for multicaret reveal proof" }
                     secondary.setSelection(0, fixture.headingEndOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds == 0) {
+                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
                         "secondary-caret selection did not reveal exact Markdown"
                     }
                     secondary.removeSelection()
                     check(first.editor.caretModel.removeCaret(secondary))
-                    check(firstController.evidenceSnapshot().collapsedFolds >= 1)
+                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
 
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
@@ -194,8 +226,6 @@ internal object NativeProjectionProbe {
                     "staleRejected=true presentationOwnershipUnchanged=true refreshQueued=true"
                 }
 
-                // Document listeners schedule refresh after the write event. Queue this continuation after those
-                // callbacks so the next case proves the automatic real-Document refresh path rather than a test hook.
                 ApplicationManager.getApplication().invokeLater {
                     runAfterDocumentRefresh()
                 }
@@ -293,12 +323,12 @@ internal object NativeProjectionProbe {
                     second.editor.selectionModel.removeSelection()
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
                     second.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds >= 1)
-                    check(secondController.evidenceSnapshot().collapsedFolds >= 1)
+                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
+                    check(headingSyntaxFoldCollapsed(second.editor, secondController))
 
                     first.editor.caretModel.moveToOffset(fixture.headingContentOffset)
-                    check(firstController.evidenceSnapshot().collapsedFolds == 0)
-                    check(secondController.evidenceSnapshot().collapsedFolds >= 1) {
+                    check(!headingSyntaxFoldCollapsed(first.editor, firstController))
+                    check(headingSyntaxFoldCollapsed(second.editor, secondController)) {
                         "first editor reveal leaked into second editor presentation"
                     }
                     check(first.editor.document === second.editor.document)
@@ -317,8 +347,7 @@ internal object NativeProjectionProbe {
                         )
                     )
                     plan.projections.forEach { projection ->
-                        check(projection.sourceRange.isInside(source))
-                        projection.syntaxRanges.forEach { range -> check(range.isInside(source)) }
+                        validateProjectionRanges(source, projection)
                     }
                     check(plan.projections.none { projection ->
                         val text = source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
@@ -458,6 +487,36 @@ Plain body line for inactive caret state.
 
         private fun createController(editor: Editor): NativePresentationController =
             NativePresentationController(editor).also(liveControllers::add)
+
+        private fun headingSyntaxFoldCollapsed(
+            editor: Editor,
+            controller: NativePresentationController,
+        ): Boolean {
+            val plan = requireNotNull(controller.currentPlan)
+            val heading = plan.projections.first { it.kind == NativeProjectionKind.HEADING }
+            val syntax = heading.syntaxRanges.single()
+            val matching = editor.foldingModel.allFoldRegions.filter { region ->
+                region.startOffset == syntax.startOffset && region.endOffset == syntax.endOffset
+            }
+            check(matching.size == 1) {
+                "expected exactly one owned heading syntax fold at ${syntax.startOffset}..${syntax.endOffset}, observed ${matching.size}"
+            }
+            return !matching.single().isExpanded
+        }
+
+        private fun validateProjectionRanges(source: String, projection: NativeProjection) {
+            check(projection.sourceRange.isInside(source))
+            projection.syntaxRanges.forEach { range ->
+                check(range.isInside(source))
+                check(range.startOffset >= projection.sourceRange.startOffset)
+                check(range.endOffset <= projection.sourceRange.endOffset)
+            }
+            projection.contentRanges.forEach { range ->
+                check(range.isInside(source))
+                check(range.startOffset >= projection.sourceRange.startOffset)
+                check(range.endOffset <= projection.sourceRange.endOffset)
+            }
+        }
 
         private fun disposeController(controller: NativePresentationController) {
             if (!liveControllers.remove(controller)) return
