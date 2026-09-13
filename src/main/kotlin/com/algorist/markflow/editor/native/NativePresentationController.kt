@@ -36,10 +36,10 @@ internal data class NativePresentationEvidence(
 /**
  * One disposable, source-neutral presentation owner for one native IntelliJ [Editor].
  *
- * It owns only source-neutral editor presentation and listeners. Optional #147 host resources and
- * #148 derived renderer presentation are composed behind independent owners. This class has no
- * browser/JCEF dependency and no source write path. Plans are accepted only for the exact current
- * source/config identity.
+ * It owns only source-neutral editor presentation and listeners. Ordinary GFM tables, optional #147
+ * host resources, and #148 derived renderer presentation are composed behind independent owners.
+ * This class has no browser/JCEF dependency and no source write path. Plans are accepted only for
+ * the exact current source/config identity.
  */
 internal class NativePresentationController(
     private val editor: Editor,
@@ -47,6 +47,7 @@ internal class NativePresentationController(
     private val planner: (ProjectionSnapshot) -> NativeProjectionPlan = NativeMarkdownProjectionPlanner::plan,
     private val derivedPresentation: NativeDerivedPresentationController? = null,
     private val hostResources: NativeHostResourcePresentationController? = null,
+    private val tablePresentation: NativeTablePresentationController = NativeTablePresentationController(editor),
 ) : Disposable {
     private val highlighters = mutableListOf<OwnedHighlighter>()
     private val folds = mutableListOf<OwnedFold>()
@@ -117,9 +118,10 @@ internal class NativePresentationController(
         clearOwnedPresentation()
         currentPlan = plan
         if (plan.status == ProjectionPlanStatus.READY) {
-            installInlineHighlighters(plan)
-            installHeadingFolds(plan)
+            installRangeHighlighters(plan)
+            installSyntaxFolds(plan)
         }
+        tablePresentation.applyPlan(plan)
         hostResources?.applyPlan(plan)
         derivedPresentation?.applyPlan(plan)
         refreshesApplied += 1
@@ -148,6 +150,8 @@ internal class NativePresentationController(
         refreshesScheduled = refreshesScheduled,
     )
 
+    fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
+
     fun derivedEvidenceSnapshot(): NativeDerivedPresentationEvidence? =
         derivedPresentation?.evidenceSnapshot()
 
@@ -164,10 +168,10 @@ internal class NativePresentationController(
     private fun matchesCurrentIdentity(identity: ProjectionSourceIdentity): Boolean =
         ProjectionSnapshot.capture(editor.document, configGeneration()).identity == identity
 
-    private fun installInlineHighlighters(plan: NativeProjectionPlan) {
+    private fun installRangeHighlighters(plan: NativeProjectionPlan) {
         plan.projections
             .asSequence()
-            .filter { projection -> projection.kind in INLINE_KINDS }
+            .filter { projection -> projection.kind in HIGHLIGHT_KINDS }
             .filterNot(::isActive)
             .forEach { projection ->
                 val range = projection.sourceRange
@@ -182,12 +186,12 @@ internal class NativePresentationController(
             }
     }
 
-    private fun installHeadingFolds(plan: NativeProjectionPlan) {
+    private fun installSyntaxFolds(plan: NativeProjectionPlan) {
         val foldingModel = editor.foldingModel
         foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
             plan.projections
                 .asSequence()
-                .filter { projection -> projection.kind == NativeProjectionKind.HEADING }
+                .filter { projection -> projection.kind in FOLDABLE_SYNTAX_KINDS }
                 .flatMap { projection -> projection.syntaxRanges.asSequence().map { range -> projection to range } }
                 .forEach { (projection, range) ->
                     val region = foldingModel.addFoldRegion(
@@ -213,7 +217,7 @@ internal class NativePresentationController(
 
         clearOwnedHighlighters()
         if (plan.status == ProjectionPlanStatus.READY) {
-            installInlineHighlighters(plan)
+            installRangeHighlighters(plan)
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
                 folds.forEach { owned ->
                     if (owned.region.isValid) {
@@ -222,6 +226,7 @@ internal class NativePresentationController(
                 }
             }
         }
+        tablePresentation.refreshActivity(plan)
         hostResources?.refreshActivity(plan)
         derivedPresentation?.refreshActivity(plan)
 
@@ -271,6 +276,7 @@ internal class NativePresentationController(
         if (disposed) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         refreshRequestGeneration += 1
+        tablePresentation.dispose()
         hostResources?.dispose()
         derivedPresentation?.dispose()
         clearOwnedPresentation()
@@ -302,17 +308,53 @@ internal class NativePresentationController(
             "MARKFLOW.PROJECTION.INLINE_CODE",
             DefaultLanguageHighlighterColors.STRING,
         )
-        private val INLINE_KINDS = setOf(
+        private val LINK_KEY = TextAttributesKey.createTextAttributesKey(
+            "MARKFLOW.PROJECTION.LINK",
+            DefaultLanguageHighlighterColors.STRING,
+        )
+        private val BLOCK_QUOTE_KEY = TextAttributesKey.createTextAttributesKey(
+            "MARKFLOW.PROJECTION.BLOCK_QUOTE",
+            DefaultLanguageHighlighterColors.MARKUP_ATTRIBUTE,
+        )
+        private val CODE_BLOCK_KEY = TextAttributesKey.createTextAttributesKey(
+            "MARKFLOW.PROJECTION.CODE_BLOCK",
+            DefaultLanguageHighlighterColors.STRING,
+        )
+        private val THEMATIC_BREAK_KEY = TextAttributesKey.createTextAttributesKey(
+            "MARKFLOW.PROJECTION.THEMATIC_BREAK",
+            DefaultLanguageHighlighterColors.KEYWORD,
+        )
+
+        private val HIGHLIGHT_KINDS = setOf(
             NativeProjectionKind.EMPHASIS,
             NativeProjectionKind.STRONG,
             NativeProjectionKind.INLINE_CODE,
+            NativeProjectionKind.LINK,
+            NativeProjectionKind.BLOCK_QUOTE,
+            NativeProjectionKind.CODE_FENCE,
+            NativeProjectionKind.CODE_BLOCK,
+            NativeProjectionKind.THEMATIC_BREAK,
+        )
+
+        private val FOLDABLE_SYNTAX_KINDS = setOf(
+            NativeProjectionKind.HEADING,
+            NativeProjectionKind.EMPHASIS,
+            NativeProjectionKind.STRONG,
+            NativeProjectionKind.INLINE_CODE,
+            NativeProjectionKind.CODE_FENCE,
         )
 
         private fun keyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
             NativeProjectionKind.EMPHASIS -> EMPHASIS_KEY
             NativeProjectionKind.STRONG -> STRONG_KEY
             NativeProjectionKind.INLINE_CODE -> INLINE_CODE_KEY
-            else -> error("no inline presentation key for $kind")
+            NativeProjectionKind.LINK -> LINK_KEY
+            NativeProjectionKind.BLOCK_QUOTE -> BLOCK_QUOTE_KEY
+            NativeProjectionKind.CODE_FENCE,
+            NativeProjectionKind.CODE_BLOCK,
+            -> CODE_BLOCK_KEY
+            NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_KEY
+            else -> error("no presentation key for $kind")
         }
     }
 }
