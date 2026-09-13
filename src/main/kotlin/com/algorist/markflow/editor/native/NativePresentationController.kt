@@ -16,6 +16,8 @@ import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.util.ui.accessibility.ScreenReader
+import java.util.LinkedHashMap
 
 internal enum class ProjectionApplyResult {
     APPLIED,
@@ -31,6 +33,7 @@ internal data class NativePresentationEvidence(
     val collapsedFolds: Int,
     val refreshesApplied: Long,
     val refreshesScheduled: Long,
+    val sourceFallbacks: Long,
 )
 
 /**
@@ -47,14 +50,17 @@ internal class NativePresentationController(
     private val planner: (ProjectionSnapshot) -> NativeProjectionPlan = NativeMarkdownProjectionPlanner::plan,
     private val derivedPresentation: NativeDerivedPresentationController? = null,
     private val hostResources: NativeHostResourcePresentationController? = null,
-    private val tablePresentation: NativeTablePresentationController = NativeTablePresentationController(editor),
+    private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
+    private val tablePresentation: NativeTablePresentationController =
+        NativeTablePresentationController(editor, richPresentationEnabled),
 ) : Disposable {
     private val highlighters = mutableListOf<OwnedHighlighter>()
-    private val folds = mutableListOf<OwnedFold>()
+    private val folds = LinkedHashMap<FoldKey, OwnedFold>()
     private var disposed = false
     private var refreshRequestGeneration = 0L
     private var refreshesApplied = 0L
     private var refreshesScheduled = 0L
+    private var sourceFallbacks = 0L
 
     var currentPlan: NativeProjectionPlan? = null
         private set
@@ -117,9 +123,11 @@ internal class NativePresentationController(
 
         clearOwnedPresentation()
         currentPlan = plan
-        if (plan.status == ProjectionPlanStatus.READY) {
+        if (plan.status == ProjectionPlanStatus.READY && isRichPresentationEnabled()) {
             installRangeHighlighters(plan)
-            installSyntaxFolds(plan)
+            reconcileSyntaxFolds(plan)
+        } else if (plan.status == ProjectionPlanStatus.READY) {
+            sourceFallbacks += 1
         }
         tablePresentation.applyPlan(plan)
         hostResources?.applyPlan(plan)
@@ -144,10 +152,11 @@ internal class NativePresentationController(
         planIdentity = currentPlan?.identity,
         planStatus = currentPlan?.status,
         ownedHighlighters = highlighters.count { it.highlighter.isValid },
-        ownedFolds = folds.count { it.region.isValid },
-        collapsedFolds = folds.count { it.region.isValid && !it.region.isExpanded },
+        ownedFolds = folds.values.count { it.region.isValid },
+        collapsedFolds = folds.values.count { it.region.isValid && !it.region.isExpanded },
         refreshesApplied = refreshesApplied,
         refreshesScheduled = refreshesScheduled,
+        sourceFallbacks = sourceFallbacks,
     )
 
     fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
@@ -186,22 +195,48 @@ internal class NativePresentationController(
             }
     }
 
-    private fun installSyntaxFolds(plan: NativeProjectionPlan) {
-        val foldingModel = editor.foldingModel
-        foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            plan.projections
-                .asSequence()
-                .filter { projection -> projection.kind in FOLDABLE_SYNTAX_KINDS }
-                .flatMap { projection -> projection.syntaxRanges.asSequence().map { range -> projection to range } }
-                .forEach { (projection, range) ->
-                    val region = foldingModel.addFoldRegion(
-                        range.startOffset,
-                        range.endOffset,
-                        ZERO_WIDTH_PLACEHOLDER,
-                    ) ?: return@forEach
-                    region.isExpanded = isActive(projection)
-                    folds += OwnedFold(projection, region)
+    /**
+     * Reconciles only MarkFlow-owned syntax folds. If the platform already owns the same exact fold
+     * (for example IntelliJ Markdown live preview is enabled), MarkFlow leaves it alone. If the
+     * platform fold later disappears, the next caret/selection reconciliation can install the
+     * public-API fallback without consulting any IntelliJ-internal live-preview implementation.
+     */
+    private fun reconcileSyntaxFolds(plan: NativeProjectionPlan) {
+        val desired = plan.projections
+            .asSequence()
+            .filter { projection -> projection.kind in FOLDABLE_SYNTAX_KINDS }
+            .flatMap { projection -> projection.syntaxRanges.asSequence().map { range -> projection to range } }
+            .associateBy { (_, range) -> FoldKey(range.startOffset, range.endOffset) }
+
+        val obsolete = folds.keys.filter { key -> key !in desired || folds[key]?.region?.isValid != true }
+        if (obsolete.isNotEmpty()) {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                obsolete.forEach { key ->
+                    folds.remove(key)?.region?.takeIf(FoldRegion::isValid)?.let(editor.foldingModel::removeFoldRegion)
                 }
+            }
+        }
+
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            desired.forEach { (key, pair) ->
+                val (projection, range) = pair
+                val active = isActive(projection)
+                val owned = folds[key]
+                if (owned?.region?.isValid == true) {
+                    owned.region.isExpanded = active
+                    return@forEach
+                }
+                if (editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset) != null) {
+                    return@forEach
+                }
+                val region = editor.foldingModel.addFoldRegion(
+                    range.startOffset,
+                    range.endOffset,
+                    placeholderFor(projection, range, plan.identity.source),
+                ) ?: return@forEach
+                region.isExpanded = active
+                folds[key] = OwnedFold(projection, region)
+            }
         }
     }
 
@@ -216,15 +251,11 @@ internal class NativePresentationController(
         val stampBefore = document.modificationStamp
 
         clearOwnedHighlighters()
-        if (plan.status == ProjectionPlanStatus.READY) {
+        if (plan.status == ProjectionPlanStatus.READY && isRichPresentationEnabled()) {
             installRangeHighlighters(plan)
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                folds.forEach { owned ->
-                    if (owned.region.isValid) {
-                        owned.region.isExpanded = isActive(owned.projection)
-                    }
-                }
-            }
+            reconcileSyntaxFolds(plan)
+        } else {
+            clearOwnedFolds()
         }
         tablePresentation.refreshActivity(plan)
         hostResources?.refreshActivity(plan)
@@ -237,16 +268,38 @@ internal class NativePresentationController(
     private fun isActive(projection: NativeProjection): Boolean = ReadAction.computeBlocking<Boolean, RuntimeException> {
         val range = projection.sourceRange
         editor.caretModel.allCarets.any { caret ->
-            range.contains(caret.offset) ||
+            range.touches(caret.offset) ||
                 (caret.hasSelection() && range.intersects(caret.selectionStart, caret.selectionEnd))
         }
     }
 
+    private fun isRichPresentationEnabled(): Boolean =
+        runCatching(richPresentationEnabled).getOrDefault(false)
+
+    private fun placeholderFor(
+        projection: NativeProjection,
+        range: ProjectionRange,
+        source: String,
+    ): String = when (projection.kind) {
+        NativeProjectionKind.LIST_ITEM -> {
+            val marker = source.substring(range.startOffset, range.endOffset)
+            val digits = marker.takeWhile(Char::isDigit)
+            if (digits.isNotEmpty()) "$digits." else BULLET_PLACEHOLDER
+        }
+        NativeProjectionKind.BLOCK_QUOTE -> QUOTE_PLACEHOLDER
+        NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_PLACEHOLDER
+        else -> ZERO_WIDTH_PLACEHOLDER
+    }
+
     private fun clearOwnedPresentation() {
         clearOwnedHighlighters()
+        clearOwnedFolds()
+    }
+
+    private fun clearOwnedFolds() {
         if (folds.isNotEmpty() && !editor.isDisposed) {
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                folds.forEach { owned ->
+                folds.values.forEach { owned ->
                     if (owned.region.isValid) {
                         editor.foldingModel.removeFoldRegion(owned.region)
                     }
@@ -288,6 +341,11 @@ internal class NativePresentationController(
         val highlighter: RangeHighlighter,
     )
 
+    private data class FoldKey(
+        val startOffset: Int,
+        val endOffset: Int,
+    )
+
     private data class OwnedFold(
         val projection: NativeProjection,
         val region: FoldRegion,
@@ -295,6 +353,9 @@ internal class NativePresentationController(
 
     companion object {
         private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
+        private const val BULLET_PLACEHOLDER = "•"
+        private const val QUOTE_PLACEHOLDER = "│"
+        private const val THEMATIC_BREAK_PLACEHOLDER = "────────"
 
         private val EMPHASIS_KEY = TextAttributesKey.createTextAttributesKey(
             "MARKFLOW.PROJECTION.EMPHASIS",
@@ -340,8 +401,12 @@ internal class NativePresentationController(
             NativeProjectionKind.HEADING,
             NativeProjectionKind.EMPHASIS,
             NativeProjectionKind.STRONG,
+            NativeProjectionKind.LINK,
+            NativeProjectionKind.LIST_ITEM,
+            NativeProjectionKind.BLOCK_QUOTE,
             NativeProjectionKind.INLINE_CODE,
             NativeProjectionKind.CODE_FENCE,
+            NativeProjectionKind.THEMATIC_BREAK,
         )
 
         private fun keyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
