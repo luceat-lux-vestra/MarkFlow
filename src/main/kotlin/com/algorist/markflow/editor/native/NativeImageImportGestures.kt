@@ -54,16 +54,18 @@ class NativeImageImportPasteProvider : PasteProvider {
 class NativeImageFileDropHandler : FileDropHandler {
     override suspend fun handleDrop(e: FileDropEvent): Boolean {
         val editor = e.editor ?: return false
+        val dropOffset = editor.caretModel.offset
+        val droppedFiles = e.files.toList()
         val applicable = readAction {
-            isSupportedEditor(editor) && e.files.isNotEmpty() &&
-                e.files.any { file -> NativeImageImportTransferable.looksLikeImageFilename(file.name) }
+            isSupportedEditor(editor) && droppedFiles.isNotEmpty() &&
+                droppedFiles.any { file -> NativeImageImportTransferable.looksLikeImageFilename(file.name) }
         }
         if (!applicable) return false
 
         return withContext(Dispatchers.EDT) {
             if (editor.isDisposed) return@withContext true
-            val inputs = e.files.map { file -> NativeImageImportInput.LocalFile(file.toPath()) }
-            showFailure(editor, NativeImageImportService.import(editor, inputs, editor.caretModel.offset))
+            val inputs = droppedFiles.map { file -> NativeImageImportInput.LocalFile(file.toPath()) }
+            showFailure(editor, NativeImageImportService.import(editor, inputs, dropOffset))
             true
         }
     }
