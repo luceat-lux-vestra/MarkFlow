@@ -319,12 +319,13 @@ internal object NativeMarkdownEditingParityProbe {
             check(fixture.editor.document.text == after)
         }
 
+        @Suppress("UsePropertyAccessSyntax")
         private fun restore(fixture: Fixture, source: String) {
             fixture.editor.caretModel.removeSecondaryCarets()
             fixture.editor.selectionModel.removeSelection()
             WriteCommandAction.writeCommandAction(project)
                 .withName("MarkFlow #152 Parity Restore")
-                .run<RuntimeException> { fixture.editor.document.text = source }
+                .run<RuntimeException> { fixture.editor.document.setText(source) }
             FileDocumentManager.getInstance().saveDocument(fixture.editor.document)
             check(!FileDocumentManager.getInstance().isDocumentUnsaved(fixture.editor.document))
         }
