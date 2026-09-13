@@ -32,15 +32,35 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
+        <!-- #151 must run before bundled Markdown image/file paste so MarkFlow's bounded copy/link
+             contract owns image gestures while non-image paste still delegates to the platform. -->
+        <customPasteProvider
+                id="MarkFlowNativeImageImportPasteProvider"
+                implementation="com.algorist.markflow.editor.native.NativeImageImportPasteProvider"
+                order="first"/>
+        <fileDropHandler
+                id="MarkFlowNativeImageFileDropHandler"
+                implementation="com.algorist.markflow.editor.native.NativeImageFileDropHandler"
+                order="first"/>
         <copyPastePostProcessor
                 implementation="com.algorist.markflow.editor.native.NativePasteTransferableCapturePostProcessor"
                 order="last"/>
         <copyPastePreProcessor
                 implementation="com.algorist.markflow.editor.native.NativeMarkdownPastePreProcessor"
                 order="last"/>
-        <!-- #144 package-isolation proof: this activity has no JCEF/browser class references. -->
+        <!-- #144 package-isolation proof. The same JCEF-disabled harness routes #151 when requested. -->
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NoJcefNativeEditingProbeProjectActivity"/>
         <!-- #147 host-resource proof also lives in the base plugin and runs with JCEF disabled. -->
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeHostResourcesProbeProjectActivity"/>
     </extensions>
+
+    <actions>
+        <action
+                id="MarkFlow.InsertImage"
+                class="com.algorist.markflow.editor.native.NativeInsertImageAction"
+                text="Insert Image into MarkFlow…"
+                description="Import local PNG, JPEG, GIF, or BMP images into the current MarkFlow document">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
