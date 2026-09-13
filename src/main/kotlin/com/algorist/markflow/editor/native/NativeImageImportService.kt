@@ -155,6 +155,8 @@ internal object NativeImageImportService {
             return failure(NativeImageImportFailureCode.INVALID_DOCUMENT_CONTEXT, "The insertion position is no longer valid.")
         }
         val sourceIdentity = SourceIdentity(
+            documentFile = documentFile,
+            documentRoot = root,
             modificationStamp = document.modificationStamp,
             startOffset = insertionStart,
             endOffset = insertionEnd,
@@ -613,6 +615,8 @@ internal object NativeImageImportService {
     )
 
     private data class SourceIdentity(
+        val documentFile: VirtualFile,
+        val documentRoot: Path,
         val modificationStamp: Long,
         val startOffset: Int,
         val endOffset: Int,
@@ -621,6 +625,12 @@ internal object NativeImageImportService {
         fun matches(editor: Editor): Boolean {
             val document = editor.document
             if (editor.isDisposed || document.modificationStamp != modificationStamp) return false
+            val currentFile = FileDocumentManager.getInstance().getFile(document)
+            if (currentFile !== documentFile || !documentFile.isValid || !documentFile.isInLocalFileSystem) return false
+            val currentParent = documentFile.parent ?: return false
+            if (!currentParent.isInLocalFileSystem) return false
+            val currentRoot = runCatching { currentParent.toNioPath().toRealPath() }.getOrNull() ?: return false
+            if (currentRoot != documentRoot) return false
             if (startOffset !in 0..document.textLength || endOffset !in startOffset..document.textLength) return false
             return document.getText(TextRange(startOffset, endOffset)) == replacedText
         }
