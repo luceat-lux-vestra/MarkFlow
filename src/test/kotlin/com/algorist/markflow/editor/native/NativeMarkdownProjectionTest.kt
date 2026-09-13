@@ -69,6 +69,11 @@ val fenced = 1
                 assertTrue(syntax.startOffset >= projection.sourceRange.startOffset)
                 assertTrue(syntax.endOffset <= projection.sourceRange.endOffset)
             }
+            projection.contentRanges.forEach { content ->
+                assertTrue(content.isInside(source))
+                assertTrue(content.startOffset >= projection.sourceRange.startOffset)
+                assertTrue(content.endOffset <= projection.sourceRange.endOffset)
+            }
         }
 
         val atxHeading = plan.projections.first {
@@ -93,8 +98,21 @@ val fenced = 1
             "| Name | Value |\n| --- | ---: |\n| alpha | 1 |\n| beta | 2 |",
             source.substring(table.sourceRange.startOffset, table.sourceRange.endOffset).trimEnd(),
         )
-        assertTrue(plan.projections.any { it.kind == NativeProjectionKind.TABLE_HEADER })
-        assertTrue(plan.projections.count { it.kind == NativeProjectionKind.TABLE_ROW } >= 2)
+        val header = plan.projections.single { it.kind == NativeProjectionKind.TABLE_HEADER }
+        assertEquals(2, header.contentRanges.size)
+        assertEquals(
+            listOf("Name", "Value"),
+            header.contentRanges.map { range -> source.substring(range.startOffset, range.endOffset).trim() },
+        )
+        val rows = plan.projections.filter { it.kind == NativeProjectionKind.TABLE_ROW }
+        assertEquals(2, rows.size)
+        assertTrue(rows.all { it.contentRanges.size == 2 })
+        assertEquals(
+            listOf(listOf("alpha", "1"), listOf("beta", "2")),
+            rows.map { row ->
+                row.contentRanges.map { range -> source.substring(range.startOffset, range.endOffset).trim() }
+            },
+        )
     }
 
     fun testUnsupportedRawHtmlNeverBecomesAProjectedConstruct() {
