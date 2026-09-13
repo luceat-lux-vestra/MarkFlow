@@ -480,12 +480,12 @@ internal object NativeImageImportProbe {
                 )
                 check(result is NativeImageImportResult.Success) { "reopen fixture import failed: $result" }
                 val target = result.markdownTargets.single()
-                val expectedSource = fixture.document.text
                 val fileDocumentManager = FileDocumentManager.getInstance()
                 fileDocumentManager.saveDocument(fixture.document)
                 check(!fileDocumentManager.isDocumentUnsaved(fixture.document)) {
                     "fixture Document remained dirty after explicit save before reopen"
                 }
+                val expectedSource = fixture.document.text
                 fixture.reopen()
                 check(fixture.document.text == expectedSource) { "reopened TextEditor did not retain exact saved Markdown source" }
                 check(FileDocumentManager.getInstance().getFile(fixture.document) === fixture.file) {
