@@ -8,6 +8,7 @@ on:
       - '.github/workflows/native-projection-evidence.yml'
       - 'build.gradle.kts'
       - 'gradle.properties'
+      - 'fixtures/markdown-fidelity/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
@@ -20,6 +21,7 @@ on:
       - '.github/workflows/native-projection-evidence.yml'
       - 'build.gradle.kts'
       - 'gradle.properties'
+      - 'fixtures/markdown-fidelity/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
@@ -160,7 +162,10 @@ jobs:
           if parity.get('verdict') != 'PASS':
               raise SystemExit(f"native Markdown parity verdict is not PASS: {parity.get('verdict')}")
           parity_required = {
+              'fidelity-corpus-runtime-mapping',
               'ordinary-parser-table-boundary',
+              'ordinary-native-presentation-source-neutral',
+              'ordinary-accessibility-source-fallback',
               'table-native-presentation-source-neutral',
               'table-caret-selection-and-end-boundary-reveal',
               'table-mouse-inlay-reveal',
@@ -184,7 +189,16 @@ jobs:
               raise SystemExit(f'native Markdown parity required cases failed: {parity_failed}')
 
           marker_contract = {
-              'ordinary-parser-table-boundary': ('allKinds=true', 'halfOpenBoundary=true'),
+              'fidelity-corpus-runtime-mapping': (
+                  'fixtures=12', 'exactIdentity=true', 'rangesInBounds=true', 'imageBoundary=true'
+              ),
+              'ordinary-parser-table-boundary': ('allKinds=true', 'linkSyntax=true', 'halfOpenBoundary=true'),
+              'ordinary-native-presentation-source-neutral': (
+                  'markers=true', 'linkConceal=true', 'boundaryReveal=true', 'sourceStable=true'
+              ),
+              'ordinary-accessibility-source-fallback': (
+                  'sourceFallback=true', 'folds=0', 'highlighters=0', 'sourceStable=true', 'stampStable=true'
+              ),
               'table-native-presentation-source-neutral': ('inlays=1', 'folds=1', 'sourceStable=true'),
               'table-caret-selection-and-end-boundary-reveal': ('caretReveal=true', 'selectionReveal=true', 'endBoundaryInactive=true'),
               'table-mouse-inlay-reveal': ('mouseEvent=true', 'mouseReveal=true', 'sourceStable=true'),
