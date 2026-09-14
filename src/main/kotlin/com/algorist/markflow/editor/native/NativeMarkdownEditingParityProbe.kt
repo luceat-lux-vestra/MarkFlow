@@ -247,7 +247,7 @@ internal object NativeMarkdownEditingParityProbe {
             }
 
         private fun performPaste(editor: Editor, transferable: Transferable) {
-            CopyPasteManager.getInstance().setContents(transferable)
+            CopyPasteManager.getInstance().contents = transferable
             WriteCommandAction.writeCommandAction(project)
                 .withName("MarkFlow #152 Parity Paste")
                 .run<RuntimeException> {
