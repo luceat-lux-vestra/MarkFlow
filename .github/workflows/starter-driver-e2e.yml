@@ -78,5 +78,6 @@ jobs:
           path: |
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-starter-driver-xvfb.log
