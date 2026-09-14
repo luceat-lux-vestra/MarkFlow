@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
@@ -18,6 +20,8 @@ on:
     paths:
       - '.github/workflows/native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
