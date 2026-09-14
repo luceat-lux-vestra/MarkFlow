@@ -117,11 +117,11 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         timeout: Duration = 30.seconds,
         predicate: () -> Boolean,
     ) {
-        driver.waitFor(
+        waitFor(
             message = description,
             timeout = timeout,
             errorMessage = { "Timed out waiting for $description" },
-            checker = predicate,
+            condition = predicate,
         )
     }
 
