@@ -28,6 +28,17 @@ kotlin {
     jvmToolchain(25)
 }
 
+sourceSets {
+    create("integrationTest") {
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+val integrationTestImplementation by configurations.getting {
+    extendsFrom(configurations.testImplementation.get())
+}
+
 // Declare repositories used to resolve project dependencies.
 repositories {
     mavenCentral()
@@ -43,6 +54,10 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.opentest4j)
 
+    integrationTestImplementation(libs.junitJupiter)
+    integrationTestImplementation(libs.kodein)
+    integrationTestImplementation(libs.coroutines)
+
     // Configure IntelliJ platform and plugin dependencies.
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
@@ -57,6 +72,7 @@ dependencies {
         bundledModules(providers.gradleProperty("platformBundledModules").map { it.split(',') })
 
         testFramework(TestFrameworkType.Platform)
+        testFramework(TestFrameworkType.Starter, configurationName = "integrationTestImplementation")
     }
 }
 
@@ -235,6 +251,15 @@ tasks {
 }
 
 intellijPlatformTesting {
+    val integrationTest by testIdeUi.registering {
+        task {
+            val integrationTestSourceSet = sourceSets.getByName("integrationTest")
+            testClassesDirs = integrationTestSourceSet.output.classesDirs
+            classpath = integrationTestSourceSet.runtimeClasspath
+            useJUnitPlatform()
+        }
+    }
+
     runIde {
         register("runIdeForUiTests") {
             task {
