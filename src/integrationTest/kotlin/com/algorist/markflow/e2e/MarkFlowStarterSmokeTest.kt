@@ -41,7 +41,7 @@ class MarkFlowStarterSmokeTest {
             PluginConfigurator(this).installPluginFromPath(pluginPath)
         }.runIdeWithDriver().useDriverAndCloseIde {
             waitForIndicators(5.minutes)
-            openFile("README.md")
+            openFile("README.md", waitForCodeAnalysis = false)
             waitForIndicators(5.minutes)
             ideFrame { }
         }
