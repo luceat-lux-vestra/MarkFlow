@@ -60,6 +60,7 @@ dependencies {
     // Plugin packaging deliberately disables the implicit Kotlin stdlib dependency, but Starter runs in a
     // standalone test worker and must align its kotlin-reflect runtime with the Kotlin plugin version.
     integrationTestImplementation(kotlin("stdlib"))
+    add("integrationTestRuntimeOnly", "org.jetbrains.teamcity:serviceMessages:2024.07")
 
     // Configure IntelliJ platform and plugin dependencies.
     intellijPlatform {
