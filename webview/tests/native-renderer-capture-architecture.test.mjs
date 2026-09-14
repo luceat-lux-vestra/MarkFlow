@@ -32,7 +32,7 @@ test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentat
     assert.match(bootstrap, /#\[0-9a-fA-F\]\{3\}/);
     assert.equal(bootstrap.includes("renderToString"), false);
     assert.equal(bootstrap.includes("mermaid.render"), false);
-    assert.equal(packageJson.dependencies.katex, "^0.18.5");
+    assert.equal(packageJson.dependencies.katex, "^0.18.7");
     assert.equal(packageJson.dependencies.mermaid, "11.17.2");
 });
 
