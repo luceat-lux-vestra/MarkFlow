@@ -246,8 +246,9 @@ internal object NativeMarkdownEditingParityProbe {
                     bean.implementationClass == DEFERRED_PASTE_HANDLER_CLASS
             }
 
+        @Suppress("UsePropertyAccessSyntax")
         private fun performPaste(editor: Editor, transferable: Transferable) {
-            CopyPasteManager.getInstance().contents = transferable
+            CopyPasteManager.getInstance().setContents(transferable)
             WriteCommandAction.writeCommandAction(project)
                 .withName("MarkFlow #152 Parity Paste")
                 .run<RuntimeException> {
