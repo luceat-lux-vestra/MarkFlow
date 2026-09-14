@@ -20,8 +20,9 @@ import java.io.Reader
  *
  * The preprocessor never writes the Document. IntelliJ's normal paste action remains responsible
  * for selections, insertion, command/undo, dirty state and save semantics. IntelliJ 2026.2 bypasses
- * CopyPastePreProcessor for multicaret paste, so #146 deliberately delegates that path unchanged
- * rather than adding a second paste-action owner; full paste parity remains #152 work.
+ * CopyPastePreProcessor for multicaret/column paste; #152 closes that platform branch through an
+ * EditorPaste action-handler wrapper while this class continues to own the ordinary single-caret
+ * PasteHandler path.
  */
 class NativeMarkdownPastePreProcessor : CopyPastePreProcessor {
     override fun preprocessOnCopy(
@@ -181,9 +182,18 @@ internal object NativeMarkdownClipboard {
         maxChars: Int = getDefaultContentLoadLimit(),
     ): String? {
         if (transferable == null) return null
-        val transferablePlain = readFlavorBounded(transferable, DataFlavor.stringFlavor, maxChars) ?: return null
+        val transferablePlain = readPlainText(transferable, maxChars) ?: return null
         if (!samePlatformPlainPayload(transferablePlain, platformText)) return null
         return readMarkdown(transferable, maxChars)
+    }
+
+    /** Bounded plain-text extraction for the exact Transferable owned by the active paste action. */
+    fun readPlainText(
+        transferable: Transferable?,
+        maxChars: Int = getDefaultContentLoadLimit(),
+    ): String? {
+        if (transferable == null) return null
+        return readFlavorBounded(transferable, DataFlavor.stringFlavor, maxChars)
     }
 
     internal fun samePlatformPlainPayload(transferablePlain: String, platformText: String): Boolean =

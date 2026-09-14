@@ -225,8 +225,8 @@ internal object NativeEditorShellProbe {
                     check(fileDocumentManager.isDocumentUnsaved(document))
                     fileDocumentManager.saveDocument(document)
                     check(!fileDocumentManager.isDocumentUnsaved(document))
-                    check(Files.readString(fixture.path, StandardCharsets.UTF_8) == document.text)
-                    "compositionConsumed=true commitConsumed=true committedText=한 save=true"
+                    proveSavedContent(fixture, document.text)
+                    "compositionConsumed=true commitConsumed=true committedText=한 save=true vfsVisible=true diskFlushed=true"
                 }
 
                 case("caret-selection-scroll-file-editor-state") {
@@ -308,10 +308,8 @@ internal object NativeEditorShellProbe {
                     check(!fileDocumentManager.isDocumentUnsaved(fixture.document)) {
                         "FileDocumentManager save left the authoritative Document dirty"
                     }
-                    check(Files.readString(fixture.path, StandardCharsets.UTF_8) == edited) {
-                        "saved backing file does not equal authoritative Document"
-                    }
-                    "dirty=true undoScope=project-text-editor undo=true redo=true save=true sharedSource=true"
+                    proveSavedContent(fixture, edited)
+                    "dirty=true undoScope=project-text-editor undo=true redo=true save=true sharedSource=true vfsVisible=true diskFlushed=true"
                 }
 
                 case("exact-source-fallback") {
@@ -493,6 +491,19 @@ internal object NativeEditorShellProbe {
         private fun disposeEditor(handle: PlatformEditorHandle) {
             if (!liveEditors.remove(handle)) return
             handle.provider.disposeEditor(handle.fileEditor)
+        }
+
+        private fun proveSavedContent(fixture: Fixture, expected: String) {
+            check(String(fixture.file.contentsToByteArray(), StandardCharsets.UTF_8) == expected) {
+                "saved VFS-visible content does not equal authoritative Document"
+            }
+            // IntelliJ 2026.2's FileDocumentManager is an AsyncFileContentWriteRequestor. The VFS
+            // exposes pending bytes immediately, while raw disk persistence may still be queued.
+            // A synchronous filesystem refresh flushes those pending writes before raw-path proof.
+            fixture.file.fileSystem.refresh(false)
+            check(Files.readString(fixture.path, StandardCharsets.UTF_8) == expected) {
+                "synchronously flushed backing file does not equal authoritative Document"
+            }
         }
 
         private fun inputMethodEvent(
