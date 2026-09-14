@@ -14,8 +14,6 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Properties
-import kotlin.io.path.deleteRecursively
-import kotlin.io.path.pathString
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -31,7 +29,9 @@ class MarkFlowStarterSmokeTest {
             .normalize()
         val tempRoot = Files.createTempDirectory("markflow-starter-driver-")
         val projectPath = tempRoot.resolve("project")
-        fixtureProject.toFile().copyRecursively(projectPath.toFile(), overwrite = true)
+        check(fixtureProject.toFile().copyRecursively(projectPath.toFile(), overwrite = true)) {
+            "failed to copy deterministic Starter/Driver fixture project"
+        }
         val fixturePath = projectPath.resolve("README.md")
         val expectedSource = Files.readString(fixturePath)
         val appendedText = "Persistence marker saved and reopened"
@@ -95,7 +95,7 @@ class MarkFlowStarterSmokeTest {
                 }
             }
         } finally {
-            tempRoot.deleteRecursively()
+            tempRoot.toFile().deleteRecursively()
         }
     }
 }
