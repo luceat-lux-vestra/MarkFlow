@@ -6,7 +6,7 @@ import com.intellij.driver.client.service
 import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.openFile
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
-import com.intellij.driver.sdk.ui.components.common.codeEditorForFile
+import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.waitFor
 import kotlin.time.Duration.Companion.seconds
@@ -17,8 +17,13 @@ import kotlin.time.Duration.Companion.seconds
  */
 class MarkFlowIdeDriver(private val driver: Driver) {
     fun openMarkdown(fileName: String): JEditorUiComponent {
-        driver.openFile(fileName, waitForCodeAnalysis = false, isTextEditor = true)
-        return driver.ideFrame().codeEditorForFile(fileName).also { editor ->
+        // Markdown may be hosted by a composite FileEditor even when the active editing surface
+        // is the native EditorComponentImpl. Do not require Driver's text-editor classification.
+        driver.openFile(fileName, waitForCodeAnalysis = false, isTextEditor = false)
+        return driver.ideFrame().editor().also { editor ->
+            check(editor.editor.getVirtualFile().getName() == fileName) {
+                "active native editor does not own expected Markdown file: $fileName"
+            }
             check(editor.isEditable()) { "opened Markdown editor is not editable: $fileName" }
         }
     }
