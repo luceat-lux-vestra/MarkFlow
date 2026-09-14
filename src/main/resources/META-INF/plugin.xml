@@ -32,6 +32,15 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
+        <!-- IntelliJ 2026.2 bypasses customPasteProvider/copyPastePreProcessor for multicaret and
+             column-mode paste. Wrap EditorPaste before bundled Markdown's table hook, transform only
+             the exact active Transferable when #152's parser/locality gates allow it, then delegate
+             insertion/undo/caret semantics to the maintained platform handler chain. -->
+        <editorActionHandler
+                id="markflow.native.markdown.deferred.paste"
+                action="EditorPaste"
+                implementationClass="com.algorist.markflow.editor.native.NativeMarkdownDeferredPasteHandler"
+                order="before markdown.table.reformat.paste"/>
         <!-- #151 must run before bundled Markdown image/file paste so MarkFlow's bounded copy/link
              contract owns image gestures while non-image paste still delegates to the platform. -->
         <customPasteProvider

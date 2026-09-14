@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/jcef-transport-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
@@ -18,6 +20,7 @@ on:
       - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentMutationProtocol.kt'
       - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentWireProtocol.kt'
       - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'webview/source-native.html'
       - 'webview/vite.config.ts'
       - 'webview/vite.source-native.config.ts'
@@ -27,6 +30,8 @@ on:
     paths:
       - '.github/workflows/jcef-transport-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
       - 'src/main/kotlin/com/algorist/markflow/runtime/JcefSourceNativeRuntimeTransport.kt'
@@ -39,6 +44,7 @@ on:
       - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentMutationProtocol.kt'
       - 'src/main/kotlin/com/algorist/markflow/sync/AttachmentWireProtocol.kt'
       - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'webview/source-native.html'
       - 'webview/vite.config.ts'
       - 'webview/vite.source-native.config.ts'

@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/no-jcef-native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/settings/**'
@@ -17,6 +19,8 @@ on:
     paths:
       - '.github/workflows/no-jcef-native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/settings/**'

@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
@@ -18,6 +20,8 @@ on:
     paths:
       - '.github/workflows/native-editing-evidence.yml'
       - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
       - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
@@ -157,11 +161,63 @@ jobs:
           if 'editors=0' not in lifecycle_detail:
               raise SystemExit(f'native editing lifecycle cleanup incomplete: {lifecycle_detail}')
 
+          parity_path = Path('build/native-editing-probe/parity.json')
+          if not parity_path.is_file():
+              raise SystemExit('#152 editing parity probe did not produce parity.json')
+          parity = json.loads(parity_path.read_text(encoding='utf-8'))
+          if parity.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected editing parity schema: {parity.get('schemaVersion')}")
+          if parity.get('verdict') != 'PASS':
+              raise SystemExit(f"native Markdown editing parity verdict is not PASS: {parity.get('verdict')}")
+          parity_required = {
+              'multicaret-single-source-markdown-platform-semantics',
+              'multicaret-ambiguous-source-delegates-platform',
+              'column-mode-markdown-platform-semantics',
+              'bundled-markdown-actions-source-local',
+          }
+          parity_cases = parity.get('cases') or []
+          parity_by_id = {case.get('id'): case for case in parity_cases}
+          if len(parity_by_id) != len(parity_cases):
+              raise SystemExit('duplicate editing parity case ids')
+          if set(parity_by_id) != parity_required:
+              raise SystemExit(
+                  f"editing parity case contract mismatch: missing={sorted(parity_required - set(parity_by_id))}, "
+                  f"unexpected={sorted(set(parity_by_id) - parity_required)}"
+              )
+          parity_failed = sorted(
+              case_id for case_id in parity_required if parity_by_id[case_id].get('outcome') != 'PASS'
+          )
+          if parity_failed:
+              raise SystemExit(f'editing parity required cases failed: {parity_failed}')
+
+          parity_markers = {
+              'multicaret-single-source-markdown-platform-semantics': (
+                  'markdownPreferred=true', 'sourceCarets=1', 'destinationCarets=2', 'platformDuplication=true', 'undoRedo=true'
+              ),
+              'multicaret-ambiguous-source-delegates-platform': (
+                  'nullMetadataDelegated=true', 'newlineSegmentationStable=true', 'multiSourceOffsetsDelegated=true'
+              ),
+              'column-mode-markdown-platform-semantics': (
+                  'columnMode=true', 'platformClones=2', 'perLineDistribution=true', 'prospectiveCodeDestinationDelegated=true'
+              ),
+              'bundled-markdown-actions-source-local': (
+                  'actionsRegistered=3', 'boldLocal=true', 'italicLocal=true', 'codeLocal=true', 'boldUndoRedo=true', 'unrelatedSourceStable=true'
+              ),
+          }
+          for case_id, markers in parity_markers.items():
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing editing parity markers {missing}: {detail}')
+
           print(f"Native editing verdict: {evidence['verdict']}")
           print(f"Selected shell: {evidence['selectedShell']}")
           print(f"IDE build: {evidence.get('ideBuild')}")
           for case_id in sorted(required):
               print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          print(f"Native Markdown editing parity verdict: {parity['verdict']}")
+          for case_id in sorted(parity_required):
+              print(f"editing-parity/{case_id}: {parity_by_id[case_id].get('outcome')}")
           PY
 
       - name: Upload native editing evidence
@@ -171,6 +227,7 @@ jobs:
           name: native-editing-evidence
           path: |
             build/native-editing-probe/evidence.json
+            build/native-editing-probe/parity.json
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-native-editing-xvfb.log
           if-no-files-found: warn
