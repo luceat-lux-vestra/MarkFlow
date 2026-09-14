@@ -57,6 +57,9 @@ dependencies {
     integrationTestImplementation(libs.junitJupiter)
     integrationTestImplementation(libs.kodein)
     integrationTestImplementation(libs.coroutines)
+    // Plugin packaging deliberately disables the implicit Kotlin stdlib dependency, but Starter runs in a
+    // standalone test worker and must align its kotlin-reflect runtime with the Kotlin plugin version.
+    integrationTestImplementation(kotlin("stdlib"))
 
     // Configure IntelliJ platform and plugin dependencies.
     intellijPlatform {
@@ -218,7 +221,7 @@ val buildWebview by tasks.registering(Exec::class) {
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         commandLine("cmd", "/c", "npm run build")
     } else {
-        commandLine("sh", "-c", "npm run build")
+        commandLine("sh", "-c", npmInstallCommand.replace("npm install --no-audit --no-fund", "npm run build").replace("npm ci --no-audit --no-fund", "npm run build"))
     }
 }
 
