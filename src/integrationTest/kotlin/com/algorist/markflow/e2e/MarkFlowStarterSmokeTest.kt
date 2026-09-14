@@ -11,7 +11,9 @@ import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Properties
 import kotlin.time.Duration.Companion.minutes
 
 class MarkFlowStarterSmokeTest {
@@ -24,10 +26,17 @@ class MarkFlowStarterSmokeTest {
         val projectPath = Path.of("src/integrationTest/resources/projects/markdown-smoke")
             .toAbsolutePath()
             .normalize()
+        val platformVersion = Properties().apply {
+            Files.newInputStream(Path.of("gradle.properties")).use(::load)
+        }.getProperty("platformVersion")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: error("platformVersion is required in gradle.properties")
+        val targetIde = IdeInfo.IdeaUltimate.copy(version = platformVersion)
 
         Starter.newContext(
             testName = "markflow-starter-driver-smoke",
-            testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(projectPath)),
+            testCase = TestCase(targetIde, LocalProjectInfo(projectPath)),
         ).apply {
             PluginConfigurator(this).installPluginFromPath(pluginPath)
         }.runIdeWithDriver().useDriverAndCloseIde {
