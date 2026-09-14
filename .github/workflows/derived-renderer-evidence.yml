@@ -5,11 +5,15 @@ on:
     branches: [ main ]
     paths:
       - '.github/workflows/derived-renderer-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/renderer/**'
       - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
       - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'webview/derived-renderer.html'
       - 'webview/vite.derived-renderer.config.ts'
       - 'webview/src/renderer/**'
@@ -18,16 +22,21 @@ on:
   pull_request:
     paths:
       - '.github/workflows/derived-renderer-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
       - 'src/main/resources/META-INF/plugin.xml'
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/renderer/**'
       - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
       - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'webview/derived-renderer.html'
       - 'webview/vite.derived-renderer.config.ts'
       - 'webview/src/renderer/**'
       - 'webview/src/app/derived-renderer-service.ts'
       - 'webview/src/app/browser-derived-renderer-backends.ts'
+  workflow_dispatch:
 
 permissions:
   contents: read
