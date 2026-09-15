@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.editor.FoldRegion
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class NativeTablePresentationControllerTest : BasePlatformTestCase() {
@@ -35,7 +36,7 @@ After
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
     }
 
-    fun testInactiveTableUsesNativeFoldAndInlayAndCaretRevealsExactSource() {
+    fun testInactiveTableUsesNativeFoldsAndInlayAndCaretRevealsExactSource() {
         val source = """Before
 
 | Name | Value |
@@ -59,7 +60,7 @@ After
             val inactive = controller.tableEvidenceSnapshot()
             assertEquals(1, inactive.tableModels)
             assertEquals(1, inactive.ownedInlays)
-            assertEquals(1, inactive.ownedFolds)
+            assertEquals(2, inactive.ownedFolds)
             assertEquals(sourceBefore, document.text)
             assertEquals(stampBefore, document.modificationStamp)
 
@@ -74,11 +75,81 @@ After
             editor.caretModel.moveToOffset(bodyOffset)
             val restored = controller.tableEvidenceSnapshot()
             assertEquals(1, restored.ownedInlays)
-            assertEquals(1, restored.ownedFolds)
+            assertEquals(2, restored.ownedFolds)
             assertEquals(sourceBefore, document.text)
             assertEquals(stampBefore, document.modificationStamp)
         } finally {
             controller.dispose()
+        }
+    }
+
+    fun testTablePresentationCoexistsWithForeignWholeTableFoldWithoutChangingItsOwnership() {
+        val tableSource = """| Name | Value |
+| --- | --- |
+| alpha | 😀"""
+        val source = """Before
+
+$tableSource
+
+After
+"""
+        myFixture.configureByText("platform-fold-table.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val sourceBefore = document.text
+        val stampBefore = document.modificationStamp
+        val tableStart = source.indexOf(tableSource)
+        val tableEnd = tableStart + tableSource.length
+        val firstCellOffset = source.indexOf("Name", tableStart)
+        val bodyOffset = source.indexOf("After")
+        editor.caretModel.moveToOffset(bodyOffset)
+
+        lateinit var foreignFold: FoldRegion
+        editor.foldingModel.runBatchFoldingOperation {
+            foreignFold = checkNotNull(
+                editor.foldingModel.addFoldRegion(tableStart, tableEnd, "platform table")
+            )
+            foreignFold.isExpanded = true
+        }
+        assertTrue(foreignFold.isValid)
+        assertTrue(foreignFold.isExpanded)
+
+        val controller = NativePresentationController(editor)
+        try {
+            val inactive = controller.tableEvidenceSnapshot()
+            assertEquals(1, inactive.tableModels)
+            assertEquals(1, inactive.ownedInlays)
+            assertEquals(2, inactive.ownedFolds)
+            assertTrue(foreignFold.isValid)
+            assertTrue(foreignFold.isExpanded)
+            assertEquals(sourceBefore, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(firstCellOffset)
+            val revealed = controller.tableEvidenceSnapshot()
+            assertEquals(0, revealed.ownedInlays)
+            assertEquals(0, revealed.ownedFolds)
+            assertTrue(foreignFold.isValid)
+            assertTrue(foreignFold.isExpanded)
+            assertEquals(sourceBefore, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(bodyOffset)
+            val restored = controller.tableEvidenceSnapshot()
+            assertEquals(1, restored.ownedInlays)
+            assertEquals(2, restored.ownedFolds)
+            assertTrue(foreignFold.isValid)
+            assertTrue(foreignFold.isExpanded)
+            assertEquals(sourceBefore, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+
+        assertTrue(foreignFold.isValid)
+        assertTrue(foreignFold.isExpanded)
+        editor.foldingModel.runBatchFoldingOperation {
+            if (foreignFold.isValid) editor.foldingModel.removeFoldRegion(foreignFold)
         }
     }
 
