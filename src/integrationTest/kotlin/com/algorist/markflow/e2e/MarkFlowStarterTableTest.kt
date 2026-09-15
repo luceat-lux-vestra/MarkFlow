@@ -40,10 +40,10 @@ class MarkFlowStarterTableTest {
         check(tableStart >= 0 && expectedSource.lastIndexOf(tableSource) == tableStart) {
             "deterministic table fixture must contain exactly one supported GFM table"
         }
-        // JetBrains GFM CELL ranges for this leading-pipe syntax start at the exact leading `|`.
-        // NativeTableProjectionPlanner keeps that parser-owned boundary as firstContentOffset; the
-        // unit parser/model contract pins it independently of this Driver acceptance test.
-        val firstCellSourceBoundary = tableStart
+        // For this leading-pipe GFM syntax the JetBrains CELL source range starts immediately after
+        // the leading `|`. The unit parser/model contract pins that boundary independently of this
+        // Driver acceptance test.
+        val firstCellSourceBoundary = tableStart + 1
         val editTarget = "table-edit"
         val editStart = expectedSource.indexOf(editTarget, tableStart)
         check(editStart >= tableStart) { "deterministic table edit target is missing" }
