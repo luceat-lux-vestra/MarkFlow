@@ -95,6 +95,12 @@ internal object NativeTableProjectionPlanner {
  * the table reveals exact source. A direct left click on the inlay also reveals the authoritative
  * source and places the primary caret at the first parser-proven cell. Screen-reader mode keeps the
  * Markdown source visible and installs no table fold/inlay.
+ *
+ * IntelliJ Markdown owns a whole-table language fold over the same parser range. MarkFlow never
+ * removes, expands, collapses, or otherwise claims that foreign fold. Instead, it partitions the
+ * exact table source into two adjacent owned folds that are strictly contained by the platform
+ * whole-table fold. This keeps ownership deterministic regardless of which folding owner runs first
+ * while still concealing the complete inactive table source for MarkFlow's block presentation.
  */
 internal class NativeTablePresentationController(
     private val editor: Editor,
@@ -150,7 +156,7 @@ internal class NativeTablePresentationController(
         planIdentity = currentPlanIdentity,
         tableModels = currentModels.size,
         ownedInlays = owned.values.count { it.inlay.isValid },
-        ownedFolds = owned.values.count { it.fold.isValid },
+        ownedFolds = owned.values.sumOf { presentation -> presentation.folds.count(FoldRegion::isValid) },
         accessibilityFallbacks = accessibilityFallbacks,
         mouseReveals = mouseReveals,
     )
@@ -189,27 +195,48 @@ internal class NativeTablePresentationController(
     private fun installIfCurrent(identity: ProjectionSourceIdentity, model: NativeTableModel) {
         if (!isCurrent(identity) || isActive(model)) return
         val key = TableKey.of(model)
-        if (owned[key]?.let { it.fold.isValid && it.inlay.isValid } == true) return
+        if (
+            owned[key]?.let { presentation ->
+                presentation.inlay.isValid &&
+                    presentation.folds.isNotEmpty() &&
+                    presentation.folds.all(FoldRegion::isValid)
+            } == true
+        ) {
+            return
+        }
         removeOwned(key)
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
-        var fold: FoldRegion? = null
+        val foldRanges = tableFoldRanges(model, sourceBefore)
+        val installedFolds = mutableListOf<FoldRegion>()
+        var foldsInstalled = true
         editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            fold = editor.foldingModel.addFoldRegion(
-                model.sourceRange.startOffset,
-                model.sourceRange.endOffset,
-                ZERO_WIDTH_PLACEHOLDER,
-            )
-            fold?.isExpanded = false
-        }
-        val installedFold = fold ?: return
-        if (installedFold.isExpanded) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (installedFold.isValid) editor.foldingModel.removeFoldRegion(installedFold)
+            for (range in foldRanges) {
+                val fold = editor.foldingModel.addFoldRegion(
+                    range.startOffset,
+                    range.endOffset,
+                    ZERO_WIDTH_PLACEHOLDER,
+                )
+                if (fold == null) {
+                    foldsInstalled = false
+                    break
+                }
+                installedFolds += fold
+                fold.isExpanded = false
+                if (fold.isExpanded) {
+                    foldsInstalled = false
+                    break
+                }
             }
-            return
+            if (!foldsInstalled) {
+                installedFolds.asReversed().forEach { fold ->
+                    if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
+                }
+                installedFolds.clear()
+            }
         }
+        if (!foldsInstalled || installedFolds.size != foldRanges.size) return
 
         val renderer = NativeTableInlayRenderer(editor, model)
         val inlay = editor.inlayModel.addBlockElement(
@@ -220,12 +247,10 @@ internal class NativeTablePresentationController(
             renderer,
         )
         if (inlay == null) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (installedFold.isValid) editor.foldingModel.removeFoldRegion(installedFold)
-            }
+            removeFolds(installedFolds)
             return
         }
-        owned[key] = OwnedTablePresentation(installedFold, inlay)
+        owned[key] = OwnedTablePresentation(installedFolds.toList(), inlay)
 
         check(editor.document.modificationStamp == stampBefore) {
             "native table presentation changed the authoritative Document modification stamp"
@@ -233,6 +258,22 @@ internal class NativeTablePresentationController(
         check(editor.document.immutableCharSequence.toString() == sourceBefore) {
             "native table presentation changed the authoritative Document source"
         }
+    }
+
+    /**
+     * Cover the entire table with two owned normal folds while avoiding an exact-range collision
+     * with IntelliJ Markdown's whole-table language fold. The tail starts at the final Unicode code
+     * point so the split never bisects a UTF-16 surrogate pair.
+     */
+    private fun tableFoldRanges(model: NativeTableModel, source: String): List<ProjectionRange> {
+        val range = model.sourceRange
+        check(range.isInside(source))
+        val tailStart = Character.offsetByCodePoints(source, range.endOffset, -1)
+        check(tailStart > range.startOffset) { "parser-proven table range is too small to partition safely" }
+        return listOf(
+            ProjectionRange(range.startOffset, tailStart),
+            ProjectionRange(tailStart, range.endOffset),
+        )
     }
 
     private fun isCurrent(identity: ProjectionSourceIdentity): Boolean =
@@ -256,9 +297,14 @@ internal class NativeTablePresentationController(
     private fun removeOwned(key: TableKey) {
         val presentation = owned.remove(key) ?: return
         if (presentation.inlay.isValid) presentation.inlay.dispose()
-        if (presentation.fold.isValid && !editor.isDisposed) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (presentation.fold.isValid) editor.foldingModel.removeFoldRegion(presentation.fold)
+        removeFolds(presentation.folds)
+    }
+
+    private fun removeFolds(folds: List<FoldRegion>) {
+        if (editor.isDisposed || folds.none(FoldRegion::isValid)) return
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            folds.asReversed().forEach { fold ->
+                if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
             }
         }
     }
@@ -292,7 +338,7 @@ internal class NativeTablePresentationController(
     }
 
     private data class OwnedTablePresentation(
-        val fold: FoldRegion,
+        val folds: List<FoldRegion>,
         val inlay: Inlay<*>,
     )
 

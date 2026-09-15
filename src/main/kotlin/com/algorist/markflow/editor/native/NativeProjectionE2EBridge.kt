@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.Disposer
 import java.util.IdentityHashMap
 
 /**
@@ -29,7 +30,7 @@ internal object NativeProjectionE2EBridge {
     fun detach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = controllers.remove(editor) ?: return false
-        controller.dispose()
+        Disposer.dispose(controller)
         return true
     }
 
@@ -52,6 +53,44 @@ internal object NativeProjectionE2EBridge {
                 projection.sourceRange.endOffset == endOffset
         } == true
     }
+
+    fun tableModels(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).tableEvidenceSnapshot().tableModels
+    }
+
+    fun tableOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).tableEvidenceSnapshot().ownedInlays
+    }
+
+    fun tableOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).tableEvidenceSnapshot().ownedFolds
+    }
+
+    fun tableMouseReveals(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).tableEvidenceSnapshot().mouseReveals
+    }
+
+    fun tableInlayCenterX(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val bounds = requireTableInlay(editor).bounds ?: return -1
+        return bounds.x + bounds.width / 2
+    }
+
+    fun tableInlayCenterY(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val bounds = requireTableInlay(editor).bounds ?: return -1
+        return bounds.y + bounds.height / 2
+    }
+
+    private fun requireTableInlay(editor: Editor) =
+        editor.inlayModel
+            .getBlockElementsInRange(0, editor.document.textLength)
+            .singleOrNull { inlay -> inlay.renderer is NativeTableInlayRenderer }
+            ?: error("expected exactly one visible MarkFlow table inlay")
 
     private fun requireController(editor: Editor): NativePresentationController =
         checkNotNull(controllers[editor]) { "native projection E2E controller is not attached" }

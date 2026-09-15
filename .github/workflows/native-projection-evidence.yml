@@ -199,7 +199,7 @@ jobs:
               'ordinary-accessibility-source-fallback': (
                   'sourceFallback=true', 'folds=0', 'highlighters=0', 'sourceStable=true', 'stampStable=true'
               ),
-              'table-native-presentation-source-neutral': ('inlays=1', 'folds=1', 'sourceStable=true'),
+              'table-native-presentation-source-neutral': ('inlays=1', 'folds=2', 'sourceStable=true'),
               'table-caret-selection-and-end-boundary-reveal': ('caretReveal=true', 'selectionReveal=true', 'endBoundaryInactive=true'),
               'table-mouse-inlay-reveal': ('mouseEvent=true', 'mouseReveal=true', 'sourceStable=true'),
               'table-accessibility-source-fallback': ('sourceVisible=true', 'accessibilityFallback=1'),
