@@ -19,7 +19,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class MarkFlowStarterSmokeTest {
     @Test
-    fun launchesNativeFallbackRevealsInlineSourceAndPersistsUserEditAcrossReopen() {
+    fun launchesNativeFallbackRevealsFormatsUndoRedoAndPersistsUserEditAcrossReopen() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -39,6 +39,17 @@ class MarkFlowStarterSmokeTest {
         check(revealStart >= 0) { "deterministic reveal fixture is missing" }
         val revealEnd = revealStart + revealSource.length
         val openingDelimiterEnd = revealStart + 1
+        val formattingTarget = "formatme"
+        val formattingStart = expectedSource.indexOf(formattingTarget)
+        check(formattingStart >= 0) { "deterministic formatting fixture is missing" }
+        val formattingEnd = formattingStart + formattingTarget.length
+        val expectedBoldSources = listOf("**", "__").map { marker ->
+            expectedSource.replaceRange(
+                formattingStart,
+                formattingEnd,
+                marker + formattingTarget + marker,
+            )
+        }
         val appendedText = "Persistence marker saved and reopened"
         val expectedPersistedSource = expectedSource + appendedText
         val platformVersion = Properties().apply {
@@ -120,6 +131,50 @@ class MarkFlowStarterSmokeTest {
                     check(!markFlow.isDirty(editor))
                 } finally {
                     markFlow.detachNativeProjection(editor)
+                }
+
+                markFlow.selectRangeWithKeyboard(editor, formattingStart, formattingTarget.length)
+                markFlow.invokeMarkdownBold(editor)
+                waitFor(
+                    message = "bundled Markdown bold action wraps only the keyboard-selected source range",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source in expectedBoldSources },
+                )
+                val boldSource = markFlow.source(editor)
+                check(markFlow.isDirty(editor)) {
+                    "source-local Markdown action must dirty the authoritative Document"
+                }
+
+                markFlow.undo(editor)
+                waitFor(
+                    message = "Undo restores the exact pre-format Markdown source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == expectedSource },
+                )
+
+                markFlow.redo(editor)
+                waitFor(
+                    message = "Redo restores the exact source-local bold edit",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == boldSource },
+                )
+                check(markFlow.isDirty(editor)) {
+                    "Redo of the Markdown action must dirty the authoritative Document"
+                }
+
+                markFlow.undo(editor)
+                waitFor(
+                    message = "formatting proof cleanup restores original source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == expectedSource },
+                )
+                markFlow.save(editor)
+                check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
+                    "formatting proof cleanup changed deterministic fixture bytes"
                 }
 
                 markFlow.appendAtEnd(editor, appendedText)

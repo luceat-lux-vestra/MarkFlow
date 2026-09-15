@@ -15,6 +15,7 @@ import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
+import java.awt.event.KeyEvent
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -60,6 +61,10 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun appendAtEnd(editor: JEditorUiComponent, text: String) {
         editor.setFocus()
+        // Moving a caret does not clear an existing IntelliJ selection. Collapse any selection
+        // through real keyboard interaction first so this helper's contract remains append-only
+        // even when the preceding acceptance step selected source text.
+        editor.keyboard { right() }
         editor.moveCaretToOffset(editor.text.length)
         editor.keyboard {
             typeText(text, delayBetweenCharsInMs = 20)
@@ -69,6 +74,35 @@ class MarkFlowIdeDriver(private val driver: Driver) {
     fun clickText(editor: JEditorUiComponent, text: String) {
         editor.setFocus()
         editor.clickOn(text)
+    }
+
+    fun selectRangeWithKeyboard(editor: JEditorUiComponent, startOffset: Int, length: Int) {
+        require(length > 0) { "keyboard selection length must be positive" }
+        editor.setFocus()
+        editor.moveCaretToOffset(startOffset)
+        editor.keyboard {
+            pressing(KeyEvent.VK_SHIFT) {
+                repeat(length) { right() }
+            }
+        }
+    }
+
+    fun invokeMarkdownBold(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction(
+            "org.intellij.plugins.markdown.ui.actions.styling.ToggleBoldAction",
+            component = editor.component,
+        )
+    }
+
+    fun undo(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction("\$Undo", component = editor.component)
+    }
+
+    fun redo(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction("\$Redo", component = editor.component)
     }
 
     fun attachNativeProjection(editor: JEditorUiComponent) {
