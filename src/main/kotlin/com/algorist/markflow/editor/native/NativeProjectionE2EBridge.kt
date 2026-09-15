@@ -49,21 +49,6 @@ internal object NativeProjectionE2EBridge {
         } == true
     }
 
-    fun ownedFolds(editor: Editor): Int {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        return requireController(editor).evidenceSnapshot().ownedFolds
-    }
-
-    fun collapsedFolds(editor: Editor): Int {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        return requireController(editor).evidenceSnapshot().collapsedFolds
-    }
-
-    fun refreshesApplied(editor: Editor): Long {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        return requireController(editor).evidenceSnapshot().refreshesApplied
-    }
-
     private fun requireController(editor: Editor): NativePresentationController =
         checkNotNull(controllers[editor]) { "native projection E2E controller is not attached" }
 }
