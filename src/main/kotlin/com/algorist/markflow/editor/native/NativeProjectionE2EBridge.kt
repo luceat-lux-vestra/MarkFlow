@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.Disposer
 import java.util.IdentityHashMap
 
 /**
@@ -29,7 +30,7 @@ internal object NativeProjectionE2EBridge {
     fun detach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = controllers.remove(editor) ?: return false
-        controller.dispose()
+        Disposer.dispose(controller)
         return true
     }
 
