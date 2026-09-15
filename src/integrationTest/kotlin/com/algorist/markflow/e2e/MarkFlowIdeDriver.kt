@@ -61,15 +61,52 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         driver.service<FileDocumentManagerRemote>().isDocumentUnsaved(editor.document)
 
     fun appendAtEnd(editor: JEditorUiComponent, text: String) {
+        val sourceBefore = source(editor)
+        val appendOffset = sourceBefore.length
+
         editor.setFocus()
+        waitFor(
+            message = "native editor owns keyboard focus before append",
+            timeout = 10.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    editor.component.isFocusOwner()
+                }
+            },
+            checker = { focused -> focused },
+        )
+
         // Moving a caret does not clear an existing IntelliJ selection. Collapse any selection
         // through real keyboard interaction first so this helper's contract remains append-only
         // even when the preceding acceptance step selected source text.
         editor.keyboard { right() }
-        editor.moveCaretToOffset(editor.text.length)
+        editor.moveCaretToOffset(appendOffset)
+        waitFor(
+            message = "primary caret reaches the exact append boundary",
+            timeout = 10.seconds,
+            getter = { primaryCaretOffset(editor) },
+            checker = { offset -> offset == appendOffset },
+        )
+        waitFor(
+            message = "native editor retains keyboard focus at append boundary",
+            timeout = 10.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    editor.component.isFocusOwner()
+                }
+            },
+            checker = { focused -> focused },
+        )
+
         editor.keyboard {
             typeText(text, delayBetweenCharsInMs = 20)
         }
+        waitFor(
+            message = "real editor input appends the exact requested source",
+            timeout = 10.seconds,
+            getter = { source(editor) },
+            checker = { actual -> actual == sourceBefore + text },
+        )
     }
 
     fun typeText(editor: JEditorUiComponent, text: String) {
