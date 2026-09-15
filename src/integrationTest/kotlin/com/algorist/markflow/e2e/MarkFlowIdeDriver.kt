@@ -76,9 +76,21 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         editor.clickOn(text)
     }
 
+    fun resetToSingleCaret(editor: JEditorUiComponent, offset: Int) {
+        editor.setFocus()
+        driver.withContext(OnDispatcher.EDT) {
+            driver.cast(editor.editor, EditorStateRemote::class).getCaretModel().removeSecondaryCarets()
+        }
+        // moveCaretToOffset does not clear an existing selection, so collapse it through the same
+        // user-level keyboard path used by appendAtEnd before positioning the sole caret.
+        editor.keyboard { right() }
+        editor.moveCaretToOffset(offset)
+    }
+
     fun selectRangeWithKeyboard(editor: JEditorUiComponent, startOffset: Int, length: Int) {
         require(length > 0) { "keyboard selection length must be positive" }
         editor.setFocus()
+        editor.keyboard { right() }
         editor.moveCaretToOffset(startOffset)
         editor.keyboard {
             pressing(KeyEvent.VK_SHIFT) {
@@ -93,6 +105,56 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             "org.intellij.plugins.markdown.ui.actions.styling.ToggleBoldAction",
             component = editor.component,
         )
+    }
+
+    fun seedMarkdownClipboard(markdown: String, plain: String, singleSourceCaret: Boolean = false) {
+        val bridge = driver.utility(NativeClipboardE2EBridgeRemote::class)
+        driver.withContext(OnDispatcher.EDT) {
+            check(bridge.seedMarkdownAndPlain(markdown, plain, singleSourceCaret)) {
+                "native Markdown clipboard E2E seed failed"
+            }
+        }
+    }
+
+    fun clearClipboard() {
+        val bridge = driver.utility(NativeClipboardE2EBridgeRemote::class)
+        driver.withContext(OnDispatcher.EDT) {
+            check(bridge.clear()) { "native Markdown clipboard E2E cleanup failed" }
+        }
+    }
+
+    fun paste(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction("\$Paste", component = editor.component)
+    }
+
+    fun cloneCaretBelow(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction("EditorCloneCaretBelow", component = editor.component)
+    }
+
+    fun caretCount(editor: JEditorUiComponent): Int =
+        driver.withContext(OnDispatcher.EDT) {
+            driver.cast(editor.editor, EditorStateRemote::class).getCaretModel().getCaretCount()
+        }
+
+    fun removeSecondaryCarets(editor: JEditorUiComponent) {
+        driver.withContext(OnDispatcher.EDT) {
+            driver.cast(editor.editor, EditorStateRemote::class).getCaretModel().removeSecondaryCarets()
+        }
+    }
+
+    fun isColumnMode(editor: JEditorUiComponent): Boolean =
+        driver.withContext(OnDispatcher.EDT) {
+            driver.cast(editor.editor, EditorStateRemote::class).isColumnMode()
+        }
+
+    fun setColumnMode(editor: JEditorUiComponent, enabled: Boolean) {
+        editor.setFocus()
+        if (isColumnMode(editor) != enabled) {
+            driver.invokeAction("EditorToggleColumnMode", component = editor.component)
+        }
+        check(isColumnMode(editor) == enabled) { "failed to set editor column mode to $enabled" }
     }
 
     fun undo(editor: JEditorUiComponent) {
@@ -190,6 +252,12 @@ private interface DocumentStampRemote {
     fun getModificationStamp(): Long
 }
 
+@Remote(value = "com.algorist.markflow.editor.native.NativeClipboardE2EBridge", plugin = "com.algorist.markflow")
+private interface NativeClipboardE2EBridgeRemote {
+    fun seedMarkdownAndPlain(markdown: String, plain: String, singleSourceCaret: Boolean): Boolean
+    fun clear(): Boolean
+}
+
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface NativeProjectionE2EBridgeRemote {
     fun attach(editor: Editor): Boolean
@@ -197,6 +265,18 @@ private interface NativeProjectionE2EBridgeRemote {
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
+}
+
+@Remote("com.intellij.openapi.editor.Editor")
+private interface EditorStateRemote {
+    fun getCaretModel(): CaretModelRemote
+    fun isColumnMode(): Boolean
+}
+
+@Remote("com.intellij.openapi.editor.CaretModel")
+private interface CaretModelRemote {
+    fun getCaretCount(): Int
+    fun removeSecondaryCarets()
 }
 
 @Remote("com.intellij.openapi.editor.Editor")

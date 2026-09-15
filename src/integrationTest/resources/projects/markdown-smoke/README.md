@@ -7,3 +7,16 @@ This document is opened by the Starter/Driver integration-test bootstrap.
 
 Caret reveal target: *emphasis*.
 Formatting action target: formatme.
+
+Paste outside target: outside-paste.
+Paste code target:
+```text
+inside-code-paste
+```
+
+Multicaret paste A: multicaret-a
+Multicaret paste B: multicaret-b
+
+Column paste A: column-a
+Column paste B: column-b
+Column paste C: column-c
