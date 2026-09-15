@@ -44,6 +44,42 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).currentPlan?.status == ProjectionPlanStatus.READY
     }
 
+    fun planDegradedToSource(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).currentPlan?.status == ProjectionPlanStatus.DEGRADED_TO_SOURCE
+    }
+
+    /**
+     * Exercise the real typed source-fallback application path without constructing a parallel
+     * renderer or mutating the authoritative Document. The plan retains the controller's exact
+     * current source/config identity, so [NativePresentationController.tryApply] still enforces its
+     * normal stale-plan and source-neutrality contracts.
+     */
+    fun degradeToSource(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireController(editor)
+        val identity = requireNotNull(controller.currentPlan?.identity) {
+            "native projection E2E controller has no current plan"
+        }
+        val degraded = NativeProjectionPlan(
+            identity = identity,
+            projections = emptyList(),
+            status = ProjectionPlanStatus.DEGRADED_TO_SOURCE,
+            failureClass = "synthetic.StarterRendererFailure",
+        )
+        return controller.tryApply(degraded) == ProjectionApplyResult.DEGRADED_TO_SOURCE
+    }
+
+    fun ownedHighlighters(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().ownedHighlighters
+    }
+
+    fun ownedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().ownedFolds
+    }
+
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val projectionKind = runCatching { NativeProjectionKind.valueOf(kind) }.getOrNull() ?: return false
