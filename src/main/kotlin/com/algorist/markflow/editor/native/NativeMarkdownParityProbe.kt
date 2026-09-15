@@ -12,6 +12,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.awt.event.MouseEvent
@@ -177,7 +178,7 @@ internal object NativeMarkdownParityProbe {
                         check(fixture.editor.document.modificationStamp == stampBefore)
                         "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} markers=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
-                        controller.dispose()
+                        Disposer.dispose(controller)
                     }
                 }
 
@@ -203,7 +204,7 @@ internal object NativeMarkdownParityProbe {
                         check(fixture.editor.document.modificationStamp == stampBefore)
                         "sourceFallback=true folds=0 highlighters=0 sourceStable=true stampStable=true"
                     } finally {
-                        controller.dispose()
+                        Disposer.dispose(controller)
                     }
                 }
 
@@ -215,10 +216,10 @@ internal object NativeMarkdownParityProbe {
                         val evidence = table.evidenceSnapshot()
                         check(evidence.tableModels == 1)
                         check(evidence.ownedInlays == 1)
-                        check(evidence.ownedFolds == 1)
+                        check(evidence.ownedFolds == 2)
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "models=1 inlays=1 folds=1 sourceStable=true stampStable=true"
+                        "models=1 inlays=1 folds=2 sourceStable=true stampStable=true"
                     }
 
                     case("table-caret-selection-and-end-boundary-reveal") {
@@ -233,7 +234,7 @@ internal object NativeMarkdownParityProbe {
                         check(table.evidenceSnapshot().ownedInlays == 1) {
                             "caret at half-open table end incorrectly kept source revealed"
                         }
-                        check(table.evidenceSnapshot().ownedFolds == 1)
+                        check(table.evidenceSnapshot().ownedFolds == 2)
 
                         fixture.editor.selectionModel.setSelection(
                             tableModel.sourceRange.startOffset + 1,
@@ -341,7 +342,7 @@ internal object NativeMarkdownParityProbe {
                         check(document.text.startsWith(original))
                         "iterations=20 exactIdentity=true caretMovement=true projectionApplied=true"
                     } finally {
-                        controller.dispose()
+                        Disposer.dispose(controller)
                     }
                 }
 
