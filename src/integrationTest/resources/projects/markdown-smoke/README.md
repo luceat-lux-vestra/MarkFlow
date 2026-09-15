@@ -8,6 +8,12 @@ This document is opened by the Starter/Driver integration-test bootstrap.
 Caret reveal target: *emphasis*.
 Formatting action target: formatme.
 
+Table interaction target:
+
+| Table key | Table value |
+| --- | --- |
+| alpha | table-edit |
+
 Paste outside target: outside-paste.
 Paste code target:
 ```text
