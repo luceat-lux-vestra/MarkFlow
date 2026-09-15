@@ -34,6 +34,28 @@ class NativeRawHtmlPresentationControllerTest : BasePlatformTestCase() {
         Disposer.dispose(controller)
     }
 
+    fun testAccessibilityFallbackKeepsExactSourceAndSkipsRenderer() {
+        val source = "Before <span>safe</span> after.\n"
+        myFixture.configureByText("accessible-html.md", source)
+        val renderer = DeferredRenderer()
+        val controller = NativeRawHtmlPresentationController(
+            editor = myFixture.editor,
+            renderer = renderer,
+            richPresentationEnabled = { false },
+        )
+
+        controller.applyPlan(plan())
+        val evidence = controller.evidenceSnapshot()
+        assertEquals(1, evidence.fragments)
+        assertEquals(1L, evidence.accessibilityFallbacks)
+        assertEquals(0, evidence.pendingRequests)
+        assertEquals(0, evidence.ownedInlays)
+        assertEquals(0, evidence.ownedFolds)
+        assertTrue(renderer.callbacks.isEmpty())
+        assertEquals(source, myFixture.editor.document.text)
+        Disposer.dispose(controller)
+    }
+
     fun testBlockedOrFailedPreviewLeavesOnlyExactEditableSource() {
         val source = "Before <span>safe</span> after.\n"
         myFixture.configureByText("blocked-html.md", source)
