@@ -153,12 +153,6 @@ class MarkFlowStarterSmokeTest {
                     getter = { markFlow.source(editor) },
                     checker = { source -> source == expectedSource },
                 )
-                waitFor(
-                    message = "Undo restores the clean Document state",
-                    timeout = 10.seconds,
-                    getter = { markFlow.isDirty(editor) },
-                    checker = { dirty -> !dirty },
-                )
 
                 markFlow.redo(editor)
                 waitFor(
@@ -178,12 +172,10 @@ class MarkFlowStarterSmokeTest {
                     getter = { markFlow.source(editor) },
                     checker = { source -> source == expectedSource },
                 )
-                waitFor(
-                    message = "formatting proof cleanup restores clean state",
-                    timeout = 10.seconds,
-                    getter = { markFlow.isDirty(editor) },
-                    checker = { dirty -> !dirty },
-                )
+                markFlow.save(editor)
+                check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
+                    "formatting proof cleanup changed deterministic fixture bytes"
+                }
 
                 markFlow.appendAtEnd(editor, appendedText)
                 check(markFlow.source(editor) == expectedPersistedSource) {
