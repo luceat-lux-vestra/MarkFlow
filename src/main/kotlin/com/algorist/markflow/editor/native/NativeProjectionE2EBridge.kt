@@ -54,6 +54,11 @@ internal object NativeProjectionE2EBridge {
         } == true
     }
 
+    fun sameDocument(first: Editor, second: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return first.document === second.document
+    }
+
     fun tableModels(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).tableEvidenceSnapshot().tableModels
