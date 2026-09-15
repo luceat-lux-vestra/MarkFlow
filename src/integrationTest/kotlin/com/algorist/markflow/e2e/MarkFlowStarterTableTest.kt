@@ -40,9 +40,10 @@ class MarkFlowStarterTableTest {
         check(tableStart >= 0 && expectedSource.lastIndexOf(tableSource) == tableStart) {
             "deterministic table fixture must contain exactly one supported GFM table"
         }
-        val firstCellText = "Table key"
-        val firstCellOffset = expectedSource.indexOf(firstCellText, tableStart)
-        check(firstCellOffset >= tableStart) { "deterministic table first cell is missing" }
+        // JetBrains GFM CELL ranges for this leading-pipe syntax start at the exact leading `|`.
+        // NativeTableProjectionPlanner keeps that parser-owned boundary as firstContentOffset; the
+        // unit parser/model contract pins it independently of this Driver acceptance test.
+        val firstCellSourceBoundary = tableStart
         val editTarget = "table-edit"
         val editStart = expectedSource.indexOf(editTarget, tableStart)
         check(editStart >= tableStart) { "deterministic table edit target is missing" }
@@ -135,8 +136,8 @@ class MarkFlowStarterTableTest {
                             inlays == 0 && folds == 0 && reveals == mouseRevealsBefore + 1
                         },
                     )
-                    check(markFlow.primaryCaretOffset(editor) == firstCellOffset) {
-                        "native table mouse reveal did not place the caret at the first parser-proven cell"
+                    check(markFlow.primaryCaretOffset(editor) == firstCellSourceBoundary) {
+                        "native table mouse reveal did not place the caret at the parser-proven first-cell source boundary"
                     }
                     check(markFlow.source(editor) == sourceBeforeReveal) {
                         "mouse table reveal changed authoritative Markdown source"
