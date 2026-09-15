@@ -52,6 +52,9 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun source(editor: JEditorUiComponent): String = editor.document.getText()
 
+    fun modificationStamp(editor: JEditorUiComponent): Long =
+        driver.cast(editor.document, DocumentStampRemote::class).getModificationStamp()
+
     fun isDirty(editor: JEditorUiComponent): Boolean =
         driver.service<FileDocumentManagerRemote>().isDocumentUnsaved(editor.document)
 
@@ -134,6 +137,11 @@ private interface FileEditorRemote {
 @Remote("com.intellij.openapi.fileEditor.FileDocumentManager")
 private interface FileDocumentManagerRemote {
     fun isDocumentUnsaved(document: com.intellij.driver.sdk.Document): Boolean
+}
+
+@Remote("com.intellij.openapi.editor.Document")
+private interface DocumentStampRemote {
+    fun getModificationStamp(): Long
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
