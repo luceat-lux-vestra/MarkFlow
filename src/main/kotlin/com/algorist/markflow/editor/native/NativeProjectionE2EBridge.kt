@@ -10,7 +10,11 @@ import java.util.IdentityHashMap
  * This object has no registration, startup hook, action, or test-framework dependency. It can only
  * affect an Editor when an external diagnostic client explicitly invokes [attach]. Production
  * editor lifecycle ownership remains unchanged until the dedicated cutover task.
+ *
+ * The Starter/Driver client resolves this object by its remote class name, so static analysis cannot
+ * observe the call edge.
  */
+@Suppress("unused")
 internal object NativeProjectionE2EBridge {
     private val controllers = IdentityHashMap<Editor, NativePresentationController>()
 
