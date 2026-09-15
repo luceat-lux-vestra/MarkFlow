@@ -75,6 +75,12 @@ class MarkFlowStarterSmokeTest {
                 val revealStampBefore = markFlow.modificationStamp(editor)
                 markFlow.attachNativeProjection(editor)
                 try {
+                    check(markFlow.isNativeProjectionAttached(editor)) {
+                        "native projection E2E controller did not attach"
+                    }
+                    check(markFlow.isNativeProjectionPlanReady(editor)) {
+                        "native projection E2E plan is not READY"
+                    }
                     check(markFlow.hasProjection(editor, "EMPHASIS", revealStart, revealEnd)) {
                         "attached MarkFlow plan does not contain the deterministic emphasis projection"
                     }
