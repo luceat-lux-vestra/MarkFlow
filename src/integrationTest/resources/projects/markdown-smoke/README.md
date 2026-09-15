@@ -7,6 +7,7 @@ This document is opened by the Starter/Driver integration-test bootstrap.
 
 Caret reveal target: *emphasis*.
 Formatting action target: formatme.
+Split editor target: split-sync.
 
 Table interaction target:
 
