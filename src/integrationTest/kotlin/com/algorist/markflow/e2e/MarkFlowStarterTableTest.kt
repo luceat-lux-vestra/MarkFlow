@@ -98,7 +98,7 @@ class MarkFlowStarterTableTest {
                         "native table projection plan is not READY"
                     }
                     waitFor(
-                        message = "inactive supported GFM table owns one native fold and block inlay",
+                        message = "inactive supported GFM table owns the platform-safe fold partition and block inlay",
                         timeout = 10.seconds,
                         getter = {
                             Triple(
@@ -107,7 +107,7 @@ class MarkFlowStarterTableTest {
                                 markFlow.tableOwnedFolds(editor),
                             )
                         },
-                        checker = { (models, inlays, folds) -> models == 1 && inlays == 1 && folds == 1 },
+                        checker = { (models, inlays, folds) -> models == 1 && inlays == 1 && folds == 2 },
                     )
                     check(markFlow.source(editor) == sourceBeforeReveal) {
                         "inactive table presentation changed authoritative Markdown source"
@@ -187,7 +187,7 @@ class MarkFlowStarterTableTest {
                         message = "moving the caret away restores inactive table presentation",
                         timeout = 10.seconds,
                         getter = { markFlow.tableOwnedInlays(editor) to markFlow.tableOwnedFolds(editor) },
-                        checker = { (inlays, folds) -> inlays == 1 && folds == 1 },
+                        checker = { (inlays, folds) -> inlays == 1 && folds == 2 },
                     )
                 } finally {
                     markFlow.detachNativeProjection(editor)
