@@ -19,7 +19,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class MarkFlowStarterSmokeTest {
     @Test
-    fun launchesNativeFallbackRevealsFormatsUndoRedoAndPersistsUserEditAcrossReopen() {
+    fun launchesNativeFallbackRevealsFormatsPastesAndPersistsUserEditAcrossReopen() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -50,6 +50,50 @@ class MarkFlowStarterSmokeTest {
                 marker + formattingTarget + marker,
             )
         }
+
+        val pasteMarkdown = "**e2e-markdown-paste**"
+        val pastePlain = "e2e-plain-paste"
+        val outsidePasteTarget = "outside-paste"
+        val outsidePasteStart = expectedSource.indexOf(outsidePasteTarget)
+        check(outsidePasteStart >= 0) { "deterministic outside-code paste fixture is missing" }
+        val expectedOutsidePasteSource = expectedSource.replaceRange(
+            outsidePasteStart,
+            outsidePasteStart + outsidePasteTarget.length,
+            pasteMarkdown,
+        )
+        val codePasteTarget = "inside-code-paste"
+        val codePasteStart = expectedSource.indexOf(codePasteTarget)
+        check(codePasteStart >= 0) { "deterministic code paste fixture is missing" }
+        val expectedCodePasteSource = expectedSource.replaceRange(
+            codePasteStart,
+            codePasteStart + codePasteTarget.length,
+            pastePlain,
+        )
+
+        val multicaretMarkdown = "**multicaret-markdown**"
+        val multicaretPlain = "multicaret-plain"
+        val multicaretTargetA = "multicaret-a"
+        val multicaretTargetB = "multicaret-b"
+        val multicaretStart = expectedSource.indexOf(multicaretTargetA)
+        check(multicaretStart >= 0 && expectedSource.indexOf(multicaretTargetB) >= 0) {
+            "deterministic multicaret paste fixture is missing"
+        }
+        val expectedMulticaretPasteSource = expectedSource
+            .replace(multicaretTargetA, multicaretMarkdown + multicaretTargetA)
+            .replace(multicaretTargetB, multicaretMarkdown + multicaretTargetB)
+
+        val columnMarkdown = "# column-one\n# column-two"
+        val columnPlain = "column-plain"
+        val columnTargetA = "column-a"
+        val columnTargetB = "column-b"
+        val columnStart = expectedSource.indexOf(columnTargetA)
+        check(columnStart >= 0 && expectedSource.indexOf(columnTargetB) >= 0) {
+            "deterministic column paste fixture is missing"
+        }
+        val expectedColumnPasteSource = expectedSource
+            .replace(columnTargetA, "# column-one" + columnTargetA)
+            .replace(columnTargetB, "# column-two" + columnTargetB)
+
         val appendedText = "Persistence marker saved and reopened"
         val expectedPersistedSource = expectedSource + appendedText
         val platformVersion = Properties().apply {
@@ -175,6 +219,175 @@ class MarkFlowStarterSmokeTest {
                 markFlow.save(editor)
                 check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
                     "formatting proof cleanup changed deterministic fixture bytes"
+                }
+
+                try {
+                    markFlow.resetToSingleCaret(editor, outsidePasteStart)
+                    markFlow.selectRangeWithKeyboard(editor, outsidePasteStart, outsidePasteTarget.length)
+                    markFlow.seedMarkdownClipboard(pasteMarkdown, pastePlain)
+                    markFlow.paste(editor)
+                    waitFor(
+                        message = "user paste prefers text/markdown outside parser-proven code",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedOutsidePasteSource },
+                    )
+                    check(markFlow.isDirty(editor)) {
+                        "outside-code user paste must dirty the authoritative Document"
+                    }
+
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "Undo restores exact source after outside-code Markdown paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                    markFlow.redo(editor)
+                    waitFor(
+                        message = "Redo restores exact Markdown-preferred paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedOutsidePasteSource },
+                    )
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "outside-code paste cleanup restores original source",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+
+                    markFlow.resetToSingleCaret(editor, codePasteStart)
+                    markFlow.selectRangeWithKeyboard(editor, codePasteStart, codePasteTarget.length)
+                    markFlow.seedMarkdownClipboard(pasteMarkdown, pastePlain)
+                    markFlow.paste(editor)
+                    waitFor(
+                        message = "user paste preserves platform plain text in parser-proven code",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedCodePasteSource },
+                    )
+
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "Undo restores exact source after code-context paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                    markFlow.redo(editor)
+                    waitFor(
+                        message = "Redo restores exact code-context plain paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedCodePasteSource },
+                    )
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "code-context paste cleanup restores original source",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+
+                    markFlow.resetToSingleCaret(editor, multicaretStart)
+                    markFlow.cloneCaretBelow(editor)
+                    check(markFlow.caretCount(editor) == 2) {
+                        "representative multicaret paste setup did not create two user carets"
+                    }
+                    markFlow.seedMarkdownClipboard(
+                        multicaretMarkdown,
+                        multicaretPlain,
+                        singleSourceCaret = true,
+                    )
+                    markFlow.paste(editor)
+                    waitFor(
+                        message = "multicaret user paste preserves single-source Markdown preference and platform duplication",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedMulticaretPasteSource },
+                    )
+                    check(markFlow.caretCount(editor) == 2) {
+                        "multicaret user paste changed destination caret cardinality"
+                    }
+
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "Undo restores exact source after multicaret paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                    markFlow.redo(editor)
+                    waitFor(
+                        message = "Redo restores exact multicaret Markdown paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedMulticaretPasteSource },
+                    )
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "multicaret paste cleanup restores original source",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                    markFlow.removeSecondaryCarets(editor)
+
+                    markFlow.resetToSingleCaret(editor, columnStart)
+                    markFlow.setColumnMode(editor, true)
+                    markFlow.seedMarkdownClipboard(columnMarkdown, columnPlain)
+                    markFlow.paste(editor)
+                    waitFor(
+                        message = "column-mode user paste distributes Markdown through the platform column path",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedColumnPasteSource },
+                    )
+                    check(markFlow.caretCount(editor) == 2) {
+                        "column-mode paste did not create the expected two platform carets"
+                    }
+
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "Undo restores exact source after column-mode paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                    markFlow.redo(editor)
+                    waitFor(
+                        message = "Redo restores exact column-mode Markdown paste",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedColumnPasteSource },
+                    )
+                    markFlow.undo(editor)
+                    waitFor(
+                        message = "column-mode paste cleanup restores original source",
+                        timeout = 10.seconds,
+                        getter = { markFlow.source(editor) },
+                        checker = { source -> source == expectedSource },
+                    )
+                } finally {
+                    markFlow.setColumnMode(editor, false)
+                    markFlow.removeSecondaryCarets(editor)
+                    markFlow.clearClipboard()
+                }
+
+                check(markFlow.source(editor) == expectedSource) {
+                    "Markdown-aware paste proof did not restore the exact original source"
+                }
+                check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
+                    "unsaved Markdown-aware paste proof changed fixture bytes"
+                }
+                markFlow.save(editor)
+                check(!markFlow.isDirty(editor)) {
+                    "explicit SaveAll after paste proof must clear platform dirty tracking"
+                }
+                check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
+                    "Markdown-aware paste cleanup changed deterministic fixture bytes"
                 }
 
                 markFlow.appendAtEnd(editor, appendedText)
