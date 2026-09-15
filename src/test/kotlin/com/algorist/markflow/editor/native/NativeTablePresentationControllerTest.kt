@@ -27,6 +27,7 @@ After
         val model = NativeTableProjectionPlanner.plan(plan).single()
 
         assertEquals(source.indexOf("| Name"), model.sourceRange.startOffset)
+        assertEquals(model.sourceRange.startOffset, model.firstContentOffset)
         assertEquals(3, model.rows.size)
         assertTrue(model.rows.first().header)
         assertEquals(listOf("Name", "Value"), model.rows.first().cells)
