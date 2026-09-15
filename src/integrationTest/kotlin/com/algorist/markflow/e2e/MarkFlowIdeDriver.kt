@@ -15,6 +15,7 @@ import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
+import java.awt.Point
 import java.awt.event.KeyEvent
 import kotlin.time.Duration.Companion.seconds
 
@@ -66,6 +67,13 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         // even when the preceding acceptance step selected source text.
         editor.keyboard { right() }
         editor.moveCaretToOffset(editor.text.length)
+        editor.keyboard {
+            typeText(text, delayBetweenCharsInMs = 20)
+        }
+    }
+
+    fun typeText(editor: JEditorUiComponent, text: String) {
+        editor.setFocus()
         editor.keyboard {
             typeText(text, delayBetweenCharsInMs = 20)
         }
@@ -138,6 +146,14 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             driver.cast(editor.editor, EditorStateRemote::class).getCaretModel().getCaretCount()
         }
 
+    fun primaryCaretOffset(editor: JEditorUiComponent): Int =
+        driver.withContext(OnDispatcher.EDT) {
+            driver.cast(editor.editor, EditorStateRemote::class)
+                .getCaretModel()
+                .getPrimaryCaret()
+                .getOffset()
+        }
+
     fun removeSecondaryCarets(editor: JEditorUiComponent) {
         driver.withContext(OnDispatcher.EDT) {
             driver.cast(editor.editor, EditorStateRemote::class).getCaretModel().removeSecondaryCarets()
@@ -207,6 +223,35 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
     }
 
+    fun tableModels(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.tableModels(editor.editor) }
+    }
+
+    fun tableOwnedInlays(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.tableOwnedInlays(editor.editor) }
+    }
+
+    fun tableOwnedFolds(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.tableOwnedFolds(editor.editor) }
+    }
+
+    fun tableMouseReveals(editor: JEditorUiComponent): Long {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.tableMouseReveals(editor.editor) }
+    }
+
+    fun clickNativeTableInlay(editor: JEditorUiComponent) {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        val x = driver.withContext(OnDispatcher.EDT) { bridge.tableInlayCenterX(editor.editor) }
+        val y = driver.withContext(OnDispatcher.EDT) { bridge.tableInlayCenterY(editor.editor) }
+        check(x >= 0 && y >= 0) { "native table inlay is not visible in the editor viewport" }
+        editor.setFocus()
+        editor.click(Point(x, y))
+    }
+
     fun isFoldCollapsed(editor: JEditorUiComponent, startOffset: Int, endOffset: Int): Boolean =
         driver.withContext(OnDispatcher.EDT) {
             val remoteEditor = driver.cast(editor.editor, FoldingEditorRemote::class)
@@ -265,6 +310,12 @@ private interface NativeProjectionE2EBridgeRemote {
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
+    fun tableModels(editor: Editor): Int
+    fun tableOwnedInlays(editor: Editor): Int
+    fun tableOwnedFolds(editor: Editor): Int
+    fun tableMouseReveals(editor: Editor): Long
+    fun tableInlayCenterX(editor: Editor): Int
+    fun tableInlayCenterY(editor: Editor): Int
 }
 
 @Remote("com.intellij.openapi.editor.Editor")
@@ -276,7 +327,13 @@ private interface EditorStateRemote {
 @Remote("com.intellij.openapi.editor.CaretModel")
 private interface CaretModelRemote {
     fun getCaretCount(): Int
+    fun getPrimaryCaret(): CaretRemote
     fun removeSecondaryCarets()
+}
+
+@Remote("com.intellij.openapi.editor.Caret")
+private interface CaretRemote {
+    fun getOffset(): Int
 }
 
 @Remote("com.intellij.openapi.editor.Editor")
