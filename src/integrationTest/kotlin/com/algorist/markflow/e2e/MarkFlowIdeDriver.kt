@@ -4,6 +4,7 @@ import com.intellij.driver.client.Driver
 import com.intellij.driver.client.Remote
 import com.intellij.driver.client.service
 import com.intellij.driver.model.OnDispatcher
+import com.intellij.driver.sdk.Editor
 import com.intellij.driver.sdk.VirtualFile
 import com.intellij.driver.sdk.findOpenFile
 import com.intellij.driver.sdk.invokeAction
@@ -62,6 +63,47 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
     }
 
+    fun clickText(editor: JEditorUiComponent, text: String) {
+        editor.setFocus()
+        editor.clickOn(text)
+    }
+
+    fun attachNativeProjection(editor: JEditorUiComponent) {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        driver.withContext(OnDispatcher.EDT) {
+            check(bridge.attach(editor.editor)) { "native projection E2E controller was already attached" }
+            check(bridge.isAttached(editor.editor)) { "native projection E2E controller did not attach" }
+            check(bridge.planReady(editor.editor)) { "native projection E2E plan is not READY" }
+        }
+    }
+
+    fun detachNativeProjection(editor: JEditorUiComponent) {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        driver.withContext(OnDispatcher.EDT) {
+            check(bridge.detach(editor.editor)) { "native projection E2E controller was not attached" }
+        }
+    }
+
+    fun hasProjection(
+        editor: JEditorUiComponent,
+        kind: String,
+        startOffset: Int,
+        endOffset: Int,
+    ): Boolean {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.hasProjection(editor.editor, kind, startOffset, endOffset)
+        }
+    }
+
+    fun isFoldCollapsed(editor: JEditorUiComponent, startOffset: Int, endOffset: Int): Boolean =
+        driver.withContext(OnDispatcher.EDT) {
+            val remoteEditor = driver.cast(editor.editor, FoldingEditorRemote::class)
+            val region = remoteEditor.getFoldingModel().getFoldRegion(startOffset, endOffset)
+                ?: return@withContext false
+            region.isValid() && !region.isExpanded()
+        }
+
     fun save(editor: JEditorUiComponent) {
         driver.invokeAction("SaveAll", component = editor.component)
         waitFor(
@@ -92,4 +134,29 @@ private interface FileEditorRemote {
 @Remote("com.intellij.openapi.fileEditor.FileDocumentManager")
 private interface FileDocumentManagerRemote {
     fun isDocumentUnsaved(document: com.intellij.driver.sdk.Document): Boolean
+}
+
+@Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
+private interface NativeProjectionE2EBridgeRemote {
+    fun attach(editor: Editor): Boolean
+    fun detach(editor: Editor): Boolean
+    fun isAttached(editor: Editor): Boolean
+    fun planReady(editor: Editor): Boolean
+    fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
+}
+
+@Remote("com.intellij.openapi.editor.Editor")
+private interface FoldingEditorRemote {
+    fun getFoldingModel(): FoldingModelRemote
+}
+
+@Remote("com.intellij.openapi.editor.FoldingModel")
+private interface FoldingModelRemote {
+    fun getFoldRegion(startOffset: Int, endOffset: Int): FoldRegionRemote?
+}
+
+@Remote("com.intellij.openapi.editor.FoldRegion")
+private interface FoldRegionRemote {
+    fun isValid(): Boolean
+    fun isExpanded(): Boolean
 }
