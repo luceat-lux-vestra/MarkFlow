@@ -13,6 +13,7 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.SelectionEvent
 import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.util.ui.accessibility.ScreenReader
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
@@ -34,6 +35,7 @@ internal data class NativeRawHtmlPresentationEvidence(
     val blockedPreviews: Long,
     val rendererFailures: Long,
     val staleResultsRejected: Long,
+    val accessibilityFallbacks: Long,
 )
 
 /**
@@ -41,12 +43,13 @@ internal data class NativeRawHtmlPresentationEvidence(
  *
  * The controller owns only derived fold/inlay state. It never writes the Document, never persists a
  * second HTML source model and never grants renderer output navigation/resource authority. A source
- * mutation invalidates all owned presentation immediately; the next authoritative projection plan
- * may then be applied by the parent native presentation owner.
+ * mutation invalidates all owned presentation; the next authoritative projection plan may then be
+ * applied by the parent native presentation owner. Screen-reader mode retains exact source only.
  */
 internal class NativeRawHtmlPresentationController(
     private val editor: Editor,
     private val renderer: NativeRawHtmlRenderer = NativeSwingRawHtmlRenderer,
+    private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
 ) : Disposable {
     private val pending = LinkedHashMap<Long, PendingRequest>()
     private val artifacts = LinkedHashMap<ProjectionKey, BufferedImage>()
@@ -58,10 +61,11 @@ internal class NativeRawHtmlPresentationController(
     private var blockedPreviews = 0L
     private var rendererFailures = 0L
     private var staleResultsRejected = 0L
+    private var accessibilityFallbacks = 0L
 
     private val documentListener = object : DocumentListener {
         override fun documentChanged(event: DocumentEvent) {
-            invalidateForSourceChange()
+            onEdt(::invalidateForSourceChange)
         }
     }
 
@@ -94,6 +98,10 @@ internal class NativeRawHtmlPresentationController(
         currentProjections = NativeRawHtmlProjectionPlanner.plan(plan)
 
         if (plan.status != ProjectionPlanStatus.READY || currentProjections.isEmpty()) return
+        if (!runCatching(richPresentationEnabled).getOrDefault(false)) {
+            accessibilityFallbacks += currentProjections.size
+            return
+        }
         currentProjections.forEach { projection -> request(plan.identity, projection) }
     }
 
@@ -107,6 +115,7 @@ internal class NativeRawHtmlPresentationController(
         blockedPreviews = blockedPreviews,
         rendererFailures = rendererFailures,
         staleResultsRejected = staleResultsRejected,
+        accessibilityFallbacks = accessibilityFallbacks,
     )
 
     private fun request(identity: ProjectionSourceIdentity, projection: NativeRawHtmlProjection) {
