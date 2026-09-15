@@ -19,7 +19,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class MarkFlowStarterSmokeTest {
     @Test
-    fun launchesNativeFallbackAndPersistsUserEditAcrossReopen() {
+    fun launchesNativeFallbackRevealsInlineSourceAndPersistsUserEditAcrossReopen() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -34,6 +34,11 @@ class MarkFlowStarterSmokeTest {
         }
         val fixturePath = projectPath.resolve("README.md")
         val expectedSource = Files.readString(fixturePath)
+        val revealSource = "*emphasis*"
+        val revealStart = expectedSource.indexOf(revealSource)
+        check(revealStart >= 0) { "deterministic reveal fixture is missing" }
+        val revealEnd = revealStart + revealSource.length
+        val openingDelimiterEnd = revealStart + 1
         val appendedText = "Persistence marker saved and reopened"
         val expectedPersistedSource = expectedSource + appendedText
         val platformVersion = Properties().apply {
@@ -64,6 +69,51 @@ class MarkFlowStarterSmokeTest {
                 }
                 check(!markFlow.isDirty(editor)) {
                     "opening the fixture must not dirty the authoritative Document"
+                }
+
+                val revealSourceBefore = markFlow.source(editor)
+                val revealStampBefore = markFlow.modificationStamp(editor)
+                markFlow.attachNativeProjection(editor)
+                try {
+                    check(markFlow.hasProjection(editor, "EMPHASIS", revealStart, revealEnd)) {
+                        "attached MarkFlow plan does not contain the deterministic emphasis projection"
+                    }
+                    waitFor(
+                        message = "inactive emphasis opening delimiter is concealed",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, revealStart, openingDelimiterEnd) },
+                        checker = { collapsed -> collapsed },
+                    )
+
+                    markFlow.clickText(editor, "emphasis")
+                    waitFor(
+                        message = "mouse caret entering emphasis reveals exact opening delimiter",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, revealStart, openingDelimiterEnd) },
+                        checker = { collapsed -> !collapsed },
+                    )
+                    check(markFlow.source(editor) == revealSourceBefore) {
+                        "caret-driven reveal changed authoritative Markdown source"
+                    }
+                    check(markFlow.modificationStamp(editor) == revealStampBefore) {
+                        "caret-driven reveal changed the authoritative Document modification stamp"
+                    }
+                    check(!markFlow.isDirty(editor)) {
+                        "caret-driven reveal dirtied the authoritative Document"
+                    }
+
+                    markFlow.clickText(editor, "deterministic")
+                    waitFor(
+                        message = "moving caret away restores inactive emphasis presentation",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, revealStart, openingDelimiterEnd) },
+                        checker = { collapsed -> collapsed },
+                    )
+                    check(markFlow.source(editor) == revealSourceBefore)
+                    check(markFlow.modificationStamp(editor) == revealStampBefore)
+                    check(!markFlow.isDirty(editor))
+                } finally {
+                    markFlow.detachNativeProjection(editor)
                 }
 
                 markFlow.appendAtEnd(editor, appendedText)
