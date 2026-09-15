@@ -75,8 +75,20 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         driver.withContext(OnDispatcher.EDT) {
             check(bridge.attach(editor.editor)) { "native projection E2E controller was already attached" }
-            check(bridge.isAttached(editor.editor)) { "native projection E2E controller did not attach" }
-            check(bridge.planReady(editor.editor)) { "native projection E2E plan is not READY" }
+        }
+    }
+
+    fun isNativeProjectionAttached(editor: JEditorUiComponent): Boolean {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.isAttached(editor.editor)
+        }
+    }
+
+    fun isNativeProjectionPlanReady(editor: JEditorUiComponent): Boolean {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.planReady(editor.editor)
         }
     }
 
