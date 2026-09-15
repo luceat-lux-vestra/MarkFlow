@@ -61,6 +61,10 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun appendAtEnd(editor: JEditorUiComponent, text: String) {
         editor.setFocus()
+        // Moving a caret does not clear an existing IntelliJ selection. Collapse any selection
+        // through real keyboard interaction first so this helper's contract remains append-only
+        // even when the preceding acceptance step selected source text.
+        editor.keyboard { right() }
         editor.moveCaretToOffset(editor.text.length)
         editor.keyboard {
             typeText(text, delayBetweenCharsInMs = 20)
