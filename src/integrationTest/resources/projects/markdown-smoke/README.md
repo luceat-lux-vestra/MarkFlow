@@ -6,3 +6,4 @@ This document is opened by the Starter/Driver integration-test bootstrap.
 - the fixture is deterministic and repository-owned
 
 Caret reveal target: *emphasis*.
+Formatting action target: formatme.
