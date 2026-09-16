@@ -140,13 +140,21 @@ internal object NativeMarkFlowProductionLifecycle {
 /** Maintained IntelliJ editor lifecycle hook selected by #143 and activated by #153. */
 class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
-        if (ApplicationManager.getApplication().isUnitTestMode) return
+        if (skipAutomaticProductionAttachment()) return
         NativeMarkFlowProductionLifecycle.attach(event.editor)
     }
 
     override fun editorReleased(event: EditorFactoryEvent) {
-        if (ApplicationManager.getApplication().isUnitTestMode) return
+        if (skipAutomaticProductionAttachment()) return
         NativeMarkFlowProductionLifecycle.release(event.editor)
+    }
+
+    private fun skipAutomaticProductionAttachment(): Boolean {
+        val application = ApplicationManager.getApplication()
+        if (application.isUnitTestMode) return true
+        return System.getProperties().stringPropertyNames().any { property ->
+            property.startsWith("markflow.") && property.endsWith("Probe.output")
+        }
     }
 }
 
