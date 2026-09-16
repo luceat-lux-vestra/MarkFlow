@@ -140,10 +140,12 @@ internal object NativeMarkFlowProductionLifecycle {
 /** Maintained IntelliJ editor lifecycle hook selected by #143 and activated by #153. */
 class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
+        if (ApplicationManager.getApplication().isUnitTestMode) return
         NativeMarkFlowProductionLifecycle.attach(event.editor)
     }
 
     override fun editorReleased(event: EditorFactoryEvent) {
+        if (ApplicationManager.getApplication().isUnitTestMode) return
         NativeMarkFlowProductionLifecycle.release(event.editor)
     }
 }
