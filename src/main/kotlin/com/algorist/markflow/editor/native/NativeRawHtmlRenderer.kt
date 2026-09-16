@@ -33,7 +33,7 @@ internal object NativeSwingRawHtmlRenderer : NativeRawHtmlRenderer {
                 }
                 is NativeRawHtmlSanitizationResult.Safe -> {
                     ApplicationManager.getApplication().invokeLater {
-                        val result = runCatching { rasterize(sanitized.html) }
+                        val result = runCatching { rasterizeSanitized(sanitized.html) }
                             .fold(
                                 onSuccess = { image -> NativeRawHtmlRenderResult.Success(image) },
                                 onFailure = { NativeRawHtmlRenderResult.Failure("RASTER_FAILED") },
@@ -45,7 +45,7 @@ internal object NativeSwingRawHtmlRenderer : NativeRawHtmlRenderer {
         }
     }
 
-    private fun rasterize(sanitizedHtml: String): BufferedImage {
+    internal fun rasterizeSanitized(sanitizedHtml: String): BufferedImage {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val pane = JEditorPane().apply {
             contentType = "text/html"
