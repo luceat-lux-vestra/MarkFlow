@@ -41,6 +41,7 @@ internal object NativeRawHtmlProjectionPlanner {
     fun plan(basePlan: NativeProjectionPlan): List<NativeRawHtmlProjection> {
         if (basePlan.status != ProjectionPlanStatus.READY) return emptyList()
         val source = basePlan.identity.source
+        val parserSource: CharSequence = source
         return try {
             val parser = MarkdownParserManager.createMarkdownParser(
                 MarkdownParserManager.FLAVOUR,
@@ -48,7 +49,7 @@ internal object NativeRawHtmlProjectionPlanner {
             )
             val root = parser.parse(
                 MarkdownElementTypes.MARKDOWN_FILE,
-                source,
+                parserSource,
                 parseInlines = true,
             )
             buildList {
