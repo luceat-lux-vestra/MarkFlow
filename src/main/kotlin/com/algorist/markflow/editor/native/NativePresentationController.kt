@@ -40,9 +40,9 @@ internal data class NativePresentationEvidence(
  * One disposable, source-neutral presentation owner for one native IntelliJ [Editor].
  *
  * It owns only source-neutral editor presentation and listeners. Ordinary GFM tables, optional #147
- * host resources, and #148 derived renderer presentation are composed behind independent owners.
- * This class has no browser/JCEF dependency and no source write path. Plans are accepted only for
- * the exact current source/config identity.
+ * host resources, #148 derived renderer presentation, and #149 raw-HTML presentation are composed
+ * behind independent owners. This class has no browser/JCEF dependency and no source write path.
+ * Plans are accepted only for the exact current source/config identity.
  */
 internal class NativePresentationController(
     private val editor: Editor,
@@ -50,6 +50,7 @@ internal class NativePresentationController(
     private val planner: (ProjectionSnapshot) -> NativeProjectionPlan = NativeMarkdownProjectionPlanner::plan,
     private val derivedPresentation: NativeDerivedPresentationController? = null,
     private val hostResources: NativeHostResourcePresentationController? = null,
+    private val rawHtmlPresentation: NativeRawHtmlPresentationController? = null,
     private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
     private val tablePresentation: NativeTablePresentationController =
         NativeTablePresentationController(editor, richPresentationEnabled),
@@ -132,6 +133,7 @@ internal class NativePresentationController(
         tablePresentation.applyPlan(plan)
         hostResources?.applyPlan(plan)
         derivedPresentation?.applyPlan(plan)
+        rawHtmlPresentation?.applyPlan(plan)
         refreshesApplied += 1
 
         check(document.modificationStamp == stampBefore) {
@@ -163,6 +165,9 @@ internal class NativePresentationController(
 
     fun derivedEvidenceSnapshot(): NativeDerivedPresentationEvidence? =
         derivedPresentation?.evidenceSnapshot()
+
+    fun rawHtmlEvidenceSnapshot(): NativeRawHtmlPresentationEvidence? =
+        rawHtmlPresentation?.evidenceSnapshot()
 
     private fun scheduleRefresh() {
         if (disposed) return
@@ -332,6 +337,7 @@ internal class NativePresentationController(
         tablePresentation.dispose()
         hostResources?.dispose()
         derivedPresentation?.dispose()
+        rawHtmlPresentation?.dispose()
         clearOwnedPresentation()
         currentPlan = null
         disposed = true
