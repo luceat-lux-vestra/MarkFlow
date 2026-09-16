@@ -27,6 +27,10 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.algorist.markflow.settings.MarkFlowSettingsService"/>
+        <!-- #153 production owner: augment the maintained platform text editor rather than replacing
+             FileEditor ownership. The service owns only per-Editor derived presentation. -->
+        <applicationService serviceImplementation="com.algorist.markflow.editor.native.NativeProductionPresentationManager"/>
+        <editorFactoryListener implementation="com.algorist.markflow.editor.native.NativeProductionEditorFactoryListener"/>
         <applicationConfigurable
                 id="preferences.markflow"
                 parentId="tools"
@@ -61,6 +65,12 @@
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NoJcefNativeEditingProbeProjectActivity"/>
         <!-- #147 host-resource proof also lives in the base plugin and runs with JCEF disabled. -->
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeHostResourcesProbeProjectActivity"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.algorist.markflow">
+        <!-- Settings/theme changes invalidate native projection identity without depending on the
+             optional browser/JCEF descriptor. Browser-only state is not interpreted by this sink. -->
+        <runtimeSettingsSink implementation="com.algorist.markflow.editor.native.NativeProductionRuntimeSettingsSink"/>
     </extensions>
 
     <actions>
