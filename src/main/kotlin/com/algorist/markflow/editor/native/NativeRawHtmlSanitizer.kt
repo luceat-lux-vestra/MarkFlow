@@ -20,6 +20,10 @@ internal sealed interface NativeRawHtmlSanitizationResult {
  * preview, and accepted output contains only a small static formatting/table allowlist with all
  * source attributes stripped. In particular there is no resource URL, navigation, event, style,
  * form, script, embedded content, SVG or canvas capability in the output.
+ *
+ * ParserDelegator catches RuntimeException thrown from ParserCallback methods internally. Therefore
+ * security rejection is latched in [SanitizerState] instead of using exceptions for callback control
+ * flow; once blocked, every later parser callback is ignored and the final result is always Blocked.
  */
 internal object NativeRawHtmlSanitizer {
     fun sanitize(source: String): NativeRawHtmlSanitizationResult {
@@ -37,14 +41,15 @@ internal object NativeRawHtmlSanitizer {
                 SanitizingCallback(state),
                 true,
             )
+            state.blockedCode?.let { code ->
+                return NativeRawHtmlSanitizationResult.Blocked(code)
+            }
             val html = state.output.toString().trim()
             if (html.isEmpty()) {
                 NativeRawHtmlSanitizationResult.Blocked("EMPTY_PREVIEW")
             } else {
                 NativeRawHtmlSanitizationResult.Safe(html)
             }
-        } catch (blocked: PreviewBlockedException) {
-            NativeRawHtmlSanitizationResult.Blocked(blocked.code)
         } catch (_: Exception) {
             NativeRawHtmlSanitizationResult.Blocked("PARSE_FAILED")
         }
@@ -54,33 +59,33 @@ internal object NativeRawHtmlSanitizer {
         private val state: SanitizerState,
     ) : HTMLEditorKit.ParserCallback() {
         override fun handleStartTag(tag: HTML.Tag, attributes: MutableAttributeSet, position: Int) {
-            state.bumpNode()
+            if (!state.bumpNode()) return
             val name = tag.toString().lowercase(Locale.ROOT)
             if (name in STRUCTURAL_WRAPPERS) return
-            state.requireSafeTag(name)
-            state.requireSafeAttributes(attributes)
+            if (!state.requireSafeTag(name)) return
+            if (!state.requireSafeAttributes(attributes)) return
             state.append("<$name>")
         }
 
         override fun handleEndTag(tag: HTML.Tag, position: Int) {
-            state.bumpNode()
+            if (!state.bumpNode()) return
             val name = tag.toString().lowercase(Locale.ROOT)
             if (name in STRUCTURAL_WRAPPERS) return
-            state.requireSafeTag(name)
+            if (!state.requireSafeTag(name)) return
             if (name !in VOID_SAFE_TAGS) state.append("</$name>")
         }
 
         override fun handleSimpleTag(tag: HTML.Tag, attributes: MutableAttributeSet, position: Int) {
-            state.bumpNode()
+            if (!state.bumpNode()) return
             val name = tag.toString().lowercase(Locale.ROOT)
             if (name in STRUCTURAL_WRAPPERS) return
-            state.requireSafeTag(name)
-            state.requireSafeAttributes(attributes)
+            if (!state.requireSafeTag(name)) return
+            if (!state.requireSafeAttributes(attributes)) return
             state.append("<$name>")
         }
 
         override fun handleText(data: CharArray, position: Int) {
-            state.bumpNode()
+            if (!state.bumpNode()) return
             state.appendEscapedText(data.concatToString())
         }
 
@@ -92,40 +97,51 @@ internal object NativeRawHtmlSanitizer {
 
     private class SanitizerState {
         val output = StringBuilder()
+        var blockedCode: String? = null
+            private set
         private var nodes = 0
 
-        fun bumpNode() {
+        fun bumpNode(): Boolean {
+            if (blockedCode != null) return false
             nodes += 1
-            if (nodes > MAX_NODES) throw PreviewBlockedException("NODE_LIMIT")
+            if (nodes > MAX_NODES) block("NODE_LIMIT")
+            return blockedCode == null
         }
 
-        fun requireSafeTag(name: String) {
-            if (name in BLOCKED_TAGS) throw PreviewBlockedException("ACTIVE_TAG")
-            if (name !in ALLOWED_TAGS) throw PreviewBlockedException("UNSUPPORTED_TAG")
+        fun requireSafeTag(name: String): Boolean {
+            if (name in BLOCKED_TAGS) block("ACTIVE_TAG")
+            else if (name !in ALLOWED_TAGS) block("UNSUPPORTED_TAG")
+            return blockedCode == null
         }
 
-        fun requireSafeAttributes(attributes: MutableAttributeSet) {
+        fun requireSafeAttributes(attributes: MutableAttributeSet): Boolean {
+            if (blockedCode != null) return false
             val names = attributes.attributeNames
             while (names.hasMoreElements()) {
                 val key = names.nextElement()
                 if (key == HTMLEditorKit.ParserCallback.IMPLIED) continue
                 val name = key.toString().lowercase(Locale.ROOT)
                 if (name.startsWith("on") || name in BLOCKED_ATTRIBUTES) {
-                    throw PreviewBlockedException("ACTIVE_ATTRIBUTE")
+                    block("ACTIVE_ATTRIBUTE")
+                    return false
                 }
                 // Static attributes are intentionally stripped. Their source remains authoritative;
                 // preview fidelity must not expand the capability surface just to retain decoration.
             }
+            return true
         }
 
         fun append(value: String) {
+            if (blockedCode != null) return
             if (output.length + value.length > MAX_OUTPUT_CHARS) {
-                throw PreviewBlockedException("OUTPUT_LIMIT")
+                block("OUTPUT_LIMIT")
+                return
             }
             output.append(value)
         }
 
         fun appendEscapedText(value: String) {
+            if (blockedCode != null) return
             buildString(value.length) {
                 value.forEach { character ->
                     when (character) {
@@ -137,9 +153,11 @@ internal object NativeRawHtmlSanitizer {
                 }
             }.let(::append)
         }
-    }
 
-    private class PreviewBlockedException(val code: String) : RuntimeException(code)
+        private fun block(code: String) {
+            if (blockedCode == null) blockedCode = code
+        }
+    }
 
     private val STRUCTURAL_WRAPPERS = setOf("html", "head", "body")
 
