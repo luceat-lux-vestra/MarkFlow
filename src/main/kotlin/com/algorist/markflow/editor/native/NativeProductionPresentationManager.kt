@@ -1,6 +1,7 @@
 package com.algorist.markflow.editor.native
 
 import com.algorist.markflow.file.MarkFlowFileSupport
+import com.algorist.markflow.renderer.DerivedRendererRuntime
 import com.algorist.markflow.renderer.DerivedRendererRuntimeProvider
 import com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink
 import com.intellij.openapi.Disposable
@@ -11,6 +12,7 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -18,8 +20,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Production owner selected by #143/#153 for platform-text-editor augmentation.
  *
- * One controller is owned per relevant native IntelliJ [Editor]. The authoritative [Document]
- * stays platform-owned; this service owns presentation only. Renderer/JCEF availability is optional:
+ * One controller is owned per relevant native IntelliJ [Editor]. The authoritative Document stays
+ * platform-owned; this service owns presentation only. Renderer/JCEF availability is optional:
  * failure to create or use a derived renderer degrades rich presentation but never prevents the
  * native source editor from existing or editing/saving exact Markdown.
  */
@@ -55,12 +57,15 @@ class NativeProductionPresentationManager : Disposable {
                     controllers.remove(editor)
                     return@forEach
                 }
-                runCatching { controller.refreshNow() }
-                    .onFailure { failure ->
-                        // Presentation refresh is explicitly non-authoritative. Keep the platform
-                        // editor alive and exact source visible/editable on any rich-path failure.
-                        LOG.warn("MARKFLOW_NATIVE production settings refresh degraded to source", failure)
-                    }
+                try {
+                    controller.refreshNow()
+                } catch (failure: ProcessCanceledException) {
+                    throw failure
+                } catch (failure: Exception) {
+                    // Presentation refresh is explicitly non-authoritative. Keep the platform
+                    // editor alive and exact source visible/editable on any rich-path failure.
+                    LOG.warn("MARKFLOW_NATIVE production settings refresh degraded to source", failure)
+                }
             }
         }
     }
@@ -98,11 +103,7 @@ class NativeProductionPresentationManager : Disposable {
         var controller: NativePresentationController? = null
 
         try {
-            val runtime = runCatching { DerivedRendererRuntimeProvider.createOrNull() }
-                .onFailure { failure ->
-                    LOG.warn("MARKFLOW_NATIVE optional derived renderer unavailable; keeping source editing", failure)
-                }
-                .getOrNull()
+            val runtime = createRendererRuntimeOrNull()
             derived = NativeDerivedPresentationController(editor, runtime)
             hostResources = NativeHostResourcePresentationController(editor)
             rawHtml = NativeRawHtmlPresentationController(editor)
@@ -128,18 +129,42 @@ class NativeProductionPresentationManager : Disposable {
                 "production native presentation changed authoritative Markdown while attaching"
             }
             controllers[editor] = controller
-        } catch (failure: Throwable) {
+        } catch (failure: ProcessCanceledException) {
+            disposeFailedAttach(controller, rawHtml, hostResources, derived)
+            throw failure
+        } catch (failure: Exception) {
             // Never allow presentation startup to replace the platform source editor failure mode.
             // Dispose every resource that was successfully created, then leave the editor untouched.
-            runCatching {
-                controller?.let(Disposer::dispose)
-                    ?: run {
-                        rawHtml?.let(Disposer::dispose)
-                        hostResources?.let(Disposer::dispose)
-                        derived?.let(Disposer::dispose)
-                    }
-            }
+            disposeFailedAttach(controller, rawHtml, hostResources, derived)
             LOG.warn("MARKFLOW_NATIVE production presentation attach failed; exact source remains active", failure)
+        }
+    }
+
+    private fun createRendererRuntimeOrNull(): DerivedRendererRuntime? = try {
+        DerivedRendererRuntimeProvider.createOrNull()
+    } catch (failure: ProcessCanceledException) {
+        throw failure
+    } catch (failure: Exception) {
+        LOG.warn("MARKFLOW_NATIVE optional derived renderer unavailable; keeping source editing", failure)
+        null
+    }
+
+    private fun disposeFailedAttach(
+        controller: NativePresentationController?,
+        rawHtml: NativeRawHtmlPresentationController?,
+        hostResources: NativeHostResourcePresentationController?,
+        derived: NativeDerivedPresentationController?,
+    ) {
+        runCatching {
+            if (controller != null) {
+                Disposer.dispose(controller)
+            } else {
+                rawHtml?.let { Disposer.dispose(it) }
+                hostResources?.let { Disposer.dispose(it) }
+                derived?.let { Disposer.dispose(it) }
+            }
+        }.onFailure { failure ->
+            LOG.warn("MARKFLOW_NATIVE failed to clean up partial presentation attachment", failure)
         }
     }
 
