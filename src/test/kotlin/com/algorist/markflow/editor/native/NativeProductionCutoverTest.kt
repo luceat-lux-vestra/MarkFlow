@@ -16,7 +16,7 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         // tests do not acquire a second owner. Exercise the exact production owner directly here.
         assertNull(NativeMarkFlowProductionLifecycle.controller(editor))
         assertTrue(NativeMarkFlowProductionLifecycle.attach(editor))
-        val controller = assertNotNull(NativeMarkFlowProductionLifecycle.controller(editor))
+        val controller = checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor))
         assertEquals(ProjectionPlanStatus.READY, controller.currentPlan?.status)
         assertEquals(source, editor.document.text)
         assertEquals(stampBefore, editor.document.modificationStamp)
@@ -26,13 +26,11 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         assertEquals(source, editor.document.text)
         assertEquals(stampBefore, editor.document.modificationStamp)
 
-        val generationBefore = controller.currentPlan?.identity?.configGeneration
+        val generationBefore = checkNotNull(controller.currentPlan?.identity?.configGeneration)
         MarkFlowSettingsService.bumpRuntimeSettingsRevision()
         NativeMarkFlowProductionLifecycle.refreshAll()
-        val generationAfter = controller.currentPlan?.identity?.configGeneration
-        assertNotNull(generationBefore)
-        assertNotNull(generationAfter)
-        assertTrue(generationAfter!! > generationBefore!!)
+        val generationAfter = checkNotNull(controller.currentPlan?.identity?.configGeneration)
+        assertTrue(generationAfter > generationBefore)
         assertEquals(source, editor.document.text)
         assertEquals(stampBefore, editor.document.modificationStamp)
 
