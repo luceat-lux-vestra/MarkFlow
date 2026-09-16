@@ -2,41 +2,38 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.util.Disposer
-import java.util.IdentityHashMap
 
 /**
- * Narrow, inert diagnostic seam for Starter/Driver acceptance tests before #153 production cutover.
+ * Narrow diagnostic seam for Starter/Driver acceptance on the #153 production opening path.
  *
- * This object has no registration, startup hook, action, or test-framework dependency. It can only
- * affect an Editor when an external diagnostic client explicitly invokes [attach]. Production
- * editor lifecycle ownership remains unchanged until the dedicated cutover task.
- *
- * The Starter/Driver client resolves this object by its remote class name, so static analysis cannot
- * observe the call edge.
+ * Unlike the pre-cutover bridge, this object never creates or disposes presentation controllers.
+ * Production lifecycle ownership belongs exclusively to [NativeProductionPresentationManager].
+ * The legacy [attach]/[detach] method names are retained temporarily as a remote ABI for the #193
+ * scenarios; both are assertion-only and return whether the production manager already owns the
+ * editor. This prevents those scenarios from accidentally manufacturing their own proof surface.
  */
 @Suppress("unused")
 internal object NativeProjectionE2EBridge {
-    private val controllers = IdentityHashMap<Editor, NativePresentationController>()
-
+    /** Legacy remote ABI: assertion-only; does not attach anything. */
     fun attach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        check(!editor.isDisposed) { "cannot attach native projection to a disposed editor" }
-        if (controllers.containsKey(editor)) return false
-        controllers[editor] = NativePresentationController(editor)
-        return true
+        return manager().isAttached(editor)
     }
 
+    /** Legacy remote ABI: assertion-only; does not detach production ownership. */
     fun detach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = controllers.remove(editor) ?: return false
-        Disposer.dispose(controller)
-        return true
+        return manager().isAttached(editor)
     }
 
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        return controllers.containsKey(editor)
+        return manager().isAttached(editor)
+    }
+
+    fun productionOwnedEditors(): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return manager().attachedEditors()
     }
 
     fun planReady(editor: Editor): Boolean {
@@ -50,16 +47,15 @@ internal object NativeProjectionE2EBridge {
     }
 
     /**
-     * Exercise the real typed source-fallback application path without constructing a parallel
-     * renderer or mutating the authoritative Document. The plan retains the controller's exact
-     * current source/config identity, so [NativePresentationController.tryApply] still enforces its
-     * normal stale-plan and source-neutrality contracts.
+     * Exercise the real typed source-fallback application path on the production-owned controller.
+     * The plan retains the exact current source/config identity, so normal stale-plan and
+     * source-neutrality contracts remain authoritative.
      */
     fun degradeToSource(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = requireController(editor)
         val identity = requireNotNull(controller.currentPlan?.identity) {
-            "native projection E2E controller has no current plan"
+            "production native projection controller has no current plan"
         }
         val degraded = NativeProjectionPlan(
             identity = identity,
@@ -78,6 +74,11 @@ internal object NativeProjectionE2EBridge {
     fun ownedFolds(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).evidenceSnapshot().ownedFolds
+    }
+
+    fun rawHtmlBlockedPreviews(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.blockedPreviews ?: 0L
     }
 
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean {
@@ -133,6 +134,11 @@ internal object NativeProjectionE2EBridge {
             .singleOrNull { inlay -> inlay.renderer is NativeTableInlayRenderer }
             ?: error("expected exactly one visible MarkFlow table inlay")
 
+    private fun manager(): NativeProductionPresentationManager =
+        NativeProductionPresentationManager.getInstance()
+
     private fun requireController(editor: Editor): NativePresentationController =
-        checkNotNull(controllers[editor]) { "native projection E2E controller is not attached" }
+        checkNotNull(manager().controllerFor(editor)) {
+            "production native projection controller is not attached"
+        }
 }
