@@ -125,8 +125,30 @@ jobs:
           if 'classPresent=false' not in jcef_detail or 'supported=false' not in jcef_detail:
               raise SystemExit(f'JCEF plugin was not actually absent from the MarkFlow classloader: {jcef_detail}')
           registration_detail = str(by_id['optional-browser-registrations-absent'].get('detail', ''))
-          if 'temporaryProvider=false' not in registration_detail or 'runtimeSettingsSinks=0' not in registration_detail:
-              raise SystemExit(f'optional browser registrations leaked into base plugin: {registration_detail}')
+          registration_flags = (
+              'temporaryProvider=false',
+              'nativeRuntimeSettingsSinks=1',
+              'browserRuntimeSettingsSinks=0',
+              'rendererRuntimeFactories=0',
+          )
+          missing_registration_flags = [flag for flag in registration_flags if flag not in registration_detail]
+          if missing_registration_flags:
+              raise SystemExit(
+                  f'no-JCEF production registration contract missing {missing_registration_flags}: {registration_detail}'
+              )
+          settings_detail = str(by_id['settings-degrade-without-renderer'].get('detail', ''))
+          settings_flags = (
+              'settingsAvailable=true',
+              'themeAvailable=true',
+              'nativeRendererSinkCount=1',
+              'browserRendererSinkCount=0',
+              'rendererRuntimeFactoryCount=0',
+          )
+          missing_settings_flags = [flag for flag in settings_flags if flag not in settings_detail]
+          if missing_settings_flags:
+              raise SystemExit(
+                  f'no-JCEF settings degradation contract missing {missing_settings_flags}: {settings_detail}'
+              )
           editing_detail = str(by_id['authoritative-native-edit-undo-redo-save'].get('detail', ''))
           for flag in ('sameDocument=true', 'dirty=true', 'undo=true', 'redo=true', 'save=true'):
               if flag not in editing_detail:
