@@ -88,19 +88,19 @@ The rows below preserve the audited migration classification. A row describing a
 | KaTeX `^0.18.7`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
 | `Crepe.Feature.Latex` | `REPLACE` + `TEMPORARY` | Thin direct KaTeX adapter, no TeX reimplementation | #144 replaces service ownership; #154 deletes old adapter after #148/cutover |
 | runtime Mermaid size/zoom/error, KaTeX density, theme/font/palette settings | `RETAIN` / `EXTRACT` | Native presentation + renderer settings | #148/#155 migrate shape while preserving approved semantics |
-| browser settings payload/revision notifications | `REPLACE` + `TEMPORARY` | Typed host settings + presentation/renderer invalidation | #155 after actual consumers converge |
-| `previewOnlyByDefault` browser meaning | `REPLACE` / `UNRESOLVED` | Explicit native projection/source-reveal UX meaning | #83/#155 must decide before old meaning removed |
-| `idleEvictAfterMs`, editor pool/prewarm/retry/debounce knobs | `DELETE` + `TEMPORARY` | No target browser-editor pool | #155 after #154 |
-| `DiagramSecurityLevel` | `EXTRACT` / security review | Retain only if #82 proves a safe meaningful renderer policy | #82/#149/#155; otherwise remove safely |
+| browser settings payload/revision notifications | `REPLACE` / `RESOLVED` | Typed host settings + native presentation invalidation; retained renderer receives only typed render settings | #155 removes browser sink/notification shape |
+| `previewOnlyByDefault` browser meaning | `DELETE` / `RESOLVED` | No native setting; native projection remains source-neutral and reveal behavior is explicit | #155 removes the no-op browser-era key and safely ignores persisted legacy values |
+| `idleEvictAfterMs`, editor pool/prewarm/retry/debounce knobs | `DELETE` / `RESOLVED` | No target browser-editor pool | #154 removed the pool/runtime; #155 removes the persisted setting |
+| `DiagramSecurityLevel` | `DELETE` / `RESOLVED` | Mermaid renderer is fail-closed at `securityLevel: strict`; no user-selectable weaker mode | #155 removes the unproven `LOOSE` surface while preserving renderer safety |
 | IDE palette/font discovery | `RETAIN` / `EXTRACT` | Native presentation and renderer config | Remove only browser/CSS transport shape |
 | web Markdown-aware clipboard behavior | `REPLACE` + `TEMPORARY` | #146 uses native IntelliJ paste ownership plus inserted-payload-only Markdown preprocessing; no browser edit authority | #146 proves target; #154 removes web implementation after cutover |
 | raw HTML exact source-preservation invariant | `RETAIN` | Source remains untouched | Permanent |
 | browser raw-HTML preview integration | `REPLACE` + `TEMPORARY` | Sanitized/isolated derived renderer -> inert artifact | #149 proves target; #154 removes old integration after cutover |
-| Node/TypeScript/Vite | `TEMPORARY` / conditional `RETAIN` | Keep only for actual Mermaid/KaTeX/raw-HTML renderer execution | #155 after #154 decides final consumers; #68/#72 reconcile here |
-| `@codemirror/*` dependencies | `DELETE` + `TEMPORARY` | No target browser editor | #155 after #154 |
-| `@milkdown/crepe` | `DELETE` + `TEMPORARY` | No target rich editor; renderer extraction first | #155 after #154 |
-| mandatory `com.intellij.modules.jcef` plugin dependency | `REPLACE` / `TEMPORARY` | Editing cannot require JCEF; final packaging follows renderer consumer | #155 after renderer adapter/cutover/purge evidence |
-| editor-specific JCEF transport probe/workflow/evidence | `DELETE` / `REPLACE` + `TEMPORARY` | Remove editor transport probe; renderer evidence only if JCEF renderer survives | #154/#155 |
+| Node/TypeScript/Vite | `RETAIN` / renderer-only | Required by the #144-selected Mermaid/KaTeX isolated renderer build; no editor bundle remains | #155 verifies renderer-only inputs/outputs; #68/#72 apply only to this retained toolchain |
+| `@codemirror/*` dependencies | `DELETE` / `RESOLVED` | No target browser editor | #154 purged the editor stack; #155 verifies no retained dependency/import |
+| `@milkdown/crepe` | `DELETE` / `RESOLVED` | No target rich editor | #154 purged the editor stack after renderer extraction; #155 verifies no retained dependency/import |
+| mandatory `com.intellij.modules.jcef` plugin dependency | `REPLACE` / `RESOLVED` | JCEF is optional behind `markflow-jcef.xml`; native source editing/settings load without it | #144 selected isolated JCEF rendering; #155 preserves optional packaging and no-JCEF real-IDE proof |
+| editor-specific JCEF transport probe/workflow/evidence | `DELETE` / `RESOLVED` | Editor transport proof is gone; retained JCEF evidence is renderer-specific | #154 removed editor transport machinery; #155 keeps only renderer/native degradation evidence |
 | prior real-JCEF request/network hostile evidence | `RETAIN` as lesson; mechanism harness `DELETE`/`REPLACE` | Reuse hostile invariants for renderer-specific containment | #149/#155 replace only when retained renderer boundary is proven |
 | mechanism-specific old browser edit tests | `DELETE` after cutover | Preserve product/invariant fixtures; rewrite evidence around native target | #154 with deleted mechanism |
 | hardening/release governance, merge-gate CI, Plugin Verifier | `RETAIN` | Repository/release policy independent of editor architecture | Permanent |
@@ -115,7 +115,7 @@ No temporary item may be retained merely for rollback comfort.
 - **#145 — COMPLETED**: owns the initial immutable snapshot/projection/controller foundation over #143.
 - **#146–#152** own remaining target capability proof needed before cutover; #146 resolves native edit ownership but remains subject to its own exact-final-HEAD/post-main completion gate.
 - **#153 — COMPLETED**: production native-editor cutover made the old editor unreachable as a normal authority.
-- **#154 — ACTIVE**: owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
+- **#154 — COMPLETED**: deleted superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
 - **#155** owns dependency/toolchain/JCEF/settings convergence after actual retained consumers are known.
 - **#156** proves no hidden temporary mechanism remains through final compatibility/lifecycle/performance/release convergence.
 
@@ -218,7 +218,7 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 ### Cutover/convergence slices
 
 - **#153 — COMPLETED** `task(leap): cut production MarkFlow editing over to the native projection architecture` — production native ownership and post-main evidence are complete.
-- **#154 — ACTIVE** `task(leap): purge superseded browser editors, sync protocols and editor trust machinery` — deleting the now-unreachable browser editing architecture after completed #153.
+- **#154 — COMPLETED** `task(leap): purge superseded browser editors, sync protocols and editor trust machinery` — the unreachable browser editing architecture and editor transport machinery are removed.
 - **#155** `task(build): converge renderer dependencies, toolchain, JCEF packaging and settings after editor purge` — after #154, based on actual renderer consumers.
 - **#156** `task(quality): prove native Leap convergence across compatibility, lifecycle, performance and release gates` — final technical convergence; makes #84 eligible to close.
 
@@ -269,17 +269,16 @@ Resolved since the original #141 inventory:
 - **native integration shell (#143):** `PLATFORM_TEXT_EDITOR_AUGMENTATION`; a MarkFlow-owned native replacement `FileEditor` shell is rejected.
 - **#145 baseline parser/projection foundation:** immutable exact `Document` snapshot + source/config identity -> bundled JetBrains Markdown parser -> immutable projection plan -> per-editor native controller; native markup plus parser-proven safe folding supply the initial presentation/reveal proof.
 - **#146 native edit ownership:** platform `TextEditor` retains actual paste insertion, input, caret/multicaret, command/undo/dirty/save and opaque `FileEditorState` ownership. MarkFlow may prefer/normalize only the inserted Markdown payload through `CopyPastePreProcessor` outside parser-proven code blocks and may perform explicitly selected, source-local representative rich edits through one native write command. Historical browser-shaped `MarkFlowEditorState` is not promoted to target authority. This resolution is implementation-complete only after #146's exact-final-HEAD/post-main gate passes.
+- **renderer execution/package target (#144/#155):** retain the TypeScript/Vite renderer build and Mermaid/KaTeX engines behind optional JCEF packaging; native source editing and base settings do not link to JCEF classes.
+- **renderer security/settings target (#82/#155):** Mermaid security is fixed fail-closed at `strict`; browser-only `previewOnlyByDefault`, `idleEvictAfterMs`, and user-selectable `DiagramSecurityLevel` are not target settings.
 
 Still unresolved or intentionally deferred:
 
 - full incremental/changed-range parsing strategy beyond the synchronous #145 baseline; add complexity only with measured evidence;
 - exact syntax reveal/presentation technique per remaining construct (#152 and specialized Tasks);
-- renderer execution adapter, including whether isolated JCEF/TypeScript remains (#144/#155);
 - inert artifact representation for Mermaid/KaTeX/raw HTML (#144/#148/#149);
 - final raw-HTML sanitizer/render path (#149);
 - image-import gestures/destination/collision/path/undo semantics (#150);
-- final renderer-sensitive security setting surface (#82/#149/#155);
-- final Node/TypeScript/Vite/JCEF packaging (#155);
 - measured cache/concurrency strategy (#156 or focused evidence task if needed).
 
 No implementation may convert an unresolved choice into a fact merely by reusing current code.
