@@ -13,9 +13,10 @@ import java.awt.Color
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * App-scoped source of truth for the active IDE editor palette + font, surfaced to presentation as a
- * stable `name -> "#RRGGBB"` map (`ideColorScheme`) plus font hints. The optional renderer sink owns
- * browser delivery; palette capture itself remains available without JCEF.
+ * App-scoped source of truth for the active IDE editor palette + font, surfaced to native
+ * presentation and optional derived rendering as a stable `name -> "#RRGGBB"` map
+ * (`ideColorScheme`) plus font hints. Palette capture and native invalidation remain available
+ * without JCEF.
  *
  * The editor colors are read from stable `EditorColors` color keys (the plan's `SchemeColor` /
  * `schemeColors` API does not exist on platform 2026.2), so the map keys are ours and version-stable.
@@ -42,7 +43,7 @@ class MarkFlowIdeThemeService : Disposable {
         val connection = ApplicationManager.getApplication().messageBus.connect(this)
         connection.subscribe(EditorColorsManager.TOPIC, listener)
         // Initial capture establishes the source of truth. There are no open MarkFlow editors to
-        // notify yet, so initialization must not trigger a runtime-settings push.
+        // notify yet, so initialization must not trigger presentation invalidation.
         val snapshot = captureFromCurrentScheme()
         current.set(snapshot)
         log.info(
@@ -89,7 +90,7 @@ class MarkFlowIdeThemeService : Disposable {
         put("selectionForeground", scheme.getColor(EditorColors.SELECTION_FOREGROUND_COLOR))
         put("border", scheme.getColor(EditorColors.BORDER_LINES_COLOR))
         // EditorFontType.PLAIN is the regular editor font the user configures in Settings >
-        // Editor > Font. Surface it as the webview's default body font.
+        // Editor > Font. Surface it as the default MarkFlow presentation/renderer body font.
         val fonts = LinkedHashMap<String, String>()
         fonts["codeFont"] = scheme.getFont(EditorFontType.PLAIN).family
 
