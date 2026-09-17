@@ -55,6 +55,7 @@ test("obsolete browser editor entrypoints and toolchains are absent", async () =
         "source-native.html",
         "vite.config.ts",
         "vite.source-native.config.ts",
+        "tsconfig.node.json",
         "src/main.ts",
         "src/editor",
         "src/runtime",
