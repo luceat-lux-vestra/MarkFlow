@@ -33,7 +33,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm --prefix webview test
+          npm --prefix webview ci --ignore-scripts --no-audit --no-fund
+          npm --prefix webview run test:source
           ./gradlew test \
             --tests com.algorist.markflow.settings.MarkFlowSettingsTest \
             --tests com.algorist.markflow.editor.native.NativeDerivedPresentationControllerTest \
