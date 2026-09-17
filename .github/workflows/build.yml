@@ -135,15 +135,19 @@ jobs:
 
           forbidden = sorted(
               name for name in web_entries
-              if name != "webview/derived-renderer.html"
+              if name not in {"webview/", "webview/derived-renderer.html"}
               and not name.startswith("webview/derived-renderer-assets/")
           )
           if forbidden:
               raise SystemExit(f"obsolete/non-renderer webview assets were packaged: {forbidden}")
 
-          assets = [name for name in web_entries if name.startswith("webview/derived-renderer-assets/")]
+          assets = [
+              name for name in web_entries
+              if name.startswith("webview/derived-renderer-assets/")
+              and name != "webview/derived-renderer-assets/"
+          ]
           if not assets:
-              raise SystemExit("packaged plugin contains no derived-renderer assets")
+              raise SystemExit("packaged plugin contains no derived-renderer asset files")
 
           print(f"renderer-only packaged webview entries: {len(web_entries)}")
           PY
