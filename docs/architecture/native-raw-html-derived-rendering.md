@@ -1,6 +1,6 @@
 # Native raw-HTML derived rendering
 
-Status: target implementation for #149; production opening-path wiring remains owned by #153.
+Status: production native derived-rendering contract from #149; #153 cutover is complete and #154 removed the superseded browser editor path.
 
 ## Authority
 
