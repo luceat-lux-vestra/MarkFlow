@@ -16,6 +16,7 @@ import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.util.Disposer
 import com.intellij.util.ui.accessibility.ScreenReader
 import java.util.LinkedHashMap
 
@@ -97,7 +98,14 @@ internal class NativePresentationController(
         editor.document.addDocumentListener(documentListener, this)
         editor.caretModel.addCaretListener(caretListener, this)
         editor.selectionModel.addSelectionListener(selectionListener, this)
-        refreshNow()
+        try {
+            refreshNow()
+        } catch (failure: Throwable) {
+            // Constructor failure must not strand listeners or child presentation owners whose
+            // lifetime was already registered against this controller before the initial refresh.
+            runCatching { Disposer.dispose(this) }
+            throw failure
+        }
     }
 
     fun refreshNow(): ProjectionApplyResult {
