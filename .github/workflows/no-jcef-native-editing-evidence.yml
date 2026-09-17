@@ -122,7 +122,7 @@ jobs:
           jcef_detail = str(by_id['jcef-plugin-class-absent'].get('detail', ''))
           if 'classPresent=false' not in jcef_detail or 'supported=false' not in jcef_detail:
               raise SystemExit(f'JCEF plugin was not actually absent from the MarkFlow classloader: {jcef_detail}')
-          registration_detail = str(by_id['optional-browser-registrations-absent'].get('detail', ''))
+          registration_detail = str(by_id['optional-jcef-renderer-registrations-absent'].get('detail', ''))
           registration_flags = (
               'temporaryProvider=false',
               'nativePresentationSettingsSinks=1',
