@@ -4,11 +4,11 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.extensions.ExtensionPointName
 
 /**
- * Optional presentation sink for runtime-setting invalidation.
+ * Presentation invalidation sink for persisted/theme settings.
  *
- * The base plugin owns settings and native source correctness. Renderer/browser implementations
- * register below their optional dependency descriptor and may disappear without making settings or
- * source editing unavailable.
+ * The base plugin owns settings and source correctness. Native presentation consumers refresh from
+ * typed settings through this extension point. Optional renderer creation is isolated separately
+ * behind DerivedRendererRuntimeFactory and may disappear without affecting source editing.
  */
 interface MarkFlowPresentationSettingsSink {
     fun presentationSettingsChanged()
