@@ -13,7 +13,6 @@ on:
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/settings/**'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowBrowserRuntimeSettingsSink.kt'
       - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
   pull_request:
     paths:
@@ -25,7 +24,6 @@ on:
       - 'src/main/resources/META-INF/markflow-jcef.xml'
       - 'src/main/kotlin/com/algorist/markflow/settings/**'
       - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowBrowserRuntimeSettingsSink.kt'
       - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
   workflow_dispatch:
 
@@ -102,7 +100,7 @@ jobs:
               'jcef-plugin-class-absent',
               'real-project-authoritative-document',
               'platform-text-provider-owns-source',
-              'optional-browser-registrations-absent',
+              'optional-jcef-renderer-registrations-absent',
               'base-native-paste-extension-present',
               'settings-degrade-without-renderer',
               'authoritative-native-edit-undo-redo-save',
@@ -127,8 +125,7 @@ jobs:
           registration_detail = str(by_id['optional-browser-registrations-absent'].get('detail', ''))
           registration_flags = (
               'temporaryProvider=false',
-              'nativeRuntimeSettingsSinks=1',
-              'browserRuntimeSettingsSinks=0',
+              'nativePresentationSettingsSinks=1',
               'rendererRuntimeFactories=0',
           )
           missing_registration_flags = [flag for flag in registration_flags if flag not in registration_detail]
@@ -140,8 +137,7 @@ jobs:
           settings_flags = (
               'settingsAvailable=true',
               'themeAvailable=true',
-              'nativeRendererSinkCount=1',
-              'browserRendererSinkCount=0',
+              'nativePresentationSinkCount=1',
               'rendererRuntimeFactoryCount=0',
           )
           missing_settings_flags = [flag for flag in settings_flags if flag not in settings_detail]
