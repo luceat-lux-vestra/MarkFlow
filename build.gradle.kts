@@ -156,13 +156,12 @@ kover {
     }
 }
 
-// Build pipeline for the webview frontend.
+// Build pipeline for the retained renderer frontend.
 val isCi = providers.environmentVariable("CI").orNull == "true"
 val webviewDir = file("webview")
 val webviewOutputDir = file("build/webview")
 val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
 val diagnosticsJvmProperty = "markflow.diagnostics"
-val jcefTransportProbeOutput = layout.buildDirectory.file("jcef-transport-probe/evidence.json")
 val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
 val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
 val nativeProjectionProbeOutput = layout.buildDirectory.file("native-projection-probe/evidence.json")
@@ -202,16 +201,14 @@ val npmInstallWebview by tasks.registering(Exec::class) {
 
 val buildWebview by tasks.registering(Exec::class) {
     group = "build"
-    description = "Builds the Vite frontend webview"
+    description = "Builds the renderer-only Vite frontend"
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
 
     inputs.files(
         fileTree("webview/src"),
-        file("webview/index.html"),
-        file("webview/source-native.html"),
-        file("webview/vite.config.ts"),
-        file("webview/vite.source-native.config.ts"),
+        file("webview/derived-renderer.html"),
+        file("webview/vite.derived-renderer.config.ts"),
         file("webview/tsconfig.json"),
         file("webview/tsconfig.node.json"),
         file("webview/package.json"),
@@ -280,22 +277,6 @@ intellijPlatformTesting {
 
             plugins {
                 robotServerPlugin()
-            }
-        }
-
-        register("runIdeForJcefTransportProbe") {
-            task {
-                jvmArgumentProviders += CommandLineArgumentProvider {
-                    listOf(
-                        "-Dmarkflow.jcefTransportProbe.output=${jcefTransportProbeOutput.get().asFile.absolutePath}",
-                        "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
-                        "-Djb.consents.confirmation.enabled=false",
-                    )
-                }
-                argumentProviders += CommandLineArgumentProvider {
-                    listOf("markflow-jcef-transport-probe")
-                }
             }
         }
 
@@ -414,9 +395,5 @@ intellijPlatformTesting {
 }
 
 tasks.named("runIdeForUiTests") {
-    dependsOn(buildWebview)
-}
-
-tasks.named("runIdeForJcefTransportProbe") {
     dependsOn(buildWebview)
 }
