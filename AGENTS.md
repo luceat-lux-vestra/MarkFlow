@@ -47,18 +47,15 @@ Every target change must respect or explicitly revise these contracts:
 
 Mermaid and KaTeX are supported product capabilities, not collateral browser-editor code.
 
-Migration order is fixed:
+The renderer migration completed by extracting one editor-independent service, attaching native presentation to that same service, cutting production editing over to the native editor, and deleting Crepe/CodeMirror-specific editor adapters.
 
-1. extract/prove reusable renderer responsibilities while the current production renderer still works;
-2. expose one editor-independent derived-renderer service/runtime;
-3. attach the native editor/inlay consumer to that same service;
-4. prove capability/settings/failure parity;
-5. cut over production consumption;
-6. only then delete Crepe/CodeMirror-specific renderer adapters.
+The resulting invariants are:
 
-Mermaid `11.17.2` and KaTeX `^0.18.7` are the retained production renderer engines unless a separate accepted renderer decision replaces them. Do not reimplement Mermaid or TeX layout merely because the editor is native/Kotlin. Do not keep duplicate production renderer engines.
-
-TypeScript/Vite/Node/JCEF may remain only for an actual isolated renderer consumer. JCEF below the renderer boundary never owns source editing and never gates typing/save/undo/source fallback.
+- Mermaid `11.17.2` and KaTeX `^0.18.7` are the retained production renderer engines unless a separate accepted renderer decision replaces them;
+- there is one production renderer engine per capability and no browser-editor adapter/session authority;
+- TypeScript/Vite/Node are renderer-only build/runtime dependencies;
+- JCEF is an optional isolated renderer backend and never gates typing, save, undo/redo, settings, or exact-source fallback;
+- do not reimplement Mermaid or TeX layout merely because editing is native/Kotlin, and do not recreate deleted Crepe/CodeMirror integration for convenience.
 
 ## Migration rules
 
