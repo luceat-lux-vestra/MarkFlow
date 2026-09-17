@@ -2,6 +2,7 @@ package com.algorist.markflow.settings
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.extensions.ExtensionPointName
+import com.intellij.openapi.progress.ProcessCanceledException
 
 /**
  * Presentation invalidation sink for persisted/theme settings.
@@ -24,10 +25,13 @@ object MarkFlowPresentationSettingsNotifier {
 
     fun notifyChanged() {
         MarkFlowPresentationSettingsSink.EP_NAME.extensionList.forEach { sink ->
-            runCatching { sink.presentationSettingsChanged() }
-                .onFailure { failure ->
-                    log.warn("MARKFLOW_SETTINGS presentation sink failed", failure)
-                }
+            try {
+                sink.presentationSettingsChanged()
+            } catch (failure: ProcessCanceledException) {
+                throw failure
+            } catch (failure: Throwable) {
+                log.warn("MARKFLOW_SETTINGS presentation sink failed", failure)
+            }
         }
     }
 }
