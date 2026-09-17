@@ -12,7 +12,7 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 has now completed the production native-editor cutover with post-main evidence; #154 owns mandatory deletion of the superseded browser editor/session/protocol/trust machinery before dependency/toolchain convergence continues.
+Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 completed the production native-editor cutover with post-main evidence, and #154 completed deletion of the superseded browser editor/session/protocol/trust machinery. #155 now owns dependency/toolchain/JCEF/settings convergence over the retained renderer-only stack.
 
 ## Accepted target
 
@@ -67,8 +67,8 @@ Do not:
 - #146 resolved native paste/state/representative local-edit ownership through platform paste/command/undo/FileEditorState semantics plus bounded MarkFlow-specific payload/local-edit behavior;
 - renderer extraction, native derived presentation, host resource/navigation, ordinary Markdown/table parity and the other #143–#152 prerequisites supplied the evidence required for cutover;
 - **#153 completed** — production file opening/editing now uses the platform-native editor and post-main verification closed the cutover gate;
-- **#154 in progress** — delete the obsolete browser editor, custom document/session/revision protocols, browser editing trust/resource realm and editor-only frontend/tooling while retaining renderer infrastructure;
-- #154 -> #155 dependency/toolchain/JCEF/settings convergence;
+- **#154 completed** — obsolete browser editor, custom document/session/revision protocols, browser editing trust/resource realm and editor-only frontend/tooling are purged while renderer infrastructure is retained;
+- **#155 active** — converge dependency/toolchain/JCEF packaging and settings over the retained renderer-only stack;
 - #155 -> #156 final compatibility/lifecycle/performance/release convergence;
 - #156 -> #84 eligible to close.
 
