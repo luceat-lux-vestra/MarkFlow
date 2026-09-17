@@ -115,6 +115,16 @@ internal object NativeProjectionE2EBridge {
         return bounds.y + bounds.height / 2
     }
 
+    fun hostLocalImages(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).hostResourceEvidenceSnapshot()?.localImages ?: 0
+    }
+
+    fun hostExternalLinks(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).hostResourceEvidenceSnapshot()?.externalLinks ?: 0
+    }
+
     fun derivedFragments(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).derivedEvidenceSnapshot()?.derivedFragments ?: 0
