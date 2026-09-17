@@ -56,17 +56,6 @@ internal class MarkFlowBrowserLeasePool {
         )
     }
 
-    fun preWarm() {
-        if (disposed || !MarkFlowJcefSupport.isAvailable) return
-        val lease = synchronized(lifecycleLock) {
-            idleLeaseIds.firstOrNull()?.let { leaseById[it] } ?: createLeaseLocked().also { created ->
-                idleLeaseIds.add(created.id)
-            }
-        }
-
-        ensureLeaseLoaded(lease)
-    }
-
     fun registerEditor(editor: MarkFlowEditor) {
         synchronized(openEditors) {
             openEditors.add(editor)

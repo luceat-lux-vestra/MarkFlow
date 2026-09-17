@@ -36,10 +36,6 @@ class MarkFlowSharedBrowserService : Disposable {
         }
     }
 
-    fun preWarm() {
-        browserLeasePool.preWarm()
-    }
-
     fun registerEditor(editor: MarkFlowEditor) {
         browserLeasePool.registerEditor(editor)
     }
