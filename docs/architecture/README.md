@@ -12,7 +12,7 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. These completed gates do not authorize production cutover; #153 remains the cutover owner.
+Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 has now completed the production native-editor cutover with post-main evidence; #154 owns mandatory deletion of the superseded browser editor/session/protocol/trust machinery before dependency/toolchain convergence continues.
 
 ## Accepted target
 
@@ -20,11 +20,11 @@ ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, s
 
 ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migration**. Native editor migration removes the browser from source-editing correctness; it does not authorize reimplementing or dropping supported Mermaid/KaTeX rendering. Existing maintained renderer engines are extracted from editor-specific integration and reused behind the derived-render boundary.
 
-#143 resolves ADR 0001's lower-level shell choice: the target **augments the normal IntelliJ platform text editor** and attaches per-editor MarkFlow presentation through maintained native editor lifecycle APIs. A MarkFlow-owned replacement `FileEditor` shell is rejected because it adds provider/state/input/focus/lifecycle ownership without an independent product requirement. See `native-editor-shell-selection.md`. This selection does not itself cut production over; #153 remains the cutover owner.
+#143 resolves ADR 0001's lower-level shell choice: the target **augments the normal IntelliJ platform text editor** and attaches per-editor MarkFlow presentation through maintained native editor lifecycle APIs. A MarkFlow-owned replacement `FileEditor` shell is rejected because it adds provider/state/input/focus/lifecycle ownership without an independent product requirement. See `native-editor-shell-selection.md`. #153 subsequently proved and completed production cutover to that native ownership model.
 
 #145 establishes the next target foundation over that selected shell: **an immutable exact `Document` snapshot and source/config identity are parsed into an immutable `NativeProjectionPlan`, then applied by one source-neutral `NativePresentationController` per native editor**. The initial mechanism and evidence contract are recorded in `native-markdown-projection-foundation.md`. #145 is a projection foundation, not ordinary-Markdown parity and not production cutover.
 
-#146 resolves native edit-ownership details above that foundation without creating a second editor authority: **IntelliJ's normal paste action, command/undo stack and opaque `FileEditorState` remain authoritative, while MarkFlow may preprocess only an inserted Markdown payload and apply narrowly source-local rich edit commands to explicit native selections**. The implementation/evidence contract is recorded in `native-edit-semantics.md`. #146 remains subject to its exact-final-HEAD and post-main proof gate and does not perform production cutover.
+#146 resolves native edit-ownership details above that foundation without creating a second editor authority: **IntelliJ's normal paste action, command/undo stack and opaque `FileEditorState` remain authoritative, while MarkFlow may preprocess only an inserted Markdown payload and apply narrowly source-local rich edit commands to explicit native selections**. The implementation/evidence contract is recorded in `native-edit-semantics.md`.
 
 Target principles:
 
@@ -33,12 +33,12 @@ Target principles:
 3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews never become source authority.
 4. **Reveal exact source in active edit context.** Presentation may visually reduce syntax only when exact source remains recoverable and interaction is unambiguous.
 5. **Stale derived work is inert.** Parse/render results apply only to the exact current source/config identity they were produced from.
-6. **Mermaid and KaTeX remain supported renderer capabilities.** Mermaid `11.17.2` and KaTeX `^0.18.5` are extracted/reused; editor adapters are replaceable.
+6. **Mermaid and KaTeX remain supported renderer capabilities.** The currently landed migration-isolation baselines are Mermaid `11.17.2` and KaTeX `^0.18.7`; editor adapters are replaceable and renderer upgrades remain separately gated.
 7. **Derived renderer execution is isolated from editing.** TypeScript/Vite/Node/JCEF may remain for real renderer consumers, but JCEF never owns source editing or gates it.
 8. **Trust surfaces are minimized first.** Local resources/navigation are host-owned. Browser origin/network/CSP machinery is deleted with superseded editor surfaces; retained renderer runtimes receive narrower renderer-specific containment.
 9. **Lifecycle ownership is explicit.** Per-editor presentation controllers and renderer runtimes have separate deterministic owners and bounded resources.
 10. **Optimization follows evidence.** Incremental parsing, caches, retained artifacts, renderer reuse, pooling/prewarm/concurrency require measured benefit and explicit bounds.
-11. **Replacement includes already-merged Leap code.** Current CodeMirror/JCEF/source-native/bridge/loopback/CSP implementation survives only where #141 independently justifies a responsibility.
+11. **Replacement includes already-merged Leap code.** Superseded CodeMirror/JCEF source-editing/bridge/loopback/CSP mechanisms are not compatibility APIs; #154 removes them once their retained responsibilities have been extracted.
 12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
 See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `native-edit-semantics.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
@@ -64,17 +64,10 @@ Do not:
 
 - **#143 completed** — platform text-editor augmentation selected/proven;
 - **#145 completed** — immutable snapshot/projection-plan/per-editor controller foundation proven over #143;
-- **#146 resolves** native paste/state/representative local-edit ownership through platform paste/command/undo/FileEditorState semantics plus bounded MarkFlow-specific payload/local-edit behavior; its implementation remains subject to the Task's exact-final-HEAD and post-main gate;
-- #144 renderer extraction and #150 image-import product decision remain independently eligible work;
-- completed #145 makes #147/#149 eligible; #148 still requires #144 and #151 still requires #150 + #147;
-- #143 + #145 -> #146 native paste/actions/state;
-- #145 -> #147 host local-image/navigation;
-- #144 + #145 -> #148 Mermaid/KaTeX native inlays;
-- #145 -> #149 sanitized source-preserved raw-HTML rendering;
-- #150 + #147 -> #151 image import;
-- #145 + #146 -> #152 ordinary Markdown/table parity;
-- required #143–#152 evidence -> #153 production native cutover;
-- #153 -> #154 mandatory old-editor/protocol/trust purge;
+- #146 resolved native paste/state/representative local-edit ownership through platform paste/command/undo/FileEditorState semantics plus bounded MarkFlow-specific payload/local-edit behavior;
+- renderer extraction, native derived presentation, host resource/navigation, ordinary Markdown/table parity and the other #143–#152 prerequisites supplied the evidence required for cutover;
+- **#153 completed** — production file opening/editing now uses the platform-native editor and post-main verification closed the cutover gate;
+- **#154 in progress** — delete the obsolete browser editor, custom document/session/revision protocols, browser editing trust/resource realm and editor-only frontend/tooling while retaining renderer infrastructure;
 - #154 -> #155 dependency/toolchain/JCEF/settings convergence;
 - #155 -> #156 final compatibility/lifecycle/performance/release convergence;
 - #156 -> #84 eligible to close.
