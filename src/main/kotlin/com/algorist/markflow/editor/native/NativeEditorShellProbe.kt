@@ -37,11 +37,11 @@ import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Production-independent real-IDE proof for #143.
+ * Real-IDE platform TextEditor shell regression proof retained across the #153 production cutover.
  *
- * The probe exercises the platform text editor through public FileEditor/TextEditor APIs in a real
- * opened project. It does not register or cut over a production MarkFlow editor. The current
- * browser editor remains temporary migration code until #153/#154.
+ * The probe exercises public FileEditor/TextEditor semantics in a real opened project while JCEF is
+ * disabled. Production authority must remain the platform text editor and the legacy MarkFlow browser
+ * FileEditorProvider must be absent from the extension inventory.
  */
 internal object NativeEditorShellProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeEditorShellProbe.output"
@@ -78,13 +78,13 @@ internal object NativeEditorShellProbe {
         fun run() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             try {
-                check(!project.isDefault) { "#143 runtime proof requires a real opened project" }
-                check(!project.isDisposed) { "#143 runtime proof project was already disposed" }
+                check(!project.isDefault) { "native shell runtime proof requires a real opened project" }
+                check(!project.isDisposed) { "native shell runtime proof project was already disposed" }
 
                 case("jcef-disabled-runtime") {
                     val supported = JBCefApp.isSupported()
                     jcefSupported = supported
-                    check(!supported) { "JCEF must be disabled for the #143 native-shell proof run" }
+                    check(!supported) { "JCEF must be disabled for the native-shell proof run" }
                     "JBCefApp.isSupported=false projectDefault=false"
                 }
 
@@ -170,7 +170,7 @@ internal object NativeEditorShellProbe {
                     val beforePasteLength = document.textLength
 
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #143 Clipboard Paste Proof")
+                        .withName("MarkFlow Native Shell Clipboard Paste Proof")
                         .run<RuntimeException> {
                             EditorActionManager.getInstance()
                                 .getActionHandler(IdeActions.ACTION_EDITOR_PASTE)
@@ -195,7 +195,7 @@ internal object NativeEditorShellProbe {
 
                     val composing = inputMethodEvent(editor, "ㅎ", committedCharacterCount = 0)
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #143 IME Composition Proof")
+                        .withName("MarkFlow Native Shell IME Composition Proof")
                         .run<RuntimeException> {
                             editor.contentComponent.dispatchEvent(composing)
                         }
@@ -209,7 +209,7 @@ internal object NativeEditorShellProbe {
 
                     val committed = inputMethodEvent(editor, "한", committedCharacterCount = 1)
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #143 IME Commit Proof")
+                        .withName("MarkFlow Native Shell IME Commit Proof")
                         .run<RuntimeException> {
                             editor.contentComponent.dispatchEvent(committed)
                         }
@@ -275,7 +275,7 @@ internal object NativeEditorShellProbe {
                     }
 
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #143 Native Edit Proof")
+                        .withName("MarkFlow Native Shell Edit Proof")
                         .run<RuntimeException> {
                             fixture.document.insertString(0, "native-edit\n")
                         }
@@ -349,10 +349,10 @@ internal object NativeEditorShellProbe {
                         ?: error("selected platform text provider missing from evidence")
                     check(platformProvider.policy == FileEditorPolicy.NONE.name)
                     check(platformProvider.accepted)
-                    check(providerInventory.any { it.markFlowTemporaryProvider && !it.accepted }) {
-                        "temporary JCEF-gated MarkFlow provider must not be required when JCEF is disabled"
+                    check(providerInventory.none { it.legacyMarkFlowProvider }) {
+                        "legacy MarkFlow browser FileEditorProvider remained registered after production cutover"
                     }
-                    "platform TextEditor already owns FileEditor/input/state semantics; target adds presentation only"
+                    "platformTextAuthority=true legacyBrowserProvider=false presentationOnly=true"
                 }
 
                 finish("PASS")
@@ -372,7 +372,7 @@ internal object NativeEditorShellProbe {
             var result: Fixture? = null
             case("authoritative-document-fixture") {
                 val projectBase = project.basePath?.let(Paths::get)
-                    ?: error("opened #143 proof project has no basePath")
+                    ?: error("opened native shell proof project has no basePath")
                 val root = Files.createTempDirectory(projectBase, ".markflow-native-shell-")
                 tempRoot = root
                 val path = root.resolve("shell-proof.md")
@@ -401,6 +401,9 @@ internal object NativeEditorShellProbe {
             case("provider-and-bundled-markdown-coexistence") {
                 val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
                 check(providers.isNotEmpty())
+                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                    "legacy MarkFlow browser provider remained registered after native production cutover"
+                }
                 check(providers.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
                     "bundled Markdown FileEditor provider not visible"
                 }
@@ -414,14 +417,14 @@ internal object NativeEditorShellProbe {
                         }
                     }.getOrElse { false }
                     val isText = provider.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID
-                    val isTemporaryMarkFlow = provider.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS
+                    val isLegacyMarkFlow = provider.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS
                     providerInventory += ProviderResult(
                         className = provider.javaClass.name,
                         editorTypeId = provider.editorTypeId,
                         policy = provider.policy.name,
                         accepted = accepted,
                         selectedPlatformTextProvider = isText && accepted,
-                        markFlowTemporaryProvider = isTemporaryMarkFlow,
+                        legacyMarkFlowProvider = isLegacyMarkFlow,
                     )
                     if (isText && accepted && selected == null) {
                         selected = provider
@@ -432,12 +435,8 @@ internal object NativeEditorShellProbe {
                 check(text.policy == FileEditorPolicy.NONE) {
                     "platform text editor policy unexpectedly displaces other editors: ${text.policy}"
                 }
-                val temporary = providerInventory.singleOrNull { it.markFlowTemporaryProvider }
-                    ?: error("temporary MarkFlow provider missing from extension inventory")
-                check(!temporary.accepted) {
-                    "temporary browser provider still accepted Markdown while JCEF was disabled"
-                }
-                "registered=${providers.size} accepted=${providerInventory.count { it.accepted }} platformText=${text.javaClass.name}"
+                check(providerInventory.none { it.legacyMarkFlowProvider })
+                "registered=${providers.size} accepted=${providerInventory.count { it.accepted }} platformText=${text.javaClass.name} legacyBrowserProvider=false"
             }
             return selected ?: error("provider coexistence case did not select a text provider")
         }
@@ -613,7 +612,7 @@ internal object NativeEditorShellProbe {
         val policy: String,
         val accepted: Boolean,
         val selectedPlatformTextProvider: Boolean,
-        val markFlowTemporaryProvider: Boolean,
+        val legacyMarkFlowProvider: Boolean,
     )
 
     private data class CaseResult(
@@ -640,5 +639,5 @@ internal object NativeEditorShellProbe {
     }
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val TEMPORARY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
 }
