@@ -22,7 +22,7 @@ import kotlin.time.Duration.Companion.seconds
 /** Exact production-opening proof for the #153 cutover wiring. */
 class MarkFlowStarterProductionWiringTest {
     @Test
-    fun productionOpeningAutomaticallyWiresDerivedAndRawHtmlConsumersWithoutOwningSource() {
+    fun productionOpeningAutomaticallyWiresNativeHostDerivedAndRawHtmlConsumersWithoutOwningSource() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -84,11 +84,23 @@ class MarkFlowStarterProductionWiringTest {
                     checker = { ready -> ready },
                 )
 
+                val hostLocalImages = driver.withContext(OnDispatcher.EDT) {
+                    bridge.hostLocalImages(editor.editor)
+                }
+                val hostExternalLinks = driver.withContext(OnDispatcher.EDT) {
+                    bridge.hostExternalLinks(editor.editor)
+                }
                 val derivedFragments = driver.withContext(OnDispatcher.EDT) {
                     bridge.derivedFragments(editor.editor)
                 }
                 val rawHtmlFragments = driver.withContext(OnDispatcher.EDT) {
                     bridge.rawHtmlFragments(editor.editor)
+                }
+                check(hostLocalImages >= 1) {
+                    "production controller did not wire the local-image host consumer: $hostLocalImages"
+                }
+                check(hostExternalLinks >= 1) {
+                    "production controller did not wire the external-navigation host consumer: $hostExternalLinks"
                 }
                 check(derivedFragments >= 3) {
                     "production controller did not wire representative Mermaid/KaTeX fragments: $derivedFragments"
@@ -98,16 +110,16 @@ class MarkFlowStarterProductionWiringTest {
                 }
 
                 check(markFlow.source(editor) == sourceBefore) {
-                    "production derived/raw-HTML wiring changed authoritative Markdown source"
+                    "production host/derived/raw-HTML wiring changed authoritative Markdown source"
                 }
                 check(markFlow.modificationStamp(editor) == stampBefore) {
-                    "production derived/raw-HTML wiring changed the Document modification stamp"
+                    "production host/derived/raw-HTML wiring changed the Document modification stamp"
                 }
                 check(!markFlow.isDirty(editor)) {
-                    "production derived/raw-HTML wiring dirtied the authoritative Document"
+                    "production host/derived/raw-HTML wiring dirtied the authoritative Document"
                 }
                 check(Files.readString(fixturePath) == expectedSource) {
-                    "production derived/raw-HTML wiring changed fixture bytes"
+                    "production host/derived/raw-HTML wiring changed fixture bytes"
                 }
             }
         } finally {
@@ -120,6 +132,8 @@ class MarkFlowStarterProductionWiringTest {
 private interface NativeProductionWiringBridgeRemote {
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
+    fun hostLocalImages(editor: Editor): Int
+    fun hostExternalLinks(editor: Editor): Int
     fun derivedFragments(editor: Editor): Int
     fun rawHtmlFragments(editor: Editor): Int
 }
