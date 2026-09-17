@@ -30,7 +30,8 @@ test.after(async () => rm(tempRoot, {recursive: true, force: true}));
 
 test("renderer defaults are fail-closed and deterministic", () => {
     const resolved = settings.resolveRuntimeSettings(undefined);
-    assert.equal(resolved.diagramSecurityLevel, "STRICT");
+    assert.equal("diagramSecurityLevel" in resolved, false);
+    assert.equal("previewOnlyByDefault" in resolved, false);
     assert.equal(resolved.themeSource, "LIGHT");
     assert.equal(resolved.mermaidZoomPercent, 100);
     const config = settings.createMermaidPreviewConfig(resolved);
@@ -38,6 +39,17 @@ test("renderer defaults are fail-closed and deterministic", () => {
     assert.equal(config.theme, "default");
     assert.equal(config.htmlLabels, false);
     assert.equal(config.flowchart.htmlLabels, false);
+});
+
+test("legacy preview and Mermaid security keys are ignored and cannot weaken renderer policy", () => {
+    const resolved = settings.resolveRuntimeSettings({
+        themeSource: "LIGHT",
+        diagramSecurityLevel: "LOOSE",
+        previewOnlyByDefault: false
+    });
+    assert.equal("diagramSecurityLevel" in resolved, false);
+    assert.equal("previewOnlyByDefault" in resolved, false);
+    assert.equal(settings.createMermaidPreviewConfig(resolved).securityLevel, "strict");
 });
 
 test("runtime settings clamp zoom and reject non-hex palette values", () => {

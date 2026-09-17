@@ -226,8 +226,6 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         themeSource = "LIGHT",
         mermaidErrorDisplay = mermaidErrorDisplay,
         katexDisplayDensity = "COMFORTABLE",
-        diagramSecurityLevel = "STRICT",
-        previewOnlyByDefault = true,
         mermaidSyntaxErrorMessage = "Diagram syntax error",
         fontFamily = "",
         baseFontSizePx = 16,

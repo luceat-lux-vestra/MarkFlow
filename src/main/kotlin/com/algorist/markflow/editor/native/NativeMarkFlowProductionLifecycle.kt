@@ -3,7 +3,7 @@ package com.algorist.markflow.editor.native
 import com.algorist.markflow.file.MarkFlowFileSupport
 import com.algorist.markflow.renderer.DerivedRendererRuntime
 import com.algorist.markflow.renderer.DerivedRendererRuntimeProvider
-import com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink
+import com.algorist.markflow.settings.MarkFlowPresentationSettingsSink
 import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -159,8 +159,8 @@ class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
 }
 
 /** Base-plugin settings sink; browser/JCEF settings adapters are not native editor authority. */
-class NativeMarkFlowRuntimeSettingsSink : MarkFlowRuntimeSettingsSink {
-    override fun runtimeSettingsChanged(forceReload: Boolean) {
+class NativeMarkFlowPresentationSettingsSink : MarkFlowPresentationSettingsSink {
+    override fun presentationSettingsChanged() {
         NativeMarkFlowProductionLifecycle.refreshAll()
     }
 }

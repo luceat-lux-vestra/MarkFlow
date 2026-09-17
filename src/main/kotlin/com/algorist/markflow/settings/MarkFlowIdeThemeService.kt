@@ -64,7 +64,7 @@ class MarkFlowIdeThemeService : Disposable {
                 "fonts=${snapshot.fonts.keys.sorted()}"
         )
         MarkFlowSettingsService.bumpRuntimeSettingsRevision()
-        MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
+        MarkFlowPresentationSettingsNotifier.notifyChanged()
         return snapshot
     }
 

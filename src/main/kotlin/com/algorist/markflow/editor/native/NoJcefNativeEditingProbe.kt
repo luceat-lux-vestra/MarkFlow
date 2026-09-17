@@ -2,8 +2,8 @@ package com.algorist.markflow.editor.native
 
 import com.algorist.markflow.renderer.DerivedRendererRuntimeFactory
 import com.algorist.markflow.settings.MarkFlowIdeThemeService
-import com.algorist.markflow.settings.MarkFlowRuntimeSettingsNotifier
-import com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink
+import com.algorist.markflow.settings.MarkFlowPresentationSettingsNotifier
+import com.algorist.markflow.settings.MarkFlowPresentationSettingsSink
 import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.google.gson.GsonBuilder
 import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
@@ -85,8 +85,8 @@ internal object NoJcefNativeEditingProbe {
                     check(providers.none { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS }) {
                         "legacy JCEF-backed MarkFlow provider was registered without JCEF"
                     }
-                    val sinks = MarkFlowRuntimeSettingsSink.EP_NAME.extensionList
-                    check(sinks.count { it is NativeMarkFlowRuntimeSettingsSink } == 1) {
+                    val sinks = MarkFlowPresentationSettingsSink.EP_NAME.extensionList
+                    check(sinks.count { it is NativeMarkFlowPresentationSettingsSink } == 1) {
                         "base native runtime-settings sink missing or duplicated without JCEF"
                     }
                     check(sinks.none { it.javaClass.name == JCEF_RUNTIME_SETTINGS_SINK_CLASS }) {
@@ -110,9 +110,9 @@ internal object NoJcefNativeEditingProbe {
                     val settings = MarkFlowSettingsService.getInstance().runtimeSettings()
                     check(settings.settingsRevision >= 1)
                     check(MarkFlowIdeThemeService.getInstance().getSnapshot().fonts.isNotEmpty())
-                    MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
-                    val sinks = MarkFlowRuntimeSettingsSink.EP_NAME.extensionList
-                    check(sinks.count { it is NativeMarkFlowRuntimeSettingsSink } == 1)
+                    MarkFlowPresentationSettingsNotifier.notifyChanged()
+                    val sinks = MarkFlowPresentationSettingsSink.EP_NAME.extensionList
+                    check(sinks.count { it is NativeMarkFlowPresentationSettingsSink } == 1)
                     check(sinks.none { it.javaClass.name == JCEF_RUNTIME_SETTINGS_SINK_CLASS })
                     check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty())
                     "settingsAvailable=true themeAvailable=true nativeRendererSinkCount=1 browserRendererSinkCount=0 rendererRuntimeFactoryCount=0"

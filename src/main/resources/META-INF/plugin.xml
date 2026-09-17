@@ -16,8 +16,8 @@
 
     <extensionPoints>
         <extensionPoint
-                name="runtimeSettingsSink"
-                interface="com.algorist.markflow.settings.MarkFlowRuntimeSettingsSink"
+                name="presentationSettingsSink"
+                interface="com.algorist.markflow.settings.MarkFlowPresentationSettingsSink"
                 dynamic="true"/>
         <extensionPoint
                 name="derivedRendererRuntimeFactory"
@@ -69,7 +69,7 @@
 
     <extensions defaultExtensionNs="com.algorist.markflow">
         <!-- Native presentation consumes the same persisted runtime settings independently of JCEF. -->
-        <runtimeSettingsSink implementation="com.algorist.markflow.editor.native.NativeMarkFlowRuntimeSettingsSink"/>
+        <presentationSettingsSink implementation="com.algorist.markflow.editor.native.NativeMarkFlowPresentationSettingsSink"/>
     </extensions>
 
     <actions>
