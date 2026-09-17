@@ -13,6 +13,10 @@ graph TD
     A --> B
 ```
 
+Local image consumer: ![missing local proof](production-wiring-missing.png)
+
+External navigation consumer: [example](https://example.invalid/production-wiring)
+
 Inline <span data-kind="safe">HTML content</span> remains authoritative source.
 
 <div class="callout">
