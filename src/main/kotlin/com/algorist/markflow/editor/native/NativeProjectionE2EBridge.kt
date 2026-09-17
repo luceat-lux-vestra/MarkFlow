@@ -2,41 +2,30 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.util.Disposer
-import java.util.IdentityHashMap
 
 /**
- * Narrow, inert diagnostic seam for Starter/Driver acceptance tests before #153 production cutover.
+ * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
  *
- * This object has no registration, startup hook, action, or test-framework dependency. It can only
- * affect an Editor when an external diagnostic client explicitly invokes [attach]. Production
- * editor lifecycle ownership remains unchanged until the dedicated cutover task.
- *
- * The Starter/Driver client resolves this object by its remote class name, so static analysis cannot
- * observe the call edge.
+ * The bridge no longer creates or owns presentation controllers. Every query resolves the controller
+ * installed by [NativeMarkFlowProductionLifecycle] through the normal platform-editor opening path.
+ * The retained [attach]/[detach] methods are compatibility assertions for the existing #193 suite:
+ * they never mutate production ownership and fail the test when normal opening did not attach.
  */
 @Suppress("unused")
 internal object NativeProjectionE2EBridge {
-    private val controllers = IdentityHashMap<Editor, NativePresentationController>()
-
     fun attach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        check(!editor.isDisposed) { "cannot attach native projection to a disposed editor" }
-        if (controllers.containsKey(editor)) return false
-        controllers[editor] = NativePresentationController(editor)
-        return true
+        return isAttached(editor)
     }
 
     fun detach(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = controllers.remove(editor) ?: return false
-        Disposer.dispose(controller)
-        return true
+        return isAttached(editor)
     }
 
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        return controllers.containsKey(editor)
+        return NativeMarkFlowProductionLifecycle.controller(editor) != null
     }
 
     fun planReady(editor: Editor): Boolean {
@@ -51,15 +40,14 @@ internal object NativeProjectionE2EBridge {
 
     /**
      * Exercise the real typed source-fallback application path without constructing a parallel
-     * renderer or mutating the authoritative Document. The plan retains the controller's exact
-     * current source/config identity, so [NativePresentationController.tryApply] still enforces its
-     * normal stale-plan and source-neutrality contracts.
+     * renderer or mutating the authoritative Document. The plan retains the production controller's
+     * exact current source/config identity, so normal stale-plan and source-neutrality gates apply.
      */
     fun degradeToSource(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = requireController(editor)
         val identity = requireNotNull(controller.currentPlan?.identity) {
-            "native projection E2E controller has no current plan"
+            "production native MarkFlow controller has no current plan"
         }
         val degraded = NativeProjectionPlan(
             identity = identity,
@@ -127,6 +115,26 @@ internal object NativeProjectionE2EBridge {
         return bounds.y + bounds.height / 2
     }
 
+    fun hostLocalImages(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).hostResourceEvidenceSnapshot()?.localImages ?: 0
+    }
+
+    fun hostExternalLinks(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).hostResourceEvidenceSnapshot()?.externalLinks ?: 0
+    }
+
+    fun derivedFragments(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.derivedFragments ?: 0
+    }
+
+    fun rawHtmlFragments(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.fragments ?: 0
+    }
+
     private fun requireTableInlay(editor: Editor) =
         editor.inlayModel
             .getBlockElementsInRange(0, editor.document.textLength)
@@ -134,5 +142,7 @@ internal object NativeProjectionE2EBridge {
             ?: error("expected exactly one visible MarkFlow table inlay")
 
     private fun requireController(editor: Editor): NativePresentationController =
-        checkNotNull(controllers[editor]) { "native projection E2E controller is not attached" }
+        checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+            "production native MarkFlow controller is not attached"
+        }
 }

@@ -132,14 +132,18 @@ jobs:
           undo_detail = str(by_id['dirty-save-undo-redo'].get('detail', ''))
           if 'undoScope=project-text-editor' not in undo_detail:
               raise SystemExit(f'undo proof did not use project TextEditor context: {undo_detail}')
+          boundary_detail = str(by_id['owned-file-editor-rejection-boundary'].get('detail', ''))
+          for flag in ('platformTextAuthority=true', 'legacyBrowserProvider=false', 'presentationOnly=true'):
+              if flag not in boundary_detail:
+                  raise SystemExit(f'production FileEditor ownership boundary incomplete: {boundary_detail}')
 
           providers = evidence.get('providerInventory') or []
           selected = [p for p in providers if p.get('selectedPlatformTextProvider') is True]
           if len(selected) != 1 or selected[0].get('accepted') is not True or selected[0].get('policy') != 'NONE':
               raise SystemExit(f'invalid selected platform text provider evidence: {selected}')
-          temporary = [p for p in providers if p.get('markFlowTemporaryProvider') is True]
-          if len(temporary) != 1 or temporary[0].get('accepted') is not False:
-              raise SystemExit(f'temporary browser provider did not fail closed with JCEF disabled: {temporary}')
+          legacy = [p for p in providers if p.get('legacyMarkFlowProvider') is True]
+          if legacy:
+              raise SystemExit(f'legacy MarkFlow browser provider remained registered after native production cutover: {legacy}')
           markdown = [p for p in providers if 'markdown' in str(p.get('className', '')).lower()]
           if not markdown or not any(p.get('accepted') is True for p in markdown):
               raise SystemExit(f'bundled Markdown provider did not coexist as an accepting provider: {markdown}')

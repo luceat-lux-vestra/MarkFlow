@@ -23,14 +23,14 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Production-independent real-IDE evidence for #145. */
+/** Real-IDE native projection regression proof retained across the #153 production cutover. */
 internal object NativeProjectionProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeProjectionProbe.output"
     const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
     const val PARSER_STRATEGY = "JETBRAINS_BUNDLED_MARKDOWN"
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val TEMPORARY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
 
     private val started = AtomicBoolean(false)
 
@@ -64,13 +64,13 @@ internal object NativeProjectionProbe {
         fun run() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             try {
-                check(!project.isDefault) { "#145 runtime proof requires a real opened project" }
-                check(!project.isDisposed) { "#145 runtime proof project was already disposed" }
+                check(!project.isDefault) { "native projection runtime proof requires a real opened project" }
+                check(!project.isDisposed) { "native projection runtime proof project was already disposed" }
 
                 case("jcef-disabled-projection-path") {
                     val supported = JBCefApp.isSupported()
                     jcefSupported = supported
-                    check(!supported) { "JCEF must be runtime-disabled for the #145 projection proof" }
+                    check(!supported) { "JCEF must be runtime-disabled for the native projection proof" }
                     "JBCefApp.isSupported=false projectDefault=false"
                 }
 
@@ -212,7 +212,7 @@ val fenced = true
                     val presentationBefore = firstController.evidenceSnapshot()
 
                     WriteCommandAction.writeCommandAction(project)
-                        .withName("MarkFlow #145 Stale Projection Proof")
+                        .withName("MarkFlow Native Stale Projection Proof")
                         .run<RuntimeException> {
                             document.insertString(document.textLength, "\n`fresh`\n")
                         }
@@ -408,7 +408,7 @@ val fenced = true
             var result: Fixture? = null
             case("authoritative-document-fixture") {
                 val projectBase = project.basePath?.let(Paths::get)
-                    ?: error("opened #145 proof project has no basePath")
+                    ?: error("opened native projection proof project has no basePath")
                 val root = Files.createTempDirectory(projectBase, ".markflow-native-projection-")
                 tempRoot = root
                 val path = root.resolve("projection-proof.md")
@@ -448,6 +448,9 @@ Plain body line for inactive caret state.
             var result: FileEditorProvider? = null
             case("platform-text-and-markdown-coexistence") {
                 val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
+                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                    "legacy MarkFlow browser provider remained registered after native production cutover"
+                }
                 val accepted = providers.filter { candidate -> accepts(candidate, file) }
                 val text = accepted.firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
                     ?: error("platform text editor provider did not accept Markdown fixture")
@@ -455,13 +458,8 @@ Plain body line for inactive caret state.
                 check(accepted.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
                     "bundled Markdown provider did not coexist with platform text editor"
                 }
-                val temporary = providers.singleOrNull { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS }
-                    ?: error("temporary MarkFlow provider missing")
-                check(!accepts(temporary, file)) {
-                    "temporary JCEF-gated MarkFlow provider accepted while JCEF runtime was disabled"
-                }
                 result = text
-                "platformText=${text.javaClass.name} bundledMarkdown=true temporaryBrowserAccepted=false"
+                "platformText=${text.javaClass.name} bundledMarkdown=true legacyBrowserProvider=false"
             }
             return result ?: error("provider case did not select platform text editor")
         }
