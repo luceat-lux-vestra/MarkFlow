@@ -158,7 +158,7 @@ class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     }
 }
 
-/** Base-plugin settings sink; browser/JCEF settings adapters are not native editor authority. */
+/** Base-plugin presentation invalidation sink; optional renderer ownership remains separate. */
 class NativeMarkFlowPresentationSettingsSink : MarkFlowPresentationSettingsSink {
     override fun presentationSettingsChanged() {
         NativeMarkFlowProductionLifecycle.refreshAll()
