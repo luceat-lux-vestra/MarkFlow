@@ -1,32 +1,4 @@
-export type IntelliJEditorState = {
-    version: number;
-    scrollTop: number;
-    cursorOffset: number;
-    selectionStart: number;
-    selectionEnd: number;
-};
-
-export type EditorUiState = {
-    version: number;
-    scrollTop: number;
-    cursorOffset: number;
-    selectionStart: number;
-    selectionEnd: number;
-};
-
-export type MarkdownSourceSnapshot = {
-    rawMarkdown: string;
-    sourceRevision: number;
-    leaseSessionId: string;
-};
-
-export type MarkdownUpdateAck = {
-    ok: boolean;
-    sourceRevision: number;
-    reason?: string;
-};
-
-/** Stable host/webview palette contract; keys mirror MarkFlowIdeThemeService.capture(). */
+/** Stable host/renderer palette contract; keys mirror MarkFlowIdeThemeService.capture(). */
 export type IdeColors = {
     background?: string;
     foreground?: string;
@@ -35,6 +7,7 @@ export type IdeColors = {
     border?: string;
 };
 
+/** Settings consumed by the retained Mermaid/KaTeX derived-renderer backend. */
 export type MarkFlowRuntimeSettings = {
     mermaidSizeMode?: "FIT_TO_VIEWPORT" | "ACTUAL_SIZE_SCROLL" | "SHRINK_TO_FIT";
     mermaidZoomPercent?: number;
@@ -50,12 +23,4 @@ export type MarkFlowRuntimeSettings = {
     ideFontFamily?: string | null;
     ideDark?: boolean;
     settingsRevision?: number;
-};
-
-export type RecoveryRole = "leader" | "follower";
-
-export type RecoveryBridgeResponse = {
-    role?: RecoveryRole | string;
-    epoch?: number;
-    reason?: string;
 };

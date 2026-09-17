@@ -1,6 +1,6 @@
 # Leap migration inventory and execution map
 
-Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through #146 target ownership
+Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through completed #153 production cutover and active #154 purge
 
 Original #141 audited base:
 
@@ -15,8 +15,8 @@ Current execution resolutions relevant to this inventory:
 - #139/#141 are completed;
 - #143 is completed and selected **`PLATFORM_TEXT_EDITOR_AUGMENTATION`** — normal IntelliJ platform text-editor augmentation, not a MarkFlow-owned replacement `FileEditor` shell;
 - #145 is completed and establishes the immutable snapshot/parser/projection-plan/per-editor-controller foundation over that selected shell;
-- #146 resolves the target paste/state/representative-rich-edit ownership as platform paste/command/undo/`FileEditorState` semantics plus narrowly scoped MarkFlow payload/local-edit behavior, subject to #146's own exact-final-HEAD and post-main proof gate;
-- #153 remains the only production native-editor cutover owner, so the current browser editor/provider/protocol remain temporary until their explicit deletion criteria are met.
+- #146 established target paste/state/representative-rich-edit ownership as platform paste/command/undo/`FileEditorState` semantics plus narrowly scoped MarkFlow payload/local-edit behavior;
+- #153 is completed and production editing is platform-native; #154 is actively deleting the superseded browser editor/provider/protocol machinery while retained JCEF is renderer-only.
 
 ## Authority hierarchy
 
@@ -50,7 +50,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 5. Dirty/save/undo/redo and source durability use IntelliJ semantics, not browser flush/debounce/retry.
 6. Stale parse/projection/render results apply only to the exact current source/config identity.
 7. Unsupported/ambiguous/malformed/renderer-failed content degrades to exact source.
-8. Mermaid `11.17.2` and KaTeX `^0.18.5` remain supported engines during editor migration.
+8. Mermaid `11.17.2` and KaTeX `^0.18.7` remain the landed renderer baselines during this purge; renderer upgrades are separately gated.
 9. Local resources and external navigation are host-owned capabilities.
 10. Optional renderer/JCEF failure never makes source editing unavailable.
 11. Every temporary old-editor mechanism has an explicit owner and deletion criterion.
@@ -58,7 +58,9 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 
 ## Responsibility-level classification
 
-| Current responsibility / mechanism | Classification | Target disposition | Temporary owner / deletion criterion |
+The rows below preserve the audited migration classification. A row describing a superseded mechanism does not imply that mechanism still exists after its deletion criterion has been satisfied; current execution authority is the status above and `docs/architecture/README.md`.
+
+| Audited responsibility / mechanism | Classification | Target disposition | Temporary owner / deletion criterion |
 | --- | --- | --- | --- |
 | #78 product/fidelity contract + hostile/fidelity corpus | `RETAIN` | Product/evidence authority independent of editor implementation | Permanent while capability remains supported |
 | `MarkFlowFileSupport` supported-file recognition | `RETAIN` | Host-level recognition | Revisit only by product-scope decision |
@@ -83,7 +85,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 | Mermaid engine `11.17.2` | `RETAIN` | Single maintained Mermaid engine during migration | Replacement requires separate renderer decision |
 | Mermaid config/theme/palette/size/zoom/error/cache/stale-result semantics | `EXTRACT` | One editor-independent derived-renderer service | #144 extracts/proves before editor adapter deletion |
 | Mermaid `createCodeMirrorFeatureConfig`, `crepeSessionId`, DOM registry/IntersectionObserver/editor visibility coupling | `DELETE` after `EXTRACT` + `TEMPORARY` | Native inlay consumes extracted service | #144 extracts; #148 proves native consumer; #154 deletes old adapters |
-| KaTeX `^0.18.5`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
+| KaTeX `^0.18.7`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |
 | `Crepe.Feature.Latex` | `REPLACE` + `TEMPORARY` | Thin direct KaTeX adapter, no TeX reimplementation | #144 replaces service ownership; #154 deletes old adapter after #148/cutover |
 | runtime Mermaid size/zoom/error, KaTeX density, theme/font/palette settings | `RETAIN` / `EXTRACT` | Native presentation + renderer settings | #148/#155 migrate shape while preserving approved semantics |
 | browser settings payload/revision notifications | `REPLACE` + `TEMPORARY` | Typed host settings + presentation/renderer invalidation | #155 after actual consumers converge |
@@ -112,8 +114,8 @@ No temporary item may be retained merely for rollback comfort.
 - **#144** owns renderer extraction while the old editor remains a migration consumer.
 - **#145 — COMPLETED**: owns the initial immutable snapshot/projection/controller foundation over #143.
 - **#146–#152** own remaining target capability proof needed before cutover; #146 resolves native edit ownership but remains subject to its own exact-final-HEAD/post-main completion gate.
-- **#153** owns the production native-editor cutover and makes the old editor unreachable as a normal authority.
-- **#154** owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
+- **#153 — COMPLETED**: production native-editor cutover made the old editor unreachable as a normal authority.
+- **#154 — ACTIVE**: owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
 - **#155** owns dependency/toolchain/JCEF/settings convergence after actual retained consumers are known.
 - **#156** proves no hidden temporary mechanism remains through final compatibility/lifecycle/performance/release convergence.
 
@@ -150,7 +152,7 @@ Target trust ownership:
 - image-file import: explicit product contract (#150) then host/VFS implementation (#151);
 - renderer JCEF, if retained: renderer-specific containment, no ambient filesystem/network/navigation and no editing authority.
 
-Historical source-native editor request/CSP/loopback/local-image mechanisms remain temporary until #154 and are not copied into the renderer boundary by default.
+Historical source-native editor request/CSP/loopback/local-image mechanisms were migration-only; #154 removes them rather than copying them into the retained renderer boundary.
 
 ## #136 / PR #137 disposition
 
@@ -215,8 +217,8 @@ Historical `plans/*` and CHANGELOG entries are preserved as historical record ra
 
 ### Cutover/convergence slices
 
-- **#153** `task(leap): cut production MarkFlow editing over to the native projection architecture` — requires target evidence from #143–#152, including #150/#151 for approved product completeness.
-- **#154** `task(leap): purge superseded browser editors, sync protocols and editor trust machinery` — hard dependency on #153.
+- **#153 — COMPLETED** `task(leap): cut production MarkFlow editing over to the native projection architecture` — production native ownership and post-main evidence are complete.
+- **#154 — ACTIVE** `task(leap): purge superseded browser editors, sync protocols and editor trust machinery` — deleting the now-unreachable browser editing architecture after completed #153.
 - **#155** `task(build): converge renderer dependencies, toolchain, JCEF packaging and settings after editor purge` — after #154, based on actual renderer consumers.
 - **#156** `task(quality): prove native Leap convergence across compatibility, lifecycle, performance and release gates` — final technical convergence; makes #84 eligible to close.
 

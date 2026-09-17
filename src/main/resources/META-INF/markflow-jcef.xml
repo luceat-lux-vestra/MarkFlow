@@ -1,12 +1,7 @@
 <idea-plugin>
-    <!-- #153 cut production source editing over to the platform native editor. JCEF remains optional
-         only for the isolated #144 derived-renderer runtime and diagnostic probes. The superseded
-         browser editor/provider/startup classes stay on disk until #154 removes dead migration code. -->
+    <!-- #154 convergence: JCEF is retained only as an optional derived-renderer execution backend.
+         Production Markdown source editing is platform-native and has no browser/session transport. -->
     <extensions defaultExtensionNs="com.intellij">
-        <appStarter
-                id="markflow-jcef-transport-probe"
-                implementation="com.algorist.markflow.runtime.JcefTransportEnvelopeProbeStarter"
-                internal="true"/>
         <appStarter
                 id="markflow-derived-renderer-probe"
                 implementation="com.algorist.markflow.renderer.jcef.DerivedRendererProbeStarter"
@@ -18,7 +13,6 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.algorist.markflow">
-        <runtimeSettingsSink implementation="com.algorist.markflow.browser.MarkFlowBrowserRuntimeSettingsSink"/>
         <derivedRendererRuntimeFactory implementation="com.algorist.markflow.renderer.jcef.JcefDerivedRendererRuntimeFactory"/>
     </extensions>
 </idea-plugin>

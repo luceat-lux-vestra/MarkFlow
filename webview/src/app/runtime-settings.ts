@@ -1,6 +1,7 @@
-import {buildIdeThemeVariables} from "./crepe-theme-mapping";
+import {buildIdeThemeVariables} from "./ide-theme-mapping";
 import {parseHex} from "./color";
 import type {IdeColors, MarkFlowRuntimeSettings} from "./types";
+
 export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     mermaidSizeMode: "FIT_TO_VIEWPORT",
     mermaidZoomPercent: 100,
@@ -26,10 +27,7 @@ const IDE_COLOR_KEYS = [
     "border"
 ] as const;
 
-/** Accept only the stable host/webview palette contract; legacy editor.* keys are not palette data. */
-export const normalizeIdeColorScheme = (
-    raw: IdeColors | null | undefined
-): IdeColors => {
+export const normalizeIdeColorScheme = (raw: IdeColors | null | undefined): IdeColors => {
     if (!raw) return {};
     return Object.fromEntries(
         IDE_COLOR_KEYS
@@ -39,8 +37,7 @@ export const normalizeIdeColorScheme = (
 };
 
 export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
-    const overrides: MarkFlowRuntimeSettings = raw ?? {};
-    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...overrides};
+    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...(raw ?? {})};
     return {
         ...merged,
         ideColorScheme: normalizeIdeColorScheme(merged.ideColorScheme),
@@ -48,12 +45,6 @@ export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined)
     };
 };
 
-/**
- * Identity of values that can change the active webview appearance or behavior. The revision is
- * deliberately excluded because the host also bumps it for IDE scheme changes that LIGHT/DARK
- * intentionally ignore. IDE_SYNC keeps its palette and resolved dark flag in the identity so a
- * palette change cannot be mistaken for a duplicate apply.
- */
 export const runtimeSettingsIdentity = (settings: Required<MarkFlowRuntimeSettings>): string => {
     const {settingsRevision: _settingsRevision, ideColorScheme, ideDark, ...stableSettings} = settings;
     return JSON.stringify({
@@ -63,31 +54,22 @@ export const runtimeSettingsIdentity = (settings: Required<MarkFlowRuntimeSettin
     });
 };
 
-export const resolveMermaidTheme = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "default" | "dark" => {
-    if (runtimeSettings.themeSource === "LIGHT") return "default";
-    if (runtimeSettings.themeSource === "DARK") return "dark";
-    // IDE_SYNC: the backend already resolved the IDE theme, so trust ideDark rather than the
-    // OS media query (which is not authoritative inside the JCEF webview).
-    return runtimeSettings.ideDark ? "dark" : "default";
+export const resolveMermaidTheme = (settings: Required<MarkFlowRuntimeSettings>): "default" | "dark" => {
+    if (settings.themeSource === "LIGHT") return "default";
+    if (settings.themeSource === "DARK") return "dark";
+    return settings.ideDark ? "dark" : "default";
 };
 
-export const resolveDiagramSecurityLevel = (runtimeSettings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" => {
-    return runtimeSettings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
-};
+export const resolveDiagramSecurityLevel = (settings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" =>
+    settings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
 
-/**
- * Mermaid flowchart theme variables. For IDE_SYNC with a populated palette, derive them from the
- * live IDE colors so arrows/nodes track the editor; otherwise fall back to the bundled
- * light/dark defaults. Arrowheads take their fill from `lineColor`, so the IDEA-derived palette
- * keeps arrows visible against the IDE background.
- */
 const buildMermaidThemeVariables = (
-    runtimeSettings: Required<MarkFlowRuntimeSettings>,
+    settings: Required<MarkFlowRuntimeSettings>,
     theme: "default" | "dark"
 ): Record<string, string> => {
-    const ideColors = runtimeSettings.ideColorScheme;
-    if (runtimeSettings.themeSource === "IDE_SYNC" && ideColors && Object.keys(ideColors).length > 0) {
-        return buildIdeThemeVariables(ideColors, runtimeSettings.ideDark ?? false);
+    const ideColors = settings.ideColorScheme;
+    if (settings.themeSource === "IDE_SYNC" && Object.keys(ideColors).length > 0) {
+        return buildIdeThemeVariables(ideColors, settings.ideDark);
     }
     return theme === "dark"
         ? {
@@ -105,123 +87,44 @@ const buildMermaidThemeVariables = (
             background: "#ffffff"
         };
 };
-export const createMermaidPreviewConfig = (runtimeSettings: Required<MarkFlowRuntimeSettings>) => {
-    const theme = resolveMermaidTheme(runtimeSettings);
-    const themeVariables = buildMermaidThemeVariables(runtimeSettings, theme);
 
-    const useMaxWidth = runtimeSettings.mermaidSizeMode === "FIT_TO_VIEWPORT";
-
+export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSettings>) => {
+    const theme = resolveMermaidTheme(settings);
+    const themeVariables = buildMermaidThemeVariables(settings, theme);
+    const useMaxWidth = settings.mermaidSizeMode === "FIT_TO_VIEWPORT";
     return {
         startOnLoad: false,
         theme,
         themeVariables,
-        securityLevel: resolveDiagramSecurityLevel(runtimeSettings),
+        securityLevel: resolveDiagramSecurityLevel(settings),
         useMaxWidth,
         htmlLabels: false,
-        flowchart: {
-            htmlLabels: false,
-            useMaxWidth
-        },
-        class: {
-            htmlLabels: false,
-            useMaxWidth
-        },
-        state: {
-            htmlLabels: false,
-            useMaxWidth
-        },
-        stateDiagram: {
-            useMaxWidth
-        },
-        mindmap: {
-            useMaxWidth
-        },
-        sequence: {
-            useMaxWidth
-        },
-        sequenceDiagram: {
-            useMaxWidth
-        },
-        gantt: {
-            useMaxWidth
-        },
-        pie: {
-            useMaxWidth
-        },
-        journey: {
-            useMaxWidth
-        },
-        requirement: {
-            useMaxWidth
-        },
-        requirementDiagram: {
-            useMaxWidth
-        },
-        sankey: {
-            useMaxWidth
-        },
-        block: {
-            useMaxWidth
-        },
-        c4: {
-            useMaxWidth
-        },
-        git: {
-            useMaxWidth
-        },
-        gitGraph: {
-            useMaxWidth
-        },
-        er: {
-            useMaxWidth
-        },
-        erDiagram: {
-            useMaxWidth
-        },
-        quadrantChart: {
-            useMaxWidth
-        },
-        xychart: {
-            useMaxWidth: true
-        },
-        timeline: {
-            useMaxWidth
-        },
-        architecture: {
-            useMaxWidth
-        },
-        kanban: {
-            useMaxWidth
-        },
-        packet: {
-            useMaxWidth
-        },
-        venn: {
-            useMaxWidth
-        },
-        xyChart: {
-            useMaxWidth: true
-        }
+        flowchart: {htmlLabels: false, useMaxWidth},
+        class: {htmlLabels: false, useMaxWidth},
+        state: {htmlLabels: false, useMaxWidth},
+        stateDiagram: {useMaxWidth},
+        mindmap: {useMaxWidth},
+        sequence: {useMaxWidth},
+        sequenceDiagram: {useMaxWidth},
+        gantt: {useMaxWidth},
+        pie: {useMaxWidth},
+        journey: {useMaxWidth},
+        requirement: {useMaxWidth},
+        requirementDiagram: {useMaxWidth},
+        sankey: {useMaxWidth},
+        block: {useMaxWidth},
+        c4: {useMaxWidth},
+        git: {useMaxWidth},
+        gitGraph: {useMaxWidth},
+        er: {useMaxWidth},
+        erDiagram: {useMaxWidth},
+        quadrantChart: {useMaxWidth},
+        xychart: {useMaxWidth: true},
+        timeline: {useMaxWidth},
+        architecture: {useMaxWidth},
+        kanban: {useMaxWidth},
+        packet: {useMaxWidth},
+        venn: {useMaxWidth},
+        xyChart: {useMaxWidth: true}
     };
-};
-
-export const applyRuntimeUiSettings = (runtimeSettings: Required<MarkFlowRuntimeSettings>) => {
-    const app = document.getElementById("app");
-    if (!app) return;
-    app.setAttribute("data-katex-density", runtimeSettings.katexDisplayDensity);
-};
-
-export const logThemeDiagnostics = (
-    raw: MarkFlowRuntimeSettings | undefined,
-    runtimeSettings: Required<MarkFlowRuntimeSettings>,
-    appliedTheme: "default" | "dark",
-    emitToIntelliJLog: (message: string) => void
-) => {
-    const payload = {
-        source: raw?.themeSource ?? "<undefined>",
-        resolvedSource: runtimeSettings.themeSource,
-        appliedTheme,
-        securityLevel: runtimeSettings.diagramSecurityLevel
-    };
-    emitToIntelliJLog(`MARKFLOW_UI theme:settings ${JSON.stringify(payload)}`);
 };
