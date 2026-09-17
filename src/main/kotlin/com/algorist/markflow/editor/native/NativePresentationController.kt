@@ -171,6 +171,9 @@ internal class NativePresentationController(
 
     fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
 
+    fun hostResourceEvidenceSnapshot(): NativeHostResourcePresentationEvidence? =
+        hostResources?.evidenceSnapshot()
+
     fun derivedEvidenceSnapshot(): NativeDerivedPresentationEvidence? =
         derivedPresentation?.evidenceSnapshot()
 
