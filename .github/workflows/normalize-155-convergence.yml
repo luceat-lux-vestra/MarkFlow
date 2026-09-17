@@ -16,329 +16,43 @@ jobs:
   normalize:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Converge settings, renderer wire shape, workflows and docs
+      - name: Normalize #155 source and settings convergence
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
+          python3 .github/scripts/normalize-155.py
 
-          def load(path):
-              return Path(path).read_text(encoding='utf-8')
-
-          def save(path, text):
-              Path(path).write_text(text, encoding='utf-8')
-
-          def one(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected exactly one old form, found {count}')
-              return text.replace(old, new, 1)
-
-          def all_exact(text, old, new, expected, label):
-              count = text.count(old)
-              if count != expected:
-                  raise SystemExit(f'{label}: expected {expected} occurrences, found {count}')
-              return text.replace(old, new)
-
-          # Host settings service: delete browser-era knobs and keep only typed presentation inputs.
-          p = 'src/main/kotlin/com/algorist/markflow/settings/MarkFlowSettingsService.kt'
-          t = load(p)
-          t = one(t, 'import com.algorist.markflow.settings.state.DiagramSecurityLevel\n', '', 'settings service security import')
-          t = one(t,
-              '            LOG.warn(\n                "MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}, " +\n                    "diagramSecurityLevel=${this.state.diagramSecurityLevel}"\n            )',
-              '            LOG.warn("MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}")',
-              'settings service load diagnostic')
-          t = one(t,
-              '                "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +\n                    "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +\n                    "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +\n                    "revision=$nextRevision"',
-              '                "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +\n                    "themeSource=${previousState.themeSource} -> ${state.themeSource}, revision=$nextRevision"',
-              'settings service update diagnostic')
-          t = one(t,
-              '                "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +\n                    "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"',
-              '                "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +\n                    "resolvedThemeSource=$resolvedThemeSource, revision=$revision"',
-              'settings service runtime diagnostic')
-          t = one(t, '            diagramSecurityLevel = state.diagramSecurityLevel,\n            previewOnlyByDefault = state.previewOnlyByDefault,\n', '', 'settings service legacy payload fields')
-          t = one(t, '        target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)\n', '', 'settings service security normalize')
-          t = one(t, '        target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)\n', '', 'settings service idle normalize')
-          t = one(t,
-              '        const val DEFAULT_IDLE_EVICT_AFTER_MS = 120_000\n\n        private const val MIN_IDLE_EVICT_AFTER_MS = 10_000\n        private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000\n\n',
-              '',
-              'settings service idle constants')
-          t = one(t,
-              '         * Bumps the runtime-settings revision counter so open webviews re-fetch runtime settings.\n         * Used by the IDE theme service when the live IDE palette changes (IDE_SYNC).',
-              '         * Bumps the presentation-settings revision so stale derived work is rejected.\n         * Used by the IDE theme service when the live IDE palette changes (IDE_SYNC).',
-              'settings service revision comment')
-          save(p, t)
-
-          # Settings UI: remove no-op/browser-era controls and unsafe security flexibility.
-          p = 'src/main/kotlin/com/algorist/markflow/settings/MarkFlowSettingsConfigurable.kt'
-          t = load(p)
-          t = one(t, 'import javax.swing.JCheckBox\n', '', 'configurable checkbox import')
-          t = one(t, 'import com.algorist.markflow.settings.state.DiagramSecurityLevel\n', '', 'configurable security import')
-          t = one(t, '    private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>\n    private lateinit var previewOnlyByDefaultCheckBox: JCheckBox\n    private lateinit var idleEvictAfterMsSpinner: JSpinner\n', '', 'configurable legacy fields')
-          t = one(t, '        diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())\n        previewOnlyByDefaultCheckBox = JCheckBox()\n        idleEvictAfterMsSpinner = JSpinner(\n            SpinnerNumberModel(DEFAULT_IDLE_EVICT_AFTER_MS, IDLE_EVICT_MIN, IDLE_EVICT_MAX, IDLE_EVICT_STEP)\n        )\n', '', 'configurable legacy init')
-          t = one(t,
-              '        row = addSection(root, row, MyBundle.message("settings.markflow.section.general"))\n        row = addRow(\n            root,\n            row,\n            MyBundle.message("settings.markflow.previewOnlyByDefault"),\n            previewOnlyByDefaultCheckBox\n        )\n\n',
-              '',
-              'configurable general preview row')
-          t = one(t,
-              '        row = addSection(root, row, MyBundle.message("settings.markflow.section.advanced"))\n        row = addRow(root, row, MyBundle.message("settings.markflow.diagram.securityLevel"), diagramSecurityCombo)\n        row = addRow(\n            root,\n            row,\n            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs"),\n            idleEvictAfterMsSpinner,\n            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs.tooltip")\n        )\n\n',
-              '',
-              'configurable advanced legacy rows')
-          t = one(t,
-              '            || state.katexDisplayDensity != selectedName(katexDensityCombo)\n            || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)\n            || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected\n            || state.idleEvictAfterMs != spinnerInt(idleEvictAfterMsSpinner)',
-              '            || state.katexDisplayDensity != selectedName(katexDensityCombo)',
-              'configurable isModified legacy fields')
-          t = one(t,
-              '            mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),\n            katexDisplayDensity = selectedName(katexDensityCombo),\n            diagramSecurityLevel = selectedName(diagramSecurityCombo),\n            previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,\n            idleEvictAfterMs = spinnerInt(idleEvictAfterMsSpinner)\n',
-              '            mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),\n            katexDisplayDensity = selectedName(katexDensityCombo)\n',
-              'configurable apply legacy fields')
-          t = one(t,
-              '                "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +\n                    "security=${updated.diagramSecurityLevel}, " +\n                    "fontFamily=${updated.fontFamily}, baseFontSizePx=${updated.baseFontSizePx}, " +\n                    "idleEvictAfterMs=${updated.idleEvictAfterMs}"',
-              '                "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +\n                    "fontFamily=${updated.fontFamily}, baseFontSizePx=${updated.baseFontSizePx}"',
-              'configurable apply diagnostic')
-          t = one(t,
-              '        setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)\n        setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)\n        previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault\n        idleEvictAfterMsSpinner.value = state.idleEvictAfterMs.coerceIn(IDLE_EVICT_MIN, IDLE_EVICT_MAX)\n',
-              '        setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)\n',
-              'configurable reset legacy fields')
-          t = one(t,
-              '        private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS\n        private const val IDLE_EVICT_MIN = 10_000\n        private const val IDLE_EVICT_MAX = 3_600_000\n        private const val IDLE_EVICT_STEP = 10_000\n',
-              '',
-              'configurable idle constants')
-          save(p, t)
-
-          p = 'src/main/resources/messages/MyBundle.properties'
-          t = load(p)
-          for old, label in [
-              ('settings.markflow.section.general=General\n', 'bundle general section'),
-              ('settings.markflow.section.advanced=Advanced\n', 'bundle advanced section'),
-              ('settings.markflow.previewOnlyByDefault=Preview only by default (Mermaid/LaTeX)\n', 'bundle preview setting'),
-              ('settings.markflow.diagram.securityLevel=Diagram security level\n', 'bundle security setting'),
-              ('settings.markflow.idleBrowserEvictAfterMs=Idle browser eviction delay (ms)\n', 'bundle idle setting'),
-              ('settings.markflow.idleBrowserEvictAfterMs.tooltip=How long an unused pooled browser stays warm before MarkFlow disposes it.\n', 'bundle idle tooltip'),
-          ]:
-              t = one(t, old, '', label)
-          save(p, t)
-
-          # Runtime wire shape: strip legacy keys and fix Mermaid to fail-closed strict security.
-          p = 'webview/src/app/types.ts'
-          t = load(p)
-          t = one(t, '    diagramSecurityLevel?: "STRICT" | "LOOSE";\n    previewOnlyByDefault?: boolean;\n', '', 'web types legacy settings')
-          save(p, t)
-
-          p = 'webview/src/vite-env.d.ts'
-          t = load(p)
-          t = one(t, '    diagramSecurityLevel?: "STRICT" | "LOOSE";\n    previewOnlyByDefault?: boolean;\n', '', 'vite env legacy settings')
-          save(p, t)
-
-          p = 'webview/src/app/runtime-settings.ts'
-          t = load(p)
-          t = one(t, '    diagramSecurityLevel: "STRICT",\n    previewOnlyByDefault: true,\n', '', 'runtime defaults legacy settings')
-          t = one(t,
-              'export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {\n    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...(raw ?? {})};\n    return {',
-              'export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {\n    const legacyAware = (raw ?? {}) as MarkFlowRuntimeSettings & {\n        diagramSecurityLevel?: unknown;\n        previewOnlyByDefault?: unknown;\n    };\n    const {diagramSecurityLevel: _legacySecurity, previewOnlyByDefault: _legacyPreview, ...current} = legacyAware;\n    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...current};\n    return {',
-              'runtime settings legacy strip')
-          t = one(t,
-              'export const resolveDiagramSecurityLevel = (settings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" =>\n    settings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";\n\n',
-              '',
-              'runtime security resolver')
-          t = one(t, '        securityLevel: resolveDiagramSecurityLevel(settings),', '        securityLevel: "strict" as const,', 'runtime strict security')
-          save(p, t)
-
-          p = 'webview/tests/runtime-settings.test.mjs'
-          t = load(p)
-          t = one(t,
-              '    assert.equal(resolved.diagramSecurityLevel, "STRICT");\n    assert.equal(resolved.themeSource, "LIGHT");',
-              '    assert.equal("diagramSecurityLevel" in resolved, false);\n    assert.equal("previewOnlyByDefault" in resolved, false);\n    assert.equal(resolved.themeSource, "LIGHT");',
-              'runtime test defaults')
-          insert_after = '''test("renderer defaults are fail-closed and deterministic", () => {\n    const resolved = settings.resolveRuntimeSettings(undefined);\n    assert.equal("diagramSecurityLevel" in resolved, false);\n    assert.equal("previewOnlyByDefault" in resolved, false);\n    assert.equal(resolved.themeSource, "LIGHT");\n    assert.equal(resolved.mermaidZoomPercent, 100);\n    const config = settings.createMermaidPreviewConfig(resolved);\n    assert.equal(config.securityLevel, "strict");\n    assert.equal(config.theme, "default");\n    assert.equal(config.htmlLabels, false);\n    assert.equal(config.flowchart.htmlLabels, false);\n});\n'''
-          addition = '''\ntest("legacy preview and Mermaid security keys are ignored and cannot weaken renderer policy", () => {\n    const resolved = settings.resolveRuntimeSettings({\n        themeSource: "LIGHT",\n        diagramSecurityLevel: "LOOSE",\n        previewOnlyByDefault: false\n    });\n    assert.equal("diagramSecurityLevel" in resolved, false);\n    assert.equal("previewOnlyByDefault" in resolved, false);\n    assert.equal(settings.createMermaidPreviewConfig(resolved).securityLevel, "strict");\n});\n'''
-          if insert_after not in t:
-              raise SystemExit('runtime test insertion anchor missing')
-          t = t.replace(insert_after, insert_after + addition, 1)
-          save(p, t)
-
-          # Host tests: remove dead setting tests and prove legacy XML keys deserialize inertly and stop serializing.
-          p = 'src/test/kotlin/com/algorist/markflow/settings/MarkFlowSettingsTest.kt'
-          t = load(p)
-          t = one(t, 'import com.intellij.testFramework.fixtures.BasePlatformTestCase\n', 'import com.intellij.testFramework.fixtures.BasePlatformTestCase\nimport com.intellij.util.xmlb.XmlSerializer\nimport org.jdom.Element\n', 'settings test serializer imports')
-          t = one(t,
-              '            mermaidErrorDisplay = "GARBAGE",\n            katexDisplayDensity = "TOO_DENSE",\n            diagramSecurityLevel = "CLASSIFIED"\n',
-              '            mermaidErrorDisplay = "GARBAGE",\n            katexDisplayDensity = "TOO_DENSE"\n',
-              'settings test invalid security input')
-          t = one(t, '        assertEquals("COMFORTABLE", state.katexDisplayDensity)\n        assertEquals("STRICT", state.diagramSecurityLevel)\n', '        assertEquals("COMFORTABLE", state.katexDisplayDensity)\n', 'settings test security assertion')
-          idle_test = '''\n    fun testNormalizeCoercesIdleEvictRange() {\n        val service = newService()\n        val below = MarkFlowSettingsState(idleEvictAfterMs = 1)\n        service.normalizeState(below)\n        assertEquals(10_000, below.idleEvictAfterMs)\n\n        val above = MarkFlowSettingsState(idleEvictAfterMs = 100_000_000)\n        service.normalizeState(above)\n        assertEquals(3_600_000, above.idleEvictAfterMs)\n    }\n'''
-          t = one(t, idle_test, '', 'settings idle test')
-          anchor = '''    fun testTypographyPreservedWhenApplyingAnotherSetting() {\n'''
-          migration_test = '''    fun testLegacyBrowserSettingsAreIgnoredAndNoLongerSerialized() {\n        val legacy = Element("state").apply {\n            addContent(Element("option").setAttribute("name", "themeSource").setAttribute("value", "DARK"))\n            addContent(Element("option").setAttribute("name", "diagramSecurityLevel").setAttribute("value", "LOOSE"))\n            addContent(Element("option").setAttribute("name", "previewOnlyByDefault").setAttribute("value", "false"))\n            addContent(Element("option").setAttribute("name", "idleEvictAfterMs").setAttribute("value", "10000"))\n        }\n        val restored = XmlSerializer.deserialize(legacy, MarkFlowSettingsState::class.java)\n        assertEquals("DARK", restored.themeSource)\n\n        val serialized = XmlSerializer.serialize(restored).toString()\n        assertFalse(serialized.contains("diagramSecurityLevel"))\n        assertFalse(serialized.contains("previewOnlyByDefault"))\n        assertFalse(serialized.contains("idleEvictAfterMs"))\n    }\n\n'''
-          if t.count(anchor) != 1:
-              raise SystemExit('settings migration test anchor mismatch')
-          t = t.replace(anchor, migration_test + anchor, 1)
-          save(p, t)
-
-          p = 'src/test/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationControllerTest.kt'
-          t = load(p)
-          t = one(t, '        diagramSecurityLevel = "STRICT",\n        previewOnlyByDefault = true,\n', '', 'native derived test legacy args')
-          save(p, t)
-
-          p = 'src/main/kotlin/com/algorist/markflow/renderer/jcef/DerivedRendererProbe.kt'
-          t = load(p)
-          t = one(t, '\\"diagramSecurityLevel\\":\\"STRICT\\",', '', 'renderer probe security payload')
-          save(p, t)
-
-          # Native settings invalidation naming: no browser/runtime reload semantics remain.
-          oldp = Path('src/main/kotlin/com/algorist/markflow/settings/MarkFlowRuntimeSettingsSink.kt')
-          newp = Path('src/main/kotlin/com/algorist/markflow/settings/MarkFlowPresentationSettingsSink.kt')
-          if not oldp.exists() or newp.exists():
-              raise SystemExit('settings sink rename precondition failed')
-          t = oldp.read_text(encoding='utf-8')
-          t = all_exact(t, 'MarkFlowRuntimeSettingsSink', 'MarkFlowPresentationSettingsSink', 3, 'settings sink type rename')
-          t = all_exact(t, 'MarkFlowRuntimeSettingsNotifier', 'MarkFlowPresentationSettingsNotifier', 2, 'settings notifier rename')
-          t = one(t, '    fun runtimeSettingsChanged(forceReload: Boolean)\n', '    fun presentationSettingsChanged()\n', 'settings sink callback')
-          t = one(t, '            ExtensionPointName.create("com.algorist.markflow.runtimeSettingsSink")', '            ExtensionPointName.create("com.algorist.markflow.presentationSettingsSink")', 'settings sink ep id')
-          t = one(t, '    fun notifyChanged(forceReload: Boolean = false) {', '    fun notifyChanged() {', 'settings notifier signature')
-          t = one(t, '            runCatching { sink.runtimeSettingsChanged(forceReload) }', '            runCatching { sink.presentationSettingsChanged() }', 'settings notifier call')
-          t = one(t, '                    log.warn("MARKFLOW_SETTINGS optional renderer sink failed", failure)', '                    log.warn("MARKFLOW_SETTINGS presentation sink failed", failure)', 'settings notifier log')
-          newp.write_text(t, encoding='utf-8')
-          oldp.unlink()
-
-          replacement_files = [
-              'src/main/kotlin/com/algorist/markflow/settings/MarkFlowSettingsService.kt',
-              'src/main/kotlin/com/algorist/markflow/settings/MarkFlowIdeThemeService.kt',
-              'src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt',
-              'src/main/kotlin/com/algorist/markflow/editor/native/NoJcefNativeEditingProbe.kt',
-              'src/test/kotlin/com/algorist/markflow/editor/native/NativeProductionCutoverTest.kt',
-              'src/main/resources/META-INF/plugin.xml',
-          ]
-          for p in replacement_files:
-              t = load(p)
-              t = t.replace('MarkFlowRuntimeSettingsNotifier', 'MarkFlowPresentationSettingsNotifier')
-              t = t.replace('MarkFlowRuntimeSettingsSink', 'MarkFlowPresentationSettingsSink')
-              t = t.replace('NativeMarkFlowRuntimeSettingsSink', 'NativeMarkFlowPresentationSettingsSink')
-              t = t.replace('notifyChanged(forceReload = false)', 'notifyChanged()')
-              t = t.replace('runtimeSettingsChanged(forceReload: Boolean)', 'presentationSettingsChanged()')
-              t = t.replace('runtimeSettingsSink', 'presentationSettingsSink')
-              save(p, t)
-
-          # Preserve the historical negative class assertion in NoJcefNativeEditingProbe.
-          p = 'src/main/kotlin/com/algorist/markflow/editor/native/NoJcefNativeEditingProbe.kt'
-          t = load(p)
-          t = t.replace(
-              'private const val JCEF_PRESENTATION_SETTINGS_SINK_CLASS = "com.algorist.markflow.browser.MarkFlowBrowserPresentationSettingsSink"',
-              'private const val JCEF_RUNTIME_SETTINGS_SINK_CLASS = "com.algorist.markflow.browser.MarkFlowBrowserRuntimeSettingsSink"'
-          )
-          t = t.replace('JCEF_PRESENTATION_SETTINGS_SINK_CLASS', 'JCEF_RUNTIME_SETTINGS_SINK_CLASS')
-          save(p, t)
-
-          p = '.github/workflows/no-jcef-native-editing-evidence.yml'
-          t = load(p)
-          t = all_exact(t, "      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowBrowserRuntimeSettingsSink.kt'\n", '', 2, 'no-jcef stale sink path')
-          save(p, t)
-
-          # Current-facing docs: describe the landed native editor + optional renderer target.
-          p = 'README.md'
-          t = load(p)
-          t = one(t,
-              'When JCEF is unavailable before current editor selection, MarkFlow does not take over the file and IntelliJ\'s native editor remains available.',
-              'MarkFlow source editing is platform-native. If optional JCEF renderer execution is unavailable, rich Mermaid/KaTeX previews degrade while exact Markdown editing remains available.',
-              'README current editor statement')
-          t = all_exact(t, 'KaTeX `^0.18.5`', 'KaTeX `^0.18.7`', 1, 'README KaTeX baseline')
-          t = one(t,
-              '- **General:** Theme source (`IDE_SYNC` follows the active IDE palette; `LIGHT`/`DARK` force a theme), body font family (`IDE Default (<actual IDE font>)` or an installed family), base font size, Preview only by default\n- **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior\n- **KaTeX:** Display density\n- **Advanced:** Diagram security level (STRICT/LOOSE)\n\nSome browser-runtime settings/meanings are migration inputs rather than target product contracts. #83/#155 own their final native/renderer interpretation and persistence migration.\n\nMarkFlow targets IntelliJ IDEA 2026.2+ (build 262+). The current production editor uses the bundled **Web Browser (JCEF)** plugin (`com.intellij.modules.jcef`); the accepted target does not permit JCEF availability to gate Markdown source editing.',
-              '- **Appearance:** Theme source (`IDE_SYNC` follows the active IDE palette; `LIGHT`/`DARK` force a theme), body font family (`IDE Default (<actual IDE font>)` or an installed family), base font size\n- **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior\n- **KaTeX:** Display density\n\nNative presentation reveals exact source in active edit context; there is no browser-era preview-only mode toggle. Mermaid rendering is fixed to fail-closed `strict` security rather than exposing an unproven weaker user setting.\n\nMarkFlow targets IntelliJ IDEA 2026.2+ (build 262+). `com.intellij.modules.jcef` is an optional derived-renderer backend only; it does not gate plugin load or Markdown source editing.',
-              'README options/current JCEF block')
-          save(p, t)
-
-          p = 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
-          t = load(p)
-          t = t.replace('katex` `^0.18.5`', 'katex` `^0.18.7`')
-          t = t.replace('KaTeX remains `^0.18.5`', 'KaTeX remains `^0.18.7`')
-          save(p, t)
-
-          p = 'docs/architecture/leap-migration-inventory.md'
-          t = load(p)
-          t = one(t,
-              'Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through completed #153 production cutover and active #154 purge',
-              'Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through completed #154 purge and active #155 renderer/toolchain/settings convergence',
-              'inventory status')
-          t = one(t,
-              '- #153 is completed and production editing is platform-native; #154 is actively deleting the superseded browser editor/provider/protocol machinery while retained JCEF is renderer-only.',
-              '- #153/#154 are completed: production editing is platform-native and superseded browser editor/provider/protocol machinery is deleted; #155 converges the remaining optional renderer packaging and settings surface.',
-              'inventory current execution')
-          t = one(t, '8. Mermaid `11.17.2` and KaTeX `^0.18.7` remain the landed renderer baselines during this purge; renderer upgrades are separately gated.', '8. Mermaid `11.17.2` and KaTeX `^0.18.7` remain the landed renderer baselines; renderer upgrades are separately gated.', 'inventory renderer invariant')
-          t = one(t, '| `previewOnlyByDefault` browser meaning | `REPLACE` / `UNRESOLVED` | Explicit native projection/source-reveal UX meaning | #83/#155 must decide before old meaning removed |', '| `previewOnlyByDefault` browser meaning | `DELETE` after target resolution | Native contextual source reveal is the product model; no persisted toggle remains | #155 resolved/removes the obsolete key |', 'inventory preview resolution')
-          t = one(t, '| `idleEvictAfterMs`, editor pool/prewarm/retry/debounce knobs | `DELETE` + `TEMPORARY` | No target browser-editor pool | #155 after #154 |', '| `idleEvictAfterMs`, editor pool/prewarm/retry/debounce knobs | `DELETE` | No target browser-editor pool | #155 removes the obsolete persisted key |', 'inventory idle resolution')
-          t = one(t, '| `DiagramSecurityLevel` | `EXTRACT` / security review | Retain only if #82 proves a safe meaningful renderer policy | #82/#149/#155; otherwise remove safely |', '| `DiagramSecurityLevel` | `DELETE` after security review | Renderer remains fail-closed at Mermaid `strict`; weaker user flexibility lacked #82 proof | #155 removes the persisted selector |', 'inventory security resolution')
-          t = one(t, '| Node/TypeScript/Vite | `TEMPORARY` / conditional `RETAIN` | Keep only for actual Mermaid/KaTeX/raw-HTML renderer execution | #155 after #154 decides final consumers; #68/#72 reconcile here |', '| Node/TypeScript/Vite | `RETAIN` for renderer build | #144-selected Mermaid/KaTeX JCEF renderer remains the actual consumer | #155 records the proven retained toolchain |', 'inventory node resolution')
-          t = one(t, '| mandatory `com.intellij.modules.jcef` plugin dependency | `REPLACE` / `TEMPORARY` | Editing cannot require JCEF; final packaging follows renderer consumer | #155 after renderer adapter/cutover/purge evidence |', '| mandatory `com.intellij.modules.jcef` plugin dependency | `REPLACE` completed | JCEF is optional through `markflow-jcef.xml`; base plugin/native editing load without it | #144 proof retained and #155 records the final packaging |', 'inventory jcef resolution')
-          t = one(t, '- **#154 — ACTIVE**: owns mandatory deletion of superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.\n- **#155** owns dependency/toolchain/JCEF/settings convergence after actual retained consumers are known.', '- **#154 — COMPLETED**: deleted superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.\n- **#155 — ACTIVE**: converges dependency/toolchain/JCEF/settings around the proven retained renderer consumers.', 'inventory ownership status')
-          save(p, t)
-
-          p = 'docs/architecture/README.md'
-          t = load(p)
-          t = one(t, '11. **Replacement includes already-merged Leap code.** Superseded CodeMirror/JCEF source-editing/bridge/loopback/CSP mechanisms are not compatibility APIs; #154 removes them once their retained responsibilities have been extracted.', '11. **Replacement includes already-merged Leap code.** #154 removed superseded CodeMirror/JCEF source-editing/bridge/loopback/CSP mechanisms after their retained responsibilities were extracted; #155 keeps only actual renderer/toolchain consumers.', 'architecture index #154 status')
-          save(p, t)
-
-          p = 'SECURITY.md'
-          t = load(p)
-          t = one(t,
-              'Those remain live attack surfaces **only while a current production consumer exists**. Changes touching them must preserve current-main fail-closed safety and real-runtime evidence as applicable, but they are not target trust authority and must not be generalized or revived. #154 owns their mandatory deletion after native cutover. If JCEF remains for rendering, renderer-specific containment is designed/proven separately rather than reusing the editor realm by default.',
-              '#154 removed the superseded editor-browser trust surfaces after native cutover. Retained JCEF is renderer-only: its containment is proven against the narrower derived-renderer boundary and must not regain document mutation, ambient navigation/network, or filesystem authority.',
-              'security current browser status')
-          save(p, t)
-
-          p = 'docs/engineering/testing-strategy.md'
-          t = load(p)
-          t = one(t,
-              'Before #153/#154 remove it, a PR that changes the current browser editor or its host↔web/session/recovery/trust code must still test the current production contract: duplication/reordering/delay/stale sessions, flush/dispose/reload/recovery, request/navigation containment, and failure paths as applicable.',
-              'The pre-#154 browser editor synchronization/recovery suites are historical evidence only. Current changes must test native source authority, source-neutral presentation, host-owned trust boundaries, and the retained renderer lifecycle actually touched by the diff.',
-              'testing strategy old browser rule')
-          save(p, t)
-
-          # Fail the helper if target code still writes/exports removed settings or old sink names.
-          forbidden = {
-              'src/main/kotlin': ['idleEvictAfterMs', 'previewOnlyByDefault', 'DiagramSecurityLevel'],
-              'webview/src': ['previewOnlyByDefault', 'diagramSecurityLevel', '"LOOSE"'],
-              'src/main/resources/messages/MyBundle.properties': ['idleBrowserEvictAfterMs', 'previewOnlyByDefault', 'diagram.securityLevel'],
-          }
-          for root, needles in forbidden.items():
-              path = Path(root)
-              files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
-              corpus = '\n'.join(p.read_text(encoding='utf-8', errors='ignore') for p in files)
-              for needle in needles:
-                  if needle in corpus:
-                      raise SystemExit(f'forbidden target residue remains under {root}: {needle}')
-
-          current = '\n'.join(
-              p.read_text(encoding='utf-8', errors='ignore')
-              for root in [Path('src/main/kotlin'), Path('src/main/resources/META-INF')]
-              for p in root.rglob('*') if p.is_file()
-          )
-          for needle in ['MarkFlowRuntimeSettingsSink', 'MarkFlowRuntimeSettingsNotifier', 'NativeMarkFlowRuntimeSettingsSink', 'runtimeSettingsSink']:
-              if needle in current:
-                  raise SystemExit(f'old settings invalidation name remains: {needle}')
-          PY
-
+      - name: Verify renderer and focused JVM regressions
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix webview test
-          ./gradlew test --tests com.algorist.markflow.settings.MarkFlowSettingsTest --tests com.algorist.markflow.editor.native.NativeDerivedPresentationControllerTest --stacktrace
+          ./gradlew test \
+            --tests com.algorist.markflow.settings.MarkFlowSettingsTest \
+            --tests com.algorist.markflow.editor.native.NativeDerivedPresentationControllerTest \
+            --stacktrace
 
-      - name: Commit normalized convergence cut
+      - name: Commit normalized implementation
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet; then
-            echo 'No convergence changes produced.' >&2
-            exit 1
-          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
+          if git diff --cached --quiet; then
+            echo 'Normalizer produced no implementation changes.' >&2
+            exit 1
+          fi
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo 'Normalizer attempted to modify a workflow file.' >&2
+            exit 1
+          fi
           git commit -m 'refactor(leap): converge presentation settings and renderer policy'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
