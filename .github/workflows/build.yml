@@ -115,10 +115,20 @@ jobs:
           if not jars:
               raise SystemExit("packaged plugin contains no JARs to inspect")
 
-          web_entries = []
+          plugin_jars = []
           for jar in jars:
               with ZipFile(jar) as archive:
-                  web_entries.extend(name for name in archive.namelist() if name.startswith("webview/"))
+                  if "META-INF/plugin.xml" not in archive.namelist():
+                      continue
+                  descriptor = archive.read("META-INF/plugin.xml").decode("utf-8", errors="replace")
+                  if "<id>com.algorist.markflow</id>" in descriptor:
+                      plugin_jars.append(jar)
+
+          if len(plugin_jars) != 1:
+              raise SystemExit(f"expected one MarkFlow plugin JAR, found {plugin_jars}")
+
+          with ZipFile(plugin_jars[0]) as archive:
+              web_entries = [name for name in archive.namelist() if name.startswith("webview/")]
 
           if "webview/derived-renderer.html" not in web_entries:
               raise SystemExit("packaged plugin is missing webview/derived-renderer.html")
