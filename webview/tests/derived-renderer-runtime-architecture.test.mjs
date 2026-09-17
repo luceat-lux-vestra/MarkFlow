@@ -5,6 +5,8 @@ import test from "node:test";
 const bootstrap = await readFile(new URL("../src/renderer/derived-renderer-bootstrap.ts", import.meta.url), "utf8");
 const html = await readFile(new URL("../derived-renderer.html", import.meta.url), "utf8");
 const vite = await readFile(new URL("../vite.derived-renderer.config.ts", import.meta.url), "utf8");
+const tsconfig = await readFile(new URL("../tsconfig.json", import.meta.url), "utf8");
+const tsconfigNode = await readFile(new URL("../tsconfig.node.json", import.meta.url), "utf8");
 
 test("isolated renderer realm has no editor/source-sync authority", () => {
     for (const forbidden of [
@@ -36,4 +38,13 @@ test("isolated renderer bundle stays in a dedicated asset namespace", () => {
     assert.match(vite, /derived-renderer-assets\//);
     assert.match(vite, /derived-renderer\.html/);
     assert.doesNotMatch(vite, /source-native\.html|index\.html/);
+});
+
+test("renderer build cleans stale output and typechecks only retained Vite config", () => {
+    assert.match(vite, /emptyOutDir:\s*true/);
+    for (const config of [tsconfig, tsconfigNode]) {
+        assert.match(config, /vite\.derived-renderer\.config\.ts/);
+        assert.doesNotMatch(config, /["']vite\.config\.ts["']/);
+        assert.doesNotMatch(config, /source-native|CodeMirror|Crepe/);
+    }
 });
