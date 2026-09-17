@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/normalize-155.py
+          python3 .github/scripts/run-normalize-155.py
 
       - name: Verify renderer and focused JVM regressions
         shell: bash
