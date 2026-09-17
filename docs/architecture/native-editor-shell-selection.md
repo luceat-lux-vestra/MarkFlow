@@ -15,7 +15,7 @@ Select **augmentation of the normal IntelliJ platform text editor** as MarkFlow'
 
 The target does not register a replacement MarkFlow `FileEditorProvider`. MarkFlow attaches one source-neutral presentation controller to each relevant native `Editor` through the maintained `EditorFactoryListener` lifecycle. The platform text editor remains responsible for the `FileEditor`, native `Editor`, authoritative `Document`, focus/data context, input, caret/selection/multicaret, keymaps, clipboard, state, dirty/save and undo/redo semantics.
 
-This decision does **not** cut production over. The current JCEF-backed `MarkFlowEditorProvider` and `MarkFlowEditor` remain temporary migration code until #153 performs the production cutover and #154 deletes the superseded editor/protocol/trust surface.
+At the #143 decision point this proof did **not** cut production over: the JCEF-backed `MarkFlowEditorProvider` and `MarkFlowEditor` were still temporary migration code. #153 later completed production cutover, and #154 owns deletion of that superseded editor/protocol/trust surface.
 
 ## Candidate comparison
 
@@ -61,7 +61,7 @@ Importing or reflecting into the reviewed `impl` classes is not authorized by th
 
 IntelliJ Platform 2026.2 moved JCEF out of the core platform into the separately bundled `com.intellij.modules.jcef` plugin. JCEF remains a supported JetBrains platform dependency; required and optional plugin dependencies are both normal mechanisms.
 
-Current MarkFlow migration code still declares `com.intellij.modules.jcef` as a required plugin dependency and directly references `com.intellij.ui.jcef.*`/`org.cef.*` classes. Therefore the #143 runtime proof has a deliberately narrower meaning:
+At the #143 proof point MarkFlow migration code still declared `com.intellij.modules.jcef` as a required plugin dependency and directly referenced `com.intellij.ui.jcef.*`/`org.cef.*` classes. Therefore that #143 runtime proof had a deliberately narrower meaning:
 
 - it proves the **native shell/runtime path** works while `JBCefApp.isSupported()` is false after MarkFlow and the JCEF plugin have already loaded;
 - it does **not** prove the current MarkFlow package loads when the `com.intellij.modules.jcef` plugin itself is absent or disabled;
@@ -79,7 +79,7 @@ Required cases:
 
 1. `jcef-disabled-runtime` — `JBCefApp.isSupported()` is actually false in the proof process; this is runtime-disabled evidence, not plugin-absence evidence.
 2. `authoritative-document-fixture` — an actual VFS file maps to one clean IntelliJ `Document`.
-3. `provider-and-bundled-markdown-coexistence` — the public provider EP contains at least one bundled Markdown integration that accepts the fixture, the platform text provider accepts the file with `NONE` policy, and the temporary JCEF-gated MarkFlow provider does not take over while JCEF runtime support is disabled.
+3. `provider-and-bundled-markdown-coexistence` — the public provider EP contains at least one bundled Markdown integration that accepts the fixture, the platform text provider accepts the file with `NONE` policy, and post-cutover evidence rejects any remaining legacy MarkFlow browser provider registration.
 4. `editor-factory-presentation-lifecycle` — two source editors create exactly two per-editor presentation owners without source/input mutation.
 5. `shared-document-splits` — two native editor surfaces share the exact `Document` while caret/selection/multicaret state remains per editor.
 6. `platform-keyboard-and-keymap` — real platform typing reaches the authoritative `Document` and active keymap bindings remain present.
@@ -114,4 +114,4 @@ The runtime proof directly checks native caret/selection/multicaret isolation. F
 - change local resource/navigation behavior (#147);
 - perform the production cutover (#153) or purge (#154).
 
-After #143, the shell choice is no longer `UNRESOLVED`: downstream native work targets platform text-editor augmentation. Production still remains on the temporary browser editor until the later cutover gate is satisfied.
+After #143, the shell choice was no longer `UNRESOLVED`: downstream native work targeted platform text-editor augmentation. #153 later satisfied the cutover gate and moved production editing to that platform-native ownership; #154 now removes the obsolete browser implementation.
