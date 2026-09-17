@@ -30,7 +30,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Production-independent real-IDE evidence for #146. */
+/** Real-IDE native editing regression proof retained across the #153 production cutover. */
 internal object NativeEditingProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeEditingProbe.output"
     const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
@@ -64,13 +64,13 @@ internal object NativeEditingProbe {
         fun run() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             try {
-                check(!project.isDefault) { "#146 runtime proof requires a real opened project" }
-                check(!project.isDisposed) { "#146 runtime proof project was already disposed" }
+                check(!project.isDefault) { "native editing runtime proof requires a real opened project" }
+                check(!project.isDisposed) { "native editing runtime proof project was already disposed" }
 
                 case("jcef-disabled-native-editing") {
                     val supported = JBCefApp.isSupported()
                     jcefSupported = supported
-                    check(!supported) { "JCEF must be runtime-disabled for the #146 native editing proof" }
+                    check(!supported) { "JCEF must be runtime-disabled for the native editing proof" }
                     "JBCefApp.isSupported=false projectDefault=false"
                 }
 
@@ -187,7 +187,7 @@ internal object NativeEditingProbe {
                         "platform multicaret paste did not insert the literal/default payload at both native carets"
                     }
                     check("must-not-win-multicaret" !in fixture.document.text) {
-                        "#146 unexpectedly took Markdown MIME ownership on the platform multicaret paste path"
+                        "native editing unexpectedly took Markdown MIME ownership on the platform multicaret paste path"
                     }
                     check(editor.caretModel.caretCount == 2)
                     proveUndoRedo(first.fileEditor, sourceBefore, expected)
@@ -326,7 +326,7 @@ internal object NativeEditingProbe {
                 case("final-native-editing-lifecycle") {
                     check(liveEditors.isEmpty())
                     check(EditorFactory.getInstance().getEditors(fixture.document, project).isEmpty()) {
-                        "native text editors retained after #146 proof disposal"
+                        "native text editors retained after editing proof disposal"
                     }
                     "editors=0 sourceStable=true"
                 }
@@ -342,7 +342,7 @@ internal object NativeEditingProbe {
             var result: Fixture? = null
             case("authoritative-editing-fixture") {
                 val projectBase = project.basePath?.let(Paths::get)
-                    ?: error("opened #146 proof project has no basePath")
+                    ?: error("opened native editing proof project has no basePath")
                 val root = Files.createTempDirectory(projectBase, ".markflow-native-editing-")
                 tempRoot = root
                 val path = root.resolve("editing-proof.md")
@@ -359,9 +359,9 @@ internal object NativeEditingProbe {
                 }
                 Files.writeString(path, source, StandardCharsets.UTF_8)
                 val file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
-                    ?: error("#146 fixture VirtualFile unavailable")
+                    ?: error("native editing fixture VirtualFile unavailable")
                 val document = FileDocumentManager.getInstance().getDocument(file)
-                    ?: error("#146 fixture Document unavailable")
+                    ?: error("native editing fixture Document unavailable")
                 check(document.text == source)
                 check(!FileDocumentManager.getInstance().isDocumentUnsaved(document))
 
@@ -390,17 +390,15 @@ internal object NativeEditingProbe {
             var result: FileEditorProvider? = null
             case("platform-text-provider-boundary") {
                 val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
+                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                    "legacy MarkFlow browser provider remained registered after native production cutover"
+                }
                 val accepted = providers.filter { candidate -> accepts(candidate, file) }
                 val text = accepted.firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
-                    ?: error("platform text editor provider did not accept #146 Markdown fixture")
+                    ?: error("platform text editor provider did not accept native editing Markdown fixture")
                 check(text.policy == FileEditorPolicy.NONE)
-                val temporary = providers.singleOrNull { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS }
-                    ?: error("temporary MarkFlow provider missing")
-                check(!accepts(temporary, file)) {
-                    "temporary browser provider accepted while JCEF runtime was disabled"
-                }
                 result = text
-                "platformText=${text.javaClass.name} temporaryBrowserAccepted=false"
+                "platformText=${text.javaClass.name} legacyBrowserProvider=false"
             }
             return result ?: error("provider case did not select platform text editor")
         }
@@ -429,7 +427,7 @@ internal object NativeEditingProbe {
         private fun paste(editor: Editor, transferable: Transferable) {
             CopyPasteManager.getInstance().setContents(transferable)
             WriteCommandAction.writeCommandAction(project)
-                .withName("MarkFlow #146 Native Paste Proof")
+                .withName("MarkFlow Native Paste Proof")
                 .run<RuntimeException> {
                     EditorActionManager.getInstance()
                         .getActionHandler(IdeActions.ACTION_EDITOR_PASTE)
@@ -449,7 +447,7 @@ internal object NativeEditingProbe {
 
         private fun restoreAndSave(source: String) {
             WriteCommandAction.writeCommandAction(project)
-                .withName("MarkFlow #146 Restore Fixture")
+                .withName("MarkFlow Restore Native Editing Fixture")
                 .run<RuntimeException> {
                     fixture.document.setText(source)
                 }
@@ -574,7 +572,7 @@ internal object NativeEditingProbe {
     }
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val TEMPORARY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
     private const val LEGACY_MARKFLOW_STATE_CLASS = "com.algorist.markflow.editor.state.MarkFlowEditorState"
     private val MARKDOWN_FLAVOR = DataFlavor("text/markdown;class=java.lang.String", "Markdown")
 }
