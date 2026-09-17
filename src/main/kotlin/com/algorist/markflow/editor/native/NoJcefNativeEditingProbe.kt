@@ -28,9 +28,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Real-IDE package proof with com.intellij.modules.jcef disabled in the sandbox.
  *
- * This class deliberately has no JCEF/browser imports. After #153 it proves the base native settings
- * sink remains available while every optional browser registration and derived-renderer factory stays
- * absent, and authoritative platform source editing/undo/redo/save remains operational.
+ * This class deliberately has no JCEF/browser imports. After #153 it proves the base native
+ * presentation-settings sink remains available while optional JCEF renderer registrations stay absent,
+ * and authoritative platform source editing/undo/redo/save remains operational.
  */
 internal object NoJcefNativeEditingProbe {
     const val OUTPUT_PROPERTY = "markflow.noJcefNativeEditingProbe.output"
@@ -80,22 +80,19 @@ internal object NoJcefNativeEditingProbe {
                 check(created is TextEditor) { "platform text provider did not create TextEditor" }
                 fileEditor = created
 
-                case("optional-browser-registrations-absent") {
+                case("optional-jcef-renderer-registrations-absent") {
                     val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
                     check(providers.none { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS }) {
                         "legacy JCEF-backed MarkFlow provider was registered without JCEF"
                     }
                     val sinks = MarkFlowPresentationSettingsSink.EP_NAME.extensionList
                     check(sinks.count { it is NativeMarkFlowPresentationSettingsSink } == 1) {
-                        "base native runtime-settings sink missing or duplicated without JCEF"
-                    }
-                    check(sinks.none { it.javaClass.name == JCEF_RUNTIME_SETTINGS_SINK_CLASS }) {
-                        "JCEF runtime-settings sink was registered without JCEF"
+                        "base native presentation-settings sink missing or duplicated without JCEF"
                     }
                     check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty()) {
                         "isolated JCEF renderer runtime factory was registered without JCEF"
                     }
-                    "temporaryProvider=false nativeRuntimeSettingsSinks=1 browserRuntimeSettingsSinks=0 rendererRuntimeFactories=0"
+                    "temporaryProvider=false nativePresentationSettingsSinks=1 rendererRuntimeFactories=0"
                 }
 
                 case("base-native-paste-extension-present") {
@@ -113,9 +110,8 @@ internal object NoJcefNativeEditingProbe {
                     MarkFlowPresentationSettingsNotifier.notifyChanged()
                     val sinks = MarkFlowPresentationSettingsSink.EP_NAME.extensionList
                     check(sinks.count { it is NativeMarkFlowPresentationSettingsSink } == 1)
-                    check(sinks.none { it.javaClass.name == JCEF_RUNTIME_SETTINGS_SINK_CLASS })
                     check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty())
-                    "settingsAvailable=true themeAvailable=true nativeRendererSinkCount=1 browserRendererSinkCount=0 rendererRuntimeFactoryCount=0"
+                    "settingsAvailable=true themeAvailable=true nativePresentationSinkCount=1 rendererRuntimeFactoryCount=0"
                 }
 
                 case("authoritative-native-edit-undo-redo-save") {
@@ -279,5 +275,4 @@ internal object NoJcefNativeEditingProbe {
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val TEMPORARY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
-    private const val JCEF_RUNTIME_SETTINGS_SINK_CLASS = "com.algorist.markflow.browser.MarkFlowBrowserRuntimeSettingsSink"
 }
