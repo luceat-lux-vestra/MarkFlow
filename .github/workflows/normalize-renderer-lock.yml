@@ -1,0 +1,71 @@
+name: Normalize Renderer Lock
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/normalize-renderer-lock.yml'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: normalize-renderer-lock-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  normalize:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+
+      - name: Normalize renderer-only lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd webview
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const root = lock.packages?.[''];
+          if (!root) throw new Error('package-lock root package is missing');
+          const actual = JSON.stringify(root.dependencies ?? {});
+          const expected = JSON.stringify(pkg.dependencies ?? {});
+          if (actual !== expected) {
+            throw new Error(`package-lock root dependencies disagree with package.json: ${actual} != ${expected}`);
+          }
+          for (const forbidden of ['@codemirror/', '@milkdown/', '@lezer/']) {
+            const paths = Object.keys(lock.packages ?? {}).filter((path) => path.includes(`node_modules/${forbidden}`));
+            if (paths.length) throw new Error(`obsolete editor dependency remains in lockfile: ${forbidden} (${paths.length})`);
+          }
+          NODE
+
+      - name: Commit normalized lockfile to this PR branch
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- webview/package-lock.json; then
+            echo 'Lockfile is already canonical.'
+            exit 0
+          fi
+          lock_sha="$(git rev-parse HEAD:webview/package-lock.json)"
+          encoded="$(base64 -w0 webview/package-lock.json)"
+          gh api "repos/$GITHUB_REPOSITORY/contents/webview/package-lock.json" \
+            --method PUT \
+            -f message='build(leap): normalize renderer-only npm lock' \
+            -f branch="$HEAD_REF" \
+            -f sha="$lock_sha" \
+            -f content="$encoded" >/dev/null
