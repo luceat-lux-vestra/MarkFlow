@@ -210,7 +210,6 @@ val buildWebview by tasks.registering(Exec::class) {
         file("webview/derived-renderer.html"),
         file("webview/vite.derived-renderer.config.ts"),
         file("webview/tsconfig.json"),
-        file("webview/tsconfig.node.json"),
         file("webview/package.json"),
         file("webview/package-lock.json")
     )
