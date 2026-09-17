@@ -190,12 +190,12 @@ Audited contributor/agent/engineering authority that could otherwise direct work
 | `.github/ISSUE_TEMPLATE/architecture_change.yml` | host-webview protocol/JCEF editor lifecycle treated as default architecture-contract fields | authority-first proposal, native source/projection/renderer contracts, and host-web/JCEF details only when an actual retained boundary requires them |
 | `CONTRIBUTING.md` | architecture-significant change list centered on host↔web/JCEF editor; repository visibility stale | accepted native target and renderer continuity; public repo wording |
 | `GOVERNANCE.md` | host↔web protocol/JCEF editor lifecycle always architecture-significant standing model | native source/projection/renderer boundaries; reintroducing edit protocol requires new proof |
-| `SECURITY.md` | JCEF editor/protocol as generic target trust boundary | host resources + isolated renderer target; legacy editor surfaces explicitly temporary |
-| `docs/engineering/testing-strategy.md` | host↔web synchronization as permanent contract suite | native source/projection/renderer proof; old protocol suite migration-only until purge |
-| `README.md` | target described as browser custom editor + native fallback/coexistence | clearly distinguishes current JCEF runtime from accepted native-authority target |
+| `SECURITY.md` | JCEF editor/protocol as generic target trust boundary | host resources + optional isolated renderer target; deleted editor surfaces are no longer live trust boundaries |
+| `docs/engineering/testing-strategy.md` | host↔web synchronization as permanent contract suite | native source/projection/renderer proof; deleted protocol harnesses stay absent after purge |
+| `README.md` | target described as browser custom editor + native fallback/coexistence | describes native production editing and optional renderer-only JCEF accurately |
 | `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records accepted architecture, completed #143/#145 foundations, and #146 native edit ownership resolution without claiming pre-gate completion |
 
-Historical `plans/*` and CHANGELOG entries are preserved as historical record rather than rewritten. Current source comments/tests that accurately describe temporary production mechanisms remain implementation evidence until their owner Task deletes them; they are not elevated into architecture authority.
+Historical `plans/*`, CHANGELOG entries and decision-time ADR context are preserved as historical record rather than rewritten into current runtime claims. #154 removed the temporary browser editor mechanisms; current guidance/tests may retain only explicit historical context or negative absence checks, not instructions to recreate them.
 
 ## Target-derived backlog #143–#156
 
