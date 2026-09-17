@@ -8,7 +8,7 @@ Ordinary Markdown local images and external links are host responsibilities in t
 
 The open IntelliJ `Document` remains authoritative Markdown source. `NativeHostResourceProjectionPlanner` derives immutable resource intents from the exact #145 projection generation. `NativeHostResourcePresentationController` owns only per-editor presentation/listener state; it cannot write source.
 
-Production editor selection remains owned by #153. This task makes the host-resource consumer independently usable and evidence-backed before that cutover.
+#153 completed production native-editor selection and #154 removed the browser resource realm. This host-owned resource boundary is now the production path for native presentation.
 
 ## Local image trust boundary
 
