@@ -30,13 +30,13 @@ assert_recovery_target_validation() {
   grep -q 'Recovery target is not the current default branch or one of its ancestors' "$workflow" || die "$label does not fail closed on non-main recovery targets"
 }
 
-jcef_workflow=".github/workflows/jcef-transport-evidence.yml"
-grep -q '^  push:$' "$jcef_workflow" || die "JCEF evidence has no push trigger"
-grep -q '^    branches: \[ main \]$' "$jcef_workflow" || die "JCEF evidence push trigger is not scoped to main"
-grep -q '^  workflow_dispatch:$' "$jcef_workflow" || die "JCEF evidence has no manual exact-SHA recovery trigger"
-grep -q '^      target_sha:$' "$jcef_workflow" || die "JCEF evidence recovery trigger has no target_sha input"
-grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$jcef_workflow" || die "JCEF evidence does not checkout the requested recovery SHA"
-assert_recovery_target_validation "$jcef_workflow" "JCEF evidence"
+renderer_workflow=".github/workflows/derived-renderer-evidence.yml"
+grep -q '^  push:$' "$renderer_workflow" || die "Derived renderer evidence has no push trigger"
+grep -q '^    branches: \[ main \]$' "$renderer_workflow" || die "Derived renderer evidence push trigger is not scoped to main"
+grep -q '^  workflow_dispatch:$' "$renderer_workflow" || die "Derived renderer evidence has no manual exact-SHA recovery trigger"
+grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evidence recovery trigger has no target_sha input"
+grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"
+assert_recovery_target_validation "$renderer_workflow" "Derived renderer evidence"
 
 if grep -Eq '^[[:space:]]+gradle[[:space:]]+runIdeForUiTests' .github/workflows/run-ui-tests.yml; then
   die "UI workflow invokes runner Gradle instead of the repository wrapper"
