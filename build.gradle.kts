@@ -370,8 +370,15 @@ intellijPlatformTesting {
                         "-Dmarkflow.noJcefNativeEditingProbe.output=${noJcefNativeEditingProbeOutput.get().asFile.absolutePath}",
                         "-Didea.trust.all.projects=true",
                         "-Didea.java.project.setup.disabled=true",
-                        // This is a non-interactive runtime probe. Keep platform errors in idea.log,
-                        // but prevent EAP diagnostic/update dialogs from monopolizing the EDT.
+                        // This raw runIde task is an integration-test runtime. Match the maintained
+                        // Starter 263 contract so proprietary first-run/agreement services do not
+                        // treat the disposable sandbox as an interactive production installation.
+                        "-Didea.is.integration.test=true",
+                        "-Didea.local.statistics.without.report=true",
+                        "-Dfeature.usage.event.log.send.on.ide.close=false",
+                        "-Didea.updates.url=http://127.0.0.1",
+                        // Keep platform errors in idea.log, but prevent EAP diagnostic/update dialogs
+                        // from monopolizing the EDT before the dedicated MarkFlow proof executes.
                         "-Didea.fatal.error.notification=disabled",
                         "-Dide.no.platform.update=true",
                         // IntelliJ Starter disables the 263 EAP trace-data-sharing notification in
