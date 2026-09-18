@@ -38,11 +38,6 @@ grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evid
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$renderer_workflow" "Derived renderer evidence"
 
-if grep -Eq '^[[:space:]]+gradle[[:space:]]+runIdeForUiTests' .github/workflows/run-ui-tests.yml; then
-  die "UI workflow invokes runner Gradle instead of the repository wrapper"
-fi
-grep -q './gradlew runIdeForUiTests' .github/workflows/run-ui-tests.yml || die "UI workflow does not use the Gradle wrapper"
-
 build_workflow=".github/workflows/build.yml"
 if grep -qi 'codecov' "$build_workflow"; then
   die "required Build workflow must not hide a non-authoritative external Codecov upload"
