@@ -163,6 +163,8 @@ jobs:
               raise SystemExit(f"native Markdown parity verdict is not PASS: {parity.get('verdict')}")
           parity_required = {
               'fidelity-corpus-runtime-mapping',
+              'raw-html-safe-runtime',
+              'raw-html-hostile-degraded-runtime',
               'ordinary-parser-table-boundary',
               'ordinary-native-presentation-source-neutral',
               'ordinary-accessibility-source-fallback',
@@ -192,6 +194,8 @@ jobs:
               'fidelity-corpus-runtime-mapping': (
                   'fixtures=12', 'exactIdentity=true', 'rangesInBounds=true', 'imageBoundary=true'
               ),
+              'raw-html-safe-runtime': ('fragments=2', 'safe=2', 'rasterized=2', 'sourceStable=true'),
+              'raw-html-hostile-degraded-runtime': ('blocked=', 'exactSourceFallback=true', 'sourceStable=true'),
               'ordinary-parser-table-boundary': ('allKinds=true', 'linkSyntax=true', 'halfOpenBoundary=true'),
               'ordinary-native-presentation-source-neutral': (
                   'markers=true', 'linkConceal=true', 'boundaryReveal=true', 'sourceStable=true'
@@ -212,6 +216,21 @@ jobs:
               if missing:
                   raise SystemExit(f'{case_id} missing parity markers {missing}: {detail}')
 
+          def metric(case_id, key):
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              prefix = f"{key}="
+              token = next((part for part in detail.split() if part.startswith(prefix)), None)
+              if token is None:
+                  raise SystemExit(f"{case_id} missing {key}: {detail}")
+              return int(token[len(prefix):])
+
+          rapid_ms = metric('rapid-edit-caret-regeneration', 'elapsedMs')
+          if rapid_ms > 5000:
+              raise SystemExit(f'rapid edit/caret projection latency {rapid_ms}ms exceeded 5000ms budget')
+          large_ms = metric('large-representative-document-baseline', 'planElapsedMs')
+          if large_ms > 3000:
+              raise SystemExit(f'large projection planning latency {large_ms}ms exceeded 3000ms budget')
+
           print(f"Native projection verdict: {evidence['verdict']}")
           print(f"Selected shell: {evidence['selectedShell']}")
           print(f"Parser: {evidence['parserStrategy']}")
@@ -231,6 +250,6 @@ jobs:
           path: |
             build/native-projection-probe/evidence.json
             build/native-projection-probe/parity.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-projection-xvfb.log
           if-no-files-found: warn

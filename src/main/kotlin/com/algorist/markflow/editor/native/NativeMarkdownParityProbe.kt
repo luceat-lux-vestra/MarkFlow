@@ -92,6 +92,57 @@ internal object NativeMarkdownParityProbe {
                     "fixtures=${FIDELITY_FIXTURES.size} exactIdentity=true rangesInBounds=true tableModels=$tableModels imageBoundary=true"
                 }
 
+                case("raw-html-safe-runtime") {
+                    val source = Files.readString(
+                        repositoryRoot().resolve("fixtures/markdown-fidelity/cases/raw-html-safe.md"),
+                        StandardCharsets.UTF_8,
+                    )
+                    val rawPlan = NativeMarkdownProjectionPlanner.plan(
+                        ProjectionSnapshot(ProjectionSourceIdentity(10_001L, source, 0L))
+                    )
+                    check(rawPlan.status == ProjectionPlanStatus.READY)
+                    val projections = NativeRawHtmlProjectionPlanner.plan(rawPlan)
+                    check(projections.size == 2) { "safe raw-HTML fixture produced ${projections.size} fragments" }
+                    var rasterized = 0
+                    projections.forEach { projection ->
+                        check(projection.source == source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset))
+                        when (val sanitized = NativeRawHtmlSanitizer.sanitize(projection.source)) {
+                            is NativeRawHtmlSanitizationResult.Safe -> {
+                                val image = NativeSwingRawHtmlRenderer.rasterizeSanitized(sanitized.html)
+                                check(image.width > 0 && image.height > 0)
+                                check(image.width <= NativeSwingRawHtmlRenderer.MAX_WIDTH)
+                                check(image.height <= NativeSwingRawHtmlRenderer.MAX_HEIGHT)
+                                rasterized += 1
+                            }
+                            is NativeRawHtmlSanitizationResult.Blocked ->
+                                error("safe raw-HTML fixture was blocked: ${sanitized.code}")
+                        }
+                    }
+                    check(rawPlan.identity.source == source)
+                    "fragments=${projections.size} safe=${projections.size} rasterized=$rasterized sourceStable=true"
+                }
+
+                case("raw-html-hostile-degraded-runtime") {
+                    val source = Files.readString(
+                        repositoryRoot().resolve("fixtures/markdown-fidelity/cases/raw-html-hostile.md"),
+                        StandardCharsets.UTF_8,
+                    )
+                    val rawPlan = NativeMarkdownProjectionPlanner.plan(
+                        ProjectionSnapshot(ProjectionSourceIdentity(10_002L, source, 0L))
+                    )
+                    check(rawPlan.status == ProjectionPlanStatus.READY)
+                    val projections = NativeRawHtmlProjectionPlanner.plan(rawPlan)
+                    check(projections.isNotEmpty()) { "hostile raw-HTML fixture produced no parser-owned fragments" }
+                    val blocked = projections.count { projection ->
+                        NativeRawHtmlSanitizer.sanitize(projection.source) is NativeRawHtmlSanitizationResult.Blocked
+                    }
+                    check(blocked == projections.size) {
+                        "hostile raw-HTML fixture did not fail closed: blocked=$blocked fragments=${projections.size}"
+                    }
+                    check(rawPlan.identity.source == source)
+                    "fragments=${projections.size} blocked=$blocked exactSourceFallback=true sourceStable=true"
+                }
+
                 case("ordinary-parser-table-boundary") {
                     val source = fixture.editor.document.text
                     val kinds = plan.projections.map { it.kind }.toSet()
@@ -327,6 +378,7 @@ internal object NativeMarkdownParityProbe {
                     val original = document.text
                     val controller = NativePresentationController(fixture.editor)
                     try {
+                        val startedAt = System.nanoTime()
                         repeat(20) { index ->
                             WriteCommandAction.writeCommandAction(project)
                                 .withName("MarkFlow #152 Rapid Projection Proof")
@@ -340,7 +392,8 @@ internal object NativeMarkdownParityProbe {
                             check(identity.modificationStamp == document.modificationStamp)
                         }
                         check(document.text.startsWith(original))
-                        "iterations=20 exactIdentity=true caretMovement=true projectionApplied=true"
+                        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+                        "iterations=20 exactIdentity=true caretMovement=true projectionApplied=true elapsedMs=$elapsedMs"
                     } finally {
                         Disposer.dispose(controller)
                     }
@@ -356,11 +409,13 @@ internal object NativeMarkdownParityProbe {
                         }
                         append("| Name | Value |\n| --- | --- |\n| tail | 1 |\n")
                     }
+                    val planStartedAt = System.nanoTime()
                     val largePlan = NativeMarkdownProjectionPlanner.plan(
                         ProjectionSnapshot(
                             ProjectionSourceIdentity(1L, largeSource, 0L)
                         )
                     )
+                    val planElapsedMs = (System.nanoTime() - planStartedAt) / 1_000_000L
                     check(largePlan.status == ProjectionPlanStatus.READY)
                     check(largePlan.projections.size > 4_000) {
                         "large representative corpus produced unexpectedly few projections: ${largePlan.projections.size}"
@@ -371,7 +426,7 @@ internal object NativeMarkdownParityProbe {
                         projection.contentRanges.forEach { check(it.isInside(largeSource)) }
                     }
                     check(NativeTableProjectionPlanner.plan(largePlan).size == 1)
-                    "sourceLength=${largeSource.length} projections=${largePlan.projections.size} rangesInBounds=true table=1"
+                    "sourceLength=${largeSource.length} projections=${largePlan.projections.size} rangesInBounds=true table=1 planElapsedMs=$planElapsedMs"
                 }
 
                 finish("PASS")
