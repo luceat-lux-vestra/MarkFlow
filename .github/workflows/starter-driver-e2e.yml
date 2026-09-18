@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - '.github/workflows/starter-driver-e2e.yml'
+      - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
       - 'src/integrationTest/**'
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/starter-driver-e2e.yml'
+      - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
       - 'src/integrationTest/**'
