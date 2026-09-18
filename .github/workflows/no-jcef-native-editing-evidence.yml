@@ -36,9 +36,17 @@ concurrency:
 
 jobs:
   probe:
-    name: Real IntelliJ native editing without JCEF plugin
+    name: No-JCEF native editing (${{ matrix.id }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: idea-2026.2.3
+            platform_version: 2026.2.3
+          - id: idea-2026.3-eap2
+            platform_version: 263.4732.28
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -74,7 +82,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNoJcefNativeEditingProbe --stacktrace
+          timeout --signal=TERM --kill-after=15s 10m \
+            ./gradlew runIdeForNoJcefNativeEditingProbe -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
 
       - name: Validate no-JCEF evidence completeness
         shell: bash
@@ -164,7 +173,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t logs < <(find build/idea-sandbox -type f -name idea.log -print 2>/dev/null || true)
+          mapfile -t logs < <(find .intellijPlatform/sandbox -type f -name idea.log -print 2>/dev/null || true)
           if ((${#logs[@]} == 0)); then
             echo 'No idea.log found; evidence file remains the primary proof.'
             exit 0
@@ -178,9 +187,10 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: no-jcef-native-editing-evidence
+          name: no-jcef-native-editing-evidence-${{ matrix.id }}
           path: |
             build/no-jcef-native-editing-probe/evidence.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
+            .intellijPlatform/sandbox/**/bg-wa/**
             ${{ runner.temp }}/markflow-no-jcef-xvfb.log
           if-no-files-found: warn

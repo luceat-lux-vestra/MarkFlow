@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Properties
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -54,18 +53,23 @@ class MarkFlowStarterTableTest {
             editedText,
         )
 
-        val platformVersion = Properties().apply {
-            Files.newInputStream(Path.of("gradle.properties")).use(::load)
-        }.getProperty("platformVersion")
+        val platformVersion = System.getProperty("markflow.test.platformVersion")
             ?.trim()
             ?.takeIf(String::isNotEmpty)
-            ?: error("platformVersion is required in gradle.properties")
-        val targetIde = IdeInfo.IdeaUltimate.copy(version = platformVersion)
+            ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
+        // Starter resolves stable release versions and EAP build numbers through different metadata fields.
+        val targetTestCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(projectPath)).let { testCase ->
+            if (isStarterEapBuildNumber(platformVersion)) {
+                testCase.useEAP(platformVersion)
+            } else {
+                testCase.useRelease(platformVersion)
+            }
+        }
 
         try {
             Starter.newContext(
                 testName = "markflow-starter-driver-table",
-                testCase = TestCase(targetIde, LocalProjectInfo(projectPath)),
+                testCase = targetTestCase,
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(pluginPath)
             }.applyVMOptionsPatch {

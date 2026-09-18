@@ -1,5 +1,6 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
@@ -131,7 +132,8 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "263.4732.28")
         }
     }
 }
@@ -257,28 +259,11 @@ intellijPlatformTesting {
             testClassesDirs = integrationTestSourceSet.output.classesDirs
             classpath = integrationTestSourceSet.runtimeClasspath
             useJUnitPlatform()
+            systemProperty("markflow.test.platformVersion", providers.gradleProperty("platformVersion").get())
         }
     }
 
     runIde {
-        register("runIdeForUiTests") {
-            task {
-                jvmArgumentProviders += CommandLineArgumentProvider {
-                    listOf(
-                        "-D$diagnosticsJvmProperty=true",
-                        "-Drobot-server.port=8082",
-                        "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
-                        "-Djb.consents.confirmation.enabled=false",
-                    )
-                }
-            }
-
-            plugins {
-                robotServerPlugin()
-            }
-        }
-
         register("runIdeForNativeEditorShellProbe") {
             task {
                 doFirst {
@@ -380,6 +365,11 @@ intellijPlatformTesting {
                     listOf(
                         "-Dmarkflow.noJcefNativeEditingProbe.output=${noJcefNativeEditingProbeOutput.get().asFile.absolutePath}",
                         "-Didea.trust.all.projects=true",
+                        "-Didea.java.project.setup.disabled=true",
+                        // This is a non-interactive runtime probe. Keep platform errors in idea.log,
+                        // but prevent EAP diagnostic/update dialogs from monopolizing the EDT.
+                        "-Didea.fatal.error.notification=disabled",
+                        "-Didea.no.platform.update=true",
                         "-Dide.mac.message.dialogs.as.sheets=false",
                         "-Djb.privacy.policy.text=<!--999.999-->",
                         "-Djb.consents.confirmation.enabled=false",
@@ -391,8 +381,4 @@ intellijPlatformTesting {
             }
         }
     }
-}
-
-tasks.named("runIdeForUiTests") {
-    dependsOn(buildWebview)
 }
