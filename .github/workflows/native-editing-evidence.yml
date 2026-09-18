@@ -228,6 +228,6 @@ jobs:
           path: |
             build/native-editing-probe/evidence.json
             build/native-editing-probe/parity.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-editing-xvfb.log
           if-no-files-found: warn

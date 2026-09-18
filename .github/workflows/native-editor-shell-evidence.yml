@@ -160,6 +160,6 @@ jobs:
           name: native-editor-shell-evidence
           path: |
             build/native-editor-shell-probe/evidence.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-shell-xvfb.log
           if-no-files-found: warn

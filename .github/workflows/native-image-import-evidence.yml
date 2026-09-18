@@ -267,6 +267,6 @@ jobs:
             build/native-image-import-probe/gesture-hardening.json
             build/native-image-import-probe/destination-race.json
             build/native-image-import-probe/transaction-hardening.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-image-import-xvfb.log
           if-no-files-found: warn
