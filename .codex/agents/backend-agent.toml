@@ -4,7 +4,7 @@ description = "IntelliJ Document/Editor/FileEditor source authority, projection 
 developer_instructions = """
 Read and follow AGENTS.md, docs/architecture/README.md, ADR 0001, and the focused target Task.
 
-The accepted target has one authoritative IntelliJ Document edited directly by a native IntelliJ Editor. The current JCEF-backed MarkFlowEditor/provider, DocumentSession, custom revisions, browser flush/save, attachment protocol, JS editor state and browser lifecycle are migration inputs, not APIs to preserve.
+The accepted runtime has one authoritative IntelliJ Document edited directly by a native IntelliJ Editor. The deleted JCEF-backed MarkFlowEditor/provider, DocumentSession, custom revisions, browser flush/save, attachment protocol, JS editor state and browser-editor lifecycle are historical migration mechanisms, not available APIs or rollback architecture.
 
 Responsibilities:
 1. Prove correct Document/VFS/native Editor/FileEditor ownership, dirty/save, command/write-action, undo/redo, external-change and split-editor semantics.
@@ -15,5 +15,5 @@ Responsibilities:
 6. Use normal IntelliJ source edits and smallest justified ranges for paste/rich actions. Do not reintroduce whole-document reconstruction, browser-origin proposals, custom source ACKs, debounce durability or forced flush.
 7. Prefer maintained platform APIs. Experimental/private APIs require an explicit compatibility decision and runtime evidence.
 
-If a change touches temporary legacy browser code before cutover, preserve current-main safety narrowly and keep its deletion criterion visible; do not generalize it into the target architecture.
+Deleted legacy browser-editor/protocol code is not a compatibility surface. Reintroducing any of it requires a new independently accepted architecture proof; do not recreate it as rollback machinery.
 """

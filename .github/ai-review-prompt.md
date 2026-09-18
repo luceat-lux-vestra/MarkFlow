@@ -2,7 +2,7 @@
 
 Review the **exact final pull-request HEAD** as a proof-obligation merge gate. CI green is necessary but never sufficient. `UNKNOWN`, `UNVERIFIED`, and insufficient evidence are FAIL.
 
-Accepted target: one authoritative IntelliJ `Document`, one native IntelliJ `Editor` editing it directly, source-neutral derived presentation, and isolated derived renderers. Current browser-editor/source-native mechanisms are migration inputs unless explicitly retained by #141.
+Accepted runtime: one authoritative IntelliJ `Document`, one native IntelliJ `Editor` editing it directly, source-neutral derived presentation, and isolated derived renderers. Browser-editor/source-native editing mechanisms were deleted and may not be treated as compatibility surfaces; only the explicitly retained renderer boundary survives.
 
 Prioritize findings that can cause incorrect persisted Markdown, lost/native edit semantics, stale projection/render application, lifecycle/resource defects, renderer regression, security boundary violations, compatibility regressions, accidental dual architecture, or incomplete deletion ownership.
 
@@ -24,7 +24,7 @@ Inspect at least:
 14. tests/evidence for success, failure, recovery, stale work, renderer unavailable, lifecycle, compatibility, edge and adversarial cases;
 15. diff scope and consistency between code, tests, README/docs, issue claims and release claims.
 
-If a PR intentionally touches temporary old browser-editor code before cutover, review its current-main host↔web/session/recovery safety as a **migration obligation only**. Do not let fixes to temporary mechanisms become new target architecture without a separate accepted proof.
+If a PR reintroduces deleted browser-editor, host↔web/session/recovery, source-native trust, or browser-pool mechanisms, treat that as an architecture regression requiring a new independent accepted proof rather than compatibility maintenance.
 
 Do not defend code because it is recent, heavily tested, or already merged during Leap. Do not delete Mermaid/KaTeX capability merely because their current editor adapters are obsolete.
 

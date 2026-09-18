@@ -52,9 +52,17 @@ concurrency:
 
 jobs:
   probe:
-    name: Isolated JCEF renderer probe
+    name: Isolated JCEF renderer (${{ matrix.id }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: idea-2026.2.3
+            platform_version: 2026.2.3
+          - id: idea-2026.3-eap2
+            platform_version: 263.4732.28
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -117,7 +125,8 @@ jobs:
         run: |
           set -euo pipefail
           export JAVA_TOOL_OPTIONS="-Dmarkflow.derivedRendererProbe.output=$GITHUB_WORKSPACE/build/derived-renderer-probe/evidence.json -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
-          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIde --args=markflow-derived-renderer-probe --stacktrace
+          timeout --signal=TERM --kill-after=15s 10m \
+            ./gradlew runIde -PplatformVersion="${{ matrix.platform_version }}" --args=markflow-derived-renderer-probe --stacktrace
 
       - name: Validate evidence completeness
         shell: bash
@@ -143,6 +152,10 @@ jobs:
 
           required = {
               'runtime-factory-registered',
+              'resource-start-failure-rollback',
+              'runtime-create-failure-rollback',
+              'temp-root-cleanup-retry',
+              'runtime-create-latency',
               'mermaid-success',
               'mermaid-syntax-failure',
               'katex-inline-success',
@@ -161,18 +174,87 @@ jobs:
           if failed:
               raise SystemExit(f"renderer evidence failures: {failed}")
 
+          def metric(case_id, key):
+              detail = str(by_id[case_id].get('detail', ''))
+              prefix = f"{key}="
+              token = next((part for part in detail.split() if part.startswith(prefix)), None)
+              if token is None:
+                  raise SystemExit(f"{case_id} missing {key}: {detail}")
+              return int(token[len(prefix):])
+
+          resource_markers = ('resourceOwners=0', 'serverRunning=false', 'extractedRoot=false', 'tempRoot=false')
+          rollback_detail = str(by_id['resource-start-failure-rollback'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in rollback_detail:
+                  raise SystemExit(f"renderer resource rollback marker missing {marker}: {rollback_detail}")
+
+          create_failure_detail = str(by_id['runtime-create-failure-rollback'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in create_failure_detail:
+                  raise SystemExit(f"renderer create-failure rollback marker missing {marker}: {create_failure_detail}")
+
+          temp_cleanup_detail = str(by_id['temp-root-cleanup-retry'].get('detail', ''))
+          for marker in ('retainedAfterFailure=true', 'rootChanged=true', *resource_markers):
+              if marker not in temp_cleanup_detail:
+                  raise SystemExit(f"renderer temp-root recovery marker missing {marker}: {temp_cleanup_detail}")
+
+          lifecycle_detail = str(by_id['repeated-create-dispose'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in lifecycle_detail:
+                  raise SystemExit(f"renderer resource lifecycle marker missing {marker}: {lifecycle_detail}")
+
+          budgets = {
+              ('runtime-create-latency', 'elapsedMs'): 15000,
+              ('mermaid-success', 'elapsedMs'): 15000,
+              ('katex-inline-success', 'elapsedMs'): 15000,
+              ('katex-display-success', 'elapsedMs'): 15000,
+              ('repeated-create-dispose', 'elapsedMs'): 10000,
+          }
+          for (case_id, key), budget in budgets.items():
+              observed = metric(case_id, key)
+              if observed > budget:
+                  raise SystemExit(f"{case_id} {key}={observed} exceeded budget {budget}")
+
           print(f"Derived renderer evidence PASS on IDE {evidence.get('ideBuild')}")
           for case in cases:
               print(f"{case.get('id')}: {case.get('outcome')} - {case.get('detail')}")
+          PY
+
+      - name: Classify retained JCEF shutdown diagnostics
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          marker = 'AppShutdownProxySelector - network access during/after app shutdown'
+          warnings = 0
+          for log in sorted(Path('.intellijPlatform/sandbox').rglob('idea.log')):
+              lines = log.read_text(encoding='utf-8', errors='replace').splitlines()
+              for index, line in enumerate(lines):
+                  if marker not in line:
+                      continue
+                  warnings += 1
+                  block = [line]
+                  for following in lines[index + 1:index + 30]:
+                      if re.match(r'^\d{4}-\d{2}-\d{2}', following):
+                          break
+                      block.append(following)
+                  joined = '\n'.join(block)
+                  if 'com.algorist.markflow' in joined:
+                      raise SystemExit(f'MarkFlow-owned stack detected in JCEF shutdown warning from {log}:\n{joined}')
+          print(f'JCEF shutdown warnings classified: count={warnings}, markflowOwned=0')
           PY
 
       - name: Upload renderer evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: derived-renderer-evidence
+          name: derived-renderer-evidence-${{ matrix.id }}
           path: |
             build/derived-renderer-probe/evidence.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-derived-renderer-xvfb.log
           if-no-files-found: warn

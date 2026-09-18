@@ -86,6 +86,41 @@ jobs:
       - name: Build plugin
         run: ./gradlew buildPlugin
 
+      - name: Enforce renderer bundle budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('build/webview/derived-renderer-assets')
+          scripts = sorted(root.rglob('*.js'))
+          if not scripts:
+              raise SystemExit('renderer build produced no JavaScript assets')
+          max_asset = max(scripts, key=lambda path: path.stat().st_size)
+          max_bytes = max_asset.stat().st_size
+          total_bytes = sum(path.stat().st_size for path in scripts)
+          max_budget = 700 * 1024
+          total_budget = 4000 * 1024
+          report = {
+              'schemaVersion': 1,
+              'scriptCount': len(scripts),
+              'maxSingleJsBytes': max_bytes,
+              'maxSingleJsPath': max_asset.relative_to(root).as_posix(),
+              'totalJsBytes': total_bytes,
+              'budgets': {'maxSingleJsBytes': max_budget, 'totalJsBytes': total_budget},
+          }
+          report_path = Path('build/reports/renderer-bundle-budget.json')
+          report_path.parent.mkdir(parents=True, exist_ok=True)
+          report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(report, sort_keys=True))
+          if max_bytes > max_budget:
+              raise SystemExit(f'largest renderer JS asset {max_asset.name} is {max_bytes} bytes; budget is {max_budget}')
+          if total_bytes > total_budget:
+              raise SystemExit(f'renderer JS total is {total_bytes} bytes; budget is {total_budget}')
+          PY
+
       - name: Prepare Plugin Artifact
         id: artifact
         shell: bash
@@ -157,6 +192,13 @@ jobs:
         with:
           name: ${{ steps.artifact.outputs.filename }}
           path: ./build/distributions/content/*/*
+
+      - name: Upload renderer bundle budget
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: renderer-bundle-budget
+          path: build/reports/renderer-bundle-budget.json
+          if-no-files-found: error
 
   test:
     name: Test

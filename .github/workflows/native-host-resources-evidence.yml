@@ -177,6 +177,6 @@ jobs:
           name: native-host-resources-evidence
           path: |
             build/native-host-resources-probe/evidence.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-host-resources-xvfb.log
           if-no-files-found: warn

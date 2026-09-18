@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - '.github/workflows/starter-driver-e2e.yml'
+      - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
       - 'src/integrationTest/**'
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/starter-driver-e2e.yml'
+      - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
       - 'src/integrationTest/**'
@@ -28,9 +30,19 @@ concurrency:
 
 jobs:
   smoke:
-    name: Real IDE Starter Driver smoke
+    name: Real IDE Starter Driver (${{ matrix.id }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: idea-2026.2.3
+            platform_version: 2026.2.3
+            repeat_count: 2
+          - id: idea-2026.3-eap2
+            platform_version: 263.4732.28
+            repeat_count: 1
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -62,20 +74,73 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
-      - name: Run Starter Driver E2E smoke
+      - name: Run Starter Driver E2E acceptance
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=30s 18m ./gradlew integrationTest --stacktrace
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+
+          for pass in $(seq 1 "${{ matrix.repeat_count }}"); do
+            echo "Starter/Driver pass $pass/${{ matrix.repeat_count }} on ${{ matrix.platform_version }}"
+            pass_dir="build/e2e-evidence/pass-$pass"
+            marker="$RUNNER_TEMP/markflow-starter-pass-$pass-start"
+            rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+            mkdir -p "$pass_dir"
+            touch "$marker"
+
+            test_status=0
+            set +e
+            timeout --signal=TERM --kill-after=30s 18m \
+              ./gradlew integrationTest --rerun-tasks -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
+            test_status=$?
+            set -e
+
+            if [ -d build/test-results/integrationTest ]; then
+              cp -R build/test-results/integrationTest "$pass_dir/test-results"
+            fi
+            if [ -d build/reports/tests/integrationTest ]; then
+              cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+            fi
+
+            while IFS= read -r -d '' log; do
+              log_dir="$(dirname "$log")"
+              relative="${log_dir#./}"
+              destination="$pass_dir/logs/$relative"
+              mkdir -p "$(dirname "$destination")"
+              rm -rf "$destination"
+              cp -R "$log_dir" "$destination"
+            done < <(
+              find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+                -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+            )
+
+            diagnostics_status=0
+            set +e
+            python3 .github/scripts/check-starter-driver-diagnostics.py \
+              --root "$pass_dir" \
+              --output "$pass_dir/diagnostics.json"
+            diagnostics_status=$?
+            set -e
+
+            if [ "$test_status" -ne 0 ]; then
+              echo "Starter/Driver pass $pass failed with status $test_status" >&2
+              exit "$test_status"
+            fi
+            if [ "$diagnostics_status" -ne 0 ]; then
+              echo "Starter/Driver pass $pass diagnostics failed" >&2
+              exit "$diagnostics_status"
+            fi
+          done
 
       - name: Upload E2E diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: starter-driver-e2e-${{ github.run_id }}
+          name: starter-driver-e2e-${{ matrix.id }}-${{ github.run_id }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
+            build/e2e-evidence/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             out/ide-tests/**/log/**

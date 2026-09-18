@@ -12,7 +12,7 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 completed the production native-editor cutover with post-main evidence, and #154 completed deletion of the superseded browser editor/session/protocol/trust machinery. #155 now owns dependency/toolchain/JCEF/settings convergence over the retained renderer-only stack.
+Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 completed the production native-editor cutover with post-main evidence, #154 completed deletion of the superseded browser editor/session/protocol/trust machinery, and #155 completed dependency/toolchain/JCEF/settings convergence over the retained renderer-only stack. #156 now owns final compatibility/lifecycle/performance/release convergence.
 
 ## Accepted target
 
@@ -68,8 +68,8 @@ Do not:
 - renderer extraction, native derived presentation, host resource/navigation, ordinary Markdown/table parity and the other #143–#152 prerequisites supplied the evidence required for cutover;
 - **#153 completed** — production file opening/editing now uses the platform-native editor and post-main verification closed the cutover gate;
 - **#154 completed** — obsolete browser editor, custom document/session/revision protocols, browser editing trust/resource realm and editor-only frontend/tooling are purged while renderer infrastructure is retained;
-- **#155 active** — converge dependency/toolchain/JCEF packaging and settings over the retained renderer-only stack;
-- #155 -> #156 final compatibility/lifecycle/performance/release convergence;
+- **#155 completed** — dependency/toolchain/JCEF packaging and settings are converged over the retained renderer-only stack;
+- **#156 active** — final compatibility/lifecycle/performance/release convergence;
 - #156 -> #84 eligible to close.
 
 Transient Task state belongs in #52 and the individual Task issue rather than this architecture index. #139 and #141 are completed. #52 remains open until implementation/convergence completes.

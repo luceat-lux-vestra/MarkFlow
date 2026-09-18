@@ -1,5 +1,6 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
@@ -131,7 +132,8 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "263.4732.28")
         }
     }
 }
@@ -257,28 +259,15 @@ intellijPlatformTesting {
             testClassesDirs = integrationTestSourceSet.output.classesDirs
             classpath = integrationTestSourceSet.runtimeClasspath
             useJUnitPlatform()
+            // Starter 263 resolves IntelliJ's MultiRoutingFsPath inside the Gradle test worker.
+            // That class implements a JDK-internal sun.nio.fs interface, so the worker needs the
+            // same explicit export expected by the IntelliJ platform runtime/tooling.
+            jvmArgs("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
+            systemProperty("markflow.test.platformVersion", providers.gradleProperty("platformVersion").get())
         }
     }
 
     runIde {
-        register("runIdeForUiTests") {
-            task {
-                jvmArgumentProviders += CommandLineArgumentProvider {
-                    listOf(
-                        "-D$diagnosticsJvmProperty=true",
-                        "-Drobot-server.port=8082",
-                        "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
-                        "-Djb.consents.confirmation.enabled=false",
-                    )
-                }
-            }
-
-            plugins {
-                robotServerPlugin()
-            }
-        }
-
         register("runIdeForNativeEditorShellProbe") {
             task {
                 doFirst {
@@ -380,9 +369,32 @@ intellijPlatformTesting {
                     listOf(
                         "-Dmarkflow.noJcefNativeEditingProbe.output=${noJcefNativeEditingProbeOutput.get().asFile.absolutePath}",
                         "-Didea.trust.all.projects=true",
+                        "-Didea.java.project.setup.disabled=true",
+                        // This raw runIde task is an integration-test runtime. Match the maintained
+                        // Starter 263 contract so proprietary first-run/agreement services do not
+                        // treat the disposable sandbox as an interactive production installation.
+                        "-Didea.is.integration.test=true",
+                        "-Didea.local.statistics.without.report=true",
+                        "-Dfeature.usage.event.log.send.on.ide.close=false",
+                        "-Didea.updates.url=http://127.0.0.1",
+                        // Keep platform errors in idea.log, but prevent EAP diagnostic/update dialogs
+                        // from monopolizing the EDT before the dedicated MarkFlow proof executes.
+                        "-Didea.fatal.error.notification=disabled",
+                        "-Dide.no.platform.update=true",
+                        // IntelliJ Starter disables the 263 EAP trace-data-sharing notification in
+                        // integration runs. Without this, TraceDataSharingActivity can open a modal
+                        // consent surface before the dedicated MarkFlow no-JCEF probe reaches EDT.
+                        "-Dide.enable.notification.trace.data.sharing=false",
                         "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        // Keep this probe aligned with IntelliJ Starter's disableStartupDialogs()
+                        // contract for maintained EAP builds. 263 EAP can otherwise surface
+                        // additional AI/Marketplace/Writerside consent dialogs after project open.
                         "-Djb.consents.confirmation.enabled=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.privacy.policy.ai.assistant.text=<!--999.999-->",
+                        "-Dmarketplace.eula.reviewed.and.accepted=true",
+                        "-Dwriterside.eula.reviewed.and.accepted=true",
+                        "-Dide.newUsersOnboarding=false",
                     )
                 }
                 argumentProviders += CommandLineArgumentProvider {
@@ -391,8 +403,4 @@ intellijPlatformTesting {
             }
         }
     }
-}
-
-tasks.named("runIdeForUiTests") {
-    dependsOn(buildWebview)
 }

@@ -3,11 +3,13 @@ package com.algorist.markflow.e2e
 import com.intellij.driver.client.Driver
 import com.intellij.driver.client.Remote
 import com.intellij.driver.client.service
+import com.intellij.driver.model.LockSemantics
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
 import com.intellij.driver.sdk.VirtualFile
 import com.intellij.driver.sdk.findOpenFile
 import com.intellij.driver.sdk.invokeAction
+import com.intellij.driver.sdk.invokeActionByShortcut
 import com.intellij.driver.sdk.openFile
 import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
@@ -16,7 +18,6 @@ import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
 import java.awt.Point
-import java.awt.event.KeyEvent
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -134,14 +135,32 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun selectRangeWithKeyboard(editor: JEditorUiComponent, startOffset: Int, length: Int) {
         require(length > 0) { "keyboard selection length must be positive" }
+        val endOffset = startOffset + length
+
         editor.setFocus()
+        // Collapse any previous selection, then position the primary caret at the exact source
+        // boundary before extending it through IntelliJ's maintained keymap action. Driver's
+        // invokeActionByShortcut resolves the current shortcut and emits a real keyboard gesture,
+        // avoiding the JDK-25/EAP modifier-hold instability of raw SHIFT + repeated RIGHT events.
         editor.keyboard { right() }
         editor.moveCaretToOffset(startOffset)
-        editor.keyboard {
-            pressing(KeyEvent.VK_SHIFT) {
-                repeat(length) { right() }
-            }
+        waitFor(
+            message = "primary caret reaches keyboard-selection start",
+            timeout = 10.seconds,
+            getter = { primaryCaretOffset(editor) },
+            checker = { offset -> offset == startOffset },
+        )
+
+        repeat(length) {
+            editor.invokeActionByShortcut("EditorRightWithSelection")
         }
+
+        waitFor(
+            message = "keyboard selection covers the exact requested source range",
+            timeout = 10.seconds,
+            getter = { primarySelectionRange(editor) },
+            checker = { (start, end) -> start == startOffset && end == endOffset },
+        )
     }
 
     fun invokeMarkdownBold(editor: JEditorUiComponent) {
@@ -189,6 +208,14 @@ class MarkFlowIdeDriver(private val driver: Driver) {
                 .getCaretModel()
                 .getPrimaryCaret()
                 .getOffset()
+        }
+
+    fun primarySelectionRange(editor: JEditorUiComponent): Pair<Int, Int> =
+        driver.withContext(OnDispatcher.EDT, semantics = LockSemantics.READ_ACTION) {
+            val caret = driver.cast(editor.editor, EditorStateRemote::class)
+                .getCaretModel()
+                .getPrimaryCaret()
+            caret.getSelectionStart() to caret.getSelectionEnd()
         }
 
     fun removeSecondaryCarets(editor: JEditorUiComponent) {
@@ -371,6 +398,8 @@ private interface CaretModelRemote {
 @Remote("com.intellij.openapi.editor.Caret")
 private interface CaretRemote {
     fun getOffset(): Int
+    fun getSelectionStart(): Int
+    fun getSelectionEnd(): Int
 }
 
 @Remote("com.intellij.openapi.editor.Editor")

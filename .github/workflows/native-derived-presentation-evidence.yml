@@ -178,6 +178,6 @@ jobs:
           name: native-derived-presentation-evidence
           path: |
             build/native-derived-presentation-probe/evidence.json
-            build/idea-sandbox/**/log/idea.log
+            .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-native-derived-xvfb.log
           if-no-files-found: warn

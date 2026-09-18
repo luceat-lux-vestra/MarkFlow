@@ -83,7 +83,7 @@ expect_fail "$mutable" action_pinning "mutable action ref"
 
 missing_permissions="$TMP/missing-permissions"
 copy_root "$missing_permissions"
-perl -0pi -e 's/\npermissions:\n  contents: read\n//' "$missing_permissions/.github/workflows/run-ui-tests.yml"
+perl -0pi -e 's/\npermissions:\n  contents: read\n//' "$missing_permissions/.github/workflows/starter-driver-e2e.yml"
 expect_fail "$missing_permissions" workflow_permissions "no workflow-level permissions"
 
 unsafe_permissions="$TMP/unsafe-permissions"

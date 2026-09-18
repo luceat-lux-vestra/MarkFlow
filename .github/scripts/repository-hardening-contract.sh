@@ -38,10 +38,20 @@ grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evid
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$renderer_workflow" "Derived renderer evidence"
 
-if grep -Eq '^[[:space:]]+gradle[[:space:]]+runIdeForUiTests' .github/workflows/run-ui-tests.yml; then
-  die "UI workflow invokes runner Gradle instead of the repository wrapper"
+[ ! -e .github/workflows/run-ui-tests.yml ] || die "obsolete Robot UI workflow must stay deleted"
+if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle.kts; then
+  die "obsolete Robot UI test infrastructure remains in build.gradle.kts"
 fi
-grep -q './gradlew runIdeForUiTests' .github/workflows/run-ui-tests.yml || die "UI workflow does not use the Gradle wrapper"
+
+starter_workflow=".github/workflows/starter-driver-e2e.yml"
+starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
+[ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
+python3 "$starter_diagnostics" --self-test >/dev/null || die "Starter/Driver diagnostics self-test failed"
+grep -Fq ".github/scripts/check-starter-driver-diagnostics.py" "$starter_workflow" || die "Starter workflow does not trigger on diagnostics-gate changes"
+grep -q 'check-starter-driver-diagnostics.py --self-test' "$starter_workflow" || die "Starter workflow does not execute diagnostics negative controls"
+grep -q -- '--root "$pass_dir"' "$starter_workflow" || die "Starter workflow does not validate each retained pass independently"
+grep -q -- '--output "$pass_dir/diagnostics.json"' "$starter_workflow" || die "Starter workflow does not persist structured diagnostics for each pass"
+grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow does not upload pass-scoped diagnostics evidence"
 
 build_workflow=".github/workflows/build.yml"
 if grep -qi 'codecov' "$build_workflow"; then
@@ -125,6 +135,9 @@ if grep -q 'MarkFlow-private' docs/release/recovery.md; then
   die "release recovery still references the retired private repository name"
 fi
 grep -q '#139 and #141 are completed' docs/architecture/README.md || die "architecture index does not record completed reset/reconciliation gates"
+if grep -Eq '^\| .*`TEMPORARY`' docs/architecture/leap-migration-inventory.md; then
+  die "#141 migration inventory still contains an unresolved TEMPORARY production row"
+fi
 grep -q '^## Dependency update governance$' GOVERNANCE.md || die "dependency update governance contract is missing"
 grep -q 'PR titles and bodies must not contain GitHub Actions skip directives' GOVERNANCE.md || die "squash message safety governance is missing"
 grep -q 'exact-SHA `workflow_dispatch` recovery input' GOVERNANCE.md || die "exact-SHA post-main recovery governance is missing"

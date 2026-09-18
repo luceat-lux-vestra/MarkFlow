@@ -20,7 +20,7 @@ Authority order is:
 4. focused target Tasks, including #143–#156;
 5. current implementation/tests/historical docs as evidence only.
 
-#139/#141 architecture reset and migration reconciliation are completed. #153 completed production native-editor cutover and #154 completed browser-editor/protocol/trust purge. Remaining Leap convergence is owned by #155 and #156; those completions, not historical implementation presence, determine when #52/#84 become eligible to close.
+#139/#141 architecture reset and migration reconciliation are completed. #153 completed production native-editor cutover and #154 completed browser-editor/protocol/trust purge. #155 dependency/toolchain/JCEF/settings convergence is completed. Remaining Leap convergence is owned by #156; that completion, not historical implementation presence, determines when #52/#84 become eligible to close.
 
 ## Maintainer responsibilities
 

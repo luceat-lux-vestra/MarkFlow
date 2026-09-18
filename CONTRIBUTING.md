@@ -7,7 +7,7 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 - Search existing issues and pull requests first.
 - Read `AGENTS.md`, `docs/architecture/README.md`, and the focused subsystem/Task documentation.
 - Treat #78, accepted ADR 0001/0002, reconciled #79–#84 Tracks, and #141's migration map as authoritative over current implementation and historical phase wording.
-- The target editor is native IntelliJ `Document`/`Editor` authority with source-neutral derived presentation. Do not assume the current browser editor, host↔web sync, source revisions, browser pool, loopback realm, CSP/request policy, or editor JCEF lifecycle survive.
+- Production editing is native IntelliJ `Document`/`Editor` authority with source-neutral derived presentation. The deleted browser editor, host↔web sync, source revisions, browser pool, editor loopback realm and editor JCEF lifecycle must not be restored as compatibility machinery.
 - Mermaid/KaTeX are retained product renderer capabilities. Do not delete/rewrite them merely because their current editor adapter is superseded.
 - Significant changes to source authority, native editor shell, projection semantics, renderer engine/runtime boundary, trust/resource/navigation policy, settings migration, compatibility, or release behavior require an explicit issue and architecture decision when not already covered by an accepted Task/ADR.
 - Report suspected vulnerabilities privately as described in `SECURITY.md`.
@@ -67,7 +67,7 @@ npm run test:source
 npm run build
 ```
 
-The web commands remain required while retained renderer/current-runtime consumers still exist. #155 will converge the toolchain after browser-editor purge.
+The web commands remain required because #155 proved a retained renderer-only TypeScript/Vite/Node consumer after browser-editor purge. Do not interpret retained web tooling as editor authority.
 
 Do not claim a check was run if it was not. Native editor/projection changes require real IntelliJ runtime scenarios where helper tests cannot prove behavior. Retained JCEF renderer changes require real renderer-runtime evidence where applicable.
 
@@ -77,7 +77,7 @@ CI green is necessary but not sufficient. `UNKNOWN`, `UNVERIFIED`, and insuffici
 
 Review the exact final HEAD for functional correctness, source fidelity/native IntelliJ semantics, architecture/ownership, migration deletion criteria, lifecycle/stale-work/resource bounds, renderer continuity, error handling/diagnostics, trust boundaries, compatibility, performance evidence, complexity/dead code, failure/recovery/edge/adversarial coverage, scope, and documentation consistency.
 
-Temporary old browser-editor code may still require regression testing before cutover, but fixing it does not make it target architecture.
+Deleted browser-editor, source-sync, recovery, and editor-trust mechanisms are not compatibility surfaces. Reintroducing them requires a new independently accepted architecture proof.
 
 ## Release boundary
 
