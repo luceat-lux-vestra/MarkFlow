@@ -38,6 +38,16 @@ grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evid
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$renderer_workflow" "Derived renderer evidence"
 
+starter_workflow=".github/workflows/starter-driver-e2e.yml"
+starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
+[ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
+python3 "$starter_diagnostics" --self-test >/dev/null || die "Starter/Driver diagnostics self-test failed"
+grep -Fq ".github/scripts/check-starter-driver-diagnostics.py" "$starter_workflow" || die "Starter workflow does not select diagnostics gate changes"
+grep -q 'name: Validate Starter Driver diagnostics' "$starter_workflow" || die "Starter workflow does not validate uploaded IDE diagnostics"
+grep -q 'check-starter-driver-diagnostics.py --self-test' "$starter_workflow" || die "Starter workflow does not execute diagnostics negative-control fixtures"
+grep -q -- '--output build/starter-driver-diagnostics.json' "$starter_workflow" || die "Starter workflow does not persist structured diagnostics evidence"
+grep -q 'build/starter-driver-diagnostics.json' "$starter_workflow" || die "Starter workflow does not upload structured diagnostics evidence"
+
 build_workflow=".github/workflows/build.yml"
 if grep -qi 'codecov' "$build_workflow"; then
   die "required Build workflow must not hide a non-authoritative external Codecov upload"
