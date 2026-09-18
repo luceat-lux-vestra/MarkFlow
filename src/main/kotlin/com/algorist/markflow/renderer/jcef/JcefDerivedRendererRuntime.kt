@@ -23,6 +23,7 @@ import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.LinkedHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -68,7 +69,15 @@ class JcefDerivedRendererRuntime(
             ?: error("derived renderer webview resources unavailable")
         entryUrl = "http://127.0.0.1:$port/derived-renderer.html"
 
-        val createdBrowser = JBCefBrowser()
+        val createdBrowser = try {
+            if (failBrowserConstructionOnceForDiagnostics.getAndSet(false)) {
+                error("diagnostic browser construction failure")
+            }
+            JBCefBrowser()
+        } catch (failure: Throwable) {
+            MarkFlowWebviewResourceManager.release()
+            throw failure
+        }
         val createdQuery = try {
             JBCefJSQuery.create(createdBrowser as JBCefBrowserBase)
         } catch (failure: Throwable) {
@@ -467,9 +476,16 @@ class JcefDerivedRendererRuntime(
         private const val MAX_PRESENTATION_PIXELS = 8L * 1024L * 1024L
         private const val MAX_PRESENTATION_BASE64_CHARS = 48 * 1024 * 1024
         private val liveInstances = AtomicInteger(0)
+        private val failBrowserConstructionOnceForDiagnostics = AtomicBoolean(false)
 
         internal val liveInstanceCountForDiagnostics: Int
             get() = liveInstances.get()
+
+        internal fun failNextBrowserConstructionForDiagnostics() {
+            check(failBrowserConstructionOnceForDiagnostics.compareAndSet(false, true)) {
+                "diagnostic browser-construction failure already armed"
+            }
+        }
 
         private fun isAllowedEntry(rawUrl: String?, entry: URI): Boolean {
             val uri = safeUri(rawUrl) ?: return false

@@ -1,5 +1,6 @@
 package com.algorist.markflow.renderer.jcef
 
+import com.algorist.markflow.browser.MarkFlowWebviewResourceManager
 import com.algorist.markflow.renderer.DerivedRendererIdentity
 import com.algorist.markflow.renderer.DerivedRendererKind
 import com.algorist.markflow.renderer.DerivedRendererRuntimeFactory
@@ -50,6 +51,27 @@ internal object DerivedRendererProbe {
             armTimeout()
 
             try {
+                val baselineResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(baselineResources.ownerCount == 0)
+                check(!baselineResources.serverRunning)
+                check(!baselineResources.extractedRootPresent)
+                check(!baselineResources.tempRootPresent)
+
+                MarkFlowWebviewResourceManager.failNextServerStartForDiagnostics()
+                check(MarkFlowWebviewResourceManager.acquire() == null) {
+                    "diagnostic renderer resource startup failure unexpectedly acquired an owner"
+                }
+                val rollbackResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(rollbackResources.ownerCount == 0)
+                check(!rollbackResources.serverRunning)
+                check(!rollbackResources.extractedRootPresent)
+                check(!rollbackResources.tempRootPresent)
+                cases += CaseResult(
+                    id = "resource-start-failure-rollback",
+                    outcome = "PASS",
+                    detail = "resourceOwners=0 serverRunning=false extractedRoot=false tempRoot=false",
+                )
+
                 val factories = DerivedRendererRuntimeFactory.EP_NAME.extensionList
                 check(factories.size == 1) { "expected exactly one isolated renderer runtime factory" }
                 cases += CaseResult(
@@ -58,9 +80,72 @@ internal object DerivedRendererProbe {
                     detail = "factoryCount=1 implementation=${factories.single().javaClass.name}",
                 )
 
+                JcefDerivedRendererRuntime.failNextBrowserConstructionForDiagnostics()
+                val createFailure = runCatching {
+                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                }.exceptionOrNull()
+                check(createFailure != null) { "diagnostic renderer runtime creation failure did not fail" }
+                check(JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics == baselineLiveInstances) {
+                    "failed renderer construction changed live-instance count"
+                }
+                val createFailureResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(createFailureResources.ownerCount == 0)
+                check(!createFailureResources.serverRunning)
+                check(!createFailureResources.extractedRootPresent)
+                check(!createFailureResources.tempRootPresent)
+                cases += CaseResult(
+                    id = "runtime-create-failure-rollback",
+                    outcome = "PASS",
+                    detail = "failure=${createFailure.javaClass.simpleName} liveInstances=${JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics} resourceOwners=0 serverRunning=false extractedRoot=false tempRoot=false",
+                )
+
+                val cleanupFailureRuntime =
+                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                check(cleanupFailureRuntime is JcefDerivedRendererRuntime) {
+                    "renderer runtime unavailable before temp-root cleanup recovery proof"
+                }
+                MarkFlowWebviewResourceManager.failNextTempRootDeleteForDiagnostics()
+                cleanupFailureRuntime.dispose()
+                check(JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics == baselineLiveInstances) {
+                    "diagnostic temp-root cleanup failure changed live-instance baseline"
+                }
+                val retainedCleanupResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(retainedCleanupResources.ownerCount == 0)
+                check(!retainedCleanupResources.serverRunning)
+                check(retainedCleanupResources.extractedRootPresent)
+                check(retainedCleanupResources.tempRootPresent)
+                val retainedRoot = requireNotNull(MarkFlowWebviewResourceManager.extractedRootForDiagnostics())
+
+                val recoveredRuntime =
+                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                check(recoveredRuntime is JcefDerivedRendererRuntime) {
+                    "renderer runtime did not recover after retained temp-root cleanup failure"
+                }
+                val recoveredRoot = requireNotNull(MarkFlowWebviewResourceManager.extractedRootForDiagnostics())
+                check(recoveredRoot != retainedRoot) { "renderer acquire reused a failed-cleanup temp root" }
+                recoveredRuntime.dispose()
+                val recoveredCleanupResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(recoveredCleanupResources.ownerCount == 0)
+                check(!recoveredCleanupResources.serverRunning)
+                check(!recoveredCleanupResources.extractedRootPresent)
+                check(!recoveredCleanupResources.tempRootPresent)
+                check(JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics == baselineLiveInstances)
+                cases += CaseResult(
+                    id = "temp-root-cleanup-retry",
+                    outcome = "PASS",
+                    detail = "retainedAfterFailure=true rootChanged=true liveInstances=${JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics} resourceOwners=0 serverRunning=false extractedRoot=false tempRoot=false",
+                )
+
+                val createStartedAt = System.nanoTime()
                 val created = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                val createElapsedMs = (System.nanoTime() - createStartedAt) / 1_000_000L
                 check(created is JcefDerivedRendererRuntime) { "isolated JCEF renderer runtime factory unavailable" }
                 runtime = created
+                cases += CaseResult(
+                    id = "runtime-create-latency",
+                    outcome = "PASS",
+                    detail = "elapsedMs=$createElapsedMs",
+                )
                 runMermaidSuccess()
             } catch (failure: Throwable) {
                 finishIncomplete("renderer probe startup failed: ${failure.javaClass.name}")
@@ -194,19 +279,26 @@ internal object DerivedRendererProbe {
             try {
                 runtime?.dispose()
                 runtime = null
+                val lifecycleStartedAt = System.nanoTime()
                 repeat(REPEATED_DISPOSAL_CYCLES) {
                     val current = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
                     check(current is JcefDerivedRendererRuntime)
                     current.dispose()
                 }
+                val lifecycleElapsedMs = (System.nanoTime() - lifecycleStartedAt) / 1_000_000L
                 val finalLiveInstances = JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics
                 check(finalLiveInstances == baselineLiveInstances) {
                     "renderer runtime live-instance count did not return to baseline"
                 }
+                val finalResources = MarkFlowWebviewResourceManager.diagnosticsSnapshot()
+                check(finalResources.ownerCount == 0) { "renderer resource owner count leaked: $finalResources" }
+                check(!finalResources.serverRunning) { "renderer resource server remained live: $finalResources" }
+                check(!finalResources.extractedRootPresent) { "renderer extracted root remained owned: $finalResources" }
+                check(!finalResources.tempRootPresent) { "renderer temp extraction remained on disk: $finalResources" }
                 cases += CaseResult(
                     id = "repeated-create-dispose",
                     outcome = "PASS",
-                    detail = "cycles=$REPEATED_DISPOSAL_CYCLES baseline=$baselineLiveInstances final=$finalLiveInstances",
+                    detail = "cycles=$REPEATED_DISPOSAL_CYCLES baseline=$baselineLiveInstances final=$finalLiveInstances elapsedMs=$lifecycleElapsedMs resourceOwners=${finalResources.ownerCount} serverRunning=${finalResources.serverRunning} extractedRoot=${finalResources.extractedRootPresent} tempRoot=${finalResources.tempRootPresent}",
                 )
                 finish("PASS")
             } catch (failure: Throwable) {
@@ -221,6 +313,7 @@ internal object DerivedRendererProbe {
             next: () -> Unit,
         ) {
             val current = runtime ?: return finishIncomplete("renderer runtime missing before $id")
+            val renderStartedAt = System.nanoTime()
             current.render(request) { result ->
                 ApplicationManager.getApplication().invokeLater {
                     if (finished) return@invokeLater
@@ -229,7 +322,8 @@ internal object DerivedRendererProbe {
                         check(result.kind == request.kind.wireName)
                         check(result.identity == request.identity)
                         verify(result)
-                        cases += CaseResult(id, "PASS", resultSummary(result))
+                        val elapsedMs = (System.nanoTime() - renderStartedAt) / 1_000_000L
+                        cases += CaseResult(id, "PASS", "${resultSummary(result)} elapsedMs=$elapsedMs")
                         next()
                     } catch (failure: Throwable) {
                         failCase(id, failure)

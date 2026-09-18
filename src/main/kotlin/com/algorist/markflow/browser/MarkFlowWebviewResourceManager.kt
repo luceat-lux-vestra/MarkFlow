@@ -26,6 +26,14 @@ internal object MarkFlowWebviewResourceManager {
     private val LOG = Logger.getInstance(MarkFlowWebviewResourceManager::class.java)
     private val lock = Any()
     private val ownerCount = AtomicInteger(0)
+    // Partial JAR extraction roots that could not be deleted immediately. Guarded by [lock].
+    private val failedExtractionTempRoots = linkedSetOf<Path>()
+
+    @Volatile
+    private var failServerStartOnceForDiagnostics = false
+
+    // Guarded by [lock]. Simulates an OS/filesystem refusal so retry cleanup is deterministic in CI.
+    private var failTempRootDeleteOnceForDiagnostics = false
 
     @Volatile
     private var extractedWebviewRoot: Path? = null
@@ -39,10 +47,48 @@ internal object MarkFlowWebviewResourceManager {
     @Volatile
     private var webviewServerPort: Int? = null
 
+    internal data class Diagnostics(
+        val ownerCount: Int,
+        val serverRunning: Boolean,
+        val extractedRootPresent: Boolean,
+        val tempRootPresent: Boolean,
+    )
+
+    internal fun diagnosticsSnapshot(): Diagnostics = synchronized(lock) {
+        val root = extractedWebviewRoot
+        Diagnostics(
+            ownerCount = ownerCount.get(),
+            serverRunning = webviewHttpServer != null,
+            extractedRootPresent = root != null,
+            tempRootPresent = (extractedWebviewRootIsTemp && root != null && Files.exists(root)) ||
+                failedExtractionTempRoots.any(Files::exists),
+        )
+    }
+
+    internal fun extractedRootForDiagnostics(): Path? = synchronized(lock) {
+        extractedWebviewRoot
+    }
+
     fun acquire(): Int? {
         synchronized(lock) {
+            // A zero-owner temporary root can only remain after cleanup failed. Never serve that
+            // potentially partial root again: retry deletion first, then extract a fresh copy.
+            if (!cleanupRetainedExtractedRootLocked()) {
+                LOG.warn("MARKFLOW_UI renderer acquire blocked by retained renderer temp root")
+                return null
+            }
+            // Never create another temporary extraction while a prior failed extraction is still
+            // retained. Retry cleanup first so repeated acquisition cannot grow orphan roots.
+            if (!cleanupFailedExtractionTempRootsLocked()) {
+                LOG.warn("MARKFLOW_UI renderer acquire blocked by retained failed extraction temp root")
+                return null
+            }
             val extractedRoot = ensureExtractedWebviewRootLocked() ?: return null
-            val port = ensureWebviewHttpServerLocked(extractedRoot) ?: return null
+            val port = ensureWebviewHttpServerLocked(extractedRoot)
+            if (port == null) {
+                cleanupUnownedResourcesLocked()
+                return null
+            }
             ownerCount.incrementAndGet()
             return port
         }
@@ -56,31 +102,104 @@ internal object MarkFlowWebviewResourceManager {
             if (ownerCount.get() > 0) {
                 return
             }
-
-            webviewHttpServer?.let { server ->
-                try {
-                    server.stop(0)
-                } catch (ex: Exception) {
-                    LOG.warn("MARKFLOW_UI failed to stop renderer resource server: ${ex.message}", ex)
-                }
-            }
-            webviewHttpServer = null
-            webviewServerPort = null
-
-            if (extractedWebviewRootIsTemp) {
-                extractedWebviewRoot?.toFile()?.deleteRecursively()
-            }
-            extractedWebviewRoot = null
-            extractedWebviewRootIsTemp = false
+            cleanupUnownedResourcesLocked()
         }
+    }
+
+    internal fun failNextServerStartForDiagnostics() {
+        synchronized(lock) {
+            check(ownerCount.get() == 0) { "renderer resource diagnostics require zero owners" }
+            check(webviewHttpServer == null) { "renderer resource diagnostics require no running server" }
+            failServerStartOnceForDiagnostics = true
+        }
+    }
+
+    internal fun failNextTempRootDeleteForDiagnostics() {
+        synchronized(lock) {
+            check(ownerCount.get() > 0) { "renderer temp-root cleanup diagnostics require an owner" }
+            check(extractedWebviewRootIsTemp) { "renderer temp-root cleanup diagnostics require JAR extraction" }
+            check(extractedWebviewRoot != null) { "renderer temp-root cleanup diagnostics require an extracted root" }
+            check(!failTempRootDeleteOnceForDiagnostics) { "renderer temp-root cleanup failure already armed" }
+            failTempRootDeleteOnceForDiagnostics = true
+        }
+    }
+
+    private fun cleanupUnownedResourcesLocked() {
+        check(ownerCount.get() == 0) { "cannot cleanup renderer resources while owners remain" }
+
+        webviewHttpServer?.let { server ->
+            try {
+                server.stop(0)
+            } catch (ex: Exception) {
+                LOG.warn("MARKFLOW_UI failed to stop renderer resource server: ${ex.message}", ex)
+            }
+        }
+        webviewHttpServer = null
+        webviewServerPort = null
+
+        if (extractedWebviewRootIsTemp) {
+            val root = extractedWebviewRoot
+            if (root != null && !deleteTempRootLocked(root, "renderer temp root")) {
+                return
+            }
+        }
+        extractedWebviewRoot = null
+        extractedWebviewRootIsTemp = false
+        cleanupFailedExtractionTempRootsLocked()
+    }
+
+    private fun cleanupRetainedExtractedRootLocked(): Boolean {
+        if (ownerCount.get() > 0 || !extractedWebviewRootIsTemp) return true
+        val root = extractedWebviewRoot ?: run {
+            extractedWebviewRootIsTemp = false
+            return true
+        }
+        if (!deleteTempRootLocked(root, "retained renderer temp root")) {
+            return false
+        }
+        extractedWebviewRoot = null
+        extractedWebviewRootIsTemp = false
+        return true
+    }
+
+    private fun cleanupFailedExtractionTempRootsLocked(): Boolean {
+        val iterator = failedExtractionTempRoots.iterator()
+        while (iterator.hasNext()) {
+            val root = iterator.next()
+            if (!Files.exists(root) || deleteTempRootLocked(root, "failed renderer extraction temp root")) {
+                iterator.remove()
+            }
+        }
+        return failedExtractionTempRoots.isEmpty()
+    }
+
+    private fun deleteTempRootLocked(root: Path, label: String): Boolean {
+        if (failTempRootDeleteOnceForDiagnostics) {
+            failTempRootDeleteOnceForDiagnostics = false
+            LOG.warn("MARKFLOW_UI diagnostic $label deletion failure: $root")
+            return false
+        }
+        runCatching { root.toFile().deleteRecursively() }
+            .onFailure { LOG.warn("MARKFLOW_UI failed to delete $label: ${it.message}", it) }
+        if (Files.exists(root)) {
+            LOG.warn("MARKFLOW_UI $label remained after cleanup: $root")
+            return false
+        }
+        return true
     }
 
     private fun ensureWebviewHttpServerLocked(root: Path): Int? {
         webviewServerPort?.let { return it }
+        if (failServerStartOnceForDiagnostics) {
+            failServerStartOnceForDiagnostics = false
+            return null
+        }
 
+        var server: HttpServer? = null
         return try {
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-            server.createContext("/") { exchange ->
+            val createdServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server = createdServer
+            createdServer.createContext("/") { exchange ->
                 val requestPath = exchange.requestURI?.path.orEmpty()
                 if (requestPath.isEmpty()) {
                     sendStatus(exchange, 404)
@@ -88,15 +207,18 @@ internal object MarkFlowWebviewResourceManager {
                 }
                 serveWebviewResource(exchange, root, requestPath)
             }
-            server.executor = null
-            server.start()
-            webviewHttpServer = server
-            webviewServerPort = server.address.port
+            createdServer.executor = null
+            createdServer.start()
+            webviewHttpServer = createdServer
+            webviewServerPort = createdServer.address.port
             if (MarkFlowDiagnostics.enabled) {
-                LOG.info("MARKFLOW_UI renderer resource server started on 127.0.0.1:${server.address.port}")
+                LOG.info("MARKFLOW_UI renderer resource server started on 127.0.0.1:${createdServer.address.port}")
             }
-            server.address.port
+            createdServer.address.port
         } catch (ex: Exception) {
+            runCatching { server?.stop(0) }
+            webviewHttpServer = null
+            webviewServerPort = null
             LOG.error("MARKFLOW_UI failed to start renderer resource server: ${ex.message}", ex)
             null
         }
@@ -175,25 +297,32 @@ internal object MarkFlowWebviewResourceManager {
             return null
         }
 
+        var tempRoot: Path? = null
         return try {
-            val tempRoot = Files.createTempDirectory("markflow-renderer-")
+            val root = Files.createTempDirectory("markflow-renderer-")
+            tempRoot = root
             JarFile(pluginJarPath.toFile()).use { jar ->
                 val entries = jar.entries()
                 while (entries.hasMoreElements()) {
                     val entry = entries.nextElement()
                     if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
 
-                    val target = tempRoot.resolve(entry.name.removePrefix("webview/"))
+                    val target = root.resolve(entry.name.removePrefix("webview/"))
                     target.parent?.let(Files::createDirectories)
                     jar.getInputStream(entry).use { input ->
                         Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
                     }
                 }
             }
-            extractedWebviewRoot = tempRoot
+            extractedWebviewRoot = root
             extractedWebviewRootIsTemp = true
-            tempRoot
+            root
         } catch (ex: Exception) {
+            tempRoot?.let { root ->
+                if (!deleteTempRootLocked(root, "failed renderer extraction temp root")) {
+                    failedExtractionTempRoots.add(root)
+                }
+            }
             LOG.error("MARKFLOW_UI failed to extract renderer resources: ${ex.message}", ex)
             null
         }
