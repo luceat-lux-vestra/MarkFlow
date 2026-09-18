@@ -18,6 +18,7 @@ REQUIRED_SUITES = {
 }
 MARKFLOW_MARKER = "com.algorist.markflow."
 MARKFLOW_FRAME = re.compile(r"(?m)^\s*at\s+com\.algorist\.markflow\.")
+LOG_RECORD_START = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+\[")
 LIFECYCLE_TOKENS = ("AlreadyDisposedException", "ConcurrentModificationException")
 
 
@@ -37,6 +38,25 @@ def _suite_name(path: Path) -> str:
 
 def _has_markflow_frame(text: str) -> bool:
     return MARKFLOW_FRAME.search(text) is not None
+
+
+def _log_records(lines: list[str]) -> list[tuple[int, list[str]]]:
+    records: list[tuple[int, list[str]]] = []
+    start: int | None = None
+    current: list[str] = []
+
+    for index, line in enumerate(lines):
+        if LOG_RECORD_START.match(line):
+            if current and start is not None:
+                records.append((start, current))
+            start = index
+            current = [line]
+        elif current:
+            current.append(line)
+
+    if current and start is not None:
+        records.append((start, current))
+    return records
 
 
 def analyze(root: Path) -> dict:
@@ -86,42 +106,50 @@ def analyze(root: Path) -> dict:
 
     for path in idea_logs:
         lines = _read(path).splitlines()
-        for index, line in enumerate(lines):
-            lo = max(0, index - 35)
-            hi = min(len(lines), index + 36)
-            window = "\n".join(lines[lo:hi])
+        for record_start, record_lines in _log_records(lines):
+            headline = record_lines[0]
+            record = "\n".join(record_lines)
 
-            if any(token in line for token in LIFECYCLE_TOKENS):
-                item = {
-                    "path": str(path.relative_to(root)),
-                    "line": index + 1,
-                    "token": next(token for token in LIFECYCLE_TOKENS if token in line),
-                }
-                if _has_markflow_frame(window):
-                    correlated.append(item)
-                else:
-                    platform_only_lifecycle.append(item)
+            for token in LIFECYCLE_TOKENS:
+                for offset, line in enumerate(record_lines):
+                    if token not in line:
+                        continue
+                    item = {
+                        "path": str(path.relative_to(root)),
+                        "line": record_start + offset + 1,
+                        "token": token,
+                    }
+                    if _has_markflow_frame(record):
+                        correlated.append(item)
+                    else:
+                        platform_only_lifecycle.append(item)
 
-            if ("PluginException" in line or "Cannot load" in line or "NoClassDefFoundError" in line) and (
-                _has_markflow_frame(window) or MARKFLOW_MARKER in line
-            ):
+            load_line = next(
+                (
+                    (offset, line)
+                    for offset, line in enumerate(record_lines)
+                    if "PluginException" in line or "Cannot load" in line or "NoClassDefFoundError" in line
+                ),
+                None,
+            )
+            if load_line is not None and (_has_markflow_frame(record) or MARKFLOW_MARKER in record):
+                offset, line = load_line
                 markflow_load_failures.append(
                     {
                         "path": str(path.relative_to(root)),
-                        "line": index + 1,
+                        "line": record_start + offset + 1,
                         "headline": line[:500],
                     }
                 )
 
-            if " ERROR " in line or " SEVERE " in line:
-                if _has_markflow_frame(window):
-                    markflow_error_windows.append(
-                        {
-                            "path": str(path.relative_to(root)),
-                            "line": index + 1,
-                            "headline": line[:500],
-                        }
-                    )
+            if (" ERROR " in headline or " SEVERE " in headline) and _has_markflow_frame(record):
+                markflow_error_windows.append(
+                    {
+                        "path": str(path.relative_to(root)),
+                        "line": record_start + 1,
+                        "headline": headline[:500],
+                    }
+                )
 
     reasons = []
     if parse_errors:
@@ -207,17 +235,19 @@ def self_test() -> None:
         assert len(baseline["ide"]["platformOnlyLifecycleExceptions"]) == 1, baseline
 
         log.write_text(
-            "2026-01-01 INFO com.algorist.markflow.MarkFlowStartup - startup complete\n"
-            "2026-01-01 ERROR platform\n"
+            "2026-01-01 00:00:00,000 [      1] ERROR - #platform - platform failure\n"
             "java.util.ConcurrentModificationException\n"
-            "at com.intellij.ui.tree.StructureTreeModel.invalidate(StructureTreeModel.java:1)\n",
+            "at com.intellij.ui.tree.StructureTreeModel.invalidate(StructureTreeModel.java:1)\n"
+            "2026-01-01 00:00:00,001 [      2] WARN - #com.algorist.markflow.lifecycle - optional renderer unavailable\n"
+            "java.lang.IllegalStateException\n"
+            "at com.algorist.markflow.editor.native.NativePresentationController.refresh(NativePresentationController.kt:1)\n",
             encoding="utf-8",
         )
         adjacent_markflow_log = analyze(root)
         assert adjacent_markflow_log["verdict"] == "PASS", adjacent_markflow_log
 
         log.write_text(
-            "2026-01-01 ERROR MarkFlow\n"
+            "2026-01-01 00:00:00,000 [      1] ERROR - #MarkFlow - MarkFlow failure\n"
             "java.lang.IllegalStateException\n"
             "at com.algorist.markflow.editor.native.NativePresentationController.refresh(NativePresentationController.kt:1)\n",
             encoding="utf-8",

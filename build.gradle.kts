@@ -259,6 +259,10 @@ intellijPlatformTesting {
             testClassesDirs = integrationTestSourceSet.output.classesDirs
             classpath = integrationTestSourceSet.runtimeClasspath
             useJUnitPlatform()
+            // Starter 263 resolves IntelliJ's MultiRoutingFsPath inside the Gradle test worker.
+            // That class implements a JDK-internal sun.nio.fs interface, so the worker needs the
+            // same explicit export expected by the IntelliJ platform runtime/tooling.
+            jvmArgs("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
             systemProperty("markflow.test.platformVersion", providers.gradleProperty("platformVersion").get())
         }
     }
@@ -369,7 +373,7 @@ intellijPlatformTesting {
                         // This is a non-interactive runtime probe. Keep platform errors in idea.log,
                         // but prevent EAP diagnostic/update dialogs from monopolizing the EDT.
                         "-Didea.fatal.error.notification=disabled",
-                        "-Didea.no.platform.update=true",
+                        "-Dide.no.platform.update=true",
                         "-Dide.mac.message.dialogs.as.sheets=false",
                         "-Djb.privacy.policy.text=<!--999.999-->",
                         "-Djb.consents.confirmation.enabled=false",
