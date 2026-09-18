@@ -374,6 +374,10 @@ intellijPlatformTesting {
                         // but prevent EAP diagnostic/update dialogs from monopolizing the EDT.
                         "-Didea.fatal.error.notification=disabled",
                         "-Dide.no.platform.update=true",
+                        // IntelliJ Starter disables the 263 EAP trace-data-sharing notification in
+                        // integration runs. Without this, TraceDataSharingActivity can open a modal
+                        // consent surface before the dedicated MarkFlow no-JCEF probe reaches EDT.
+                        "-Dide.enable.notification.trace.data.sharing=false",
                         "-Dide.mac.message.dialogs.as.sheets=false",
                         // Keep this probe aligned with IntelliJ Starter's disableStartupDialogs()
                         // contract for maintained EAP builds. 263 EAP can otherwise surface
