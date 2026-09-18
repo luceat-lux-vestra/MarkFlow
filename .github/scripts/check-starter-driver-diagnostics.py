@@ -216,7 +216,7 @@ def _write_platform_log(root: Path) -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     log = log_dir / "idea.log"
     log.write_text(
-        "2026-01-01 ERROR platform\n"
+        "2026-01-01 00:00:00,000 [      1] ERROR - #platform - platform failure\n"
         "java.util.ConcurrentModificationException\n"
         "at com.intellij.ui.tree.StructureTreeModel.invalidate(StructureTreeModel.java:1)\n",
         encoding="utf-8",
