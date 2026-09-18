@@ -80,6 +80,8 @@ Do not make performance claims without measurements. Identify workload, document
 
 Measure target bottlenecks before adding incremental parsing complexity, retained artifacts, renderer reuse, pooling, prewarm, caches or concurrency. Resource-retention claims require repeated lifecycle and bounded-lifetime evidence, not throughput alone.
 
+The final Leap convergence matrix, quantitative regression tripwires, and release evidence contract are recorded in [leap-convergence-gate.md](./leap-convergence-gate.md).
+
 ## Manual/runtime evidence
 
 Record IDE build, OS, scenario, expected behavior and observed result when helper tests cannot prove native editor, projection, inlay, renderer, accessibility or lifecycle semantics. Screenshots/log snippets may supplement but must not expose private document content.

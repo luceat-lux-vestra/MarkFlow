@@ -153,6 +153,7 @@ Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editi
 - #152: ordinary Markdown/table fidelity parity described here;
 - #153: production native cutover;
 - #154: mandatory browser editor/protocol/trust purge;
-- #155: final dependency/toolchain/JCEF/settings convergence.
+- #155: dependency/toolchain/JCEF/settings convergence, completed;
+- #156: final compatibility/lifecycle/performance/release convergence, active.
 
 No part of #145/#152 authorizes production cutover or browser deletion before #153/#154.

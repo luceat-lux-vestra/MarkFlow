@@ -136,6 +136,7 @@ Unit tests separately prove the disposition matrix, transferable flavor preserva
 - #152: ordinary Markdown/table parity plus the deferred multicaret/column paste boundary described here;
 - #153: production native cutover;
 - #154: browser editor/protocol/state/trust purge;
-- #155: final dependency/toolchain/JCEF/settings convergence.
+- #155: dependency/toolchain/JCEF/settings convergence, completed;
+- #156: final compatibility/lifecycle/performance/release convergence, active.
 
 No part of #146 or #152 authorizes deleting the temporary production editor before #153/#154.

@@ -23,10 +23,13 @@ Before publication, record and verify:
 2. changelog/release notes accurately describing user-visible changes and known limitations;
 3. clean build/test/static-analysis results for that commit;
 4. plugin packaging and IntelliJ Plugin Verifier results for the supported compatibility matrix;
-5. manual smoke scenarios for editor open/edit/save/reopen, theme/settings, Mermaid/KaTeX, and lifecycle behavior relevant to the release;
-6. security-sensitive changes and dependency updates reviewed;
-7. generated release artifact identity/checksum retained where practical;
-8. rollback/withdrawal plan understood.
+5. Starter/Driver acceptance on the maintained runtime matrix, including a repeated baseline run that proves the suite does not depend on prior process state;
+6. real no-JCEF native-editing evidence and retained-JCEF renderer evidence on that maintained matrix;
+7. the quantitative projection/render/bundle regression tripwires in `docs/engineering/leap-convergence-gate.md` passing on the exact release candidate;
+8. manual smoke scenarios only for behavior that cannot be deterministically automated, with the unautomated boundary recorded rather than substituting manual observation for available CI evidence;
+9. security-sensitive changes and dependency updates reviewed;
+10. generated release artifact identity/checksum retained where practical;
+11. rollback/withdrawal plan understood.
 
 The release workflow accepts only the repository's timestamp version format
 `yy.MM.dd.HHmmss` as an immutable tag/version identity. It resolves the tag to a

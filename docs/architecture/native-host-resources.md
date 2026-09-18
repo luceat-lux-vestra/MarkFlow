@@ -35,7 +35,7 @@ When an image is inactive, the per-editor controller may fold its exact Markdown
 
 The native controller requires an explicit modifier-left-click over the derived link label before invoking the host navigator. It revalidates the URI immediately before the host action. Rejection or navigator failure does not touch Markdown source.
 
-The temporary source-native browser bridge delegates its HTTP(S) authorization to the same policy only to prevent migration drift. That bridge remains temporary and is deleted by #154 after #153 production cutover; it is not part of the target host-resource architecture.
+The historical source-native browser bridge delegated its HTTP(S) authorization to the same policy only to prevent migration drift. #154 deleted that bridge after #153 production cutover; it is not part of the production host-resource architecture.
 
 ## Ownership and non-goals
 
