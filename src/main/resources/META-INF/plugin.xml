@@ -44,7 +44,7 @@
                 id="markflow.native.markdown.deferred.paste"
                 action="EditorPaste"
                 implementationClass="com.algorist.markflow.editor.native.NativeMarkdownDeferredPasteHandler"
-                order="before markdown.table.reformat.paste"/>
+                order="first, before markdown.table.reformat.paste"/>
         <!-- #151 must run before bundled Markdown image/file paste so MarkFlow's bounded copy/link
              contract owns image gestures while non-image paste still delegates to the platform. -->
         <customPasteProvider
