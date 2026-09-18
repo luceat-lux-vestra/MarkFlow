@@ -53,10 +53,8 @@ repositories {
 // Configure dependency coordinates.
 dependencies {
     testImplementation(libs.junit)
-    testImplementation(libs.opentest4j)
 
     integrationTestImplementation(libs.junitJupiter)
-    integrationTestImplementation(libs.kodein)
     integrationTestImplementation(libs.coroutines)
     // Plugin packaging deliberately disables the implicit Kotlin stdlib dependency, but Starter runs in a
     // standalone test worker and must align its kotlin-reflect runtime with the Kotlin plugin version.
