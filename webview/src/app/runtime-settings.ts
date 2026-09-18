@@ -8,8 +8,6 @@ export const DEFAULT_RUNTIME_SETTINGS: Required<MarkFlowRuntimeSettings> = {
     themeSource: "LIGHT",
     mermaidErrorDisplay: "INLINE_ERROR_BOX",
     katexDisplayDensity: "COMFORTABLE",
-    diagramSecurityLevel: "STRICT",
-    previewOnlyByDefault: true,
     mermaidSyntaxErrorMessage: "Mermaid Syntax Error",
     fontFamily: "",
     baseFontSizePx: 16,
@@ -37,7 +35,10 @@ export const normalizeIdeColorScheme = (raw: IdeColors | null | undefined): IdeC
 };
 
 export const resolveRuntimeSettings = (raw: MarkFlowRuntimeSettings | undefined): Required<MarkFlowRuntimeSettings> => {
-    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...(raw ?? {})};
+    const current: MarkFlowRuntimeSettings & {diagramSecurityLevel?: unknown; previewOnlyByDefault?: unknown} = {...(raw ?? {})};
+    delete current.diagramSecurityLevel;
+    delete current.previewOnlyByDefault;
+    const merged: Required<MarkFlowRuntimeSettings> = {...DEFAULT_RUNTIME_SETTINGS, ...current};
     return {
         ...merged,
         ideColorScheme: normalizeIdeColorScheme(merged.ideColorScheme),
@@ -59,9 +60,6 @@ export const resolveMermaidTheme = (settings: Required<MarkFlowRuntimeSettings>)
     if (settings.themeSource === "DARK") return "dark";
     return settings.ideDark ? "dark" : "default";
 };
-
-export const resolveDiagramSecurityLevel = (settings: Required<MarkFlowRuntimeSettings>): "strict" | "loose" =>
-    settings.diagramSecurityLevel === "LOOSE" ? "loose" : "strict";
 
 const buildMermaidThemeVariables = (
     settings: Required<MarkFlowRuntimeSettings>,
@@ -96,7 +94,7 @@ export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSet
         startOnLoad: false,
         theme,
         themeVariables,
-        securityLevel: resolveDiagramSecurityLevel(settings),
+        securityLevel: "strict" as const,
         useMaxWidth,
         htmlLabels: false,
         flowchart: {htmlLabels: false, useMaxWidth},

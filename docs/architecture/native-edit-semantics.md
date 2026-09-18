@@ -39,7 +39,7 @@ existing EditorPaste handler chain
 authoritative Document
 ```
 
-This is still not the production editor cutover. #153 owns production opening; #154 owns deletion of the temporary browser editor/protocol.
+#153 completed production cutover to this native editing authority, and #154 removed the temporary browser editor/protocol. The semantics below are production contracts, not migration-only alternatives.
 
 ## Single-caret paste boundary (#146)
 

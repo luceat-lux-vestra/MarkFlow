@@ -11,7 +11,6 @@ import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Font
 import java.text.ParseException
-import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -22,7 +21,6 @@ import javax.swing.JList
 import javax.swing.DefaultListCellRenderer
 import com.algorist.markflow.MyBundle
 import com.algorist.markflow.MarkFlowDiagnostics
-import com.algorist.markflow.settings.state.DiagramSecurityLevel
 import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
@@ -37,9 +35,6 @@ class MarkFlowSettingsConfigurable : Configurable {
     private lateinit var themeSourceCombo: ComboBox<ThemeSource>
     private lateinit var mermaidErrorDisplayCombo: ComboBox<MermaidErrorDisplay>
     private lateinit var katexDensityCombo: ComboBox<KatexDisplayDensity>
-    private lateinit var diagramSecurityCombo: ComboBox<DiagramSecurityLevel>
-    private lateinit var previewOnlyByDefaultCheckBox: JCheckBox
-    private lateinit var idleEvictAfterMsSpinner: JSpinner
     private lateinit var fontFamilyCombo: ComboBox<FontFamilyOption>
     private lateinit var baseFontSizeSpinner: JSpinner
 
@@ -55,11 +50,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         themeSourceCombo = enumCombo(ThemeSource.entries.toTypedArray())
         mermaidErrorDisplayCombo = enumCombo(MermaidErrorDisplay.entries.toTypedArray())
         katexDensityCombo = enumCombo(KatexDisplayDensity.entries.toTypedArray())
-        diagramSecurityCombo = enumCombo(DiagramSecurityLevel.entries.toTypedArray())
-        previewOnlyByDefaultCheckBox = JCheckBox()
-        idleEvictAfterMsSpinner = JSpinner(
-            SpinnerNumberModel(DEFAULT_IDLE_EVICT_AFTER_MS, IDLE_EVICT_MIN, IDLE_EVICT_MAX, IDLE_EVICT_STEP)
-        )
         fontFamilyCombo = fontCombo(
             FontFamilyOptions.build(
                 GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames.toList(),
@@ -73,14 +63,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         val root = JPanel(GridBagLayout())
         root.border = JBUI.Borders.empty(PANEL_PADDING)
         var row = 0
-
-        row = addSection(root, row, MyBundle.message("settings.markflow.section.general"))
-        row = addRow(
-            root,
-            row,
-            MyBundle.message("settings.markflow.previewOnlyByDefault"),
-            previewOnlyByDefaultCheckBox
-        )
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.appearance"))
         row = addRow(root, row, MyBundle.message("settings.markflow.themeSource"), themeSourceCombo)
@@ -100,16 +82,6 @@ class MarkFlowSettingsConfigurable : Configurable {
 
         row = addSection(root, row, MyBundle.message("settings.markflow.section.katex"))
         row = addRow(root, row, MyBundle.message("settings.markflow.katex.displayDensity"), katexDensityCombo)
-
-        row = addSection(root, row, MyBundle.message("settings.markflow.section.advanced"))
-        row = addRow(root, row, MyBundle.message("settings.markflow.diagram.securityLevel"), diagramSecurityCombo)
-        row = addRow(
-            root,
-            row,
-            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs"),
-            idleEvictAfterMsSpinner,
-            MyBundle.message("settings.markflow.idleBrowserEvictAfterMs.tooltip")
-        )
 
         val spacer = GridBagConstraints().apply {
             gridx = 0
@@ -134,9 +106,6 @@ class MarkFlowSettingsConfigurable : Configurable {
             || state.baseFontSizePx != spinnerInt(baseFontSizeSpinner)
             || state.mermaidErrorDisplay != selectedName(mermaidErrorDisplayCombo)
             || state.katexDisplayDensity != selectedName(katexDensityCombo)
-            || state.diagramSecurityLevel != selectedName(diagramSecurityCombo)
-            || state.previewOnlyByDefault != previewOnlyByDefaultCheckBox.isSelected
-            || state.idleEvictAfterMs != spinnerInt(idleEvictAfterMsSpinner)
     }
 
     override fun apply() {
@@ -150,17 +119,12 @@ class MarkFlowSettingsConfigurable : Configurable {
             fontFamily = selectedValue(fontFamilyCombo),
             baseFontSizePx = spinnerInt(baseFontSizeSpinner),
             mermaidErrorDisplay = selectedName(mermaidErrorDisplayCombo),
-            katexDisplayDensity = selectedName(katexDensityCombo),
-            diagramSecurityLevel = selectedName(diagramSecurityCombo),
-            previewOnlyByDefault = previewOnlyByDefaultCheckBox.isSelected,
-            idleEvictAfterMs = spinnerInt(idleEvictAfterMsSpinner)
+            katexDisplayDensity = selectedName(katexDensityCombo)
         )
         if (MarkFlowDiagnostics.enabled) {
             LOG.warn(
                 "MARKFLOW_SETTINGS_UI apply themeSource=${updated.themeSource}, " +
-                    "security=${updated.diagramSecurityLevel}, " +
-                    "fontFamily=${updated.fontFamily}, baseFontSizePx=${updated.baseFontSizePx}, " +
-                    "idleEvictAfterMs=${updated.idleEvictAfterMs}"
+                    "fontFamily=${updated.fontFamily}, baseFontSizePx=${updated.baseFontSizePx}"
             )
         }
         service.updateFromUi(updated)
@@ -175,9 +139,6 @@ class MarkFlowSettingsConfigurable : Configurable {
         baseFontSizeSpinner.value = state.baseFontSizePx.coerceIn(BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX)
         setSelectedByName(mermaidErrorDisplayCombo, state.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         setSelectedByName(katexDensityCombo, state.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
-        setSelectedByName(diagramSecurityCombo, state.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
-        previewOnlyByDefaultCheckBox.isSelected = state.previewOnlyByDefault
-        idleEvictAfterMsSpinner.value = state.idleEvictAfterMs.coerceIn(IDLE_EVICT_MIN, IDLE_EVICT_MAX)
     }
 
     override fun disposeUIResources() {
@@ -338,9 +299,5 @@ class MarkFlowSettingsConfigurable : Configurable {
         private val BASE_FONT_SIZE_MAX: Int
             get() = EditorFontsConstants.getMaxEditorFontSize()
 
-        private const val DEFAULT_IDLE_EVICT_AFTER_MS = MarkFlowSettingsService.DEFAULT_IDLE_EVICT_AFTER_MS
-        private const val IDLE_EVICT_MIN = 10_000
-        private const val IDLE_EVICT_MAX = 3_600_000
-        private const val IDLE_EVICT_STEP = 10_000
     }
 }

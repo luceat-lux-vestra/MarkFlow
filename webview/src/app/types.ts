@@ -14,8 +14,6 @@ export type MarkFlowRuntimeSettings = {
     themeSource?: "IDE_SYNC" | "LIGHT" | "DARK";
     mermaidErrorDisplay?: "INLINE_ERROR_BOX" | "SILENT_LOG_ONLY";
     katexDisplayDensity?: "COMPACT" | "COMFORTABLE";
-    diagramSecurityLevel?: "STRICT" | "LOOSE";
-    previewOnlyByDefault?: boolean;
     mermaidSyntaxErrorMessage?: string;
     fontFamily?: string;
     baseFontSizePx?: number;

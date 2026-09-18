@@ -22,11 +22,6 @@ enum class KatexDisplayDensity {
     COMFORTABLE
 }
 
-enum class DiagramSecurityLevel {
-    STRICT,
-    LOOSE
-}
-
 data class MarkFlowSettingsState(
     var mermaidSizeMode: String = MermaidSizeMode.FIT_TO_VIEWPORT.name,
     var mermaidZoomPercent: Int = 100,
@@ -34,10 +29,7 @@ data class MarkFlowSettingsState(
     var fontFamily: String = DEFAULT_FONT_FAMILY,
     var baseFontSizePx: Int = DEFAULT_BASE_FONT_SIZE_PX,
     var mermaidErrorDisplay: String = MermaidErrorDisplay.INLINE_ERROR_BOX.name,
-    var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name,
-    var diagramSecurityLevel: String = DiagramSecurityLevel.STRICT.name,
-    var previewOnlyByDefault: Boolean = true,
-    var idleEvictAfterMs: Int = 120_000
+    var katexDisplayDensity: String = KatexDisplayDensity.COMFORTABLE.name
 ) {
     companion object {
         /**
@@ -57,8 +49,6 @@ data class MarkFlowRuntimeSettings(
     val themeSource: String,
     val mermaidErrorDisplay: String,
     val katexDisplayDensity: String,
-    val diagramSecurityLevel: String,
-    val previewOnlyByDefault: Boolean,
     val mermaidSyntaxErrorMessage: String,
     val fontFamily: String,
     val baseFontSizePx: Int,

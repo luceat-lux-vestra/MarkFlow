@@ -4,6 +4,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.algorist.markflow.settings.state.MarkFlowSettingsState
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.xmlb.XmlSerializer
+import org.jdom.Element
 
 /**
  * Unit tests for the pure settings normalization logic in [MarkFlowSettingsService].
@@ -96,27 +98,32 @@ class MarkFlowSettingsTest : BasePlatformTestCase() {
             mermaidSizeMode = "NOT_A_SIZE",
             themeSource = "NOT_A_SOURCE",
             mermaidErrorDisplay = "GARBAGE",
-            katexDisplayDensity = "TOO_DENSE",
-            diagramSecurityLevel = "CLASSIFIED"
+            katexDisplayDensity = "TOO_DENSE"
         )
         service.normalizeState(state)
         assertEquals("FIT_TO_VIEWPORT", state.mermaidSizeMode)
         assertEquals("LIGHT", state.themeSource)
         assertEquals("INLINE_ERROR_BOX", state.mermaidErrorDisplay)
         assertEquals("COMFORTABLE", state.katexDisplayDensity)
-        assertEquals("STRICT", state.diagramSecurityLevel)
     }
 
-    fun testNormalizeCoercesIdleEvictRange() {
-        val service = newService()
-        val below = MarkFlowSettingsState(idleEvictAfterMs = 1)
-        service.normalizeState(below)
-        assertEquals(10_000, below.idleEvictAfterMs)
+    fun testLegacyBrowserSettingsAreIgnoredAndNoLongerSerialized() {
+        val legacy = Element("state").apply {
+            addContent(Element("option").setAttribute("name", "themeSource").setAttribute("value", "DARK"))
+            addContent(Element("option").setAttribute("name", "diagramSecurityLevel").setAttribute("value", "LOOSE"))
+            addContent(Element("option").setAttribute("name", "previewOnlyByDefault").setAttribute("value", "false"))
+            addContent(Element("option").setAttribute("name", "idleEvictAfterMs").setAttribute("value", "10000"))
+        }
+        val restored = XmlSerializer.deserialize(legacy, MarkFlowSettingsState::class.java)
+        assertEquals("DARK", restored.themeSource)
 
-        val above = MarkFlowSettingsState(idleEvictAfterMs = 100_000_000)
-        service.normalizeState(above)
-        assertEquals(3_600_000, above.idleEvictAfterMs)
+        val serialized = XmlSerializer.serialize(restored)
+        val names = serialized.getChildren("option").mapNotNull { it.getAttributeValue("name") }.toSet()
+        assertFalse(names.contains("diagramSecurityLevel"))
+        assertFalse(names.contains("previewOnlyByDefault"))
+        assertFalse(names.contains("idleEvictAfterMs"))
     }
+
     fun testTypographyPreservedWhenApplyingAnotherSetting() {
         val service = newService()
         // First apply: user sets a font + size. Configurable.apply() builds a COMPLETE state via

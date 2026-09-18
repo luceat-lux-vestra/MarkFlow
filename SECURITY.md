@@ -50,11 +50,11 @@ Security-sensitive changes must explicitly review:
 
 Opening/editing Markdown must not grant arbitrary filesystem, network, navigation, or active-content authority. Optional renderer failure must leave exact source editing available.
 
-## Migration-period legacy surfaces
+## Post-purge renderer trust boundary
 
-Until production cutover/purge, current `main` may still contain JCEF editor messages, host↔web mutation protocol, loopback routes, request filters, CSP/navigation controls and local-image capability tokens.
+The browser editor, host↔web source-mutation protocol, editor loopback/resource realm, editor CSP/navigation machinery and browser-held local-image capabilities were purged by #154. They are not live production surfaces and must not be revived as generic infrastructure.
 
-Those remain live attack surfaces **only while a current production consumer exists**. Changes touching them must preserve current-main fail-closed safety and real-runtime evidence as applicable, but they are not target trust authority and must not be generalized or revived. #154 owns their mandatory deletion after native cutover. If JCEF remains for rendering, renderer-specific containment is designed/proven separately rather than reusing the editor realm by default.
+JCEF remains only as an optional isolated derived-renderer backend. Its renderer-specific request/network/navigation/filesystem containment is independent of source editing; renderer failure must leave the native `Document`/editor and exact Markdown source usable.
 
 ## Repository control boundaries
 

@@ -64,11 +64,11 @@ Use hostile fixtures for:
 - clipboard/file-import authority, collisions, partial failure/rollback/undo and read-only/non-local contexts when that feature is implemented;
 - diagnostics redaction and bounded payloads.
 
-### Migration-period legacy browser editor
+### Post-purge architecture regression
 
-Before #153/#154 remove it, a PR that changes the current browser editor or its host↔web/session/recovery/trust code must still test the current production contract: duplication/reordering/delay/stale sessions, flush/dispose/reload/recovery, request/navigation containment, and failure paths as applicable.
+The browser editor and host↔web/session/recovery editing protocol were removed by #154. Tests must not restore mechanism-only browser-editor harnesses merely to preserve historical coverage.
 
-This is **migration safety evidence only**. Do not report it as proof that host↔web synchronization is target architecture. Mechanism-only tests are deleted/replaced when their responsibility is purged.
+Where a historical test represented a real product invariant, prove that invariant against the native editor, source-neutral presentation, host-owned trust boundary, or retained derived-renderer runtime. Negative residue tests may assert that deleted editor mechanisms stay absent.
 
 ### Compatibility
 

@@ -4,7 +4,7 @@
 
 MarkFlow is an IntelliJ-platform WYSIWYG-first Markdown editor. The product goal is reliable, source-safe, responsive Markdown editing inside supported IntelliJ IDEs; preserving the current implementation is never a goal by itself.
 
-The accepted Leap architecture is **IntelliJ-native authoritative editing with in-place source-neutral Markdown projection and isolated derived renderers**. Existing browser-editor code remains migration input until target slices replace and delete it.
+The accepted Leap architecture is **IntelliJ-native authoritative editing with in-place source-neutral Markdown projection and isolated derived renderers**. The superseded browser editor/session/protocol stack has been purged; historical browser-editor code and plans are evidence only and must not be reintroduced as target architecture.
 
 ## Required reading
 
@@ -47,22 +47,19 @@ Every target change must respect or explicitly revise these contracts:
 
 Mermaid and KaTeX are supported product capabilities, not collateral browser-editor code.
 
-Migration order is fixed:
+The renderer migration completed by extracting one editor-independent service, attaching native presentation to that same service, cutting production editing over to the native editor, and deleting Crepe/CodeMirror-specific editor adapters.
 
-1. extract/prove reusable renderer responsibilities while the current production renderer still works;
-2. expose one editor-independent derived-renderer service/runtime;
-3. attach the native editor/inlay consumer to that same service;
-4. prove capability/settings/failure parity;
-5. cut over production consumption;
-6. only then delete Crepe/CodeMirror-specific renderer adapters.
+The resulting invariants are:
 
-Mermaid `11.17.2` and KaTeX `^0.18.5` remain the migration engines unless a separate accepted renderer decision replaces them. Do not reimplement Mermaid or TeX layout merely because the editor is native/Kotlin. Do not keep duplicate production renderer engines.
-
-TypeScript/Vite/Node/JCEF may remain only for an actual isolated renderer consumer. JCEF below the renderer boundary never owns source editing and never gates typing/save/undo/source fallback.
+- Mermaid `11.17.2` and KaTeX `^0.18.7` are the retained production renderer engines unless a separate accepted renderer decision replaces them;
+- there is one production renderer engine per capability and no browser-editor adapter/session authority;
+- TypeScript/Vite/Node are renderer-only build/runtime dependencies;
+- JCEF is an optional isolated renderer backend and never gates typing, save, undo/redo, settings, or exact-source fallback;
+- do not reimplement Mermaid or TeX layout merely because editing is native/Kotlin, and do not recreate deleted Crepe/CodeMirror integration for convenience.
 
 ## Migration rules
 
-Already-merged Leap code receives no preservation credit. The current CodeMirror/source-native editor, Crepe/Milkdown editor, host↔web edit protocol, custom revisions, attachment/ACK/recovery, browser leases/pools, loopback editor realm, request/CSP/navigation controls, JS editor state, and browser-only settings are temporary or superseded unless #141 independently classifies a retained responsibility.
+Already-merged Leap code receives no preservation credit. The deleted CodeMirror/source-native editor, Crepe/Milkdown editor, host↔web edit protocol, custom revisions, attachment/ACK/recovery, browser leases/pools, loopback editor realm, editor request/CSP/navigation controls, JS editor state, and browser-only settings are historical migration mechanisms, not available target building blocks.
 
 Classify by responsibility, not directory. A module can contain reusable renderer semantics and obsolete editor coupling at the same time.
 
@@ -127,7 +124,7 @@ Test the changed target contract at the narrowest level that can falsify it. Dep
 - large documents and rapid edits;
 - supported IntelliJ versions and Plugin Verifier.
 
-If a PR touches a temporary old browser-editor mechanism before its deletion, test the legacy failure/recovery contract needed to keep current `main` safe, but do not encode that mechanism as target authority. Mechanism-only tests are deleted/replaced with their superseded responsibility.
+Do not restore deleted browser-editor mechanisms merely to reuse historical tests. If historical code is consulted, preserve only the product invariant and rewrite evidence against the native editor or retained renderer responsibility.
 
 ## Strict merge gate
 

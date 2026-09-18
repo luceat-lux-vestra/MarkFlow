@@ -10,7 +10,7 @@ export default defineConfig({
     base: "./",
     build: {
         outDir: webviewOutputDir,
-        emptyOutDir: false,
+        emptyOutDir: true,
         assetsInlineLimit: 0,
         modulePreload: {
             polyfill: false

@@ -11,7 +11,6 @@ import java.awt.GraphicsEnvironment
 import java.util.concurrent.atomic.AtomicInteger
 import com.algorist.markflow.MarkFlowDiagnostics
 import com.algorist.markflow.MyBundle
-import com.algorist.markflow.settings.state.DiagramSecurityLevel
 import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MarkFlowRuntimeSettings
 import com.algorist.markflow.settings.state.MarkFlowSettingsState
@@ -31,10 +30,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         normalize()
         settingsRevision.incrementAndGet()
         if (MarkFlowDiagnostics.enabled) {
-            LOG.warn(
-                "MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}, " +
-                    "diagramSecurityLevel=${this.state.diagramSecurityLevel}"
-            )
+            LOG.warn("MARKFLOW_SETTINGS loadState themeSource=${this.state.themeSource}")
         }
     }
 
@@ -47,13 +43,11 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         if (MarkFlowDiagnostics.enabled) {
             LOG.warn(
                 "MARKFLOW_SETTINGS updateFromUi changed=$changed, " +
-                    "themeSource=${previousState.themeSource} -> ${state.themeSource}, " +
-                    "security=${previousState.diagramSecurityLevel} -> ${state.diagramSecurityLevel}, " +
-                    "revision=$nextRevision"
+                    "themeSource=${previousState.themeSource} -> ${state.themeSource}, revision=$nextRevision"
             )
         }
         if (changed) {
-            MarkFlowRuntimeSettingsNotifier.notifyChanged(forceReload = false)
+            MarkFlowPresentationSettingsNotifier.notifyChanged()
         }
     }
 
@@ -65,7 +59,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         if (MarkFlowDiagnostics.enabled) {
             LOG.warn(
                 "MARKFLOW_SETTINGS runtimeSettings themeSource=${state.themeSource}, " +
-                    "resolvedThemeSource=$resolvedThemeSource, security=${state.diagramSecurityLevel}, revision=$revision"
+                    "resolvedThemeSource=$resolvedThemeSource, revision=$revision"
             )
         }
         return runtimeSettingsFromSnapshot(snapshot, resolvedThemeSource, revision)
@@ -84,8 +78,6 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
             themeSource = resolvedThemeSource,
             mermaidErrorDisplay = state.mermaidErrorDisplay,
             katexDisplayDensity = state.katexDisplayDensity,
-            diagramSecurityLevel = state.diagramSecurityLevel,
-            previewOnlyByDefault = state.previewOnlyByDefault,
             mermaidSyntaxErrorMessage = MyBundle.message("preview.mermaid.syntaxError"),
             fontFamily = resolveRuntimeFontFamily(state.fontFamily, snapshot.fonts["codeFont"].orEmpty()),
             baseFontSizePx = state.baseFontSizePx,
@@ -132,9 +124,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         target.themeSource = normalizeEnum(target.themeSource, ThemeSource.LIGHT)
         target.mermaidErrorDisplay = normalizeEnum(target.mermaidErrorDisplay, MermaidErrorDisplay.INLINE_ERROR_BOX)
         target.katexDisplayDensity = normalizeEnum(target.katexDisplayDensity, KatexDisplayDensity.COMFORTABLE)
-        target.diagramSecurityLevel = normalizeEnum(target.diagramSecurityLevel, DiagramSecurityLevel.STRICT)
         target.mermaidZoomPercent = target.mermaidZoomPercent.coerceIn(50, 200)
-        target.idleEvictAfterMs = target.idleEvictAfterMs.coerceIn(MIN_IDLE_EVICT_AFTER_MS, MAX_IDLE_EVICT_AFTER_MS)
         target.baseFontSizePx = target.baseFontSizePx.coerceIn(BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX)
         target.fontFamily = normalizeFontFamily(target.fontFamily)
         return target
@@ -171,11 +161,6 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         private val LOG = Logger.getInstance(MarkFlowSettingsService::class.java)
         private val settingsRevision = AtomicInteger(1)
 
-        const val DEFAULT_IDLE_EVICT_AFTER_MS = 120_000
-
-        private const val MIN_IDLE_EVICT_AFTER_MS = 10_000
-        private const val MAX_IDLE_EVICT_AFTER_MS = 3_600_000
-
         val BASE_FONT_SIZE_MIN: Int
             get() = EditorFontsConstants.getMinEditorFontSize()
 
@@ -188,7 +173,7 @@ class MarkFlowSettingsService : PersistentStateComponent<MarkFlowSettingsState> 
         }
 
         /**
-         * Bumps the runtime-settings revision counter so open webviews re-fetch runtime settings.
+         * Bumps the presentation-settings revision so stale derived work is rejected.
          * Used by the IDE theme service when the live IDE palette changes (IDE_SYNC).
          */
         fun bumpRuntimeSettingsRevision(): Int {

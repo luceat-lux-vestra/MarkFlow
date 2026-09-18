@@ -354,7 +354,7 @@ internal object DerivedRendererProbe {
     private const val PROBE_TIMEOUT_SECONDS = 60L
     private const val NAVIGATION_OBSERVATION_MILLIS = 500L
     private const val REPEATED_DISPOSAL_CYCLES = 3
-    private const val MERMAID_CONFIG = """{"runtimeSettings":{"themeSource":"LIGHT","ideColorScheme":{"foreground":"#112233"},"ideDark":false,"diagramSecurityLevel":"STRICT","mermaidSizeMode":"FIT_TO_VIEWPORT","mermaidZoomPercent":100}}"""
+    private const val MERMAID_CONFIG = """{"runtimeSettings":{"themeSource":"LIGHT","ideColorScheme":{"foreground":"#112233"},"ideDark":false,"mermaidSizeMode":"FIT_TO_VIEWPORT","mermaidZoomPercent":100}}"""
     private const val KATEX_INLINE_CONFIG = """{"displayMode":false,"displayDensity":"COMPACT","baseFontSizePx":16,"foreground":"#112233"}"""
     private const val KATEX_DISPLAY_CONFIG = """{"displayMode":true,"displayDensity":"COMFORTABLE","baseFontSizePx":16,"foreground":"#112233"}"""
     private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)

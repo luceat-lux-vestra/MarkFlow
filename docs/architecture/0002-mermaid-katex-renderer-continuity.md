@@ -19,7 +19,7 @@ That decision does **not** remove MarkFlow's supported derived-rendering capabil
 Current `main` already carries maintained JavaScript renderer dependencies:
 
 - `mermaid` `11.17.2`;
-- `katex` `^0.18.5`.
+- `katex` `^0.18.7`.
 
 The current Mermaid implementation also contains MarkFlow-specific renderer behavior worth preserving independently of the editor shell: Mermaid configuration, IDE theme/palette mapping, security level, size/zoom semantics, cache identity, stale-render protection, error behavior, and fidelity fixtures. However `MarkFlowMermaidRenderer` currently mixes those concerns with Crepe/CodeMirror preview callbacks, `crepeSessionId`, DOM preview registries, visibility observers, editor telemetry, and editor-session lifecycle.
 
@@ -217,7 +217,7 @@ Issue #144 keeps **Candidate A, isolated IntelliJ JCEF/TypeScript execution, as 
 
 The decision is intentionally conservative:
 
-- Mermaid remains `11.17.2` and KaTeX remains `^0.18.5`; there is no renderer-engine rewrite.
+- Mermaid remains `11.17.2` and KaTeX remains `^0.18.7`; there is no renderer-engine rewrite.
 - The MarkFlow `DerivedRendererService` owns bounded source/config input, explicit source/config generation identity, timeout/retry, cancellation/disposal, cache bounds, typed/redacted failures, and inert SVG/HTML artifacts independently of Crepe/CodeMirror/editor-session identity.
 - Mermaid engine invocation and direct KaTeX `renderToString` invocation have one MarkFlow production owner in the browser renderer backend. The temporary Crepe/CodeMirror adapters consume the service and remain presentation/editor adapters only until #153/#154.
 - KaTeX uses direct `renderToString` with `trust: false` and `throwOnError: false`; existing KaTeX CSS/fonts remain the presentation assets. No custom TeX layout is introduced.

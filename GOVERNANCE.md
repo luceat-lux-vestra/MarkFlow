@@ -20,7 +20,7 @@ Authority order is:
 4. focused target Tasks, including #143–#156;
 5. current implementation/tests/historical docs as evidence only.
 
-#139 architecture reset and #141 migration reconciliation are completed. #143 native editor shell proof is also completed; none of those completions closes #52 or authorizes production cutover. Runtime Leap implementation remains owned by the still-open target Tasks, with #153 as the production cutover owner and #154 as the old browser-editor/protocol purge owner.
+#139/#141 architecture reset and migration reconciliation are completed. #153 completed production native-editor cutover and #154 completed browser-editor/protocol/trust purge. Remaining Leap convergence is owned by #155 and #156; those completions, not historical implementation presence, determine when #52/#84 become eligible to close.
 
 ## Maintainer responsibilities
 

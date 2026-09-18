@@ -102,6 +102,56 @@ jobs:
           unzip "$filename" -d content
           printf 'filename=%s\n' "${filename%.zip}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify packaged webview is renderer-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          root = Path("build/distributions/content")
+          jars = sorted(root.rglob("*.jar"))
+          if not jars:
+              raise SystemExit("packaged plugin contains no JARs to inspect")
+
+          plugin_jars = []
+          for jar in jars:
+              with ZipFile(jar) as archive:
+                  if "META-INF/plugin.xml" not in archive.namelist():
+                      continue
+                  descriptor = archive.read("META-INF/plugin.xml").decode("utf-8", errors="replace")
+                  if "<id>com.algorist.markflow</id>" in descriptor:
+                      plugin_jars.append(jar)
+
+          if len(plugin_jars) != 1:
+              raise SystemExit(f"expected one MarkFlow plugin JAR, found {plugin_jars}")
+
+          with ZipFile(plugin_jars[0]) as archive:
+              web_entries = [name for name in archive.namelist() if name.startswith("webview/")]
+
+          if "webview/derived-renderer.html" not in web_entries:
+              raise SystemExit("packaged plugin is missing webview/derived-renderer.html")
+
+          forbidden = sorted(
+              name for name in web_entries
+              if name not in {"webview/", "webview/derived-renderer.html"}
+              and not name.startswith("webview/derived-renderer-assets/")
+          )
+          if forbidden:
+              raise SystemExit(f"obsolete/non-renderer webview assets were packaged: {forbidden}")
+
+          assets = [
+              name for name in web_entries
+              if name.startswith("webview/derived-renderer-assets/")
+              and name != "webview/derived-renderer-assets/"
+          ]
+          if not assets:
+              raise SystemExit("packaged plugin contains no derived-renderer asset files")
+
+          print(f"renderer-only packaged webview entries: {len(web_entries)}")
+          PY
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

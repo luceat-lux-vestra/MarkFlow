@@ -57,7 +57,7 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         )
 
         assertTrue(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
-        assertTrue(pluginXml.contains("NativeMarkFlowRuntimeSettingsSink"))
+        assertTrue(pluginXml.contains("NativeMarkFlowPresentationSettingsSink"))
         assertFalse(pluginXml.contains("MarkFlowEditorProvider"))
 
         assertFalse(jcefXml.contains("MarkFlowEditorProvider"))

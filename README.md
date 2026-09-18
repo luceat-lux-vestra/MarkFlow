@@ -9,23 +9,22 @@ MarkFlow is an IntelliJ IDEA plugin for WYSIWYG-first Markdown editing.
 
 ## Current runtime
 
-The current production implementation still uses a JCEF-based custom editor for supported Markdown files. That implementation remains functional migration input while the accepted Leap target is implemented; it is **not** the target architecture.
+Production editing uses IntelliJ's platform text editor. The IntelliJ `Document` is the sole mutable Markdown authority, and MarkFlow augments that native editor with source-neutral presentation rather than maintaining a second browser editor.
 
 Current behavior includes:
 
-- Typora-style WYSIWYG Markdown editing in a custom IntelliJ `FileEditor`
-- Automatic custom-editor handling for supported Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) when JCEF is available
-- Two-way IntelliJ <-> Webview synchronization in the current runtime
-- Editor UI state restore (scroll position, cursor, selection)
-- Mermaid live preview in code blocks
-- KaTeX rendering for inline and block math expressions
-- Markdown-aware clipboard paste (with safe fallback in code blocks)
-- Raw HTML support for inline and block HTML with XSS sanitization
-- Frontend build integrated into Gradle plugin tasks
+- Native IntelliJ editing for supported Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`)
+- In-place source-neutral Markdown projection with exact-source reveal/degradation
+- Mermaid derived previews through the retained Mermaid engine
+- KaTeX rendering for inline and block math through the retained KaTeX engine
+- Markdown-aware native paste with safe fallback in parser-proven code blocks
+- Host-owned local-image and external-navigation handling
+- Source-preserved raw HTML with isolated/sanitized derived presentation
+- Renderer-only TypeScript/Vite build integrated into Gradle plugin tasks
 
-When JCEF is unavailable before current editor selection, MarkFlow does not take over the file and IntelliJ's native editor remains available.
+JCEF is an optional derived-renderer backend behind `markflow-jcef.xml`. If it is unavailable or disabled, rich renderer output degrades while native source editing, save, undo/redo, settings, and exact-source access remain available.
 
-## Accepted Leap target
+## Accepted Leap architecture
 
 ADR 0001 / PR #142 selected **IntelliJ-native authoritative editing + in-place source-neutral Markdown projection + isolated derived renderers**.
 
@@ -39,7 +38,7 @@ The target has these non-negotiable properties:
 - optional renderer/JCEF failure cannot make source editing unavailable;
 - local resources and external navigation are host-owned capabilities.
 
-ADR 0002 preserves renderer continuity during migration: Mermaid `11.17.2` and KaTeX `^0.18.5` are extracted from editor-specific integration, reused behind one derived-renderer service, and then consumed by native inlays. They are not deleted and recreated as collateral editor work.
+ADR 0002 preserves renderer continuity during migration: Mermaid `11.17.2` and KaTeX `^0.18.7` are extracted from editor-specific integration, reused behind one derived-renderer service, and then consumed by native inlays. They are not deleted and recreated as collateral editor work.
 
 JCEF/TypeScript/Vite/Node may remain only for actual isolated renderer consumers after editor migration. They do not become editor authority again.
 
@@ -49,25 +48,24 @@ See `docs/architecture/README.md` and `docs/architecture/leap-migration-inventor
 
 You can configure these in `Settings > Tools > MarkFlow`.
 
-Current runtime options include:
+Current options include:
 
-- **General:** Theme source (`IDE_SYNC` follows the active IDE palette; `LIGHT`/`DARK` force a theme), body font family (`IDE Default (<actual IDE font>)` or an installed family), base font size, Preview only by default
+- **Appearance:** Theme source (`IDE_SYNC` follows the active IDE palette; `LIGHT`/`DARK` force a theme), body font family (`IDE Default (<actual IDE font>)` or an installed family), base font size
 - **Mermaid:** Diagram size mode, Diagram zoom (%), Error display behavior
 - **KaTeX:** Display density
-- **Advanced:** Diagram security level (STRICT/LOOSE)
 
-Some browser-runtime settings/meanings are migration inputs rather than target product contracts. #83/#155 own their final native/renderer interpretation and persistence migration.
+Browser-era `previewOnlyByDefault`, `idleEvictAfterMs`, and user-selectable Mermaid security-level settings are removed. Legacy persisted values are ignored and are not written again; Mermaid rendering is fail-closed at `securityLevel: strict`.
 
-MarkFlow targets IntelliJ IDEA 2026.2+ (build 262+). The current production editor uses the bundled **Web Browser (JCEF)** plugin (`com.intellij.modules.jcef`); the accepted target does not permit JCEF availability to gate Markdown source editing.
+MarkFlow targets IntelliJ IDEA 2026.2+ (build 262+). The bundled **Web Browser (JCEF)** plugin (`com.intellij.modules.jcef`) is optional renderer infrastructure and never gates Markdown source editing.
 
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, raw-html, wysiwyg )
 
 MarkFlow is a WYSIWYG-first Markdown editor for IntelliJ-based IDEs.
 
-The current runtime uses a JCEF-backed custom editor and supports Mermaid diagrams, KaTeX math, Markdown-aware paste, raw HTML rendering with sanitization, configurable theme/font settings, Mermaid sizing/zoom/error display, and KaTeX density.
+MarkFlow uses the native IntelliJ `Document`/`Editor` as the authoritative Markdown editing surface and adds source-neutral in-place presentation, Markdown-aware paste, host-owned resources/navigation, and source-preserved raw HTML presentation.
 
-The accepted Leap architecture is migrating editing authority to the native IntelliJ `Document`/`Editor` with source-neutral in-place projection. Mermaid and KaTeX remain supported through one extracted derived-renderer service; optional renderer/JCEF failure will not gate source editing.
+Mermaid and KaTeX remain supported through one isolated derived-renderer service. JCEF is optional renderer infrastructure; renderer failure does not gate source editing, save, undo/redo, or exact-source access.
 <!-- Plugin description end -->
 
 ## License
