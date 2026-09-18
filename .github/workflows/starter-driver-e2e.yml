@@ -68,6 +68,16 @@ jobs:
           set -euo pipefail
           timeout --signal=TERM --kill-after=30s 18m ./gradlew integrationTest --stacktrace
 
+      - name: Validate Starter Driver diagnostics
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root . \
+            --output build/starter-driver-diagnostics.json
+
       - name: Upload E2E diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -78,6 +88,7 @@ jobs:
           path: |
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
+            build/starter-driver-diagnostics.json
             out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-starter-driver-xvfb.log
