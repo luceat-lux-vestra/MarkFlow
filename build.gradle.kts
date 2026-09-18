@@ -173,7 +173,25 @@ val noJcefNativeEditingProbeProjectDir = layout.buildDirectory.dir("no-jcef-nati
 val nativeHostResourcesProbeOutput = layout.buildDirectory.file("native-host-resources-probe/evidence.json")
 val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-resources-probe/project")
 
+val requiredNodeVersion = providers.fileContents(layout.projectDirectory.file(".node-version")).asText.map { it.trim() }
+
+val verifyNodeToolchain by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Verifies the exact Node runtime used by the renderer toolchain"
+    inputs.file(layout.projectDirectory.file(".node-version"))
+
+    doFirst {
+        val expected = requiredNodeVersion.get()
+        commandLine(
+            "node",
+            "-e",
+            "const expected = " + '"' + expected + '"' + "; if (process.versions.node !== expected) { console.error('Expected Node ' + expected + ', got ' + process.versions.node); process.exit(1); }"
+        )
+    }
+}
+
 val npmInstallWebview by tasks.registering(Exec::class) {
+    dependsOn(verifyNodeToolchain)
     group = "build"
     description = "Installs webview dependencies"
     workingDir = webviewDir

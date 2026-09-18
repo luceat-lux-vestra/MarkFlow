@@ -115,6 +115,28 @@ if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
 fi
 
+node_version="$(tr -d '\r\n' < .node-version)"
+[ "$node_version" = "26.9.0" ] || die "renderer Node runtime pin must be 26.9.0"
+
+jq -e '.engines.node == ">=26.9.0 <27"' webview/package.json >/dev/null || die "webview Node engine does not match the pinned Node 26 runtime"
+jq -e '.devDependencies["@types/node"] | startswith("^26.")' webview/package.json >/dev/null || die "@types/node is not aligned to Node 26"
+jq -e '.packages[""].engines.node == ">=26.9.0 <27"' webview/package-lock.json >/dev/null || die "package-lock root Node engine is not aligned"
+jq -e '.packages["node_modules/@types/node"].version | startswith("26.")' webview/package-lock.json >/dev/null || die "locked @types/node is not Node 26"
+
+grep -q 'dependsOn(verifyNodeToolchain)' build.gradle.kts || die "renderer npm install does not enforce the pinned Node runtime"
+grep -q 'process.versions.node !== expected' build.gradle.kts || die "Node runtime verification is not fail-closed"
+
+for workflow in .github/workflows/*.yml; do
+  if ! grep -q './gradlew' "$workflow"; then
+    continue
+  fi
+  java_count="$(grep -Fc -- '- name: Setup Java' "$workflow" || true)"
+  node_count="$(grep -Fc -- "node-version-file: '.node-version'" "$workflow" || true)"
+  cache_disabled_count="$(grep -Fc -- 'package-manager-cache: false' "$workflow" || true)"
+  [ "$java_count" = "$node_count" ] || die "$(basename "$workflow") does not pin Node for every Gradle-capable job (java=$java_count node=$node_count)"
+  [ "$node_count" = "$cache_disabled_count" ] || die "$(basename "$workflow") does not disable setup-node package-manager caching for every Node setup"
+done
+
 dependabot=".github/dependabot.yml"
 gradle_block="$(awk '/package-ecosystem: "gradle"/{on=1} /package-ecosystem: "npm"/{on=0} on' "$dependabot")"
 npm_block="$(awk '/package-ecosystem: "npm"/{on=1} /package-ecosystem: "github-actions"/{on=0} on' "$dependabot")"
@@ -128,6 +150,8 @@ grep -q 'applies-to: version-updates' <<<"$npm_block" || die "npm routine group 
 grep -q 'dependency-type: development' <<<"$npm_block" || die "npm routine group is not limited to development dependencies"
 grep -Fq -- '- "@types/*"' <<<"$npm_block" || die "npm routine group is missing @types/*"
 grep -Fq -- '- "jsdom"' <<<"$npm_block" || die "npm routine group is missing jsdom"
+grep -Fq -- 'dependency-name: "@types/node"' <<<"$npm_block" || die "npm policy does not keep Node type major updates explicit"
+grep -Fq -- '- "version-update:semver-major"' <<<"$npm_block" || die "npm policy does not ignore automatic @types/node major updates"
 if grep -Fq -- '- "*"' <<<"$npm_block"; then
   die "npm routine group must not wildcard all editor/renderer/toolchain dependencies"
 fi

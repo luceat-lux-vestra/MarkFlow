@@ -8,7 +8,7 @@
     "test:source": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.5.1",
     "jsdom": "^30.0.1",
     "typescript": "~5.9.3",
     "vite": "^8.2.2"
@@ -16,5 +16,8 @@
   "dependencies": {
     "katex": "^0.18.7",
     "mermaid": "11.17.2"
+  },
+  "engines": {
+    "node": ">=26.9.0 <27"
   }
 }
