@@ -30,6 +30,19 @@ assert_recovery_target_validation() {
   grep -q 'Recovery target is not the current default branch or one of its ancestors' "$workflow" || die "$label does not fail closed on non-main recovery targets"
 }
 
+assert_gradle_catalog_trigger() {
+  local workflow="$1" label="$2" count
+  count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
+  [ "$count" = "2" ] || die "$label must watch gradle/** for both push and pull_request"
+}
+
+for workflow in \
+  ".github/workflows/native-projection-evidence.yml" \
+  ".github/workflows/native-host-resources-evidence.yml" \
+  ".github/workflows/native-image-import-evidence.yml"; do
+  assert_gradle_catalog_trigger "$workflow" "$(basename "$workflow")"
+done
+
 renderer_workflow=".github/workflows/derived-renderer-evidence.yml"
 grep -q '^  push:$' "$renderer_workflow" || die "Derived renderer evidence has no push trigger"
 grep -q '^    branches: \[ main \]$' "$renderer_workflow" || die "Derived renderer evidence push trigger is not scoped to main"
