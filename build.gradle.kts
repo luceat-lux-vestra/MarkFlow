@@ -375,8 +375,15 @@ intellijPlatformTesting {
                         "-Didea.fatal.error.notification=disabled",
                         "-Dide.no.platform.update=true",
                         "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        // Keep this probe aligned with IntelliJ Starter's disableStartupDialogs()
+                        // contract for maintained EAP builds. 263 EAP can otherwise surface
+                        // additional AI/Marketplace/Writerside consent dialogs after project open.
                         "-Djb.consents.confirmation.enabled=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.privacy.policy.ai.assistant.text=<!--999.999-->",
+                        "-Dmarketplace.eula.reviewed.and.accepted=true",
+                        "-Dwriterside.eula.reviewed.and.accepted=true",
+                        "-Dide.newUsersOnboarding=false",
                     )
                 }
                 argumentProviders += CommandLineArgumentProvider {
