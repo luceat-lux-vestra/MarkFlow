@@ -164,6 +164,7 @@ jobs:
               'temp-root-cleanup-retry',
               'runtime-create-latency',
               'mermaid-success',
+              'mermaid-math-success',
               'mermaid-syntax-failure',
               'katex-inline-success',
               'katex-display-success',
@@ -213,6 +214,7 @@ jobs:
           budgets = {
               ('runtime-create-latency', 'elapsedMs'): 15000,
               ('mermaid-success', 'elapsedMs'): 15000,
+              ('mermaid-math-success', 'elapsedMs'): 15000,
               ('katex-inline-success', 'elapsedMs'): 15000,
               ('katex-display-success', 'elapsedMs'): 15000,
               ('repeated-create-dispose', 'elapsedMs'): 10000,
@@ -262,6 +264,8 @@ jobs:
           name: derived-renderer-evidence-${{ matrix.id }}
           path: |
             build/derived-renderer-probe/evidence.json
+            build/derived-renderer-probe/mermaid-math.png
+            build/derived-renderer-probe/mermaid-math.svg
             .intellijPlatform/sandbox/**/idea.log
             ${{ runner.temp }}/markflow-derived-renderer-xvfb.log
           if-no-files-found: warn
