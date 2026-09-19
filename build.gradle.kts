@@ -55,6 +55,7 @@ dependencies {
     testImplementation(libs.junit)
 
     integrationTestImplementation(libs.junitJupiter)
+    add("integrationTestRuntimeOnly", "org.junit.platform:junit-platform-launcher")
     integrationTestImplementation(libs.coroutines)
     // Plugin packaging deliberately disables the implicit Kotlin stdlib dependency, but Starter runs in a
     // standalone test worker and must align its kotlin-reflect runtime with the Kotlin plugin version.
