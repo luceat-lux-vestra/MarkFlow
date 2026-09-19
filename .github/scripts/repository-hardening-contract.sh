@@ -36,6 +36,14 @@ assert_gradle_catalog_trigger() {
   [ "$count" = "2" ] || die "$label must watch gradle/** for both push and pull_request"
 }
 
+assert_webview_dependency_trigger() {
+  local workflow="$1" label="$2" package_count lock_count
+  package_count="$(grep -Fc -- "- 'webview/package.json'" "$workflow" || true)"
+  lock_count="$(grep -Fc -- "- 'webview/package-lock.json'" "$workflow" || true)"
+  [ "$package_count" = "2" ] || die "$label must watch webview/package.json for both push and pull_request"
+  [ "$lock_count" = "2" ] || die "$label must watch webview/package-lock.json for both push and pull_request"
+}
+
 assert_node26_setup_count() {
   local workflow="$1" label="$2" expected="$3" count
   count="$(grep -Ec '^[[:space:]]+node-version:[[:space:]]+26$' "$workflow" || true)"
@@ -65,6 +73,19 @@ for workflow in \
   ".github/workflows/native-host-resources-evidence.yml" \
   ".github/workflows/native-image-import-evidence.yml"; do
   assert_gradle_catalog_trigger "$workflow" "$(basename "$workflow")"
+done
+
+for workflow in \
+  ".github/workflows/starter-driver-e2e.yml" \
+  ".github/workflows/native-editor-shell-evidence.yml" \
+  ".github/workflows/native-editing-evidence.yml" \
+  ".github/workflows/derived-renderer-evidence.yml" \
+  ".github/workflows/native-host-resources-evidence.yml" \
+  ".github/workflows/native-projection-evidence.yml" \
+  ".github/workflows/no-jcef-native-editing-evidence.yml" \
+  ".github/workflows/native-image-import-evidence.yml" \
+  ".github/workflows/native-derived-presentation-evidence.yml"; do
+  assert_webview_dependency_trigger "$workflow" "$(basename "$workflow")"
 done
 
 renderer_workflow=".github/workflows/derived-renderer-evidence.yml"

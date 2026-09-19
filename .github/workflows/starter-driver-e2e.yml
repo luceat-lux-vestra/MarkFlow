@@ -9,6 +9,8 @@ on:
       - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'src/integrationTest/**'
       - 'src/main/**'
   pull_request:
@@ -17,6 +19,8 @@ on:
       - '.github/scripts/check-starter-driver-diagnostics.py'
       - 'build.gradle.kts'
       - 'gradle/libs.versions.toml'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
       - 'src/integrationTest/**'
       - 'src/main/**'
   workflow_dispatch:
