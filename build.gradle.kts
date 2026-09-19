@@ -173,9 +173,20 @@ val noJcefNativeEditingProbeProjectDir = layout.buildDirectory.dir("no-jcef-nati
 val nativeHostResourcesProbeOutput = layout.buildDirectory.file("native-host-resources-probe/evidence.json")
 val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-resources-probe/project")
 
+val verifyRendererNode by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Verifies the renderer toolchain runs on the supported Node 26 major"
+    commandLine(
+        "node",
+        "-e",
+        "const v=process.versions.node; const major=Number.parseInt(v.split('.')[0],10); if(major!==26){console.error('MarkFlow renderer requires Node 26.x; found '+v); process.exit(1);} console.log('Renderer Node '+v);"
+    )
+}
+
 val npmInstallWebview by tasks.registering(Exec::class) {
     group = "build"
     description = "Installs webview dependencies"
+    dependsOn(verifyRendererNode)
     workingDir = webviewDir
 
     inputs.files(

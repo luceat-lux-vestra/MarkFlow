@@ -36,6 +36,30 @@ assert_gradle_catalog_trigger() {
   [ "$count" = "2" ] || die "$label must watch gradle/** for both push and pull_request"
 }
 
+assert_node26_setup_count() {
+  local workflow="$1" label="$2" expected="$3" count
+  count="$(grep -Ec '^[[:space:]]+node-version:[[:space:]]+26$' "$workflow" || true)"
+  [ "$count" = "$expected" ] || die "$label must select Node 26 in every Gradle job (expected $expected, found $count)"
+}
+
+[ "$(tr -d '[:space:]' < .nvmrc)" = "26" ] || die ".nvmrc must select Node 26"
+jq -e '.engines.node == ">=26 <27"' webview/package.json >/dev/null || die "webview package must constrain Node to the 26.x line"
+jq -e '.devDependencies["@types/node"] | startswith("^26.")' webview/package.json >/dev/null || die "@types/node must align to Node 26"
+grep -Fq 'major!==26' build.gradle.kts || die "Gradle renderer build does not fail closed outside Node 26"
+grep -Fq 'dependsOn(verifyRendererNode)' build.gradle.kts || die "npmInstallWebview does not enforce the Node 26 verification task"
+
+assert_node26_setup_count ".github/workflows/build.yml" "Build workflow" 3
+assert_node26_setup_count ".github/workflows/release.yml" "Release workflow" 1
+assert_node26_setup_count ".github/workflows/starter-driver-e2e.yml" "Starter Driver workflow" 1
+assert_node26_setup_count ".github/workflows/native-editor-shell-evidence.yml" "Native Editor Shell workflow" 1
+assert_node26_setup_count ".github/workflows/native-editing-evidence.yml" "Native Editing workflow" 1
+assert_node26_setup_count ".github/workflows/derived-renderer-evidence.yml" "Derived Renderer workflow" 1
+assert_node26_setup_count ".github/workflows/native-host-resources-evidence.yml" "Native Host Resources workflow" 1
+assert_node26_setup_count ".github/workflows/native-projection-evidence.yml" "Native Projection workflow" 1
+assert_node26_setup_count ".github/workflows/no-jcef-native-editing-evidence.yml" "No-JCEF Native Editing workflow" 1
+assert_node26_setup_count ".github/workflows/native-image-import-evidence.yml" "Native Image Import workflow" 1
+assert_node26_setup_count ".github/workflows/native-derived-presentation-evidence.yml" "Native Derived Presentation workflow" 1
+
 for workflow in \
   ".github/workflows/native-projection-evidence.yml" \
   ".github/workflows/native-host-resources-evidence.yml" \
