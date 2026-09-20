@@ -62,7 +62,7 @@
       "workflow": ".github/workflows/dependency-review.yml",
       "job": "review",
       "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
-      "promotion": "Promote only after ordinary PR and merged-main reliability are proven and authoritative live readback confirms Dependency Graph support; update the checked-in policy and live main ruleset atomically."
+      "promotion": "Promote only after ordinary PR reliability is proven and authoritative live readback confirms Dependency Graph support; this check is PR-diff-scoped and has no merged-main producer. After merge, verify the checked-in policy/live ruleset state atomically rather than requiring an impossible main run."
     }
   ],
   "advisory": [
