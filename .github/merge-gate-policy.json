@@ -71,10 +71,6 @@
       "reason": "Posted by Qodana itself and not stable across linter editions; Inspect code is the authoritative required job."
     },
     {
-      "context": "CodeQL (java-kotlin)",
-      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
-    },
-    {
       "context": "CodeQL (javascript-typescript)",
       "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
     },
@@ -131,6 +127,15 @@
       "blocked_by": "Same-repository PR/merged-main reliability and external live readback are proven; unprivileged fork-PR execution is not yet proven and the repository currently has no forks.",
       "promote_to": "ruleset",
       "when": "after an unprivileged fork PR proves Hardening audit execution on its exact head, followed by fresh ordinary-PR/main evidence and authoritative live readback; add the context to required and the live main ruleset in one reviewed change"
+    }
+  ],
+  "security_analysis_exceptions": [
+    {
+      "surface": "java-kotlin CodeQL",
+      "disposition": "temporarily unavailable",
+      "evidence": "CodeQL v4.38.1 / CLI 2.27.0 reports Kotlin version too new for the repository's maintained Kotlin 2.4 toolchain; autobuild also fails before extraction.",
+      "retained_authority": "Required Qodana Inspect code plus Build/Test/Plugin Verifier remain the Kotlin/JVM validation authority.",
+      "reassessment_trigger": "A CodeQL release explicitly supporting the maintained Kotlin toolchain."
     }
   ]
 }
