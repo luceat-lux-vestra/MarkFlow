@@ -1,0 +1,81 @@
+name: Issue labels
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report intended changes without mutating labels
+        required: true
+        default: true
+        type: boolean
+      backfill:
+        description: Reconcile all open issues
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-labels-${{ github.event.issue.number || 'backfill' }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: issue-labels
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Fetch trusted default-branch classifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Reconcile deterministic type metadata
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          BACKFILL: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill || false }}
+        with:
+          script: |
+            const { classify } = require("./.github/scripts/issue-metadata.cjs");
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const dryRun = process.env.DRY_RUN === "true";
+            const backfill = process.env.BACKFILL === "true";
+
+            async function reconcile(issue) {
+              if (!issue || issue.pull_request) return;
+              const decision = classify(issue);
+              core.info(`#${issue.number} expected=${decision.expectedType || "none"} add=${decision.add.join(",") || "-"} remove=${decision.remove.join(",") || "-"} diagnostics=${decision.diagnostics.join(",") || "-"}`);
+
+              for (const diagnostic of decision.diagnostics) {
+                core.warning(`#${issue.number}: ${diagnostic}; no heuristic classification applied`);
+              }
+              if (dryRun) return;
+
+              for (const label of decision.remove) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: label });
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+              if (decision.add.length) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: decision.add });
+              }
+            }
+
+            if (context.eventName === "issues") {
+              await reconcile(context.payload.issue);
+            } else if (context.eventName === "workflow_dispatch" && backfill) {
+              const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: "open", per_page: 100 });
+              for (const issue of issues) await reconcile(issue);
+            }

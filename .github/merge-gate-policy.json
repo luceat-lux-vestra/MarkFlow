@@ -23,7 +23,6 @@
     "delete_branch_on_merge": true,
     "allow_update_branch": true
   },
-
   "required": [
     {
       "context": "Build",
@@ -50,7 +49,6 @@
       "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
     }
   ],
-
   "staged_required": [
     {
       "context": "Hardening audit",
@@ -58,16 +56,29 @@
       "job": "audit",
       "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
       "promotion": "Same-repository PR and merged-main reliability are proven. Promote only after an unprivileged fork PR proves this exact context is emitted and passes without privileged state, then re-read live administration state and update this policy and the live main ruleset atomically."
+    },
+    {
+      "context": "Dependency Review",
+      "workflow": ".github/workflows/dependency-review.yml",
+      "job": "review",
+      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
+      "promotion": "Promote only after ordinary PR reliability is proven and authoritative live readback confirms Dependency Graph support; this check is PR-diff-scoped and has no merged-main producer. After merge, verify the checked-in policy/live ruleset state atomically rather than requiring an impossible main run."
     }
   ],
-
   "advisory": [
     {
       "context": "Qodana Community for JVM",
       "reason": "Posted by Qodana itself and not stable across linter editions; Inspect code is the authoritative required job."
+    },
+    {
+      "context": "CodeQL (javascript-typescript)",
+      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
+    },
+    {
+      "context": "CodeQL (actions)",
+      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
     }
   ],
-
   "release_only": [
     {
       "context": "Publish Plugin",
@@ -76,7 +87,6 @@
       "reason": "Runs only from an explicit GitHub Release event after tag/source/version/artifact preflight; it is never a pull-request merge check."
     }
   ],
-
   "checks": {
     "$comment": [
       "gate checks are offline and run in the staged Hardening audit job on PR/push/schedule/manual events.",
@@ -99,7 +109,6 @@
     "label_references": "report",
     "repository_settings": "report"
   },
-
   "staged": [
     {
       "check": "ruleset_sync",
@@ -118,6 +127,15 @@
       "blocked_by": "Same-repository PR/merged-main reliability and external live readback are proven; unprivileged fork-PR execution is not yet proven and the repository currently has no forks.",
       "promote_to": "ruleset",
       "when": "after an unprivileged fork PR proves Hardening audit execution on its exact head, followed by fresh ordinary-PR/main evidence and authoritative live readback; add the context to required and the live main ruleset in one reviewed change"
+    }
+  ],
+  "security_analysis_exceptions": [
+    {
+      "surface": "java-kotlin CodeQL",
+      "disposition": "temporarily unavailable",
+      "evidence": "CodeQL v4.38.1 / CLI 2.27.0 reports Kotlin version too new for the repository's maintained Kotlin 2.4 toolchain; autobuild also fails before extraction.",
+      "retained_authority": "Required Qodana Inspect code plus Build/Test/Plugin Verifier remain the Kotlin/JVM validation authority.",
+      "reassessment_trigger": "A CodeQL release explicitly supporting the maintained Kotlin toolchain."
     }
   ]
 }

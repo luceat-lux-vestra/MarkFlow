@@ -75,19 +75,59 @@ must emit.
 
 ## Issue metadata automation disposition
 
-Repository issue forms already apply deterministic type metadata where the
-form itself establishes the classification: the bug form applies `type:bug`
-and the architecture-change form applies `type:research`. That is sufficient
-for reliable form-origin metadata without executing issue content.
+The 2026-09-20 Hardening Reassessment supersedes the earlier assumption that
+Issue Forms alone cover the repository's normal issue-creation paths. API/agent
+creation is now routine and bypasses Issue Form default labels.
 
-A generic issue-open/title classifier is intentionally not added. Maintainer
-created work items use a broader vocabulary whose type/area cannot be inferred
-reliably from arbitrary title text, and an additional `issues: write`
-automation would add mutation authority while risking incorrect maintainer-owned
-metadata. The trigger for revisiting this decision is a new deterministic form
-or other repository-owned structured field that maps one-to-one to an existing
-managed label. Validation and metadata automation must remain separate, and no
-issue or PR body may be executed as code.
+The repository still rejects generic natural-language classification. The issue
+reconciler owns only explicit title protocol already used by maintained work:
+
+- `fix|bug` -> `type:bug`;
+- `feat|feature` -> `type:feature`;
+- `security` -> `type:security`;
+- `docs` -> `type:docs`;
+- `research|rfc|adr|audit|design|spike|architecture` -> `type:research`;
+- `task|build|ci|test|refactor|chore|perf|release|track|epic` -> `type:task`.
+
+An explicit protocol prefix may repair a conflicting managed type label.
+Titles outside that protocol are diagnostic-only: existing maintainer metadata
+is preserved and no body/NLP inference is attempted. Area labels remain outside
+the issue classifier because arbitrary issue text is not authoritative path
+evidence.
+
+The write boundary is isolated in `.github/workflows/issue-labeler.yml` with
+job-local `issues:write`. It executes the classifier from the trusted default
+branch, disables checkout credential persistence, supports dry-run/backfill,
+and never executes issue title/body as code. Its classifier tests run inside the
+credential-less `Hardening audit` job.
+
+### Hardening Reassessment — 2026-09-20
+
+Current external guidance and repository operation were re-read rather than
+treating the prior hardening completion as permanent evidence.
+
+New controls are deliberately classified before promotion:
+
+- `Dependency Review` is `staged_required`: Dependabot proposes version
+  movement, while this separate gate evaluates the dependency diff admitted by
+  a pull request. It must prove ordinary-PR reliability plus authoritative live Dependency
+  Graph support before ruleset promotion. Dependency Review is PR-diff-scoped,
+  so merged-main execution is N/A; post-merge proof concerns policy/ruleset
+  readback, not a nonexistent main check run.
+- CodeQL for JavaScript/TypeScript and GitHub Actions is advisory security
+  analysis. A Java/Kotlin leg was exercised during this reassessment with both
+  `build-mode:none` and `autobuild`; the current CodeQL v4.38.1 / CLI 2.27.0
+  run reported the maintained Kotlin toolchain as too new and could not produce
+  a database. That surface is therefore an explicit temporary capability
+  exception, not a false green. Required Qodana `Inspect code`, Build/Test and
+  Plugin Verifier remain the Kotlin/JVM authority. Revisit when CodeQL explicitly
+  supports the maintained Kotlin version.
+- the existing `Hardening audit` remains staged for its already documented
+  reason: unprivileged fork-PR execution evidence is still missing. This
+  reassessment does not weaken or bypass that proof obligation.
+
+Live repository/security-feature state remains an authoritative exit-audit
+input. Missing live evidence is not inferred from green repository workflows.
 
 ## Credential contract
 
