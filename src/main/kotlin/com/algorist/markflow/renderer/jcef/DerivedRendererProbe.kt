@@ -167,6 +167,30 @@ internal object DerivedRendererProbe {
                     check(result.content?.contains("<svg") == true)
                     checkPresentationArtifact(result)
                 },
+                next = ::runMermaidMathSuccess,
+            )
+        }
+
+        private fun runMermaidMathSuccess() {
+            runRenderCase(
+                id = "mermaid-math-success",
+                request = request(
+                    id = "mermaid-math-success",
+                    kind = DerivedRendererKind.MERMAID,
+                    source = "graph TD; A[\"\u0024\u0024a^2 + b^2 = c^2\u0024\u0024\"]-->B",
+                    configJson = MERMAID_CONFIG,
+                ),
+                verify = { result ->
+                    check(result.status == "success")
+                    check(result.mediaType == "image/svg+xml")
+                    val content = requireNotNull(result.content) { "Mermaid math SVG content missing" }
+                    check(content.contains("<svg"))
+                    check(content.contains("katex") || content.contains("<math")) {
+                        "Mermaid math output did not contain KaTeX/MathML markup"
+                    }
+                    checkPresentationArtifact(result)
+                    persistMermaidMathArtifacts(result)
+                },
                 next = ::runMermaidFailure,
             )
         }
@@ -330,6 +354,18 @@ internal object DerivedRendererProbe {
                     }
                 }
             }
+        }
+
+        private fun persistMermaidMathArtifacts(result: DerivedRendererRuntimeResult) {
+            val directory = requireNotNull(output.parent) { "renderer probe output directory missing" }
+            Files.createDirectories(directory)
+            val artifact = requireNotNull(result.presentationArtifact) { "Mermaid math PNG artifact missing" }
+            Files.write(directory.resolve("mermaid-math.png"), Base64.getDecoder().decode(artifact.contentBase64))
+            Files.writeString(
+                directory.resolve("mermaid-math.svg"),
+                requireNotNull(result.content) { "Mermaid math SVG artifact missing" },
+                StandardCharsets.UTF_8,
+            )
         }
 
         private fun checkPresentationArtifact(result: DerivedRendererRuntimeResult) {
