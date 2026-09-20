@@ -6,7 +6,7 @@ const RULES = Object.freeze([
   [/^security(\([^)]*\))?:/i, "type:security"],
   [/^docs(\([^)]*\))?:/i, "type:docs"],
   [/^(research|rfc|adr|audit|design|spike|architecture)(\([^)]*\))?:/i, "type:research"],
-  [/^(task|build|ci|test|refactor|chore|perf|release|track|epic)(\([^)]*\))?:/i, "type:task"]
+  [/^(task|build|ci|test|refactor|chore|perf|release|track|epic|hardening)(\([^)]*\))?:/i, "type:task"]
 ]);
 
 const MANAGED_TYPES = new Set([
