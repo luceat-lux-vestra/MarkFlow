@@ -4,6 +4,7 @@ import test from "node:test";
 
 const bootstrap = await readFile(new URL("../src/renderer/derived-renderer-bootstrap.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const packageLock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
 
 test("native presentation capture is optional alongside the original renderer artifact", () => {
     assert.match(bootstrap, /mediaType: result\.mediaType/);
@@ -34,6 +35,11 @@ test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentat
     assert.equal(bootstrap.includes("mermaid.render"), false);
     assert.equal(packageJson.dependencies.katex, "^0.18.7");
     assert.equal(packageJson.dependencies.mermaid, "11.17.2");
+    assert.equal(packageJson.overrides?.mermaid?.katex, "$katex");
+    const katexPackages = Object.entries(packageLock.packages)
+        .filter(([location]) => location === "node_modules/katex" || location.endsWith("/node_modules/katex"));
+    assert.deepEqual(katexPackages.map(([location]) => location), ["node_modules/katex"]);
+    assert.equal(katexPackages[0][1].version, "0.18.7");
 });
 
 test("capture adds no ambient transport or mutation authority", () => {
