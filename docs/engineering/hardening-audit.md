@@ -110,8 +110,10 @@ New controls are deliberately classified before promotion:
 
 - `Dependency Review` is `staged_required`: Dependabot proposes version
   movement, while this separate gate evaluates the dependency diff admitted by
-  a pull request. It must prove ordinary-PR and merged-main reliability plus
-  authoritative live Dependency Graph support before ruleset promotion.
+  a pull request. It must prove ordinary-PR reliability plus authoritative live Dependency
+  Graph support before ruleset promotion. Dependency Review is PR-diff-scoped,
+  so merged-main execution is N/A; post-merge proof concerns policy/ruleset
+  readback, not a nonexistent main check run.
 - CodeQL for JavaScript/TypeScript and GitHub Actions is advisory security
   analysis. A Java/Kotlin leg was exercised during this reassessment with both
   `build-mode:none` and `autobuild`; the current CodeQL v4.38.1 / CLI 2.27.0
