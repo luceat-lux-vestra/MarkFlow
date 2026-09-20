@@ -52,6 +52,7 @@
       "context": "failure-triage",
       "workflow": ".github/workflows/failure-triage.yml",
       "job": "failure-triage",
+      "trigger": "pull_request_target",
       "covers": "Trusted-base classification-before-remediation metadata gate; proof PR #241 failed on run 35522245191 and passed after body-only correction on run 35522399480 without executing PR-controlled code."
     }
   ],
