@@ -23,7 +23,6 @@
     "delete_branch_on_merge": true,
     "allow_update_branch": true
   },
-
   "required": [
     {
       "context": "Build",
@@ -50,7 +49,6 @@
       "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
     }
   ],
-
   "staged_required": [
     {
       "context": "Hardening audit",
@@ -58,16 +56,33 @@
       "job": "audit",
       "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
       "promotion": "Same-repository PR and merged-main reliability are proven. Promote only after an unprivileged fork PR proves this exact context is emitted and passes without privileged state, then re-read live administration state and update this policy and the live main ruleset atomically."
+    },
+    {
+      "context": "Dependency Review",
+      "workflow": ".github/workflows/dependency-review.yml",
+      "job": "review",
+      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
+      "promotion": "Promote only after ordinary PR and merged-main reliability are proven and authoritative live readback confirms Dependency Graph support; update the checked-in policy and live main ruleset atomically."
     }
   ],
-
   "advisory": [
     {
       "context": "Qodana Community for JVM",
       "reason": "Posted by Qodana itself and not stable across linter editions; Inspect code is the authoritative required job."
+    },
+    {
+      "context": "CodeQL (java-kotlin)",
+      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
+    },
+    {
+      "context": "CodeQL (javascript-typescript)",
+      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
+    },
+    {
+      "context": "CodeQL (actions)",
+      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
     }
   ],
-
   "release_only": [
     {
       "context": "Publish Plugin",
@@ -76,7 +91,6 @@
       "reason": "Runs only from an explicit GitHub Release event after tag/source/version/artifact preflight; it is never a pull-request merge check."
     }
   ],
-
   "checks": {
     "$comment": [
       "gate checks are offline and run in the staged Hardening audit job on PR/push/schedule/manual events.",
@@ -99,7 +113,6 @@
     "label_references": "report",
     "repository_settings": "report"
   },
-
   "staged": [
     {
       "check": "ruleset_sync",
