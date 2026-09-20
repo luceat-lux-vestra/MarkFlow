@@ -168,7 +168,8 @@ jq -n '{
           {context: "Build", integration_id: 15368},
           {context: "Test", integration_id: 15368},
           {context: "Inspect code", integration_id: 15368},
-          {context: "Verify plugin", integration_id: 15368}
+          {context: "Verify plugin", integration_id: 15368},
+          {context: "failure-triage", integration_id: 15368}
         ]
       }}
     ]
@@ -213,7 +214,7 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
     printf '%s\n' '[{"id":1,"name":"main protection"}]'
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
-  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368}]}}]}'
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"failure-triage","integration_id":15368}]}}]}'
 else
   echo "unexpected gh invocation" >&2
   exit 92
