@@ -46,6 +46,20 @@ copy_root "$baseline"
 expect_pass "$baseline"
 expect_pass "$baseline" live_readback_boundary
 
+wrong_target="$TMP/wrong-target"
+copy_root "$wrong_target"
+jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"' \
+  "$wrong_target/.github/merge-gate-policy.json" > "$wrong_target/.github/merge-gate-policy.json.tmp"
+mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
+expect_fail "$wrong_target" policy_producers "outside the audited failure-triage producer"
+
+missing_target_declaration="$TMP/missing-target-declaration"
+copy_root "$missing_target_declaration"
+jq '(.required[] | select(.context == "failure-triage")) |= del(.trigger)' \
+  "$missing_target_declaration/.github/merge-gate-policy.json" > "$missing_target_declaration/.github/merge-gate-policy.json.tmp"
+mv "$missing_target_declaration/.github/merge-gate-policy.json.tmp" "$missing_target_declaration/.github/merge-gate-policy.json"
+expect_fail "$missing_target_declaration" policy_producers "workflow is not triggered by pull_request"
+
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
 perl -0pi -e 's/ref: \$\{\{ github\.event\.repository\.default_branch \}\}/ref: \$\{\{ github\.ref_name \}\}/' "$caller_selected_ref/.github/workflows/hardening-audit.yml"
