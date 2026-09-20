@@ -126,6 +126,59 @@ Test the changed target contract at the narrowest level that can falsify it. Dep
 
 Do not restore deleted browser-editor mechanisms merely to reuse historical tests. If historical code is consulted, preserve only the product invariant and rewrite evidence against the native editor or retained renderer responsibility.
 
+## Failure classification before remediation
+
+A failing renderer/runtime test, screenshot/runtime observation, Qodana result,
+Plugin Verifier result, hardening check, or CI signal is an **observation**, not
+a remediation instruction. Before a non-trivial remediation, classify the
+observed failure as exactly one of:
+
+- `implementation defect` — MarkFlow editor, projection, renderer, lifecycle,
+  or platform integration violates the accepted contract;
+- `test defect` — a unit/integration/UI test, fixture, harness, oracle,
+  screenshot expectation, or assertion is wrong for the intended contract;
+- `evidence defect` — runtime/screenshot evidence capture, provenance,
+  attribution, freshness, parsing, or proof construction is wrong or
+  insufficient;
+- `workflow-policy drift` — Qodana/Plugin Verifier configuration, CI,
+  repository hardening/review policy, checked-in policy, or live settings have
+  diverged from the intended governance contract;
+- `environment failure` — JetBrains platform distribution/service,
+  JCEF/runtime availability, runner, toolchain, network, or other execution
+  environment caused the failure;
+- `UNKNOWN` — available evidence does not justify any of the five classes.
+
+`UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain fail-closed.
+Classification is a proof obligation. Preserve at least:
+
+```text
+Observed:
+Classification:
+Basis:
+Root cause:
+Remediation:
+Proof:
+```
+
+The `Basis` must justify the selected owner and identify plausible
+alternatives that were rejected or remain unresolved. A Qodana or Plugin
+Verifier failure is not automatically a workflow/environment problem: it may
+be implementation incompatibility, verifier/test configuration, policy drift,
+or an external platform/tooling failure. Likewise, a screenshot mismatch is
+not automatically a renderer defect until the runtime evidence and expectation
+are proven.
+
+A deterministic/reproducible failure does not become an
+`environment failure` merely because a rerun later passes. Never weaken a
+valid test, Qodana/Plugin Verifier obligation, runtime evidence requirement, or
+repository hardening policy merely to obtain green.
+
+If remediation changes implementation, a test/oracle, screenshot/runtime
+evidence procedure, Qodana/Plugin Verifier configuration, workflow/policy, or
+another premise of the exact-HEAD proof, invalidate the affected evidence.
+Re-run the relevant targeted validation and required checks on the new exact
+final PR HEAD before merge.
+
 ## Strict merge gate
 
 Review the exact final PR HEAD for:
