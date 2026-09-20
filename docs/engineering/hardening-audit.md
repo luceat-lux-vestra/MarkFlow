@@ -112,9 +112,14 @@ New controls are deliberately classified before promotion:
   movement, while this separate gate evaluates the dependency diff admitted by
   a pull request. It must prove ordinary-PR and merged-main reliability plus
   authoritative live Dependency Graph support before ruleset promotion.
-- CodeQL for Java/Kotlin, JavaScript/TypeScript, and GitHub Actions is advisory
-  security analysis. It does not replace the required Qodana `Inspect code`
-  authority and is not made required merely because the workflow exists.
+- CodeQL for JavaScript/TypeScript and GitHub Actions is advisory security
+  analysis. A Java/Kotlin leg was exercised during this reassessment with both
+  `build-mode:none` and `autobuild`; the current CodeQL v4.38.1 / CLI 2.27.0
+  run reported the maintained Kotlin toolchain as too new and could not produce
+  a database. That surface is therefore an explicit temporary capability
+  exception, not a false green. Required Qodana `Inspect code`, Build/Test and
+  Plugin Verifier remain the Kotlin/JVM authority. Revisit when CodeQL explicitly
+  supports the maintained Kotlin version.
 - the existing `Hardening audit` remains staged for its already documented
   reason: unprivileged fork-PR execution evidence is still missing. This
   reassessment does not weaken or bypass that proof obligation.
