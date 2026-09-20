@@ -131,7 +131,7 @@ check_policy_producers() {
     esac
     ontext="$(on_block "$wf")"
     if ! printf '%s\n' "$ontext" | grep -qE "^[[:space:]]*${trigger}:?[[:space:]]*($|#)"; then finding policy_producers "required context '$context' workflow is not triggered by $trigger"; clean=0; fi
-    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters PR execution by path"; clean=0; fi
+    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters $trigger by path"; clean=0; fi
     [ "$clean" -eq 1 ] && info policy_producers "'$context' <- $workflow:$job"
   done
   return 0
