@@ -60,7 +60,7 @@
       "workflow": ".github/workflows/dependency-review.yml",
       "job": "review",
       "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
-      "promotion_evidence": "PR #234 exact HEAD d7df6a2991e255c9cd56eb4d37a1da21a5002eeb produced successful Dependency Review run 35501629755. Final promotion still requires live main-ruleset mutation/readback in the same promotion session."
+      "promotion_evidence": "PR #234 exact HEAD d7df6a2991e255c9cd56eb4d37a1da21a5002eeb produced successful Dependency Review run 35501629755. Promotion completed through PR #248 and authoritative live readback on 2026-09-22: ruleset 22021368 already required Dependency Review with GitHub Actions integration id 15368 and no bypass actors."
     }
   ],
   "staged_required": [
