@@ -148,7 +148,7 @@ check_action_pinning() {
 }
 
 check_workflow_permissions() {
-  local clean=1 wf top
+  local clean=1 wf top top_head
   while IFS= read -r wf; do
     if ! grep -qE '^permissions:' "$wf"; then
       finding workflow_permissions "$(basename "$wf") has no workflow-level permissions block"; clean=0
@@ -162,6 +162,13 @@ check_workflow_permissions() {
       capture && /^[^[:space:]#]/ { exit }
       capture { print }
     ' "$wf")"
+    top_head="$(printf '%s\n' "$top" | head -n 1)"
+    case "$top_head" in
+      "permissions:"|"permissions: {}"|"permissions: read-all") ;;
+      *)
+        finding workflow_permissions "$(basename "$wf") uses unsupported workflow-level permissions form; use a read-only block, read-all, or {}"; clean=0
+        ;;
+    esac
     if printf '%s\n' "$top" | grep -qE '^  [A-Za-z0-9_-]+:[[:space:]]*write([[:space:]]|$)'; then
       finding workflow_permissions "$(basename "$wf") grants workflow-level write permission; move mutation authority to the exact job"; clean=0
     fi
