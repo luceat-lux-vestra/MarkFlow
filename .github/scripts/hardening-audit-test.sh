@@ -105,6 +105,16 @@ copy_root "$unsafe_permissions"
 perl -0pi -e 's/pull-requests: write/pull-requests: write-all/' "$unsafe_permissions/.github/workflows/pr-labeler.yml"
 expect_fail "$unsafe_permissions" workflow_permissions "grants write-all"
 
+workflow_scope_write="$TMP/workflow-scope-write"
+copy_root "$workflow_scope_write"
+perl -0pi -e 's/permissions:\n  contents: read\n/permissions:\n  contents: read\n  issues: write\n/' "$workflow_scope_write/.github/workflows/pr-labeler.yml"
+expect_fail "$workflow_scope_write" workflow_permissions "workflow-level write permission"
+
+inline_workflow_scope_write="$TMP/inline-workflow-scope-write"
+copy_root "$inline_workflow_scope_write"
+perl -0pi -e 's/permissions:\n  contents: read\n/permissions: { contents: read, issues: write }\n/' "$inline_workflow_scope_write/.github/workflows/pr-labeler.yml"
+expect_fail "$inline_workflow_scope_write" workflow_permissions "unsupported workflow-level permissions form"
+
 unsafe_privileged="$TMP/unsafe-privileged"
 copy_root "$unsafe_privileged"
 cat > "$unsafe_privileged/.github/workflows/unsafe.yml" <<'YAML'

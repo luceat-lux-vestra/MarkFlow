@@ -97,9 +97,12 @@ evidence.
 
 The write boundary is isolated in `.github/workflows/issue-labeler.yml` with
 job-local `issues:write`. It executes the classifier from the trusted default
-branch, disables checkout credential persistence, supports dry-run/backfill,
-and never executes issue title/body as code. Its classifier tests run inside the
-credential-less `Hardening audit` job.
+branch, disables checkout credential persistence, and never executes issue
+title/body as code. Manual backlog reconciliation is explicitly opt-in
+(`backfill=false` by default) and review-first (`dry_run=true` by default);
+a mutating backfill is rejected unless the dispatch itself targets the default
+branch. Static negative-contract tests run inside the credential-less
+`Hardening audit` job so those operator-safety guards cannot silently regress.
 
 ### Hardening Reassessment — 2026-09-20
 
