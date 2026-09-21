@@ -54,6 +54,13 @@
       "job": "failure-triage",
       "trigger": "pull_request_target",
       "covers": "Trusted-base classification-before-remediation metadata gate; proof PR #241 failed on run 35522245191 and passed after body-only correction on run 35522399480 without executing PR-controlled code."
+    },
+    {
+      "context": "Dependency Review",
+      "workflow": ".github/workflows/dependency-review.yml",
+      "job": "review",
+      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
+      "promotion_evidence": "PR #234 exact HEAD d7df6a2991e255c9cd56eb4d37a1da21a5002eeb produced successful Dependency Review run 35501629755. Final promotion still requires live main-ruleset mutation/readback in the same promotion session."
     }
   ],
   "staged_required": [
@@ -63,13 +70,6 @@
       "job": "audit",
       "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
       "promotion": "Same-repository PR and merged-main reliability are proven. Promote only after an unprivileged fork PR proves this exact context is emitted and passes without privileged state, then re-read live administration state and update this policy and the live main ruleset atomically."
-    },
-    {
-      "context": "Dependency Review",
-      "workflow": ".github/workflows/dependency-review.yml",
-      "job": "review",
-      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
-      "promotion": "Promote only after ordinary PR reliability is proven and authoritative live readback confirms Dependency Graph support; this check is PR-diff-scoped and has no merged-main producer. After merge, verify the checked-in policy/live ruleset state atomically rather than requiring an impossible main run."
     }
   ],
   "advisory": [
