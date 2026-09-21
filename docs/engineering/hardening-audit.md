@@ -87,7 +87,7 @@ reconciler owns only explicit title protocol already used by maintained work:
 - `security` -> `type:security`;
 - `docs` -> `type:docs`;
 - `research|rfc|adr|audit|design|spike|architecture` -> `type:research`;
-- `task|build|ci|test|refactor|chore|perf|release|track|epic|hardening` -> `type:task`.
+- `task|build|ci|test|refactor|chore|perf|release|track|epic|hardening|governance` -> `type:task`.
 
 An explicit protocol prefix may repair a conflicting managed type label.
 Titles outside that protocol are diagnostic-only: existing maintainer metadata
