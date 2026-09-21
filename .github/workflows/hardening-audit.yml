@@ -61,7 +61,7 @@ jobs:
         run: python3 .github/scripts/check-squash-message-safety.py --self-test
 
       - name: Verify issue metadata reconciliation
-        run: node --test .github/scripts/issue-metadata.test.cjs
+        run: node --test .github/scripts/issue-metadata.test.cjs .github/scripts/issue-labeler-workflow.test.cjs
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
