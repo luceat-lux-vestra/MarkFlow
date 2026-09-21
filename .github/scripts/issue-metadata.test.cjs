@@ -63,8 +63,8 @@ test("manual backlog reconciliation is dry-run first and default-branch-only for
     path.join(__dirname, "..", "workflows", "issue-labeler.yml"),
     "utf8"
   );
-  assert.match(workflow, /dry_run:[\\s\\S]*?default:\\s*true/);
-  assert.match(workflow, /backfill:[\\s\\S]*?default:\\s*false/);
+  assert.match(workflow, /dry_run:[\s\S]*?default:\s*true/);
+  assert.match(workflow, /backfill:[\s\S]*?default:\s*false/);
   assert.ok(workflow.includes("const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;"));
   assert.ok(workflow.includes(
     'context.eventName === "workflow_dispatch" && backfill && !dryRun && context.ref !== defaultBranchRef'
