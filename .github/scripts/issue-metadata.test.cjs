@@ -16,6 +16,7 @@ test("classifies only explicit repository title protocol", () => {
   assert.equal(expectedType("track(governance): audit"), "type:task");
   assert.equal(expectedType("epic(repo): hardening"), "type:task");
   assert.equal(expectedType("hardening(reassessment): refresh controls"), "type:task");
+  assert.equal(expectedType("governance: classify failure signals"), "type:task");
   assert.equal(expectedType("Investigate rendering"), null);
 });
 
