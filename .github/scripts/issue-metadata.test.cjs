@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const { expectedType, classify } = require("./issue-metadata.cjs");
 
@@ -53,4 +55,21 @@ test("unknown untyped title is diagnostic only", () => {
     remove: [],
     diagnostics: ["unclassified-title"]
   });
+});
+
+
+test("manual backlog reconciliation is dry-run first and default-branch-only for mutation", () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, "..", "workflows", "issue-labeler.yml"),
+    "utf8"
+  );
+  assert.match(workflow, /dry_run:[\\s\\S]*?default:\\s*true/);
+  assert.match(workflow, /backfill:[\\s\\S]*?default:\\s*false/);
+  assert.ok(workflow.includes("const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;"));
+  assert.ok(workflow.includes(
+    'context.eventName === "workflow_dispatch" && backfill && !dryRun && context.ref !== defaultBranchRef'
+  ));
+  assert.ok(workflow.includes("Mutating backfill must run from"));
+  assert.ok(workflow.includes("persist-credentials: false"));
+  assert.ok(workflow.includes("ref: ${{ github.event.repository.default_branch }}"));
 });
