@@ -46,6 +46,20 @@ copy_root "$baseline"
 expect_pass "$baseline"
 expect_pass "$baseline" live_readback_boundary
 
+wrong_target="$TMP/wrong-target"
+copy_root "$wrong_target"
+jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"' \
+  "$wrong_target/.github/merge-gate-policy.json" > "$wrong_target/.github/merge-gate-policy.json.tmp"
+mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
+expect_fail "$wrong_target" policy_producers "outside the audited failure-triage producer"
+
+missing_target_declaration="$TMP/missing-target-declaration"
+copy_root "$missing_target_declaration"
+jq '(.required[] | select(.context == "failure-triage")) |= del(.trigger)' \
+  "$missing_target_declaration/.github/merge-gate-policy.json" > "$missing_target_declaration/.github/merge-gate-policy.json.tmp"
+mv "$missing_target_declaration/.github/merge-gate-policy.json.tmp" "$missing_target_declaration/.github/merge-gate-policy.json"
+expect_fail "$missing_target_declaration" policy_producers "workflow is not triggered by pull_request"
+
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
 perl -0pi -e 's/ref: \$\{\{ github\.event\.repository\.default_branch \}\}/ref: \$\{\{ github\.ref_name \}\}/' "$caller_selected_ref/.github/workflows/hardening-audit.yml"
@@ -154,7 +168,8 @@ jq -n '{
           {context: "Build", integration_id: 15368},
           {context: "Test", integration_id: 15368},
           {context: "Inspect code", integration_id: 15368},
-          {context: "Verify plugin", integration_id: 15368}
+          {context: "Verify plugin", integration_id: 15368},
+          {context: "failure-triage", integration_id: 15368}
         ]
       }}
     ]
@@ -199,7 +214,7 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
     printf '%s\n' '[{"id":1,"name":"main protection"}]'
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
-  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368}]}}]}'
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"failure-triage","integration_id":15368}]}}]}'
 else
   echo "unexpected gh invocation" >&2
   exit 92

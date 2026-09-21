@@ -47,6 +47,13 @@
       "workflow": ".github/workflows/build.yml",
       "job": "verify",
       "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
+    },
+    {
+      "context": "failure-triage",
+      "workflow": ".github/workflows/failure-triage.yml",
+      "job": "failure-triage",
+      "trigger": "pull_request_target",
+      "covers": "Trusted-base classification-before-remediation metadata gate; proof PR #241 failed on run 35522245191 and passed after body-only correction on run 35522399480 without executing PR-controlled code."
     }
   ],
   "staged_required": [
@@ -63,13 +70,6 @@
       "job": "review",
       "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
       "promotion": "Promote only after ordinary PR reliability is proven and authoritative live readback confirms Dependency Graph support; this check is PR-diff-scoped and has no merged-main producer. After merge, verify the checked-in policy/live ruleset state atomically rather than requiring an impossible main run."
-    },
-    {
-      "context": "failure-triage",
-      "workflow": ".github/workflows/failure-triage.yml",
-      "job": "failure-triage",
-      "covers": "Base-branch PR metadata gate requiring explicit classification-before-remediation records without executing PR-controlled code.",
-      "promotion": "Promote only after a real PR proves missing/invalid metadata fails, an edited body recovers to success without a code change, bot exemption behaves as intended, and the checked-in/live ruleset update is performed and read back atomically."
     }
   ],
   "advisory": [

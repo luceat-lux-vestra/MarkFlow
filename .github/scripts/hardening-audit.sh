@@ -109,20 +109,29 @@ job_is_substantive() {
 }
 
 check_policy_producers() {
-  local n i context workflow job wf jobname block cond ontext clean
+  local n i context workflow job trigger wf jobname block cond ontext clean
   n="$(jq '.required | length' "$POLICY")"
   [ "$n" -gt 0 ] || { finding policy_producers "the policy declares no required contexts"; return 0; }
   for i in $(seq 0 $((n - 1))); do
-    context="$(jq -r ".required[$i].context" "$POLICY")"; workflow="$(jq -r ".required[$i].workflow" "$POLICY")"; job="$(jq -r ".required[$i].job" "$POLICY")"; wf="$ROOT/$workflow"; clean=1
+    context="$(jq -r ".required[$i].context" "$POLICY")"; workflow="$(jq -r ".required[$i].workflow" "$POLICY")"; job="$(jq -r ".required[$i].job" "$POLICY")"; trigger="$(jq -r ".required[$i].trigger // \"pull_request\"" "$POLICY")"; wf="$ROOT/$workflow"; clean=1
     if [ ! -f "$wf" ]; then finding policy_producers "required context '$context' names missing workflow '$workflow'"; continue; fi
     if ! job_exists "$wf" "$job"; then finding policy_producers "required context '$context' names missing job '$job'"; continue; fi
     block="$(job_block "$wf" "$job")"; jobname="$(unquote "$(job_field "$wf" "$job" name)")"
     if [ -z "$jobname" ]; then finding policy_producers "job '$job' has no explicit name"; clean=0; elif [ "$jobname" != "$context" ]; then finding policy_producers "required context '$context' does not match job '$job' name '$jobname'"; clean=0; fi
     if printf '%s\n' "$block" | grep -qE '^    if:'; then cond="$(printf '%s\n' "$block" | grep -m1 -E '^    if:')"; finding policy_producers "required context '$context' is conditionally skipped ($cond)"; clean=0; fi
     if ! job_is_substantive "$block"; then finding policy_producers "required context '$context' is produced by a fake or no-op job"; clean=0; fi
+    case "$trigger" in
+      pull_request) ;;
+      pull_request_target)
+        if [ "$workflow" != ".github/workflows/failure-triage.yml" ] || [ "$job" != "failure-triage" ]; then
+          finding policy_producers "required context '$context' uses pull_request_target outside the audited failure-triage producer"; clean=0
+        fi
+        ;;
+      *) finding policy_producers "required context '$context' declares unsupported PR trigger '$trigger'"; clean=0 ;;
+    esac
     ontext="$(on_block "$wf")"
-    if ! printf '%s\n' "$ontext" | grep -qE '^[[:space:]]*pull_request:?[[:space:]]*$'; then finding policy_producers "required context '$context' workflow is not triggered by pull_request"; clean=0; fi
-    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters pull_request by path"; clean=0; fi
+    if ! printf '%s\n' "$ontext" | grep -qE "^[[:space:]]*${trigger}:?[[:space:]]*($|#)"; then finding policy_producers "required context '$context' workflow is not triggered by $trigger"; clean=0; fi
+    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters $trigger by path"; clean=0; fi
     [ "$clean" -eq 1 ] && info policy_producers "'$context' <- $workflow:$job"
   done
   return 0
