@@ -111,12 +111,13 @@ treating the prior hardening completion as permanent evidence.
 
 New controls are deliberately classified before promotion:
 
-- `Dependency Review` is `staged_required`: Dependabot proposes version
-  movement, while this separate gate evaluates the dependency diff admitted by
-  a pull request. It must prove ordinary-PR reliability plus authoritative live Dependency
-  Graph support before ruleset promotion. Dependency Review is PR-diff-scoped,
-  so merged-main execution is N/A; post-merge proof concerns policy/ruleset
-  readback, not a nonexistent main check run.
+- `Dependency Review` is **required**. PR #234 proved the ordinary-PR
+  producer, and PR #248 reconciled the checked-in merge-gate policy after the
+  live `main protection` ruleset already required the same context. The
+  2026-09-22 authoritative readback confirmed ruleset `22021368`, GitHub
+  Actions integration id `15368`, and no bypass actors. Dependency Review is
+  PR-diff-scoped, so merged-main execution is N/A; post-merge proof is the
+  policy/ruleset readback rather than a nonexistent main check run.
 - CodeQL for JavaScript/TypeScript and GitHub Actions is advisory security
   analysis. A Java/Kotlin leg was exercised during this reassessment with both
   `build-mode:none` and `autobuild`; the current CodeQL v4.38.1 / CLI 2.27.0
