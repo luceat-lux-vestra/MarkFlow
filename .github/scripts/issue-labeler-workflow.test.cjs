@@ -8,8 +8,8 @@ const test = require("node:test");
 const source = fs.readFileSync(path.resolve(__dirname, "../workflows/issue-labeler.yml"), "utf8");
 
 test("manual backlog reconciliation is opt-in and dry-run first", () => {
-  assert.match(source, /dry_run:\\n[\\s\\S]*?default: true/);
-  assert.match(source, /backfill:\\n[\\s\\S]*?default: false/);
+  assert.match(source, /dry_run:\n[\s\S]*?default: true/);
+  assert.match(source, /backfill:\n[\s\S]*?default: false/);
 });
 
 test("mutating dispatch is bound to the default branch", () => {
@@ -19,7 +19,7 @@ test("mutating dispatch is bound to the default branch", () => {
 });
 
 test("write authority stays narrow and trusted code is used", () => {
-  assert.match(source, /^permissions:\\n  contents: read$/m);
+  assert.match(source, /^permissions:\n  contents: read$/m);
   assert.ok(source.includes("issues: write # Required only for canonical issue-label reconciliation."));
   assert.ok(source.includes("ref: ${{ github.event.repository.default_branch }}"));
   assert.ok(source.includes("persist-credentials: false"));
