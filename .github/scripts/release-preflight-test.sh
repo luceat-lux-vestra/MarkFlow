@@ -3,7 +3,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PREFLIGHT="$SCRIPT_DIR/release-preflight.sh"
+RELEASE_WORKFLOW="$ROOT/.github/workflows/release.yml"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/markflow-release.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -25,6 +27,98 @@ expect_fail() {
     *"$needle"*) ;;
     *) echo "release fixture failed for the wrong reason: $needle" >&2; printf '%s\n' "$output" >&2; return 1 ;;
   esac
+}
+
+check_release_authority() {
+  local workflow="$1"
+  grep -qE '^[[:space:]]+types:[[:space:]]*\[[[:space:]]*released[[:space:]]*\][[:space:]]*
+check_release_authority "$RELEASE_WORKFLOW"
+
+prerelease_workflow="$TMP/release-prerelease.yml"
+cp "$RELEASE_WORKFLOW" "$prerelease_workflow"
+perl -0pi -e 's/types: \[ released \]/types: [ prereleased, released ]/' "$prerelease_workflow"
+expect_fail "release publication trigger must be stable released only" check_release_authority "$prerelease_workflow"
+
+missing_environment_workflow="$TMP/release-no-environment.yml"
+cp "$RELEASE_WORKFLOW" "$missing_environment_workflow"
+perl -0pi -e 's/    environment: jetbrains-marketplace\n//' "$missing_environment_workflow"
+expect_fail "release job is not bound to jetbrains-marketplace environment" check_release_authority "$missing_environment_workflow"
+
+manifest="$TMP/identity.json"
+output="$TMP/github-output"
+bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$manifest" --github-output "$output"
+grep -qx 'publish=true' "$output"
+jq -e --arg tag "$tag" '.publication_state == "pending" and .artifact_sha256 != null and (.artifact | endswith("-" + $tag + "-signed.zip"))' "$manifest" >/dev/null
+
+expect_fail "pending publication identity" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$manifest" --artifact-present false --output-manifest "$TMP/unused.json"
+expect_fail "not reachable from reviewed main" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status ahead --artifact "$artifact" --output-manifest "$TMP/ahead.json"
+wrong_source="$TMP/wrong-source.json"
+jq '.tag_commit = "3333333333333333333333333333333333333333"' "$manifest" > "$wrong_source"
+expect_fail "immutable tag/artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$wrong_source" --artifact-present false --output-manifest "$TMP/wrong-source-output.json"
+
+bad_stage="$TMP/bad-plugin"
+mkdir -p "$bad_stage/META-INF"
+printf '<idea-plugin><version>26.09.02.999999</version></idea-plugin>\n' > "$bad_stage/META-INF/plugin.xml"
+bad_artifact="$TMP/MarkFlow-bad-$tag-signed.zip"
+(cd "$bad_stage" && zip -qr "$bad_artifact" .)
+unsigned_artifact="$TMP/MarkFlow-$tag.zip"
+cp "$artifact" "$unsigned_artifact"
+expect_fail "is not the signed ZIP" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$unsigned_artifact" --output-manifest "$TMP/unsigned.json"
+
+expect_fail "does not equal release tag" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$bad_artifact" --output-manifest "$TMP/bad.json"
+
+published="$TMP/published.json"
+jq '.publication_state = "published"' "$manifest" > "$published"
+published_output="$TMP/published-output"
+artifact_sha="$(sha256sum "$artifact" | awk '{print $1}')"
+bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present true --existing-artifact-sha256 "$artifact_sha" --github-output "$published_output"
+grep -qx 'publish=false' "$published_output"
+expect_fail "does not match the rebuilt artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present true --existing-artifact-sha256 "$(printf '0%.0s' {1..64})" --github-output "$TMP/wrong-digest-output"
+expect_fail "artifact is absent" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present false --github-output "$TMP/absent-output"
+
+echo "release-preflight non-publishing fixtures passed"
+ "$workflow" || {
+    echo "release publication trigger must be stable released only" >&2
+    return 1
+  }
+  grep -qE '^    environment:[[:space:]]+jetbrains-marketplace[[:space:]]*
+manifest="$TMP/identity.json"
+output="$TMP/github-output"
+bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$manifest" --github-output "$output"
+grep -qx 'publish=true' "$output"
+jq -e --arg tag "$tag" '.publication_state == "pending" and .artifact_sha256 != null and (.artifact | endswith("-" + $tag + "-signed.zip"))' "$manifest" >/dev/null
+
+expect_fail "pending publication identity" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$manifest" --artifact-present false --output-manifest "$TMP/unused.json"
+expect_fail "not reachable from reviewed main" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status ahead --artifact "$artifact" --output-manifest "$TMP/ahead.json"
+wrong_source="$TMP/wrong-source.json"
+jq '.tag_commit = "3333333333333333333333333333333333333333"' "$manifest" > "$wrong_source"
+expect_fail "immutable tag/artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$wrong_source" --artifact-present false --output-manifest "$TMP/wrong-source-output.json"
+
+bad_stage="$TMP/bad-plugin"
+mkdir -p "$bad_stage/META-INF"
+printf '<idea-plugin><version>26.09.02.999999</version></idea-plugin>\n' > "$bad_stage/META-INF/plugin.xml"
+bad_artifact="$TMP/MarkFlow-bad-$tag-signed.zip"
+(cd "$bad_stage" && zip -qr "$bad_artifact" .)
+unsigned_artifact="$TMP/MarkFlow-$tag.zip"
+cp "$artifact" "$unsigned_artifact"
+expect_fail "is not the signed ZIP" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$unsigned_artifact" --output-manifest "$TMP/unsigned.json"
+
+expect_fail "does not equal release tag" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$bad_artifact" --output-manifest "$TMP/bad.json"
+
+published="$TMP/published.json"
+jq '.publication_state = "published"' "$manifest" > "$published"
+published_output="$TMP/published-output"
+artifact_sha="$(sha256sum "$artifact" | awk '{print $1}')"
+bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present true --existing-artifact-sha256 "$artifact_sha" --github-output "$published_output"
+grep -qx 'publish=false' "$published_output"
+expect_fail "does not match the rebuilt artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present true --existing-artifact-sha256 "$(printf '0%.0s' {1..64})" --github-output "$TMP/wrong-digest-output"
+expect_fail "artifact is absent" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present false --github-output "$TMP/absent-output"
+
+echo "release-preflight non-publishing fixtures passed"
+ "$workflow" || {
+    echo "release job is not bound to jetbrains-marketplace environment" >&2
+    return 1
+  }
 }
 
 manifest="$TMP/identity.json"
