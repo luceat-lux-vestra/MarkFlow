@@ -10,10 +10,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 copy_root() {
   local destination="$1"
-  mkdir -p "$destination/.github"
+  mkdir -p "$destination/.github" "$destination/docs/release"
   cp "$ROOT/.github/merge-gate-policy.json" "$destination/.github/"
   cp -R "$ROOT/.github/workflows" "$destination/.github/"
   cp -R "$ROOT/.github/scripts" "$destination/.github/"
+  cp "$ROOT/docs/release/recovery.md" "$destination/docs/release/recovery.md"
 }
 
 expect_pass() {
@@ -158,8 +159,6 @@ expect_fail "$missing_identity_equality" release_preflight "pending/published re
 
 recovery_version_conflation="$TMP/recovery-version-conflation"
 copy_root "$recovery_version_conflation"
-mkdir -p "$recovery_version_conflation/docs/release"
-cp "$ROOT/docs/release/recovery.md" "$recovery_version_conflation/docs/release/recovery.md"
 perl -0pi -e 's/\(\.version == \(\.tag \| ltrimstr\("v"\)\)\)/(.version == .tag)/' "$recovery_version_conflation/docs/release/recovery.md"
 expect_fail "$recovery_version_conflation" release_preflight "recovery runbook conflates release tag with effective plugin version"
 
