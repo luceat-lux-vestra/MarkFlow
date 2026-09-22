@@ -23,6 +23,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
+      attestations: write
     env:
       RELEASE_VERSION: ${{ github.event.release.tag_name }}
     steps:
@@ -123,51 +125,53 @@ jobs:
           [ "${#artifacts[@]}" -eq 1 ] || { echo "::error::Expected one plugin distribution, found ${#artifacts[@]}."; exit 1; }
           printf 'path=%s\nname=%s\n' "${artifacts[0]}" "$(basename "${artifacts[0]}")" >> "$GITHUB_OUTPUT"
 
-      # This is a local dry-run only: it reads the built archive and the API-resolved
-      # immutable source identity, and writes a pending lock manifest under RUNNER_TEMP.
-      - name: Release provenance preflight (dry-run)
-        id: preflight
+      - name: Resolve existing publication state
+        id: state
         env:
-          PREFLIGHT_ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
-          PREFLIGHT_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
-          PREFLIGHT_IDENTITY_FILE: ${{ steps.source.outputs.identity_file }}
-          PREFLIGHT_MAIN_SHA: ${{ steps.source.outputs.main_sha }}
-          PREFLIGHT_TAG_SHA: ${{ steps.source.outputs.tag_sha }}
-          PREFLIGHT_COMPARE_STATUS: ${{ steps.source.outputs.compare_status }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IDENTITY_FILE: ${{ steps.source.outputs.identity_file }}
         run: |
           set -euo pipefail
           release_json="$RUNNER_TEMP/release.json"
-          artifact_name="$PREFLIGHT_ARTIFACT_NAME"
-          artifact_present=false
-          artifact_asset_ids="$(jq -r --arg name "$artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
-          [ "$(printf '%s\n' "$artifact_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple release artifacts have the same name."; exit 1; }
-          existing_artifact_sha256=""
-          artifact_asset_id="$(printf '%s\n' "$artifact_asset_ids" | sed -n '1p')"
-          if [ -n "$artifact_asset_id" ]; then
-            artifact_present=true
-            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${artifact_asset_id}" > "$RUNNER_TEMP/existing-release-artifact.zip"
-            existing_artifact_sha256="$(sha256sum "$RUNNER_TEMP/existing-release-artifact.zip" | awk '{print $1}')"
-          fi
-          existing="$PREFLIGHT_IDENTITY_FILE"
-          args=(
-            --dry-run
-            --tag "$RELEASE_VERSION"
-            --main-sha "$PREFLIGHT_MAIN_SHA"
-            --tag-sha "$PREFLIGHT_TAG_SHA"
-            --compare-status "$PREFLIGHT_COMPARE_STATUS"
-            --artifact "$PREFLIGHT_ARTIFACT_PATH"
-            --artifact-present "$artifact_present"
-            --existing-artifact-sha256 "$existing_artifact_sha256"
-            --output-manifest "$RUNNER_TEMP/markflow-release-identity.json"
-            --github-output "$GITHUB_OUTPUT"
-          )
+          existing="$IDENTITY_FILE"
+          publish=true
           if [ -s "$existing" ]; then
-            args+=(--existing-identity "$existing")
+            jq -e --arg tag "$RELEASE_VERSION" '
+              .schema == 1 and .tag == $tag and .version == $tag and
+              (.tag_commit | test("^[0-9a-f]{40}$")) and
+              (.artifact | endswith("-" + $tag + "-signed.zip")) and
+              (.artifact_sha256 | test("^[0-9a-f]{64}$")) and
+              (.publication_state == "pending" or .publication_state == "published")
+            ' "$existing" >/dev/null || { echo "::error::Existing release identity is invalid."; exit 1; }
+            state="$(jq -r '.publication_state' "$existing")"
+            case "$state" in
+              pending)
+                echo "::error::A pending publication identity already exists; manual recovery is required."
+                exit 1
+                ;;
+              published)
+                artifact_name="$(jq -r '.artifact' "$existing")"
+                expected_sha="$(jq -r '.artifact_sha256' "$existing")"
+                asset_ids="$(jq -r --arg name "$artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
+                [ "$(printf '%s\n' "$asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1 ] || {
+                  echo "::error::Published identity does not map to exactly one signed release asset."
+                  exit 1
+                }
+                asset_id="$(printf '%s\n' "$asset_ids" | sed -n '1p')"
+                gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$RUNNER_TEMP/existing-signed-release.zip"
+                actual_sha="$(sha256sum "$RUNNER_TEMP/existing-signed-release.zip" | awk '{print $1}')"
+                [ "$actual_sha" = "$expected_sha" ] || { echo "::error::Published signed release asset digest does not match identity."; exit 1; }
+                publish=false
+                ;;
+            esac
+          else
+            orphan_count="$(jq -r --arg suffix "-${RELEASE_VERSION}-signed.zip" '[.assets[]? | select(.name | endswith($suffix))] | length' "$release_json")"
+            [ "$orphan_count" -eq 0 ] || { echo "::error::Signed release asset exists without a release identity."; exit 1; }
           fi
-          bash .github/scripts/release-preflight.sh "${args[@]}"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
       - name: Verify publication credentials
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
@@ -185,16 +189,76 @@ jobs:
             exit 1
           fi
 
+      - name: Sign exact release artifact
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew signPlugin -PbuildVersion="$RELEASE_VERSION"
+
+      - name: Verify signed release artifact
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"
+
+      - name: Capture verified signed release asset
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        id: signed_artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=(./build/distributions/*-"$RELEASE_VERSION"-signed.zip)
+          [ "${#artifacts[@]}" -eq 1 ] || { echo "::error::Expected one signed plugin distribution, found ${#artifacts[@]}."; exit 1; }
+          printf 'path=%s\nname=%s\n' "${artifacts[0]}" "$(basename "${artifacts[0]}")" >> "$GITHUB_OUTPUT"
+
+      # This validation-only preflight creates the pending release identity from the
+      # signature-verified ZIP. The signed artifact, not buildPlugin output, is the identity subject.
+      - name: Release provenance preflight for signed artifact
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        id: preflight
+        env:
+          PREFLIGHT_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}
+          PREFLIGHT_MAIN_SHA: ${{ steps.source.outputs.main_sha }}
+          PREFLIGHT_TAG_SHA: ${{ steps.source.outputs.tag_sha }}
+          PREFLIGHT_COMPARE_STATUS: ${{ steps.source.outputs.compare_status }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/release-preflight.sh \
+            --dry-run \
+            --tag "$RELEASE_VERSION" \
+            --main-sha "$PREFLIGHT_MAIN_SHA" \
+            --tag-sha "$PREFLIGHT_TAG_SHA" \
+            --compare-status "$PREFLIGHT_COMPARE_STATUS" \
+            --artifact "$PREFLIGHT_ARTIFACT_PATH" \
+            --artifact-present false \
+            --output-manifest "$RUNNER_TEMP/markflow-release-identity.json" \
+            --github-output "$GITHUB_OUTPUT"
+          [ "$(cat "$GITHUB_OUTPUT" | sed -n 's/^publish=//p' | tail -1)" = true ] || {
+            echo "::error::New signed release preflight did not authorize publication."
+            exit 1
+          }
+
+      - name: Attest verified signed release asset
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.signed_artifact.outputs.path }}
+
       # A pending identity asset is a publication lock. If this run fails after the
       # lock, reruns stop instead of guessing whether Marketplace publication happened.
       - name: Lock release identity before publication
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-identity.json"
 
       - name: Publish Plugin
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
@@ -203,14 +267,14 @@ jobs:
         run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
 
       - name: Upload Release Asset
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+          RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}
         run: gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"
 
       - name: Mark publication complete
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -221,7 +285,7 @@ jobs:
       # Changelog PR creation remains release-only and is idempotent for a rerun that
       # already created the deterministic branch/PR. It never runs during CI validation.
       - name: Create Pull Request
-        if: ${{ github.event.release.body != '' && steps.preflight.outputs.publish == 'true' }}
+        if: ${{ github.event.release.body != '' && steps.state.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
