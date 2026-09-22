@@ -92,7 +92,7 @@ expect_fail "$noop" policy_producers "fake or no-op job"
 
 mutable="$TMP/mutable"
 copy_root "$mutable"
-perl -0pi -e 's/\@54081f138730dfa15788a46383842cd2f914a1be/\@v1.3.1/' "$mutable/.github/workflows/build.yml"
+perl -0pi -e 's#jlumbroso/free-disk-space\@[0-9a-f]{40}#jlumbroso/free-disk-space\@v2.0.0#' "$mutable/.github/workflows/build.yml"
 expect_fail "$mutable" action_pinning "mutable action ref"
 
 missing_permissions="$TMP/missing-permissions"
