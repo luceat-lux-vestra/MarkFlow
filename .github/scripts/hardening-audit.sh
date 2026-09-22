@@ -248,7 +248,29 @@ check_release_preflight() {
   grep -qE 'Run release preflight fixtures' "$audit" || { finding release_preflight "release preflight fixtures are not named in the hardening workflow"; clean=0; }
   grep -qE 'bash \.github/scripts/release-preflight-test\.sh' "$audit" || { finding release_preflight "release preflight fixtures are not executed by the hardening workflow"; clean=0; }
   [ -f "$release" ] || { finding release_preflight "release.yml is missing"; return 0; }
-  grep -qE '^      id-token:[[:space:]]+write
+  grep -qE '^      id-token:[[:space:]]+write$' "$release" || { finding release_preflight "release job lacks id-token: write for attestation"; clean=0; }
+  grep -qE '^      attestations:[[:space:]]+write$' "$release" || { finding release_preflight "release job lacks attestations: write"; clean=0; }
+  grep -qE 'uses:[[:space:]]+actions/attest@[0-9a-f]{40}' "$release" || { finding release_preflight "attestation action is not full-SHA pinned"; clean=0; }
+  grep -qF './gradlew verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"' "$release" || { finding release_preflight "signature verification is missing before publication"; clean=0; }
+  grep -qE 'artifacts=\(\.\/build\/distributions\/\*-"\$RELEASE_VERSION"-signed\.zip\)' "$release" || { finding release_preflight "signed release artifact selection is missing or ambiguous"; clean=0; }
+  grep -qF 'RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}' "$release" || { finding release_preflight "GitHub Release upload is not bound to the verified signed artifact"; clean=0; }
+  grep -qF 'subject-path: ${{ steps.signed_artifact.outputs.path }}' "$release" || { finding release_preflight "attestation subject is not the verified signed artifact"; clean=0; }
+  sign_pos="$(grep -nF './gradlew signPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
+  verify_pos="$(grep -nF './gradlew verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
+  capture_pos="$(grep -nF 'id: signed_artifact' "$release" | head -1 | cut -d: -f1 || true)"
+  preflight_pos="$(grep -nF 'id: preflight' "$release" | head -1 | cut -d: -f1 || true)"
+  attest_pos="$(grep -nF 'uses: actions/attest@' "$release" | head -1 | cut -d: -f1 || true)"
+  lock_pos="$(grep -nF 'Lock release identity before publication' "$release" | head -1 | cut -d: -f1 || true)"
+  publish_pos="$(grep -nF './gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
+  upload_pos="$(grep -nF 'gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"' "$release" | head -1 | cut -d: -f1 || true)"
+  if [ -z "$sign_pos" ] || [ -z "$verify_pos" ] || [ -z "$capture_pos" ] || [ -z "$preflight_pos" ] || [ -z "$attest_pos" ] || [ -z "$lock_pos" ] || [ -z "$publish_pos" ] || [ -z "$upload_pos" ] ||
+     ! [ "$sign_pos" -lt "$verify_pos" ] || ! [ "$verify_pos" -lt "$capture_pos" ] || ! [ "$capture_pos" -lt "$preflight_pos" ] ||
+     ! [ "$preflight_pos" -lt "$attest_pos" ] || ! [ "$attest_pos" -lt "$lock_pos" ] || ! [ "$lock_pos" -lt "$publish_pos" ] || ! [ "$publish_pos" -lt "$upload_pos" ]; then
+    finding release_preflight "release order must be sign -> signature verify -> signed identity -> attestation -> lock -> Marketplace publish -> signed GitHub upload"
+    clean=0
+  fi
+  [ "$clean" -eq 1 ] && info release_preflight "release publication is bound to one verified signed attested artifact"; return 0
+}
 
 check_live_readback_boundary() {
   local audit="$WORKFLOW_DIR/hardening-audit.yml" audit_block live_block clean=1
