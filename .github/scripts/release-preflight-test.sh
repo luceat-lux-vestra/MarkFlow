@@ -69,7 +69,18 @@ expect_fail "signed release artifact is absent" bash "$PREFLIGHT" --dry-run --ta
 bash "$PUBLICATION_CONTRACT" "$ROOT/.github/workflows/release.yml" >/dev/null
 unsigned_release="$TMP/release-unsigned.yml"
 cp "$ROOT/.github/workflows/release.yml" "$unsigned_release"
-perl -0pi -e 's/steps\.signed_artifact\.outputs\.path/steps.artifact.outputs.path/g' "$unsigned_release"
+python3 - "$unsigned_release" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = 'RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}'
+new = 'RELEASE_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}'
+if old not in text:
+    raise SystemExit("release asset fixture target not found")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PY
 expect_fail "unsigned buildPlugin output" bash "$PUBLICATION_CONTRACT" "$unsigned_release"
 
 echo "release-preflight non-publishing fixtures passed"
