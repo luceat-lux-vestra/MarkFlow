@@ -6,8 +6,6 @@ import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
 
 import org.apache.tools.ant.taskdefs.condition.Os
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 
 plugins {
     id("java") // Java support.
@@ -20,9 +18,8 @@ plugins {
 
 group = providers.gradleProperty("pluginGroup").get()
 
-val buildTimestampVersion: String = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yy.MM.dd.HHmmss"))
-val resolvedPluginVersion: String = providers.gradleProperty("buildVersion").orNull ?: buildTimestampVersion
-version = resolvedPluginVersion
+val resolvedPluginVersion = providers.gradleProperty("buildVersion").orElse("0.0.0-dev")
+version = resolvedPluginVersion.get()
 
 // Set the JVM language level used to build the project.
 kotlin {
@@ -84,7 +81,7 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         name = providers.gradleProperty("pluginName")
-        version = providers.provider { resolvedPluginVersion }
+        version = resolvedPluginVersion
 
         // Load plugin description from README markers.
         description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.map {
@@ -101,7 +98,7 @@ intellijPlatform {
 
         val changelog = project.changelog // Keep a local reference for configuration cache compatibility.
         // Render release notes from the versioned changelog entry or Unreleased fallback.
-        changeNotes = providers.provider { resolvedPluginVersion }.map { pluginVersion ->
+        changeNotes = resolvedPluginVersion.map { pluginVersion ->
             with(changelog) {
                 renderItem(
                     (getOrNull(pluginVersion) ?: getUnreleased())
@@ -125,8 +122,7 @@ intellijPlatform {
 
     publishing {
         token = providers.environmentVariable("PUBLISH_TOKEN")
-        // Timestamp versions do not encode channels; override with -PreleaseChannel when needed.
-        channels = providers.gradleProperty("releaseChannel").map { listOf(it) }.orElse(listOf("default"))
+        channels = listOf("default")
     }
 
     pluginVerification {
@@ -142,8 +138,6 @@ changelog {
     groups.empty()
     repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
     versionPrefix = ""
-    // Versions are `yy.MM.dd.HHmmss` timestamps, so the default SemVer header parser rejects patched entries.
-    headerParserRegex = """(\d+\.\d+\.\d+\.\d+)""".toRegex()
 }
 
 // Configure Kover coverage reporting.
