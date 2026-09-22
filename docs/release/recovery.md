@@ -116,7 +116,7 @@ fi
 
 The archive must contain exactly one `META-INF/plugin.xml`, and that manifest's `<version>` must equal the release tag/version. The repository's `.github/scripts/release-preflight.sh` performs this check and should be used as the executable reference.
 
-Important: do not require the byte-for-byte Marketplace-hosted download to equal `artifact_sha256`. `publishPlugin` may publish the signed distribution produced by the IntelliJ Platform Gradle plugin, while the preflight digest records the archive built and checked before publication. Recovery uses the pending manifest and GitHub Release artifact as repository-side provenance evidence; Marketplace verification is by plugin/version/publication state, not by inventing an unsupported remote byte digest equivalence.
+Important: `artifact_sha256` now identifies the signature-verified `*-signed.zip` that was attested before publication and is used as the GitHub Release asset. Do not invent a byte-for-byte equivalence requirement for a Marketplace-hosted download unless an authoritative Marketplace interface exposes and guarantees that exact byte identity. Marketplace verification remains by plugin/version/publication state; repository-side artifact identity is the signed ZIP recorded in the pending manifest and covered by GitHub attestation.
 
 If the GitHub Release artifact exists and its digest differs from the pending identity, stop. Do not overwrite it and do not publish/retry under the same version.
 
@@ -154,13 +154,15 @@ Only when Marketplace state is authoritatively `Absent`:
 
 1. check out the immutable release tag, never a branch tip;
 2. rebuild with `-PbuildVersion="$version"`;
-3. run the same non-publishing preflight validation against the pending identity;
-4. require the rebuilt artifact filename and SHA-256 to match the pending identity exactly;
-5. require the embedded plugin version to equal the release version;
-6. require the tag to still resolve to the recorded `tag_commit` and remain reachable from reviewed `main`;
-7. obtain explicit maintainer publication authorization;
-8. perform at most the publication action needed for this existing identity;
-9. after authoritative confirmation that Marketplace accepted the version, reconcile the GitHub Release artifact and published marker as described below.
+3. sign the rebuilt candidate with the release signing authority and run `verifyPluginSignature`;
+4. run the same non-publishing preflight validation against that verified signed ZIP and the pending identity;
+5. require the reproduced signed artifact filename and SHA-256 to match the pending identity exactly; if signing cannot reproduce those bytes, stop and use a new release/version rather than rewriting identity;
+6. require the embedded plugin version to equal the release version;
+7. require the tag to still resolve to the recorded `tag_commit` and remain reachable from reviewed `main`;
+8. verify the signed archive's GitHub attestation when an attested release asset is available;
+9. obtain explicit maintainer publication authorization;
+10. perform at most the publication action needed for this existing identity, without re-running signing after identity verification;
+11. after authoritative confirmation that Marketplace accepted the version, reconcile the GitHub Release signed artifact and published marker as described below.
 
 If any identity check fails, do not "repair" the old release. Create a new version instead.
 
@@ -170,7 +172,7 @@ If the exact version is confirmed as existing in Marketplace, never call `publis
 
 ### Release ZIP missing
 
-Rebuild from the immutable tag using the exact version and run `.github/scripts/release-preflight.sh` against the pending identity. Upload a GitHub Release ZIP only if its filename and SHA-256 exactly match the pending identity. If exact reproduction is impossible, stop rather than uploading a different artifact under the same release identity.
+Rebuild from the immutable tag using the exact version, sign it with the release signing authority, verify the signature, and run `.github/scripts/release-preflight.sh` against that signed ZIP and the pending identity. Upload a GitHub Release ZIP only if the reproduced signed filename and SHA-256 exactly match the pending identity. If exact signed-byte reproduction is impossible, stop rather than uploading a different artifact under the same release identity.
 
 ### Release ZIP present
 
