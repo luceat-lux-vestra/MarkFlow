@@ -1,0 +1,57 @@
+name: Failure classification
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] trusted reporter only; no PR checkout/code/artifact execution; central action pinned by SHA
+    workflows:
+      - Build
+      - CodeQL
+      - Dependency Review
+      - Hardening audit
+      - Starter Driver E2E
+      - Derived Renderer Evidence
+      - Native Derived Presentation Evidence
+      - Native Editing Evidence
+      - Native Editor Shell Evidence
+      - Native Host Resources Evidence
+      - Native Image Import Evidence
+      - Native Projection Evidence
+      - No-JCEF Native Editing Evidence
+      - Failure triage
+    types: [completed]
+
+permissions: {}
+
+
+concurrency:
+  group: failure-classification-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    permissions:
+      actions: read
+      pull-requests: read
+      issues: write
+    if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Rebuild exact-HEAD failure classification report
+        uses: luceat-lux-vestra/.github/actions/failure-classifier@c6aae652fb50a6575682549fcb57757f1af46c2e
+        with:
+          github-token: ${{ github.token }}
+          tracked-workflows: |
+            Build
+            CodeQL
+            Dependency Review
+            Hardening audit
+            Starter Driver E2E
+            Derived Renderer Evidence
+            Native Derived Presentation Evidence
+            Native Editing Evidence
+            Native Editor Shell Evidence
+            Native Host Resources Evidence
+            Native Image Import Evidence
+            Native Projection Evidence
+            No-JCEF Native Editing Evidence
+            Failure triage
