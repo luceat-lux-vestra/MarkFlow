@@ -137,6 +137,9 @@ jobs:
       - name: Run release preflight fixtures
         run: bash .github/scripts/release-preflight-test.sh
 
+      - name: Verify release authority boundary
+        run: bash .github/scripts/release-authority-test.sh
+
   live-readback:
     name: Live hardening readback
     if: ${{ vars.HARDENING_LIVE_READBACK_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || (github.ref_name == github.event.repository.default_branch && inputs.target_sha == '')) }}
