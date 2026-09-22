@@ -7,13 +7,14 @@ PREFLIGHT="$SCRIPT_DIR/release-preflight.sh"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/markflow-release.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
-tag="26.09.02.123456"
+tag="v1.0.0"
+version="1.0.0"
 main_sha="1111111111111111111111111111111111111111"
 tag_sha="2222222222222222222222222222222222222222"
-artifact="$TMP/MarkFlow-$tag-signed.zip"
+artifact="$TMP/MarkFlow-$version-signed.zip"
 stage="$TMP/plugin"
 mkdir -p "$stage/META-INF"
-printf '<idea-plugin><id>com.algorist.markflow</id><version>%s</version></idea-plugin>\n' "$tag" > "$stage/META-INF/plugin.xml"
+printf '<idea-plugin><id>com.algorist.markflow</id><version>%s</version></idea-plugin>\n' "$version" > "$stage/META-INF/plugin.xml"
 (cd "$stage" && zip -qr "$artifact" .)
 
 expect_fail() {
@@ -27,11 +28,15 @@ expect_fail() {
   esac
 }
 
+expect_fail "must be stable vMAJOR.MINOR.PATCH" bash "$PREFLIGHT" --dry-run --tag "1.0.0" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$TMP/no-v.json"
+expect_fail "must be stable vMAJOR.MINOR.PATCH" bash "$PREFLIGHT" --dry-run --tag "26.09.02.123456" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$TMP/timestamp.json"
+expect_fail "must be stable vMAJOR.MINOR.PATCH" bash "$PREFLIGHT" --dry-run --tag "v0.9.9" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$TMP/v0.json"
+
 manifest="$TMP/identity.json"
 output="$TMP/github-output"
 bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$manifest" --github-output "$output"
 grep -qx 'publish=true' "$output"
-jq -e --arg tag "$tag" '.publication_state == "pending" and .artifact_sha256 != null and (.artifact | endswith("-" + $tag + "-signed.zip"))' "$manifest" >/dev/null
+jq -e --arg tag "$tag" --arg version "$version" '.publication_state == "pending" and .tag == $tag and .version == $version and .artifact_sha256 != null and (.artifact | endswith("-" + $version + "-signed.zip"))' "$manifest" >/dev/null
 
 expect_fail "pending publication identity" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$manifest" --artifact-present false --output-manifest "$TMP/unused.json"
 expect_fail "not reachable from reviewed main" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status ahead --artifact "$artifact" --output-manifest "$TMP/ahead.json"
@@ -41,14 +46,14 @@ expect_fail "immutable tag/artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --
 
 bad_stage="$TMP/bad-plugin"
 mkdir -p "$bad_stage/META-INF"
-printf '<idea-plugin><version>26.09.02.999999</version></idea-plugin>\n' > "$bad_stage/META-INF/plugin.xml"
-bad_artifact="$TMP/MarkFlow-bad-$tag-signed.zip"
+printf '<idea-plugin><version>1.0.1</version></idea-plugin>\n' > "$bad_stage/META-INF/plugin.xml"
+bad_artifact="$TMP/MarkFlow-bad-$version-signed.zip"
 (cd "$bad_stage" && zip -qr "$bad_artifact" .)
-unsigned_artifact="$TMP/MarkFlow-$tag.zip"
+unsigned_artifact="$TMP/MarkFlow-$version.zip"
 cp "$artifact" "$unsigned_artifact"
 expect_fail "is not the signed ZIP" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$unsigned_artifact" --output-manifest "$TMP/unsigned.json"
 
-expect_fail "does not equal release tag" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$bad_artifact" --output-manifest "$TMP/bad.json"
+expect_fail "does not equal effective release version" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$bad_artifact" --output-manifest "$TMP/bad.json"
 
 published="$TMP/published.json"
 jq '.publication_state = "published"' "$manifest" > "$published"
