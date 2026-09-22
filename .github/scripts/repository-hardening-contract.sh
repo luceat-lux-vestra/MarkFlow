@@ -172,7 +172,11 @@ grep -q 'npm-low-risk-dev-minor-and-patch:' <<<"$npm_block" || die "bounded npm 
 grep -q 'applies-to: version-updates' <<<"$npm_block" || die "npm routine group is not limited to version updates"
 grep -q 'dependency-type: development' <<<"$npm_block" || die "npm routine group is not limited to development dependencies"
 grep -Fq -- '- "@types/*"' <<<"$npm_block" || die "npm routine group is missing @types/*"
-grep -Fq -- '- "jsdom"' <<<"$npm_block" || die "npm routine group is missing jsdom"
+if jq -e '.devDependencies | has("jsdom")' webview/package.json >/dev/null; then
+  grep -Fq -- '- "jsdom"' <<<"$npm_block" || die "npm routine group is missing declared jsdom"
+elif grep -Fq -- '- "jsdom"' <<<"$npm_block"; then
+  die "npm routine group still targets removed jsdom"
+fi
 if grep -Fq -- '- "*"' <<<"$npm_block"; then
   die "npm routine group must not wildcard all editor/renderer/toolchain dependencies"
 fi

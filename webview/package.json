@@ -12,7 +12,6 @@
   },
   "devDependencies": {
     "@types/node": "^26.5.1",
-    "jsdom": "^30.0.1",
     "typescript": "~5.9.3",
     "vite": "^8.3.0"
   },
