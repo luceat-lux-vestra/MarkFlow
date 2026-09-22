@@ -12,6 +12,8 @@ ARTIFACT=""
 EXISTING_IDENTITY=""
 ARTIFACT_PRESENT=false
 EXISTING_ARTIFACT_SHA256=""
+PUBLISHED_ARTIFACT_PRESENT=false
+EXISTING_PUBLISHED_ARTIFACT_SHA256=""
 OUTPUT_MANIFEST=""
 GITHUB_OUTPUT_FILE=""
 DRY_RUN=false
@@ -27,6 +29,8 @@ while [ $# -gt 0 ]; do
     --existing-identity) EXISTING_IDENTITY="${2:-}"; shift 2 ;;
     --artifact-present) ARTIFACT_PRESENT="${2:-}"; shift 2 ;;
     --existing-artifact-sha256) EXISTING_ARTIFACT_SHA256="${2:-}"; shift 2 ;;
+    --published-artifact-present) PUBLISHED_ARTIFACT_PRESENT="${2:-}"; shift 2 ;;
+    --existing-published-artifact-sha256) EXISTING_PUBLISHED_ARTIFACT_SHA256="${2:-}"; shift 2 ;;
     --output-manifest) OUTPUT_MANIFEST="${2:-}"; shift 2 ;;
     --github-output) GITHUB_OUTPUT_FILE="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
@@ -43,6 +47,7 @@ case "$TAG" in */*) die "tag must not contain a slash" ;; esac
 [[ "$TAG_SHA" =~ ^[0-9a-f]{40}$ ]] || die "tag SHA is not a full immutable commit SHA"
 case "$COMPARE_STATUS" in identical|behind) ;; *) die "tag is not reachable from reviewed main (compare status: $COMPARE_STATUS)" ;; esac
 [ "$ARTIFACT_PRESENT" = true ] || [ "$ARTIFACT_PRESENT" = false ] || die "--artifact-present must be true or false"
+[ "$PUBLISHED_ARTIFACT_PRESENT" = true ] || [ "$PUBLISHED_ARTIFACT_PRESENT" = false ] || die "--published-artifact-present must be true or false"
 [ -f "$ARTIFACT" ] || die "artifact not found: $ARTIFACT"
 command -v python3 >/dev/null 2>&1 || die "python3 is required to inspect plugin.xml"
 
@@ -84,10 +89,6 @@ esac
 
 ARTIFACT_SHA="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
 ARTIFACT_NAME="$(basename "$ARTIFACT")"
-if [ "$ARTIFACT_PRESENT" = true ]; then
-  [[ "$EXISTING_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "existing release artifact digest is unavailable"
-  [ "$EXISTING_ARTIFACT_SHA256" = "$ARTIFACT_SHA" ] || die "existing release artifact digest does not match the rebuilt artifact"
-fi
 publish=true
 
 if [ -n "$EXISTING_IDENTITY" ] && [ -s "$EXISTING_IDENTITY" ]; then
@@ -101,11 +102,23 @@ if [ -n "$EXISTING_IDENTITY" ] && [ -s "$EXISTING_IDENTITY" ]; then
   case "$state" in
     pending) die "a pending publication identity already exists; refusing automatic republish (manual recovery required)" ;;
     published)
-      [ "$ARTIFACT_PRESENT" = true ] || die "published identity exists but the release artifact is absent; refusing recovery ambiguity"
+      publication_artifact="$(jq -r '.publication_artifact // empty' "$EXISTING_IDENTITY")"
+      publication_hash="$(jq -r '.publication_artifact_sha256 // empty' "$EXISTING_IDENTITY")"
+      if [ -n "$publication_artifact" ] || [ -n "$publication_hash" ]; then
+        [ -n "$publication_artifact" ] || die "published identity has no publication artifact name"
+        [[ "$publication_hash" =~ ^[0-9a-f]{64}$ ]] || die "published identity has no valid publication artifact digest"
+        [ "$PUBLISHED_ARTIFACT_PRESENT" = true ] || die "published identity exists but the signed release artifact is absent; refusing recovery ambiguity"
+        [[ "$EXISTING_PUBLISHED_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "existing signed release artifact digest is unavailable"
+        [ "$EXISTING_PUBLISHED_ARTIFACT_SHA256" = "$publication_hash" ] || die "existing signed release artifact digest does not match the published identity"
+      else
+        [ "$ARTIFACT_PRESENT" = true ] || die "published identity exists but the release artifact is absent; refusing recovery ambiguity"
+        [[ "$EXISTING_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "existing release artifact digest is unavailable"
+        [ "$EXISTING_ARTIFACT_SHA256" = "$ARTIFACT_SHA" ] || die "existing release artifact digest does not match the rebuilt artifact"
+      fi
       publish=false
       ;;
   esac
-elif [ "$ARTIFACT_PRESENT" = true ]; then
+elif [ "$ARTIFACT_PRESENT" = true ] || [ "$PUBLISHED_ARTIFACT_PRESENT" = true ]; then
   die "release artifact exists without a release identity; refusing ambiguous recovery"
 fi
 
