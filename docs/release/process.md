@@ -37,13 +37,9 @@ commit, requires that commit to be reachable from reviewed `main`, builds with
 that exact version, and verifies the archive's `META-INF/plugin.xml` version and
 SHA-256 before any Marketplace credential is used.
 
-The workflow records a pending release-identity asset before publication. A
-rerun with a pending identity stops for manual recovery instead of guessing
-whether Marketplace publication completed. A completed identity may be replayed
-only when the tag, source commit, artifact name, and artifact digest all match;
-an existing tag/version is never rewritten or repointed automatically. The
-preflight helper and its fixtures are non-publishing and do not require
-Marketplace credentials.
+For a new publication, the workflow first builds the exact candidate, then explicitly signs it and verifies that signature. The signature-verified `*-signed.zip` is the repository publication identity: its digest is recorded by the preflight, it is covered by GitHub build-provenance attestation, and the same signed archive is used for Marketplace publication and the GitHub Release asset. `publishPlugin` is invoked with `signPlugin` excluded so no post-attestation re-signing can change the publication subject.
+
+The workflow records a pending release-identity asset only after signed-artifact validation and attestation. A rerun with a pending identity stops for manual recovery instead of guessing whether Marketplace publication completed. A completed identity may be replayed only when the tag, source commit, signed artifact name, and signed artifact digest all match; an existing tag/version is never rewritten or repointed automatically. The preflight helper and its fixtures are non-publishing and do not require Marketplace credentials.
 
 ## Publication authorization
 
@@ -56,7 +52,8 @@ Recovery of an already-started release also requires explicit maintainer authori
 After publishing:
 
 - verify the expected version is present at the intended Marketplace distribution path/state;
-- verify the GitHub Release artifact and recorded release identity agree;
+- verify the GitHub Release signed artifact and recorded release identity agree;
+- verify the signed artifact's GitHub attestation (for example with `gh attestation verify <artifact> -R luceat-lux-vestra/MarkFlow`);
 - verify release metadata and notes;
 - perform a clean-install smoke test when practical;
 - record any incident or unexpected incompatibility as a new issue rather than silently patching release history.
