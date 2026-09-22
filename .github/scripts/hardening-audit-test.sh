@@ -136,6 +136,31 @@ jobs:
 YAML
 expect_fail "$unsafe_privileged" privileged_workflows "checks out code"
 
+prerelease_publication="$TMP/prerelease-publication"
+copy_root "$prerelease_publication"
+perl -0pi -e 's/types: \[ released \]/types: [ prereleased, released ]/' "$prerelease_publication/.github/workflows/release.yml"
+expect_fail "$prerelease_publication" release_preflight "release workflow must publish only from stable released events"
+
+missing_release_environment="$TMP/missing-release-environment"
+copy_root "$missing_release_environment"
+perl -0pi -e 's/environment: jetbrains-marketplace/environment: unrestricted-release/' "$missing_release_environment/.github/workflows/release.yml"
+expect_fail "$missing_release_environment" release_preflight "release job is not bound to jetbrains-marketplace environment"
+
+missing_pending_anchor="$TMP/missing-pending-anchor"
+copy_root "$missing_pending_anchor"
+perl -0pi -e 's/Published identity requires its original pending identity\./published identity accepted without pending lock./' "$missing_pending_anchor/.github/workflows/release.yml"
+expect_fail "$missing_pending_anchor" release_preflight "published release state is not anchored to the original pending identity"
+
+missing_identity_equality="$TMP/missing-identity-equality"
+copy_root "$missing_identity_equality"
+perl -0pi -e 's/\[ "\$pending_canonical" = "\$published_canonical" \]/true/' "$missing_identity_equality/.github/workflows/release.yml"
+expect_fail "$missing_identity_equality" release_preflight "pending/published release identity equality check is missing"
+
+missing_version_derivation="$TMP/missing-version-derivation"
+copy_root "$missing_version_derivation"
+perl -0pi -e 's/release_version="\$\{RELEASE_TAG#v\}"/release_version="1.0.0"/' "$missing_version_derivation/.github/workflows/release.yml"
+expect_fail "$missing_version_derivation" release_preflight "effective plugin version is not derived from the release tag"
+
 missing_signature_verify="$TMP/missing-signature-verify"
 copy_root "$missing_signature_verify"
 perl -0pi -e 's#\./gradlew verifyPluginSignature -PbuildVersion="\$RELEASE_VERSION"#echo "signature verification skipped"#' "$missing_signature_verify/.github/workflows/release.yml"
