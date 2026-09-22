@@ -8,7 +8,7 @@ It does not authorize publication. It exists to resolve an already-started relea
 
 The release identity is anchored by all of the following values together:
 
-- release/tag/version (`yy.MM.dd.HHmmss`);
+- immutable release tag (`vMAJOR.MINOR.PATCH`) and effective plugin version (tag without the leading `v`);
 - immutable tag commit (`tag_commit`);
 - artifact filename (`artifact`);
 - SHA-256 of the exact archive produced by the workflow preflight (`artifact_sha256`);
@@ -57,9 +57,10 @@ Download the identity assets without modifying the release:
 
 ```bash
 repo="luceat-lux-vestra/MarkFlow"
-version="YY.MM.DD.HHMMSS"
+tag="v1.0.0"
+version="${tag#v}"
 
-gh api "repos/$repo/releases/tags/$version" > /tmp/markflow-release.json
+gh api "repos/$repo/releases/tags/$tag" > /tmp/markflow-release.json
 jq '{id, tag_name, assets: [.assets[] | {id, name, size}]}' /tmp/markflow-release.json
 
 pending_id="$(jq -r '.assets[] | select(.name == "markflow-release-identity.json") | .id' /tmp/markflow-release.json)"
@@ -89,7 +90,7 @@ The release tag must still resolve to exactly the recorded commit:
 
 ```bash
 tag_commit="$(jq -r '.tag_commit' /tmp/markflow-release-identity.json)"
-resolved="$(git rev-list -n 1 "$version")"
+resolved="$(git rev-list -n 1 "$tag")"
 [ "$resolved" = "$tag_commit" ]
 ```
 
@@ -114,7 +115,7 @@ if [ -n "$artifact_id" ]; then
 fi
 ```
 
-The archive must contain exactly one `META-INF/plugin.xml`, and that manifest's `<version>` must equal the release tag/version. The repository's `.github/scripts/release-preflight.sh` performs this check and should be used as the executable reference.
+The archive must contain exactly one `META-INF/plugin.xml`, and that manifest's `<version>` must equal the effective plugin version (the release tag without its leading `v`). The repository's `.github/scripts/release-preflight.sh` performs this check and should be used as the executable reference.
 
 Important: `artifact_sha256` now identifies the signature-verified `*-signed.zip` that was attested before publication and is used as the GitHub Release asset. Do not invent a byte-for-byte equivalence requirement for a Marketplace-hosted download unless an authoritative Marketplace interface exposes and guarantees that exact byte identity. Marketplace verification remains by plugin/version/publication state; repository-side artifact identity is the signed ZIP recorded in the pending manifest and covered by GitHub attestation.
 
