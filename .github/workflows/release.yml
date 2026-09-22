@@ -238,7 +238,7 @@ jobs:
             --artifact-present false \
             --output-manifest "$RUNNER_TEMP/markflow-release-identity.json" \
             --github-output "$GITHUB_OUTPUT"
-          [ "$(cat "$GITHUB_OUTPUT" | sed -n 's/^publish=//p' | tail -1)" = true ] || {
+          [ "$(sed -n 's/^publish=//p' "$GITHUB_OUTPUT" | tail -1)" = true ] || {
             echo "::error::New signed release preflight did not authorize publication."
             exit 1
           }
