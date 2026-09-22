@@ -1,7 +1,7 @@
 name: Failure classification
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] trusted reporter only; no PR checkout/code/artifact execution; central action pinned by SHA
     workflows:
       - Build
       - CodeQL
