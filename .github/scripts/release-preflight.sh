@@ -38,7 +38,8 @@ done
 [ "$DRY_RUN" = true ] || die "--dry-run is required; this helper is validation-only"
 [ -n "$TAG" ] || die "tag is required"
 case "$TAG" in */*) die "tag must not contain a slash" ;; esac
-[[ "$TAG" =~ ^[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{6}$ ]] || die "tag '$TAG' is not a MarkFlow release version"
+[[ "$TAG" =~ ^v([1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die "tag '$TAG' must be stable vMAJOR.MINOR.PATCH with major >= 1"
+VERSION="${TAG#v}"
 [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || die "main SHA is not a full immutable commit SHA"
 [[ "$TAG_SHA" =~ ^[0-9a-f]{40}$ ]] || die "tag SHA is not a full immutable commit SHA"
 case "$COMPARE_STATUS" in identical|behind) ;; *) die "tag is not reachable from reviewed main (compare status: $COMPARE_STATUS)" ;; esac
@@ -46,7 +47,7 @@ case "$COMPARE_STATUS" in identical|behind) ;; *) die "tag is not reachable from
 [ -f "$ARTIFACT" ] || die "artifact not found: $ARTIFACT"
 command -v python3 >/dev/null 2>&1 || die "python3 is required to inspect plugin.xml"
 
-python3 - "$ARTIFACT" "$TAG" <<'PY'
+python3 - "$ARTIFACT" "$VERSION" <<'PY'
 import sys
 import io
 import zipfile
@@ -74,11 +75,11 @@ with zipfile.ZipFile(archive) as zf:
         raise SystemExit("plugin.xml root is not idea-plugin")
     versions = [child.text or "" for child in root if child.tag.rsplit("}", 1)[-1] == "version"]
     if versions != [expected]:
-        raise SystemExit(f"plugin.xml version {versions!r} in {manifest_name} does not equal release tag {expected!r}")
+        raise SystemExit(f"plugin.xml version {versions!r} in {manifest_name} does not equal effective release version {expected!r}")
 PY
 
 case "$(basename "$ARTIFACT")" in
-  *-"$TAG"-signed.zip) ;;
+  *-"$VERSION"-signed.zip) ;;
   *) die "release identity artifact is not the signed ZIP for the exact release version: $(basename "$ARTIFACT")" ;;
 esac
 
@@ -92,8 +93,8 @@ publish=true
 
 if [ -n "$EXISTING_IDENTITY" ] && [ -s "$EXISTING_IDENTITY" ]; then
   command -v jq >/dev/null 2>&1 || die "jq is required to inspect an existing release identity"
-  jq -e --arg tag "$TAG" --arg tag_sha "$TAG_SHA" --arg artifact "$ARTIFACT_NAME" --arg hash "$ARTIFACT_SHA" '
-    .schema == 1 and (.version == $tag) and (.tag == $tag) and (.tag_commit == $tag_sha) and
+  jq -e --arg tag "$TAG" --arg version "$VERSION" --arg tag_sha "$TAG_SHA" --arg artifact "$ARTIFACT_NAME" --arg hash "$ARTIFACT_SHA" '
+    .schema == 1 and (.version == $version) and (.tag == $tag) and (.tag_commit == $tag_sha) and
     (.artifact == $artifact) and (.artifact_sha256 == $hash) and
     (.publication_state == "pending" or .publication_state == "published")
   ' "$EXISTING_IDENTITY" >/dev/null || die "existing release identity does not match this immutable tag/artifact"
@@ -112,10 +113,10 @@ fi
 if [ "$publish" = true ]; then
   [ -n "$OUTPUT_MANIFEST" ] || die "new publication requires --output-manifest"
   umask 077
-  jq -n --arg tag "$TAG" --arg tag_sha "$TAG_SHA" --arg main_sha "$MAIN_SHA" --arg artifact "$ARTIFACT_NAME" --arg hash "$ARTIFACT_SHA" '{
+  jq -n --arg tag "$TAG" --arg version "$VERSION" --arg tag_sha "$TAG_SHA" --arg main_sha "$MAIN_SHA" --arg artifact "$ARTIFACT_NAME" --arg hash "$ARTIFACT_SHA" '{
     schema: 1,
     tag: $tag,
-    version: $tag,
+    version: $version,
     tag_commit: $tag_sha,
     main_commit_at_preflight: $main_sha,
     artifact: $artifact,
