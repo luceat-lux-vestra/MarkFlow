@@ -27,7 +27,6 @@ updates:
         dependency-type: development
         patterns:
           - "@types/*"
-          - "jsdom"
         update-types:
           - "minor"
           - "patch"
