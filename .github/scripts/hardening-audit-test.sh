@@ -156,6 +156,16 @@ copy_root "$resigning_publish"
 perl -0pi -e 's#publishPlugin -x signPlugin#publishPlugin#' "$resigning_publish/.github/workflows/release.yml"
 expect_fail "$resigning_publish" release_preflight "release order must be sign -> signature verify -> signed identity -> attestation -> lock -> Marketplace publish -> signed GitHub upload"
 
+prerelease_trigger="$TMP/prerelease-trigger"
+copy_root "$prerelease_trigger"
+perl -0pi -e 's/types: \[ released \]/types: [ prereleased, released ]/' "$prerelease_trigger/.github/workflows/release.yml"
+expect_fail "$prerelease_trigger" release_preflight "release publication trigger must be stable released only"
+
+missing_marketplace_environment="$TMP/missing-marketplace-environment"
+copy_root "$missing_marketplace_environment"
+perl -0pi -e 's/    environment: jetbrains-marketplace\n//' "$missing_marketplace_environment/.github/workflows/release.yml"
+expect_fail "$missing_marketplace_environment" release_preflight "release job is not bound to jetbrains-marketplace environment"
+
 ruleset_fixture="$TMP/rulesets.json"
 jq -n '{
   main: {
