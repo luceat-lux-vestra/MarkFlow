@@ -151,6 +151,11 @@ copy_root "$mutable_attestation"
 perl -0pi -e 's#actions/attest\@[0-9a-f]{40}#actions/attest\@v4#' "$mutable_attestation/.github/workflows/release.yml"
 expect_fail "$mutable_attestation" release_preflight "attestation action is not full-SHA pinned"
 
+resigning_publish="$TMP/resigning-publish"
+copy_root "$resigning_publish"
+perl -0pi -e 's#publishPlugin -x signPlugin#publishPlugin#' "$resigning_publish/.github/workflows/release.yml"
+expect_fail "$resigning_publish" release_preflight "release order must be sign -> signature verify -> signed identity -> attestation -> lock -> Marketplace publish -> signed GitHub upload"
+
 ruleset_fixture="$TMP/rulesets.json"
 jq -n '{
   main: {
