@@ -156,6 +156,13 @@ copy_root "$missing_identity_equality"
 perl -0pi -e 's/\[ "\$pending_canonical" = "\$published_canonical" \]/true/' "$missing_identity_equality/.github/workflows/release.yml"
 expect_fail "$missing_identity_equality" release_preflight "pending/published release identity equality check is missing"
 
+recovery_version_conflation="$TMP/recovery-version-conflation"
+copy_root "$recovery_version_conflation"
+mkdir -p "$recovery_version_conflation/docs/release"
+cp "$ROOT/docs/release/recovery.md" "$recovery_version_conflation/docs/release/recovery.md"
+perl -0pi -e 's/\(\.version == \(\.tag \| ltrimstr\("v"\)\)\)/(.version == .tag)/' "$recovery_version_conflation/docs/release/recovery.md"
+expect_fail "$recovery_version_conflation" release_preflight "recovery runbook conflates release tag with effective plugin version"
+
 missing_version_derivation="$TMP/missing-version-derivation"
 copy_root "$missing_version_derivation"
 perl -0pi -e 's/release_version="\$\{RELEASE_TAG#v\}"/release_version="1.0.0"/' "$missing_version_derivation/.github/workflows/release.yml"
