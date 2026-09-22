@@ -19,11 +19,8 @@ on:
       - Failure triage
     types: [completed]
 
-permissions:
-  actions: read
-  contents: read
-  pull-requests: read
-  issues: write
+permissions: {}
+
 
 concurrency:
   group: failure-classification-${{ github.event.workflow_run.head_sha }}
@@ -31,6 +28,10 @@ concurrency:
 
 jobs:
   classify:
+    permissions:
+      actions: read
+      pull-requests: read
+      issues: write
     if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
