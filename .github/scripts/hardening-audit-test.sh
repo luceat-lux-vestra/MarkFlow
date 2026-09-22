@@ -45,6 +45,7 @@ baseline="$TMP/baseline"
 copy_root "$baseline"
 expect_pass "$baseline"
 expect_pass "$baseline" live_readback_boundary
+expect_pass "$baseline" release_preflight
 
 wrong_target="$TMP/wrong-target"
 copy_root "$wrong_target"
@@ -134,6 +135,26 @@ jobs:
       - run: echo "${{ secrets.PUBLISH_TOKEN }}"
 YAML
 expect_fail "$unsafe_privileged" privileged_workflows "checks out code"
+
+missing_signature_verify="$TMP/missing-signature-verify"
+copy_root "$missing_signature_verify"
+perl -0pi -e 's#\./gradlew verifyPluginSignature -PbuildVersion="\$RELEASE_VERSION"#echo "signature verification skipped"#' "$missing_signature_verify/.github/workflows/release.yml"
+expect_fail "$missing_signature_verify" release_preflight "signature verification is missing"
+
+unsigned_release_upload="$TMP/unsigned-release-upload"
+copy_root "$unsigned_release_upload"
+perl -0pi -e 's#RELEASE_ARTIFACT_PATH: \$\{\{ steps\.signed_artifact\.outputs\.path \}\}#RELEASE_ARTIFACT_PATH: \$\{\{ steps\.artifact\.outputs\.path \}\}#' "$unsigned_release_upload/.github/workflows/release.yml"
+expect_fail "$unsigned_release_upload" release_preflight "GitHub Release upload is not bound to the verified signed artifact"
+
+mutable_attestation="$TMP/mutable-attestation"
+copy_root "$mutable_attestation"
+perl -0pi -e 's#actions/attest\@[0-9a-f]{40}#actions/attest\@v4#' "$mutable_attestation/.github/workflows/release.yml"
+expect_fail "$mutable_attestation" release_preflight "attestation action is not full-SHA pinned"
+
+resigning_publish="$TMP/resigning-publish"
+copy_root "$resigning_publish"
+perl -0pi -e 's#publishPlugin -x signPlugin#publishPlugin#' "$resigning_publish/.github/workflows/release.yml"
+expect_fail "$resigning_publish" release_preflight "release order must be sign -> signature verify -> signed identity -> attestation -> lock -> Marketplace publish -> signed GitHub upload"
 
 ruleset_fixture="$TMP/rulesets.json"
 jq -n '{

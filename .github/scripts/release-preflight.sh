@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Non-publishing release provenance preflight.
-# It validates the exact release identity and a locally built plugin archive. It never
+# It validates the exact release identity and a signature-verified plugin archive. It never
 # calls GitHub, Marketplace, signing, or publication APIs.
 set -euo pipefail
 
@@ -78,8 +78,8 @@ with zipfile.ZipFile(archive) as zf:
 PY
 
 case "$(basename "$ARTIFACT")" in
-  *-"$TAG".zip) ;;
-  *) die "artifact filename does not end in the exact release version: $(basename "$ARTIFACT")" ;;
+  *-"$TAG"-signed.zip) ;;
+  *) die "release identity artifact is not the signed ZIP for the exact release version: $(basename "$ARTIFACT")" ;;
 esac
 
 ARTIFACT_SHA="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
