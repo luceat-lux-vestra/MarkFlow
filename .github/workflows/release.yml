@@ -235,20 +235,20 @@ jobs:
           ' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-identity.json.tmp"
           mv "$RUNNER_TEMP/markflow-release-identity.json.tmp" "$RUNNER_TEMP/markflow-release-identity.json"
 
-      # A pending identity asset is a publication lock. If this run fails after the
-      # lock, reruns stop instead of guessing whether attestation/Marketplace publication happened.
+      - name: Attest verified signed release artifact
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.signed_artifact.outputs.path }}
+          create-storage-record: false
+
+      # A pending identity asset is the first GitHub Release mutation. If this run fails
+      # after the lock, reruns stop instead of guessing whether Marketplace publication happened.
       - name: Lock release identity before publication
         if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-identity.json"
-
-      - name: Attest verified signed release artifact
-        if: ${{ steps.preflight.outputs.publish == 'true' }}
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
-        with:
-          subject-path: ${{ steps.signed_artifact.outputs.path }}
-          create-storage-record: false
 
       - name: Publish Plugin
         if: ${{ steps.preflight.outputs.publish == 'true' }}
