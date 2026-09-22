@@ -103,14 +103,17 @@ check_policy_shape() {
   ' "$POLICY" >/dev/null; then
     finding policy_shape "public repository security/actions settings contract is missing or malformed"; clean=0
   fi
-  while IFS=
+  while IFS= read -r entry; do
+    context="$(jq -r '.context // empty' <<< "$entry")"
+    workflow="$(jq -r '.workflow // empty' <<< "$entry")"
+    job="$(jq -r '.job // empty' <<< "$entry")"
     [ -n "$context" ] || continue
     wf="$ROOT/$workflow"
     if [ ! -f "$wf" ]; then finding policy_shape "staged context '$context' names missing workflow '$workflow'"; clean=0; continue; fi
     if ! job_exists "$wf" "$job"; then finding policy_shape "staged context '$context' names missing job '$job'"; clean=0; continue; fi
     jobname="$(unquote "$(job_field "$wf" "$job" name)")"
     [ "$jobname" = "$context" ] || { finding policy_shape "staged context '$context' does not match job name '$jobname'"; clean=0; }
-  done < <(jq -r '.staged_required[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+  done < <(jq -c '.staged_required[]' "$POLICY")
   [ "$clean" -eq 1 ] && info policy_shape "policy classifications are unique and internally consistent"
   return 0
 }
