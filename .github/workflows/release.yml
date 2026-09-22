@@ -1,12 +1,12 @@
 # Explicit release/publication boundary for a manually created GitHub Release.
 # Ordinary pull-request and main validation is entirely in build.yml and never mutates
 # release or Marketplace state. This workflow fails closed on provenance ambiguity.
-# Marketplace/signing secrets are scoped only to the publication step.
+# Marketplace/signing authority is gated by the release-only jetbrains-marketplace environment.
 
 name: Release
 on:
   release:
-    types: [ prereleased, released ]
+    types: [ released ]
 
 permissions:
   contents: read
@@ -20,13 +20,14 @@ jobs:
     name: Publish Plugin
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment: jetbrains-marketplace
     permissions:
       contents: write
       pull-requests: write
       id-token: write
       attestations: write
     env:
-      RELEASE_VERSION: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
@@ -51,9 +52,15 @@ jobs:
           set -euo pipefail
           release_json="$RUNNER_TEMP/release.json"
           tag_ref_json="$RUNNER_TEMP/tag-ref.json"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_VERSION}" > "$release_json"
-          jq -e --arg tag "$RELEASE_VERSION" '.tag_name == $tag and .id != null' "$release_json" >/dev/null
-          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_VERSION}" > "$tag_ref_json"
+          [[ "$RELEASE_TAG" =~ ^v([1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "::error::Stable release tags must be vMAJOR.MINOR.PATCH with major >= 1."
+            exit 1
+          }
+          release_version="${RELEASE_TAG#v}"
+          printf 'RELEASE_VERSION=%s\n' "$release_version" >> "$GITHUB_ENV"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$release_json"
+          jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .id != null and .draft == false and .prerelease == false' "$release_json" >/dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" > "$tag_ref_json"
           tag_type="$(jq -r '.object.type' "$tag_ref_json")"
           tag_object="$(jq -r '.object.sha' "$tag_ref_json")"
           if [ "$tag_type" = tag ]; then
@@ -69,7 +76,7 @@ jobs:
           [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Tag does not resolve to a full commit SHA."; exit 1; }
           main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::main does not resolve to a full commit SHA."; exit 1; }
-          compare_status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_VERSION}" --jq '.status')"
+          compare_status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_TAG}" --jq '.status')"
           case "$compare_status" in
             identical|behind) ;;
             *) echo "::error::Release tag is not reachable from reviewed main (compare status: $compare_status)."; exit 1 ;;
@@ -78,15 +85,18 @@ jobs:
           published_identity_asset_ids="$(jq -r '.assets[]? | select(.name == "markflow-release-published.json") | .id' "$release_json")"
           [ "$(printf '%s\n' "$identity_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple pending release identity assets exist."; exit 1; }
           [ "$(printf '%s\n' "$published_identity_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple completed release identity assets exist."; exit 1; }
-          identity_file="$RUNNER_TEMP/existing-identity.json"
-          # Prefer the completed marker on a rerun. The pending marker is retained
-          # as an immutable audit trail and must not be mistaken for current state.
-          identity_asset_id="$(printf '%s\n' "$published_identity_asset_ids" | sed -n '1p')"
-          [ -n "$identity_asset_id" ] || identity_asset_id="$(printf '%s\n' "$identity_asset_ids" | sed -n '1p')"
-          if [ -n "$identity_asset_id" ]; then
-            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${identity_asset_id}" > "$identity_file"
+          pending_identity_file="$RUNNER_TEMP/existing-pending.json"
+          published_identity_file="$RUNNER_TEMP/existing-published.json"
+          pending_identity_asset_id="$(printf '%s\n' "$identity_asset_ids" | sed -n '1p')"
+          published_identity_asset_id="$(printf '%s\n' "$published_identity_asset_ids" | sed -n '1p')"
+          if [ -n "$pending_identity_asset_id" ]; then
+            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${pending_identity_asset_id}" > "$pending_identity_file"
           fi
-          printf 'tag_sha=%s\nmain_sha=%s\ncompare_status=%s\nidentity_file=%s\n' "$tag_sha" "$main_sha" "$compare_status" "$identity_file" >> "$GITHUB_OUTPUT"
+          if [ -n "$published_identity_asset_id" ]; then
+            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${published_identity_asset_id}" > "$published_identity_file"
+          fi
+          printf 'tag_sha=%s\nmain_sha=%s\ncompare_status=%s\nversion=%s\npending_identity_file=%s\npublished_identity_file=%s\n' \
+            "$tag_sha" "$main_sha" "$compare_status" "$release_version" "$pending_identity_file" "$published_identity_file" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
@@ -129,41 +139,57 @@ jobs:
         id: state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IDENTITY_FILE: ${{ steps.source.outputs.identity_file }}
+          PENDING_IDENTITY_FILE: ${{ steps.source.outputs.pending_identity_file }}
+          PUBLISHED_IDENTITY_FILE: ${{ steps.source.outputs.published_identity_file }}
         run: |
           set -euo pipefail
           release_json="$RUNNER_TEMP/release.json"
-          existing="$IDENTITY_FILE"
+          pending="$PENDING_IDENTITY_FILE"
+          published="$PUBLISHED_IDENTITY_FILE"
           publish=true
-          if [ -s "$existing" ]; then
-            jq -e --arg tag "$RELEASE_VERSION" '
-              .schema == 1 and .tag == $tag and .version == $tag and
+
+          if [ -s "$published" ]; then
+            [ -s "$pending" ] || {
+              echo "::error::Published identity requires its original pending identity."
+              exit 1
+            }
+            jq -e --arg tag "$RELEASE_TAG" --arg version "$RELEASE_VERSION" '
+              .schema == 1 and .tag == $tag and .version == $version and
               (.tag_commit | test("^[0-9a-f]{40}$")) and
-              (.artifact | endswith("-" + $tag + "-signed.zip")) and
+              (.artifact | endswith("-" + $version + "-signed.zip")) and
               (.artifact_sha256 | test("^[0-9a-f]{64}$")) and
-              (.publication_state == "pending" or .publication_state == "published")
-            ' "$existing" >/dev/null || { echo "::error::Existing release identity is invalid."; exit 1; }
-            state="$(jq -r '.publication_state' "$existing")"
-            case "$state" in
-              pending)
-                echo "::error::A pending publication identity already exists; manual recovery is required."
-                exit 1
-                ;;
-              published)
-                artifact_name="$(jq -r '.artifact' "$existing")"
-                expected_sha="$(jq -r '.artifact_sha256' "$existing")"
-                asset_ids="$(jq -r --arg name "$artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
-                [ "$(printf '%s\n' "$asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1 ] || {
-                  echo "::error::Published identity does not map to exactly one signed release asset."
-                  exit 1
-                }
-                asset_id="$(printf '%s\n' "$asset_ids" | sed -n '1p')"
-                gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$RUNNER_TEMP/existing-signed-release.zip"
-                actual_sha="$(sha256sum "$RUNNER_TEMP/existing-signed-release.zip" | awk '{print $1}')"
-                [ "$actual_sha" = "$expected_sha" ] || { echo "::error::Published signed release asset digest does not match identity."; exit 1; }
-                publish=false
-                ;;
-            esac
+              .publication_state == "pending"
+            ' "$pending" >/dev/null || { echo "::error::Pending release identity is invalid."; exit 1; }
+            jq -e --arg tag "$RELEASE_TAG" --arg version "$RELEASE_VERSION" '
+              .schema == 1 and .tag == $tag and .version == $version and
+              (.tag_commit | test("^[0-9a-f]{40}$")) and
+              (.artifact | endswith("-" + $version + "-signed.zip")) and
+              (.artifact_sha256 | test("^[0-9a-f]{64}$")) and
+              .publication_state == "published"
+            ' "$published" >/dev/null || { echo "::error::Published release identity is invalid."; exit 1; }
+
+            pending_canonical="$(jq -S 'del(.publication_state)' "$pending")"
+            published_canonical="$(jq -S 'del(.publication_state)' "$published")"
+            [ "$pending_canonical" = "$published_canonical" ] || {
+              echo "::error::Pending and published release identities conflict."
+              exit 1
+            }
+
+            artifact_name="$(jq -r '.artifact' "$published")"
+            expected_sha="$(jq -r '.artifact_sha256' "$published")"
+            asset_ids="$(jq -r --arg name "$artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
+            [ "$(printf '%s\n' "$asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1 ] || {
+              echo "::error::Published identity does not map to exactly one signed release asset."
+              exit 1
+            }
+            asset_id="$(printf '%s\n' "$asset_ids" | sed -n '1p')"
+            gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$RUNNER_TEMP/existing-signed-release.zip"
+            actual_sha="$(sha256sum "$RUNNER_TEMP/existing-signed-release.zip" | awk '{print $1}')"
+            [ "$actual_sha" = "$expected_sha" ] || { echo "::error::Published signed release asset digest does not match identity."; exit 1; }
+            publish=false
+          elif [ -s "$pending" ]; then
+            echo "::error::A pending publication identity already exists; manual recovery is required."
+            exit 1
           else
             orphan_count="$(jq -r --arg suffix "-${RELEASE_VERSION}-signed.zip" '[.assets[]? | select(.name | endswith($suffix))] | length' "$release_json")"
             [ "$orphan_count" -eq 0 ] || { echo "::error::Signed release asset exists without a release identity."; exit 1; }
@@ -230,7 +256,7 @@ jobs:
           set -euo pipefail
           bash .github/scripts/release-preflight.sh \
             --dry-run \
-            --tag "$RELEASE_VERSION" \
+            --tag "$RELEASE_TAG" \
             --main-sha "$PREFLIGHT_MAIN_SHA" \
             --tag-sha "$PREFLIGHT_TAG_SHA" \
             --compare-status "$PREFLIGHT_COMPARE_STATUS" \
@@ -255,7 +281,7 @@ jobs:
         if: ${{ steps.state.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-identity.json"
+        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/markflow-release-identity.json"
 
       - name: Publish Plugin
         if: ${{ steps.state.outputs.publish == 'true' }}
@@ -271,7 +297,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}
-        run: gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"
+        run: gh release upload "$RELEASE_TAG" "$RELEASE_ARTIFACT_PATH"
 
       - name: Mark publication complete
         if: ${{ steps.state.outputs.publish == 'true' }}
@@ -280,7 +306,7 @@ jobs:
         run: |
           set -euo pipefail
           jq '.publication_state = "published"' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-published.json"
-          gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-published.json"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/markflow-release-published.json"
 
       # Changelog PR creation remains release-only and is idempotent for a rerun that
       # already created the deterministic branch/PR. It never runs during CI validation.

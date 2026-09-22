@@ -10,10 +10,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 copy_root() {
   local destination="$1"
-  mkdir -p "$destination/.github"
+  mkdir -p "$destination/.github" "$destination/docs/release"
   cp "$ROOT/.github/merge-gate-policy.json" "$destination/.github/"
   cp -R "$ROOT/.github/workflows" "$destination/.github/"
   cp -R "$ROOT/.github/scripts" "$destination/.github/"
+  cp "$ROOT/docs/release/recovery.md" "$destination/docs/release/recovery.md"
 }
 
 expect_pass() {
@@ -135,6 +136,36 @@ jobs:
       - run: echo "${{ secrets.PUBLISH_TOKEN }}"
 YAML
 expect_fail "$unsafe_privileged" privileged_workflows "checks out code"
+
+prerelease_publication="$TMP/prerelease-publication"
+copy_root "$prerelease_publication"
+perl -0pi -e 's/types: \[ released \]/types: [ prereleased, released ]/' "$prerelease_publication/.github/workflows/release.yml"
+expect_fail "$prerelease_publication" release_preflight "release workflow must publish only from stable released events"
+
+missing_release_environment="$TMP/missing-release-environment"
+copy_root "$missing_release_environment"
+perl -0pi -e 's/environment: jetbrains-marketplace/environment: unrestricted-release/' "$missing_release_environment/.github/workflows/release.yml"
+expect_fail "$missing_release_environment" release_preflight "release job is not bound to jetbrains-marketplace environment"
+
+missing_pending_anchor="$TMP/missing-pending-anchor"
+copy_root "$missing_pending_anchor"
+perl -0pi -e 's/Published identity requires its original pending identity\./published identity accepted without pending lock./' "$missing_pending_anchor/.github/workflows/release.yml"
+expect_fail "$missing_pending_anchor" release_preflight "published release state is not anchored to the original pending identity"
+
+missing_identity_equality="$TMP/missing-identity-equality"
+copy_root "$missing_identity_equality"
+perl -0pi -e 's/\[ "\$pending_canonical" = "\$published_canonical" \]/true/' "$missing_identity_equality/.github/workflows/release.yml"
+expect_fail "$missing_identity_equality" release_preflight "pending/published release identity equality check is missing"
+
+recovery_version_conflation="$TMP/recovery-version-conflation"
+copy_root "$recovery_version_conflation"
+perl -0pi -e 's/\(\.version == \(\.tag \| ltrimstr\("v"\)\)\)/(.version == .tag)/' "$recovery_version_conflation/docs/release/recovery.md"
+expect_fail "$recovery_version_conflation" release_preflight "recovery runbook conflates release tag with effective plugin version"
+
+missing_version_derivation="$TMP/missing-version-derivation"
+copy_root "$missing_version_derivation"
+perl -0pi -e 's/release_version="\$\{RELEASE_TAG#v\}"/release_version="1.0.0"/' "$missing_version_derivation/.github/workflows/release.yml"
+expect_fail "$missing_version_derivation" release_preflight "effective plugin version is not derived from the release tag"
 
 missing_signature_verify="$TMP/missing-signature-verify"
 copy_root "$missing_signature_verify"

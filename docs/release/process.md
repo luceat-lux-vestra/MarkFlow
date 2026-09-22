@@ -10,7 +10,7 @@ The operational recovery procedure for an ambiguous or partial Marketplace publi
 
 - A merged PR is not release authorization.
 - Agent completion or CI success is not publication authorization. A release must be created explicitly by an authorized maintainer.
-- Marketplace/signing credentials must only be exercised after an explicit release decision.
+- Marketplace/signing credentials must only be exercised after an explicit release decision and only through the `jetbrains-marketplace` GitHub Environment.
 - Release evidence must refer to the exact commit/artifact being published.
 - A pending publication identity is a fail-closed lock, not evidence that Marketplace publication failed.
 - An existing release version/tag must never be rewritten or reused for different source during recovery.
@@ -31,11 +31,9 @@ Before publication, record and verify:
 10. generated release artifact identity/checksum retained where practical;
 11. rollback/withdrawal plan understood.
 
-The release workflow accepts only the repository's timestamp version format
-`yy.MM.dd.HHmmss` as an immutable tag/version identity. It resolves the tag to a
-commit, requires that commit to be reachable from reviewed `main`, builds with
-that exact version, and verifies the archive's `META-INF/plugin.xml` version and
-SHA-256 before any Marketplace credential is used.
+Automatic Marketplace publication is triggered only by a stable GitHub Release (`released`). Publication tags use stable `vMAJOR.MINOR.PATCH` identity and the JetBrains plugin version is the same SemVer with the leading `v` removed. The production release job is bound to the `jetbrains-marketplace` GitHub Environment; environment protection/ref policy and the four publication/signing secret names are live administrative prerequisites rather than repository-source claims.
+
+The release workflow accepts only stable `vMAJOR.MINOR.PATCH` tags with major version 1 or greater as immutable release identity. It resolves the tag to a commit, requires that commit to be reachable from reviewed `main`, derives the effective plugin version by removing exactly the leading `v`, builds with that exact version, and verifies the archive's `META-INF/plugin.xml` version and SHA-256 before any Marketplace credential is used.
 
 For a new publication, the workflow first builds the exact candidate, then explicitly signs it and verifies that signature. The signature-verified `*-signed.zip` is the repository publication identity: its digest is recorded by the preflight, it is covered by GitHub build-provenance attestation, and the same signed archive is used for Marketplace publication and the GitHub Release asset. `publishPlugin` is invoked with `signPlugin` excluded so no post-attestation re-signing can change the publication subject.
 
