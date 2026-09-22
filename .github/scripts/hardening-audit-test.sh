@@ -208,6 +208,13 @@ expect_fail "$baseline" ruleset_sync "omitted an authoritative field" "$incomple
 live_without_credential="$TMP/live-without-credential"
 copy_root "$live_without_credential"
 expect_live_fail "$live_without_credential" ruleset_sync "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+expect_live_fail "$live_without_credential" security_settings "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+
+missing_security_policy="$TMP/missing-security-policy"
+copy_root "$missing_security_policy"
+jq 'del(.security_settings.secret_scanning_push_protection)' "$missing_security_policy/.github/merge-gate-policy.json" > "$missing_security_policy/.github/merge-gate-policy.json.tmp"
+mv "$missing_security_policy/.github/merge-gate-policy.json.tmp" "$missing_security_policy/.github/merge-gate-policy.json"
+expect_fail "$missing_security_policy" policy_shape "security_settings declaration is incomplete or unsupported"
 
 token_wrapper="$TMP/token-wrapper"
 copy_root "$token_wrapper"
@@ -225,6 +232,24 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
   printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"failure-triage","integration_id":15368},{"context":"Dependency Review","integration_id":15368}]}}]}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture" ]; then
+  if [ "${MOCK_SECURITY_DRIFT:-}" = 1 ]; then
+    printf '%s\n' '{"visibility":"public","security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}}'
+  else
+    printf '%s\n' '{"visibility":"public","security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
+  fi
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/dependency-graph/sbom" ]; then
+  printf '%s\n' '{"sbom":{}}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/dependabot/alerts?per_page=1" ]; then
+  printf '%s\n' '[]'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/automated-security-fixes" ]; then
+  printf '%s\n' '{"enabled":true}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/private-vulnerability-reporting" ]; then
+  printf '%s\n' '{"enabled":true}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/actions/permissions/workflow" ]; then
+  printf '%s\n' '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/code-scanning/default-setup" ]; then
+  printf '%s\n' '{"state":"not-configured"}'
 else
   echo "unexpected gh invocation" >&2
   exit 92
@@ -237,5 +262,14 @@ output="$(PATH="$mock_bin:$PATH" GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN
 output="$(PATH="$mock_bin:$PATH" MOCK_DUPLICATE=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only ruleset_sync 2>&1)" || status=$?
 [ "${status:-0}" -ne 0 ] || { echo "duplicate ruleset identity fixture unexpectedly passed" >&2; exit 1; }
 case "$output" in *"ruleset name 'main protection' is ambiguous"*) ;; *) echo "duplicate identity fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
+
+status=0
+output="$(PATH="$mock_bin:$PATH" GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only security_settings 2>&1)" || status=$?
+[ "$status" -eq 0 ] || { echo "security settings fixture failed" >&2; printf '%s\n' "$output" >&2; exit 1; }
+
+status=0
+output="$(PATH="$mock_bin:$PATH" MOCK_SECURITY_DRIFT=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only security_settings 2>&1)" || status=$?
+[ "$status" -ne 0 ] || { echo "security settings drift fixture unexpectedly passed" >&2; exit 1; }
+case "$output" in *"secret_scanning_push_protection"*) ;; *) echo "security drift fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
 
 echo "hardening-audit negative fixtures passed"
