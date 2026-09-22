@@ -238,4 +238,69 @@ output="$(PATH="$mock_bin:$PATH" MOCK_DUPLICATE=1 GITHUB_REPOSITORY=fixture HARD
 [ "${status:-0}" -ne 0 ] || { echo "duplicate ruleset identity fixture unexpectedly passed" >&2; exit 1; }
 case "$output" in *"ruleset name 'main protection' is ambiguous"*) ;; *) echo "duplicate identity fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
 
+
+security_live_without_credential="$TMP/security-live-without-credential"
+copy_root "$security_live_without_credential"
+expect_live_fail "$security_live_without_credential" repository_security "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+
+security_root="$TMP/security-readback"
+copy_root "$security_root"
+security_bin="$TMP/security-bin"
+mkdir -p "$security_bin"
+cat > "$security_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${GH_TOKEN:-}" = designated-token ] || { echo "unexpected credential selected" >&2; exit 91; }
+[ "${1:-}" = api ] || { echo "unexpected gh command" >&2; exit 92; }
+case "${2:-}" in
+  repos/fixture/dependency-graph/sbom)
+    printf '%s\n' '{"sbom":{"name":"fixture"}}'
+    ;;
+  repos/fixture/vulnerability-alerts)
+    exit 0
+    ;;
+  repos/fixture)
+    if [ "${MOCK_SECURITY_DRIFT:-}" = 1 ]; then
+      printf '%s\n' '{"security_and_analysis":{"dependabot_security_updates":{"status":"enabled"},"secret_scanning":{"status":"disabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
+    else
+      printf '%s\n' '{"security_and_analysis":{"dependabot_security_updates":{"status":"enabled"},"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
+    fi
+    ;;
+  repos/fixture/private-vulnerability-reporting)
+    printf '%s\n' '{"enabled":true}'
+    ;;
+  repos/fixture/code-scanning/default-setup)
+    printf '%s\n' '{"state":"not-configured"}'
+    ;;
+  repos/fixture/actions/permissions/workflow)
+    printf '%s\n' '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}'
+    ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 93
+    ;;
+esac
+EOF
+chmod +x "$security_bin/gh"
+
+status=0
+output="$(PATH="$security_bin:$PATH" GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$security_root" --only repository_security 2>&1)" || status=$?
+[ "$status" -eq 0 ] || { echo "public security readback fixture failed" >&2; printf '%s\n' "$output" >&2; exit 1; }
+case "$output" in *"authoritative public security and Actions settings match canonical policy"*) ;; *)
+  echo "public security readback fixture did not prove expected pass" >&2
+  printf '%s\n' "$output" >&2
+  exit 1
+  ;;
+esac
+
+status=0
+output="$(PATH="$security_bin:$PATH" MOCK_SECURITY_DRIFT=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$security_root" --only repository_security 2>&1)" || status=$?
+[ "$status" -ne 0 ] || { echo "secret-scanning drift fixture unexpectedly passed" >&2; exit 1; }
+case "$output" in *"secret_scanning does not match canonical expected state 'enabled'"*) ;; *)
+  echo "secret-scanning drift fixture failed for the wrong reason" >&2
+  printf '%s\n' "$output" >&2
+  exit 1
+  ;;
+esac
+
 echo "hardening-audit negative fixtures passed"
