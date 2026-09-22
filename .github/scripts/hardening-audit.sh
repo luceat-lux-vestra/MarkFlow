@@ -103,7 +103,8 @@ check_policy_shape() {
   ' "$POLICY" >/dev/null; then
     finding policy_shape "public repository security/actions settings contract is missing or malformed"; clean=0
   fi
-  while IFS=
+  while IFS="$(printf '\\t')" read -r context workflow job; do
+    [ -n "$context" ] || continue
     wf="$ROOT/$workflow"
     if [ ! -f "$wf" ]; then finding policy_shape "staged context '$context' names missing workflow '$workflow'"; clean=0; continue; fi
     if ! job_exists "$wf" "$job"; then finding policy_shape "staged context '$context' names missing job '$job'"; clean=0; continue; fi
