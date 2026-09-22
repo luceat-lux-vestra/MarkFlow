@@ -6,7 +6,7 @@
 name: Release
 on:
   release:
-    types: [ prereleased, released ]
+    types: [ released ]
 
 permissions:
   contents: read
@@ -19,6 +19,7 @@ jobs:
   release:
     name: Publish Plugin
     runs-on: ubuntu-latest
+    environment: jetbrains-marketplace
     timeout-minutes: 60
     permissions:
       contents: write
