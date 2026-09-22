@@ -49,22 +49,22 @@ require_fixed "--existing-published-artifact-sha256"   "recovery preflight must 
 
 sign_line="$(line_of "      - name: Sign and verify exact release artifact")"
 capture_line="$(line_of "      - name: Capture verified signed release artifact")"
-lock_line="$(line_of "      - name: Lock release identity before publication")"
 attest_line="$(line_of "      - name: Attest verified signed release artifact")"
+lock_line="$(line_of "      - name: Lock release identity before publication")"
 publish_line="$(line_of "      - name: Publish Plugin")"
 recheck_line="$(line_of "      - name: Recheck signed artifact identity after Marketplace publication")"
 upload_line="$(line_of "      - name: Upload Release Asset")"
 
-for value in "$sign_line" "$capture_line" "$lock_line" "$attest_line" "$publish_line" "$recheck_line" "$upload_line"; do
+for value in "$sign_line" "$capture_line" "$attest_line" "$lock_line" "$publish_line" "$recheck_line" "$upload_line"; do
   [[ "$value" =~ ^[0-9]+$ ]] || die "release publication step order is incomplete"
 done
 
 [ "$sign_line" -lt "$capture_line" ] &&
-[ "$capture_line" -lt "$lock_line" ] &&
-[ "$lock_line" -lt "$attest_line" ] &&
-[ "$attest_line" -lt "$publish_line" ] &&
+[ "$capture_line" -lt "$attest_line" ] &&
+[ "$attest_line" -lt "$lock_line" ] &&
+[ "$lock_line" -lt "$publish_line" ] &&
 [ "$publish_line" -lt "$recheck_line" ] &&
 [ "$recheck_line" -lt "$upload_line" ] ||
-  die "release order must be sign/verify -> capture -> lock -> attest -> publish -> identity recheck -> release upload"
+  die "release order must be sign/verify -> capture -> attest -> lock -> publish -> identity recheck -> release upload"
 
 echo "release publication contract checks passed"
