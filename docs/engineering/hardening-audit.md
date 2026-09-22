@@ -28,8 +28,8 @@ or manual hardening audits.
 
 When authoritative live readback is performed, it checks the live
 `main protection` ruleset, the `release tag immutability` ruleset, repository
-labels referenced by automation, and repository merge settings against
-`.github/merge-gate-policy.json`.
+labels referenced by automation, repository merge settings, and public-repository security settings against
+`.github/merge-gate-policy.json`. The security readback covers Dependency Graph/SBOM availability, Dependabot alerts and security updates, Secret Scanning, Push Protection, Private Vulnerability Reporting, Actions default workflow permissions, and CodeQL authority/default-setup state.
 
 Ruleset identity is fail-closed: the live ruleset list must contain exactly
 one entry for each canonical name. Zero matches, duplicate names, or a
@@ -133,6 +133,14 @@ New controls are deliberately classified before promotion:
 Live repository/security-feature state remains an authoritative exit-audit
 input. Missing live evidence is not inferred from green repository workflows.
 
+For the current public repository, `.github/workflows/codeql.yml` is the single
+CodeQL authority (advanced setup) for `actions` and `javascript-typescript`.
+Default setup must therefore remain `not-configured`; enabling it in parallel is
+a drift finding rather than additional coverage. Secret Scanning, Push
+Protection, Dependency Graph, Dependabot alerts/security updates, and Private
+Vulnerability Reporting are declared as enabled public-repository controls and
+must be proven by an administration-authorized readback.
+
 ## Credential contract
 
 No long-lived administration credential is required by the default workflow.
@@ -140,7 +148,8 @@ For an explicit automated or local live readback, use a repository-scoped,
 read-only administration credential (or equivalent GitHub App installation
 credential) with only the permissions needed for the readback:
 
-- repository `Administration: read` for rulesets and repository settings;
+- repository `Administration: read` for rulesets, repository/security settings, Actions workflow defaults, Private Vulnerability Reporting, and CodeQL default-setup state;
+- repository `Dependabot alerts: read` for Dependabot alert availability/readback;
 - repository `Issues: read` for the label catalog;
 - the automatically available repository metadata read access.
 

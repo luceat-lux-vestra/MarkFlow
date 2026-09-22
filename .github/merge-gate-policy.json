@@ -114,7 +114,8 @@
     "ruleset_sync": "report",
     "release_tag_ruleset": "report",
     "label_references": "report",
-    "repository_settings": "report"
+    "repository_settings": "report",
+    "security_settings": "report"
   },
   "staged": [
     {
@@ -144,5 +145,25 @@
       "retained_authority": "Required Qodana Inspect code plus Build/Test/Plugin Verifier remain the Kotlin/JVM validation authority.",
       "reassessment_trigger": "A CodeQL release explicitly supporting the maintained Kotlin toolchain."
     }
-  ]
+  ],
+  "security_settings": {
+    "visibility": "public",
+    "dependency_graph": "enabled",
+    "dependabot_alerts": "enabled",
+    "dependabot_security_updates": "enabled",
+    "secret_scanning": "enabled",
+    "secret_scanning_push_protection": "enabled",
+    "private_vulnerability_reporting": "enabled",
+    "actions_default_workflow_permissions": "read",
+    "actions_can_approve_pull_request_reviews": false,
+    "codeql": {
+      "authority": "advanced_setup",
+      "workflow": ".github/workflows/codeql.yml",
+      "languages": [
+        "actions",
+        "javascript-typescript"
+      ],
+      "default_setup_state": "not-configured"
+    }
+  }
 }
