@@ -77,8 +77,8 @@ For the pending identity, verify at minimum:
 ```bash
 jq -e '
   .schema == 1 and
-  (.tag | type == "string") and
-  (.version == .tag) and
+  (.tag | test("^v[1-9][0-9]*\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+  (.version == (.tag | ltrimstr("v"))) and
   (.tag_commit | test("^[0-9a-f]{40}$")) and
   (.artifact | type == "string") and
   (.artifact_sha256 | test("^[0-9a-f]{64}$")) and
