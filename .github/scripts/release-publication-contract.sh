@@ -33,17 +33,17 @@ require_fixed "      attestations: write" "release job must persist provenance a
 grep -Eq '^[[:space:]]+uses: actions/attest@[0-9a-f]{40}([[:space:]]+#.*)?$' "$WORKFLOW" ||
   die "actions/attest must use an immutable full SHA"
 
-require_fixed "./gradlew signPlugin verifyPluginSignature -PbuildVersion=\"$RELEASE_VERSION\""   "release workflow must sign and verify the exact candidate"
-require_fixed "          subject-path: ${{ steps.signed_artifact.outputs.path }}"   "attestation subject must be the verified signed archive"
+require_fixed './gradlew signPlugin verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"'   "release workflow must sign and verify the exact candidate"
+require_fixed '          subject-path: ${{ steps.signed_artifact.outputs.path }}'   "attestation subject must be the verified signed archive"
 require_fixed "          create-storage-record: false"   "release attestation must not require broader artifact-metadata authority"
-require_fixed "./gradlew publishPlugin -x signPlugin -PbuildVersion=\"$RELEASE_VERSION\""   "Marketplace publication must consume the already-verified signed archive without re-signing"
-require_fixed "          RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}"   "GitHub Release must upload the verified signed archive"
+require_fixed './gradlew publishPlugin -x signPlugin -PbuildVersion="$RELEASE_VERSION"'   "Marketplace publication must consume the already-verified signed archive without re-signing"
+require_fixed '          RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}'   "GitHub Release must upload the verified signed archive"
 if grep -Fq 'RELEASE_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}' "$WORKFLOW"; then
   die "unsigned buildPlugin output must not be a GitHub Release asset"
 fi
 
-require_fixed ".publication_artifact = $artifact"   "pending release identity must record the signed publication artifact"
-require_fixed ".publication_artifact_sha256 = $hash"   "pending release identity must record the signed publication digest"
+require_fixed '.publication_artifact = $artifact'   "pending release identity must record the signed publication artifact"
+require_fixed '.publication_artifact_sha256 = $hash'   "pending release identity must record the signed publication digest"
 require_fixed "--published-artifact-present"   "recovery preflight must verify the signed release asset"
 require_fixed "--existing-published-artifact-sha256"   "recovery preflight must verify the signed release digest"
 
