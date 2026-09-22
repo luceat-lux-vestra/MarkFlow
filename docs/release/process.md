@@ -43,6 +43,8 @@ The workflow records a pending release-identity asset only after signed-artifact
 
 ## Publication authorization
 
+Automatic Marketplace publication is accepted only from a GitHub Release `released` event. Prerelease events do not enter the production publication path. The release job is bound to the protected `jetbrains-marketplace` GitHub Environment so signing and Marketplace credentials remain inside that deployment authority boundary.
+
 Publication requires an explicit maintainer decision after reviewing the release candidate evidence. Do not infer authorization from issue/PR closure.
 
 Recovery of an already-started release also requires explicit maintainer authorization before any Marketplace retry, release-asset mutation, published-marker upload, or Marketplace withdrawal. See [`recovery.md`](./recovery.md).
