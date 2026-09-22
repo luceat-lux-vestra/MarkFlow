@@ -44,7 +44,15 @@ expect_live_fail() {
 baseline="$TMP/baseline"
 copy_root "$baseline"
 expect_pass "$baseline"
+expect_pass "$baseline" policy_shape
 expect_pass "$baseline" live_readback_boundary
+
+staged_missing="$TMP/staged-missing"
+copy_root "$staged_missing"
+jq '(.staged_required[] | select(.context == "Hardening audit")).workflow = ".github/workflows/missing-staged.yml"' \
+  "$staged_missing/.github/merge-gate-policy.json" > "$staged_missing/.github/merge-gate-policy.json.tmp"
+mv "$staged_missing/.github/merge-gate-policy.json.tmp" "$staged_missing/.github/merge-gate-policy.json"
+expect_fail "$staged_missing" policy_shape "staged context 'Hardening audit' names missing workflow '.github/workflows/missing-staged.yml'"
 
 wrong_target="$TMP/wrong-target"
 copy_root "$wrong_target"
