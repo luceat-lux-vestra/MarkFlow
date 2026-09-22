@@ -242,7 +242,7 @@ check_workflow_static_analysis() {
 }
 
 check_release_preflight() {
-  local audit="$WORKFLOW_DIR/hardening-audit.yml" release="$WORKFLOW_DIR/release.yml" clean=1
+  local audit="$WORKFLOW_DIR/hardening-audit.yml" release="$WORKFLOW_DIR/release.yml" recovery="$ROOT/docs/release/recovery.md" clean=1
   local sign_pos verify_pos capture_pos preflight_pos attest_pos lock_pos publish_pos upload_pos
   [ -f "$ROOT/.github/scripts/release-preflight-test.sh" ] || { finding release_preflight "release preflight fixture script is missing"; clean=0; }
   grep -qE 'Run release preflight fixtures' "$audit" || { finding release_preflight "release preflight fixtures are not named in the hardening workflow"; clean=0; }
@@ -256,6 +256,11 @@ check_release_preflight() {
   grep -qE 'uses:[[:space:]]+actions/attest@[0-9a-f]{40}' "$release" || { finding release_preflight "attestation action is not full-SHA pinned"; clean=0; }
   grep -qF '[[ "$RELEASE_TAG" =~ ^v([1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]' "$release" || { finding release_preflight "stable v-prefixed SemVer tag validation is missing"; clean=0; }
   grep -qF 'release_version="${RELEASE_TAG#v}"' "$release" || { finding release_preflight "effective plugin version is not derived from the release tag"; clean=0; }
+  [ -f "$recovery" ] || { finding release_preflight "release recovery runbook is missing"; clean=0; }
+  if [ -f "$recovery" ]; then
+    grep -qF '(.version == (.tag | ltrimstr("v")))' "$recovery" || { finding release_preflight "recovery runbook conflates release tag with effective plugin version"; clean=0; }
+    ! grep -qF '(.version == .tag)' "$recovery" || { finding release_preflight "recovery runbook still equates v-prefixed tag with plugin version"; clean=0; }
+  fi
   grep -qF './gradlew verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"' "$release" || { finding release_preflight "signature verification is missing before publication"; clean=0; }
   grep -qE 'artifacts=\(\.\/build\/distributions\/\*-"\$RELEASE_VERSION"-signed\.zip\)' "$release" || { finding release_preflight "signed release artifact selection is missing or ambiguous"; clean=0; }
   grep -qF 'RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}' "$release" || { finding release_preflight "GitHub Release upload is not bound to the verified signed artifact"; clean=0; }
