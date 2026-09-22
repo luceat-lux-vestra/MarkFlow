@@ -55,4 +55,13 @@ grep -qx 'publish=false' "$published_output"
 expect_fail "does not match the rebuilt artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present true --existing-artifact-sha256 "$(printf '0%.0s' {1..64})" --github-output "$TMP/wrong-digest-output"
 expect_fail "artifact is absent" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published" --artifact-present false --github-output "$TMP/absent-output"
 
+published_signed="$TMP/published-signed.json"
+signed_sha="$(printf '1%.0s' {1..64})"
+jq --arg name "MarkFlow-$tag-signed.zip" --arg hash "$signed_sha" '.publication_artifact = $name | .publication_artifact_sha256 = $hash' "$published" > "$published_signed"
+signed_output="$TMP/published-signed-output"
+bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published_signed" --artifact-present false --published-artifact-present true --existing-published-artifact-sha256 "$signed_sha" --github-output "$signed_output"
+grep -qx 'publish=false' "$signed_output"
+expect_fail "signed release artifact digest does not match" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published_signed" --artifact-present false --published-artifact-present true --existing-published-artifact-sha256 "$(printf '2%.0s' {1..64})" --github-output "$TMP/wrong-signed-digest-output"
+expect_fail "signed release artifact is absent" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$published_signed" --artifact-present false --published-artifact-present false --github-output "$TMP/absent-signed-output"
+
 echo "release-preflight non-publishing fixtures passed"
