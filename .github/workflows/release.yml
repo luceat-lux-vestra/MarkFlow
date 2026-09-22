@@ -23,6 +23,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
+      attestations: write
     env:
       RELEASE_VERSION: ${{ github.event.release.tag_name }}
     steps:
@@ -149,6 +151,21 @@ jobs:
             existing_artifact_sha256="$(sha256sum "$RUNNER_TEMP/existing-release-artifact.zip" | awk '{print $1}')"
           fi
           existing="$PREFLIGHT_IDENTITY_FILE"
+          published_artifact_present=false
+          existing_published_artifact_sha256=""
+          if [ -s "$existing" ]; then
+            published_artifact_name="$(jq -r '.publication_artifact // empty' "$existing")"
+            if [ -n "$published_artifact_name" ]; then
+              published_asset_ids="$(jq -r --arg name "$published_artifact_name" '.assets[]? | select(.name == $name) | .id' "$release_json")"
+              [ "$(printf '%s\n' "$published_asset_ids" | sed '/^$/d' | wc -l | tr -d ' ')" -le 1 ] || { echo "::error::Multiple published release artifacts have the same name."; exit 1; }
+              published_asset_id="$(printf '%s\n' "$published_asset_ids" | sed -n '1p')"
+              if [ -n "$published_asset_id" ]; then
+                published_artifact_present=true
+                gh api -H 'Accept: application/octet-stream' "repos/${GITHUB_REPOSITORY}/releases/assets/${published_asset_id}" > "$RUNNER_TEMP/existing-published-release-artifact.zip"
+                existing_published_artifact_sha256="$(sha256sum "$RUNNER_TEMP/existing-published-release-artifact.zip" | awk '{print $1}')"
+              fi
+            fi
+          fi
           args=(
             --dry-run
             --tag "$RELEASE_VERSION"
@@ -158,6 +175,8 @@ jobs:
             --artifact "$PREFLIGHT_ARTIFACT_PATH"
             --artifact-present "$artifact_present"
             --existing-artifact-sha256 "$existing_artifact_sha256"
+            --published-artifact-present "$published_artifact_present"
+            --existing-published-artifact-sha256 "$existing_published_artifact_sha256"
             --output-manifest "$RUNNER_TEMP/markflow-release-identity.json"
             --github-output "$GITHUB_OUTPUT"
           )
@@ -185,13 +204,51 @@ jobs:
             exit 1
           fi
 
+      - name: Sign and verify exact release artifact
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew signPlugin verifyPluginSignature -PbuildVersion="$RELEASE_VERSION"
+
+      - name: Capture verified signed release artifact
+        id: signed_artifact
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          UNSIGNED_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+        run: |
+          set -euo pipefail
+          expected_signed="${UNSIGNED_ARTIFACT_PATH%.zip}-signed.zip"
+          [ -f "$expected_signed" ] || { echo "::error::Expected signed plugin archive was not produced: $expected_signed"; exit 1; }
+          shopt -s nullglob
+          signed_artifacts=(./build/distributions/*-signed.zip)
+          [ "${#signed_artifacts[@]}" -eq 1 ] || { echo "::error::Expected one signed plugin distribution, found ${#signed_artifacts[@]}."; exit 1; }
+          [ "${signed_artifacts[0]}" = "$expected_signed" ] || { echo "::error::Signed archive identity does not match the built candidate."; exit 1; }
+          digest="$(sha256sum "$expected_signed" | awk '{print $1}')"
+          printf 'path=%s\nname=%s\nsha256=%s\n' "$expected_signed" "$(basename "$expected_signed")" "$digest" >> "$GITHUB_OUTPUT"
+          jq --arg artifact "$(basename "$expected_signed")" --arg hash "$digest" '
+            .publication_artifact = $artifact |
+            .publication_artifact_sha256 = $hash |
+            .signature_verified = true |
+            .attestation_required = true
+          ' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-identity.json.tmp"
+          mv "$RUNNER_TEMP/markflow-release-identity.json.tmp" "$RUNNER_TEMP/markflow-release-identity.json"
+
       # A pending identity asset is a publication lock. If this run fails after the
-      # lock, reruns stop instead of guessing whether Marketplace publication happened.
+      # lock, reruns stop instead of guessing whether attestation/Marketplace publication happened.
       - name: Lock release identity before publication
         if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-identity.json"
+
+      - name: Attest verified signed release artifact
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.signed_artifact.outputs.path }}
+          create-storage-record: false
 
       - name: Publish Plugin
         if: ${{ steps.preflight.outputs.publish == 'true' }}
@@ -200,22 +257,31 @@ jobs:
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"
+        run: ./gradlew publishPlugin -x signPlugin -PbuildVersion="$RELEASE_VERSION"
+
+      - name: Recheck signed artifact identity after Marketplace publication
+        if: ${{ steps.preflight.outputs.publish == 'true' }}
+        env:
+          RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}
+          EXPECTED_SHA256: ${{ steps.signed_artifact.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          actual="$(sha256sum "$RELEASE_ARTIFACT_PATH" | awk '{print $1}')"
+          [ "$actual" = "$EXPECTED_SHA256" ] || { echo "::error::Signed artifact changed after attestation/publication."; exit 1; }
 
       - name: Upload Release Asset
         if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+          RELEASE_ARTIFACT_PATH: ${{ steps.signed_artifact.outputs.path }}
         run: gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"
-
       - name: Mark publication complete
         if: ${{ steps.preflight.outputs.publish == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          jq '.publication_state = "published"' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-published.json"
+          jq '.publication_state = "published" | .attestation_state = "generated"' "$RUNNER_TEMP/markflow-release-identity.json" > "$RUNNER_TEMP/markflow-release-published.json"
           gh release upload "$RELEASE_VERSION" "$RUNNER_TEMP/markflow-release-published.json"
 
       # Changelog PR creation remains release-only and is idempotent for a rerun that
