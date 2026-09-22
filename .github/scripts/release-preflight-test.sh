@@ -10,7 +10,7 @@ trap 'rm -rf "$TMP"' EXIT
 tag="26.09.02.123456"
 main_sha="1111111111111111111111111111111111111111"
 tag_sha="2222222222222222222222222222222222222222"
-artifact="$TMP/MarkFlow-$tag.zip"
+artifact="$TMP/MarkFlow-$tag-signed.zip"
 stage="$TMP/plugin"
 mkdir -p "$stage/META-INF"
 printf '<idea-plugin><id>com.algorist.markflow</id><version>%s</version></idea-plugin>\n' "$tag" > "$stage/META-INF/plugin.xml"
@@ -31,7 +31,7 @@ manifest="$TMP/identity.json"
 output="$TMP/github-output"
 bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --output-manifest "$manifest" --github-output "$output"
 grep -qx 'publish=true' "$output"
-jq -e '.publication_state == "pending" and .artifact_sha256 != null' "$manifest" >/dev/null
+jq -e --arg tag "$tag" '.publication_state == "pending" and .artifact_sha256 != null and (.artifact | endswith("-" + $tag + "-signed.zip"))' "$manifest" >/dev/null
 
 expect_fail "pending publication identity" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$artifact" --existing-identity "$manifest" --artifact-present false --output-manifest "$TMP/unused.json"
 expect_fail "not reachable from reviewed main" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status ahead --artifact "$artifact" --output-manifest "$TMP/ahead.json"
@@ -42,8 +42,12 @@ expect_fail "immutable tag/artifact" bash "$PREFLIGHT" --dry-run --tag "$tag" --
 bad_stage="$TMP/bad-plugin"
 mkdir -p "$bad_stage/META-INF"
 printf '<idea-plugin><version>26.09.02.999999</version></idea-plugin>\n' > "$bad_stage/META-INF/plugin.xml"
-bad_artifact="$TMP/MarkFlow-bad-$tag.zip"
+bad_artifact="$TMP/MarkFlow-bad-$tag-signed.zip"
 (cd "$bad_stage" && zip -qr "$bad_artifact" .)
+unsigned_artifact="$TMP/MarkFlow-$tag.zip"
+cp "$artifact" "$unsigned_artifact"
+expect_fail "is not the signed ZIP" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$unsigned_artifact" --output-manifest "$TMP/unsigned.json"
+
 expect_fail "does not equal release tag" bash "$PREFLIGHT" --dry-run --tag "$tag" --main-sha "$main_sha" --tag-sha "$tag_sha" --compare-status behind --artifact "$bad_artifact" --output-manifest "$TMP/bad.json"
 
 published="$TMP/published.json"
