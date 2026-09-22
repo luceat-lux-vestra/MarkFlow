@@ -261,7 +261,7 @@ check_release_preflight() {
   preflight_pos="$(grep -nF 'id: preflight' "$release" | head -1 | cut -d: -f1 || true)"
   attest_pos="$(grep -nF 'uses: actions/attest@' "$release" | head -1 | cut -d: -f1 || true)"
   lock_pos="$(grep -nF 'Lock release identity before publication' "$release" | head -1 | cut -d: -f1 || true)"
-  publish_pos="$(grep -nF './gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
+  publish_pos="$(grep -nF './gradlew publishPlugin -x signPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
   upload_pos="$(grep -nF 'gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"' "$release" | head -1 | cut -d: -f1 || true)"
   if [ -z "$sign_pos" ] || [ -z "$verify_pos" ] || [ -z "$capture_pos" ] || [ -z "$preflight_pos" ] || [ -z "$attest_pos" ] || [ -z "$lock_pos" ] || [ -z "$publish_pos" ] || [ -z "$upload_pos" ] ||
      ! [ "$sign_pos" -lt "$verify_pos" ] || ! [ "$verify_pos" -lt "$capture_pos" ] || ! [ "$capture_pos" -lt "$preflight_pos" ] ||
@@ -833,7 +833,7 @@ exit 1 "$release" || { finding release_preflight "release job lacks attestations
   preflight_pos="$(grep -nF 'id: preflight' "$release" | head -1 | cut -d: -f1 || true)"
   attest_pos="$(grep -nF 'uses: actions/attest@' "$release" | head -1 | cut -d: -f1 || true)"
   lock_pos="$(grep -nF 'Lock release identity before publication' "$release" | head -1 | cut -d: -f1 || true)"
-  publish_pos="$(grep -nF './gradlew publishPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
+  publish_pos="$(grep -nF './gradlew publishPlugin -x signPlugin -PbuildVersion="$RELEASE_VERSION"' "$release" | head -1 | cut -d: -f1 || true)"
   upload_pos="$(grep -nF 'gh release upload "$RELEASE_VERSION" "$RELEASE_ARTIFACT_PATH"' "$release" | head -1 | cut -d: -f1 || true)"
   if [ -z "$sign_pos" ] || [ -z "$verify_pos" ] || [ -z "$capture_pos" ] || [ -z "$preflight_pos" ] || [ -z "$attest_pos" ] || [ -z "$lock_pos" ] || [ -z "$publish_pos" ] || [ -z "$upload_pos" ] ||
      ! [ "$sign_pos" -lt "$verify_pos" ] || ! [ "$verify_pos" -lt "$capture_pos" ] || ! [ "$capture_pos" -lt "$preflight_pos" ] ||
