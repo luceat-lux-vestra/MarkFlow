@@ -204,4 +204,7 @@ grep -q '^## Dependency update governance$' GOVERNANCE.md || die "dependency upd
 grep -q 'PR titles and bodies must not contain GitHub Actions skip directives' GOVERNANCE.md || die "squash message safety governance is missing"
 grep -q 'exact-SHA `workflow_dispatch` recovery input' GOVERNANCE.md || die "exact-SHA post-main recovery governance is missing"
 
+bash .github/scripts/release-preflight-test.sh >/dev/null || die "release preflight/recovery fixtures failed"
+bash .github/scripts/release-publication-contract.sh >/dev/null || die "release publication contract failed"
+
 echo "repository hardening contract checks passed"
