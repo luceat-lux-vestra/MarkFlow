@@ -28,8 +28,23 @@ or manual hardening audits.
 
 When authoritative live readback is performed, it checks the live
 `main protection` ruleset, the `release tag immutability` ruleset, repository
-labels referenced by automation, and repository merge settings against
+labels referenced by automation, repository merge settings, and the declared
+public-repository security/Actions settings against
 `.github/merge-gate-policy.json`.
+
+The 2026-09-22 public-repository re-audit makes security applicability explicit.
+The canonical report contract requires Dependency Graph, Dependabot alerts and
+security updates, secret scanning, push protection, and private vulnerability
+reporting to be enabled. It also requires the default `GITHUB_TOKEN` workflow
+permission to remain read-only and forbids Actions from approving pull-request
+reviews. MarkFlow keeps checked-in CodeQL as the intentional analysis authority,
+so GitHub CodeQL default setup is required to remain `not-configured` unless a
+later reviewed authority migration changes both policy and implementation.
+
+These are administration-backed report checks, not claims produced by the
+credential-less PR audit. If the administration credential cannot read a
+security field or endpoint, the result is a finding; missing data is never
+coerced into an enabled/default-safe value.
 
 Ruleset identity is fail-closed: the live ruleset list must contain exactly
 one entry for each canonical name. Zero matches, duplicate names, or a
