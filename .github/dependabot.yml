@@ -5,12 +5,6 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    groups:
-      gradle-minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
     commit-message:
       prefix: "build"
     labels:
