@@ -97,6 +97,25 @@ check_policy_shape() {
     jobname="$(unquote "$(job_field "$wf" "$job" name)")"
     [ "$jobname" = "$context" ] || { finding policy_shape "staged context '$context' does not match job name '$jobname'"; clean=0; }
   done < <(jq -r '.staged_required[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+  if ! jq -e '
+    .security_settings
+    | type == "object"
+      and (.visibility == "public")
+      and (.dependency_graph == "enabled")
+      and (.dependabot_alerts == "enabled")
+      and (.dependabot_security_updates == "enabled")
+      and (.secret_scanning == "enabled")
+      and (.secret_scanning_push_protection == "enabled")
+      and (.private_vulnerability_reporting == "enabled")
+      and (.actions_default_workflow_permissions == "read")
+      and (.actions_can_approve_pull_request_reviews == false)
+      and (.codeql.authority == "advanced_setup")
+      and (.codeql.workflow | type == "string" and length > 0)
+      and (.codeql.languages | type == "array" and length > 0)
+      and (.codeql.default_setup_state == "not-configured")
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "security_settings declaration is incomplete or unsupported"; clean=0
+  fi
   [ "$clean" -eq 1 ] && info policy_shape "policy classifications are unique and internally consistent"
   return 0
 }
@@ -381,12 +400,86 @@ check_repository_settings() {
   [ "$clean" -eq 1 ] && info repository_settings "authoritative live repository merge settings match canonical policy"; return 0
 }
 
+check_security_settings() {
+  local repository fixes pvr workflow_permissions default_setup codeql_workflow expected observed_languages expected_languages field clean=1
+  if [ "$NETWORK" -eq 0 ]; then info security_settings "skipped (--no-network)"; return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then finding security_settings "gh and GITHUB_REPOSITORY are required for live security readback"; return 0; fi
+  if [ -z "${HARDENING_AUDIT_TOKEN:-}" ]; then finding security_settings "authoritative HARDENING_AUDIT_TOKEN is unavailable; public-repository security controls are unverified"; return 0; fi
+
+  if ! repository="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}" 2>/dev/null)"; then
+    finding security_settings "could not read authoritative repository security state"; return 0
+  fi
+  expected="$(jq -r '.security_settings.visibility' "$POLICY")"
+  jq -e --arg expected "$expected" '.visibility == $expected' <<< "$repository" >/dev/null ||
+    { finding security_settings "repository visibility does not match canonical security policy"; clean=0; }
+
+  for field in secret_scanning secret_scanning_push_protection; do
+    expected="$(jq -r --arg field "$field" '.security_settings[$field]' "$POLICY")"
+    jq -e --arg field "$field" --arg expected "$expected" '.security_and_analysis[$field].status == $expected' <<< "$repository" >/dev/null ||
+      { finding security_settings "live $field does not match canonical security policy"; clean=0; }
+  done
+
+  authoritative_gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" >/dev/null 2>&1 ||
+    { finding security_settings "Dependency Graph/SBOM is unavailable"; clean=0; }
+  authoritative_gh api "repos/${GITHUB_REPOSITORY}/dependabot/alerts?per_page=1" >/dev/null 2>&1 ||
+    { finding security_settings "Dependabot alerts are unavailable or unreadable"; clean=0; }
+
+  if fixes="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/automated-security-fixes" 2>/dev/null)"; then
+    jq -e '.enabled == true' <<< "$fixes" >/dev/null ||
+      { finding security_settings "Dependabot security updates / automated security fixes are not enabled"; clean=0; }
+  else
+    finding security_settings "could not read Dependabot security-update state"; clean=0
+  fi
+
+  if pvr="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/private-vulnerability-reporting" 2>/dev/null)"; then
+    jq -e '.enabled == true' <<< "$pvr" >/dev/null ||
+      { finding security_settings "private vulnerability reporting is not enabled"; clean=0; }
+  else
+    finding security_settings "could not read private vulnerability reporting state"; clean=0
+  fi
+
+  if workflow_permissions="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/actions/permissions/workflow" 2>/dev/null)"; then
+    expected="$(jq -r '.security_settings.actions_default_workflow_permissions' "$POLICY")"
+    jq -e --arg expected "$expected" '.default_workflow_permissions == $expected' <<< "$workflow_permissions" >/dev/null ||
+      { finding security_settings "Actions default workflow permissions drifted"; clean=0; }
+    expected="$(jq -r '.security_settings.actions_can_approve_pull_request_reviews' "$POLICY")"
+    jq -e --argjson expected "$expected" '.can_approve_pull_request_reviews == $expected' <<< "$workflow_permissions" >/dev/null ||
+      { finding security_settings "Actions PR-review approval permission drifted"; clean=0; }
+  else
+    finding security_settings "could not read Actions workflow permission defaults"; clean=0
+  fi
+
+  if default_setup="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/code-scanning/default-setup" 2>/dev/null)"; then
+    expected="$(jq -r '.security_settings.codeql.default_setup_state' "$POLICY")"
+    jq -e --arg expected "$expected" '.state == $expected' <<< "$default_setup" >/dev/null ||
+      { finding security_settings "CodeQL default-setup state conflicts with the declared advanced-setup authority"; clean=0; }
+  else
+    finding security_settings "could not read CodeQL default-setup state"; clean=0
+  fi
+
+  if [ "$(jq -r '.security_settings.codeql.authority' "$POLICY")" != "advanced_setup" ]; then
+    finding security_settings "unsupported CodeQL authority declaration"; clean=0
+  fi
+  codeql_workflow="$ROOT/$(jq -r '.security_settings.codeql.workflow' "$POLICY")"
+  if [ ! -f "$codeql_workflow" ]; then
+    finding security_settings "declared CodeQL advanced-setup workflow is missing"; clean=0
+  else
+    observed_languages="$(sed -nE 's/^[[:space:]]*-[[:space:]]+language:[[:space:]]+([^[:space:]#]+).*$/\1/p' "$codeql_workflow" | sort -u)"
+    expected_languages="$(jq -r '.security_settings.codeql.languages[]' "$POLICY" | sort -u)"
+    if [ "$observed_languages" != "$expected_languages" ]; then
+      finding security_settings "CodeQL advanced-setup language set drifted"; clean=0
+    fi
+  fi
+
+  [ "$clean" -eq 1 ] && info security_settings "authoritative public-repository security controls match canonical policy"; return 0
+}
+
 check_negative_tests() {
   if bash "$SCRIPT_DIR/hardening-audit-test.sh"; then info negative_tests "all negative fixtures fail closed"; else finding negative_tests "at least one negative fixture did not fail closed"; fi
   return 0
 }
 
-ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows live_readback_boundary workflow_static_analysis release_preflight ruleset_sync release_tag_ruleset label_references repository_settings"
+ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows live_readback_boundary workflow_static_analysis release_preflight ruleset_sync release_tag_ruleset label_references repository_settings security_settings"
 should_run() {
   local name="$1" configured
   if [ -n "$ONLY" ]; then [ "$ONLY" = "$name" ]; return; fi
@@ -421,6 +514,7 @@ for check in $ALL_CHECKS; do
     release_tag_ruleset) check_release_tag_ruleset ;;
     label_references) check_label_references ;;
     repository_settings) check_repository_settings ;;
+    security_settings) check_security_settings ;;
     *) die "internal error: unsupported check '$check'" ;;
   esac
 done
