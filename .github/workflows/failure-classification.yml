@@ -30,14 +30,13 @@ jobs:
   classify:
     permissions:
       actions: read
-      pull-requests: read
-      issues: write
+      pull-requests: write
     if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Rebuild exact-HEAD failure classification report
-        uses: luceat-lux-vestra/.github/actions/failure-classifier@c6aae652fb50a6575682549fcb57757f1af46c2e
+        uses: luceat-lux-vestra/.github/actions/failure-classifier@f35a983aa477772bc0cb579f7fe1f47c4ff852a0
         with:
           github-token: ${{ github.token }}
           tracked-workflows: |
