@@ -53,14 +53,15 @@ copy_root "$wrong_target"
 jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"' \
   "$wrong_target/.github/merge-gate-policy.json" > "$wrong_target/.github/merge-gate-policy.json.tmp"
 mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
-expect_fail "$wrong_target" policy_producers "outside the audited failure-triage producer"
+expect_fail "$wrong_target" policy_producers "uses privileged pull_request_target"
 
-missing_target_declaration="$TMP/missing-target-declaration"
-copy_root "$missing_target_declaration"
-jq '(.required[] | select(.context == "failure-triage")) |= del(.trigger)' \
-  "$missing_target_declaration/.github/merge-gate-policy.json" > "$missing_target_declaration/.github/merge-gate-policy.json.tmp"
-mv "$missing_target_declaration/.github/merge-gate-policy.json.tmp" "$missing_target_declaration/.github/merge-gate-policy.json"
-expect_fail "$missing_target_declaration" policy_producers "workflow is not triggered by pull_request"
+privileged_failure_triage="$TMP/privileged-failure-triage"
+copy_root "$privileged_failure_triage"
+jq '(.required[] | select(.context == "failure-triage")).trigger = "pull_request_target"' \
+  "$privileged_failure_triage/.github/merge-gate-policy.json" > "$privileged_failure_triage/.github/merge-gate-policy.json.tmp"
+mv "$privileged_failure_triage/.github/merge-gate-policy.json.tmp" "$privileged_failure_triage/.github/merge-gate-policy.json"
+perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_failure_triage/.github/workflows/failure-declaration.yml"
+expect_fail "$privileged_failure_triage" policy_producers "uses privileged pull_request_target"
 
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
