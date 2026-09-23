@@ -142,9 +142,7 @@ check_policy_producers() {
     case "$trigger" in
       pull_request) ;;
       pull_request_target)
-        if [ "$workflow" != ".github/workflows/failure-triage.yml" ] || [ "$job" != "failure-triage" ]; then
-          finding policy_producers "required context '$context' uses pull_request_target outside the audited failure-triage producer"; clean=0
-        fi
+        finding policy_producers "required context '$context' uses privileged pull_request_target; required PR gates must use pull_request"; clean=0
         ;;
       *) finding policy_producers "required context '$context' declares unsupported PR trigger '$trigger'"; clean=0 ;;
     esac
