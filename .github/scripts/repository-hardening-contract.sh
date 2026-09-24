@@ -118,7 +118,7 @@ fi
 squash_guard=".github/scripts/check-squash-message-safety.py"
 [ -f "$squash_guard" ] || die "squash message safety guard is missing"
 python3 "$squash_guard" --self-test >/dev/null || die "squash message safety guard fixtures failed"
-grep -Fq 'types: [opened, synchronize, reopened, edited]' "$build_workflow" || die "required Build workflow does not revalidate squash metadata edits"
+grep -Fq 'types: [opened, synchronize, reopened, edited, ready_for_review]' "$build_workflow" || die "required Build workflow does not revalidate squash metadata edits and final-gate readiness"
 grep -q '^  workflow_dispatch:$' "$build_workflow" || die "required Build workflow has no exact-SHA recovery trigger"
 grep -q '^      target_sha:$' "$build_workflow" || die "required Build recovery trigger has no target_sha input"
 grep -q 'Reject squash CI-skip directives' "$build_workflow" || die "required Build workflow does not reject unsafe squash metadata"
