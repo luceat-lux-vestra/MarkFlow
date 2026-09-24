@@ -1,19 +1,20 @@
-import {readFileSync} from "node:fs";
-import {resolve} from "node:path";
+import {mkdtemp, rm} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {test} from "node:test";
-import * as ts from "typescript";
+import {pathToFileURL} from "node:url";
+import {compileTypeScriptFixtures} from "./typescript-cli.mjs";
 
-const source = readFileSync(resolve(import.meta.dirname, "..", "src", "app", "color.ts"), "utf8");
-const code = ts.transpileModule(source, {
-    compilerOptions: {module: "ESNext", target: "ES2020"},
-    fileName: "color.ts"
-}).outputText;
+const tempRoot = await mkdtemp(path.join(os.tmpdir(), "markflow-color-"));
+await compileTypeScriptFixtures({sourceNames: ["color.ts"], outDir: tempRoot, target: "ES2020"});
 const {
     adjustForContrast,
     contrastRatio,
     parseHex,
     readableTextColor
-} = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+} = await import(pathToFileURL(path.join(tempRoot, "color.js")).href);
+
+test.after(async () => rm(tempRoot, {recursive: true, force: true}));
 
 const rgb = (value) => parseHex(value);
 const ratio = (foreground, background) => contrastRatio(rgb(foreground), rgb(background));

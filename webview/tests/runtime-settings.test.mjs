@@ -1,30 +1,18 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdtemp, rm} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import ts from "typescript";
-import {pathToFileURL, fileURLToPath} from "node:url";
-
-const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/app");
-
-const transpile = async (sourceName, outputName, replacements = []) => {
-    const source = await readFile(path.join(appRoot, sourceName), "utf8");
-    let output = ts.transpileModule(source, {
-        compilerOptions: {target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022}
-    }).outputText;
-    for (const [from, to] of replacements) output = output.replaceAll(from, to);
-    await writeFile(path.join(tempRoot, outputName), output, "utf8");
-};
+import {pathToFileURL} from "node:url";
+import {compileTypeScriptFixtures} from "./typescript-cli.mjs";
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "markflow-renderer-settings-"));
-await transpile("color.ts", "color.mjs");
-await transpile("ide-theme-mapping.ts", "ide-theme-mapping.mjs", [["./color", "./color.mjs"]]);
-await transpile("runtime-settings.ts", "runtime-settings.mjs", [
-    ["./ide-theme-mapping", "./ide-theme-mapping.mjs"],
-    ["./color", "./color.mjs"]
-]);
-const settings = await import(pathToFileURL(path.join(tempRoot, "runtime-settings.mjs")).href);
+await compileTypeScriptFixtures({
+    sourceNames: ["runtime-settings.ts"],
+    outDir: tempRoot,
+    target: "ES2022"
+});
+const settings = await import(pathToFileURL(path.join(tempRoot, "runtime-settings.js")).href);
 
 test.after(async () => rm(tempRoot, {recursive: true, force: true}));
 
