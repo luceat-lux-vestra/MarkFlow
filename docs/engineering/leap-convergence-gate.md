@@ -45,8 +45,9 @@ These are CI regression budgets on GitHub-hosted Linux runners, not user-facing 
 | representative Mermaid render | first representative Mermaid success render on the runtime | <= 15000 ms |
 | representative KaTeX render | inline and display success cases | <= 15000 ms each |
 | renderer create/dispose lifecycle | three create/dispose cycles returning live-instance count to baseline | <= 10000 ms |
-| renderer JavaScript bundle | largest emitted JS asset | <= 700 KiB |
-| renderer JavaScript bundle | sum of emitted JS assets | <= 4000 KiB |
+| renderer JavaScript core bundle | largest non-ELK emitted JS asset | <= 700 KiB |
+| renderer JavaScript core bundle | sum of non-ELK emitted JS assets | <= 4000 KiB |
+| Mermaid optional ELK lazy chunk | exactly one emitted `elk-*.js` asset | <= 1536 KiB |
 
 A budget breach is a deterministic failure until explained and fixed or the budget is explicitly re-baselined with measured evidence. Do not rerun a red job to manufacture PASS.
 
@@ -68,7 +69,11 @@ The historical Robot Server workflow/task/plugin has no retained product consume
 
 ## Renderer bundle warning disposition
 
-Vite's historical >500 kB chunk warning is not hidden or treated as an optimization mandate. Build CI records actual emitted JS sizes and enforces the explicit budgets above. Current renderer code splitting may be changed only when measurement shows a useful improvement without weakening Mermaid/KaTeX behavior, lazy loading, or lifecycle ownership.
+Vite's historical >500 kB chunk warning is not hidden or treated as an optimization mandate. Build CI records actual emitted JS sizes and enforces the explicit budgets above.
+
+Mermaid 12's full ESM distribution emits ELK as a separate lazy chunk. MarkFlow keeps its historical non-ELK core tripwires unchanged and accounts for that upstream optional payload separately rather than relaxing the core limits. The gate requires exactly one `elk-*.js` chunk, records both core and total emitted bytes, and fails if the ELK payload exceeds its measured regression tripwire. This partition does not authorize eager ELK loading or an additional renderer engine.
+
+Current renderer code splitting may be changed only when measurement shows a useful improvement without weakening Mermaid/KaTeX behavior, lazy loading, or lifecycle ownership.
 
 ## Release gate
 

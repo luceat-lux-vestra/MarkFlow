@@ -92,6 +92,8 @@ export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSet
     const useMaxWidth = settings.mermaidSizeMode === "FIT_TO_VIEWPORT";
     return {
         startOnLoad: false,
+        layout: "dagre" as const,
+        look: "classic" as const,
         theme,
         themeVariables,
         securityLevel: "strict" as const,

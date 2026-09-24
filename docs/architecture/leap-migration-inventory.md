@@ -50,7 +50,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 5. Dirty/save/undo/redo and source durability use IntelliJ semantics, not browser flush/debounce/retry.
 6. Stale parse/projection/render results apply only to the exact current source/config identity.
 7. Unsupported/ambiguous/malformed/renderer-failed content degrades to exact source.
-8. Mermaid `11.17.2` and KaTeX `^0.18.7` remain the landed renderer baselines during this purge; renderer upgrades are separately gated.
+8. Mermaid and KaTeX remain separately gated renderer dependencies; #222 migrates the retained Mermaid engine from `11.17.2` to `12.0.0` while preserving the approved classic/Dagre presentation contract.
 9. Local resources and external navigation are host-owned capabilities.
 10. Optional renderer/JCEF failure never makes source editing unavailable.
 11. Every temporary old-editor mechanism has an explicit owner and deletion criterion.
@@ -82,7 +82,7 @@ The rows below preserve the audited migration responsibility while recording the
 | legacy Crepe/Milkdown rich editor + source reconstruction/AST/LCS | `DELETE` / `RESOLVED` | No rich semantic source authority/reconstruction | #144 first extracts renderers; #153 cutover; #154 purge |
 | CodeMirror/Lezer source-native editor/bootstrap/sync/live-preview integration | `DELETE` / `RESOLVED` | Native platform editor + source-neutral projection | #145/#152 prove target; #153 cutover; #154 purge |
 | Markdown parsing/source-range lessons independent of browser editor | `EXTRACT` -> target `RETAIN` responsibility | #145 selects immutable exact `Document` snapshot -> bundled JetBrains Markdown parser -> immutable `NativeProjectionPlan`; no second editable model | #145 proves initial parser/range/presentation boundary; later replacement requires current evidence |
-| Mermaid engine `11.17.2` | `RETAIN` | Single maintained Mermaid engine during migration | Replacement requires separate renderer decision |
+| Mermaid engine `12.0.0` | `RETAIN` | Single maintained Mermaid engine; classic look and Dagre layout are explicit compatibility policy | Replacement requires separate renderer decision |
 | Mermaid config/theme/palette/size/zoom/error/cache/stale-result semantics | `EXTRACT` | One editor-independent derived-renderer service | #144 extracts/proves before editor adapter deletion |
 | Mermaid `createCodeMirrorFeatureConfig`, `crepeSessionId`, DOM registry/IntersectionObserver/editor visibility coupling | `DELETE` after `EXTRACT` / `RESOLVED` | Native inlay consumes extracted service | #144 extracts; #148 proves native consumer; #154 deletes old adapters |
 | KaTeX `^0.18.7`, CSS/fonts, compatible inline/display semantics | `RETAIN` / `EXTRACT` | Direct KaTeX adapter in derived-renderer service | #144 extracts/proves; retained while capability supported |

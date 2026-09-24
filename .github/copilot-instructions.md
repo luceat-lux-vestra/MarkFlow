@@ -9,7 +9,7 @@ Key constraints:
 - Do not introduce or preserve host↔web edit mutation, custom source revisions, attachment/ACK/recovery, browser flush durability, JS editor state, or JCEF editor readiness as target architecture.
 - Reject stale parse/projection/render work using exact current source/config identity. Do not solve correctness with debounce, retries, sleeps, boolean guards, pooling, or prewarm.
 - Unsupported/ambiguous/renderer-failed content must remain editable exact source.
-- Mermaid `11.17.2` and KaTeX `^0.18.7` are the retained production renderer engines behind one derived-renderer service. Native presentation consumes that service; do not recreate deleted editor adapters or introduce duplicate engines.
+- Mermaid `12.0.0` and KaTeX `^0.18.7` are the retained production renderer engines behind one derived-renderer service. Mermaid 12 keeps `layout: dagre` and `look: classic` explicit unless a separate product decision changes them. Native presentation consumes that service; do not recreate deleted editor adapters or introduce duplicate engines.
 - TypeScript/Vite/Node are retained only for the isolated renderer build; JCEF is an optional renderer backend. None may gate source editing.
 - Local images/resources and external navigation are host-owned capabilities. Treat Markdown, raw HTML, links/resources and renderer inputs as untrusted.
 - Already-merged Leap code gets no preservation credit. Use #141 responsibility classifications and explicit TEMPORARY deletion criteria.

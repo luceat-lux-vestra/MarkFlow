@@ -105,27 +105,64 @@ jobs:
           scripts = sorted(root.rglob('*.js'))
           if not scripts:
               raise SystemExit('renderer build produced no JavaScript assets')
-          max_asset = max(scripts, key=lambda path: path.stat().st_size)
-          max_bytes = max_asset.stat().st_size
-          total_bytes = sum(path.stat().st_size for path in scripts)
-          max_budget = 700 * 1024
-          total_budget = 4000 * 1024
+
+          # Mermaid 12's full ESM build emits ELK as a separate lazy chunk.
+          # Keep the pre-v12 core tripwires unchanged and budget that upstream
+          # optional payload independently rather than weakening core limits.
+          elk_scripts = [path for path in scripts if path.name.startswith('elk-')]
+          if len(elk_scripts) != 1:
+              raise SystemExit(
+                  f'expected exactly one Mermaid ELK lazy chunk, found {[path.name for path in elk_scripts]}'
+              )
+          elk_asset = elk_scripts[0]
+          core_scripts = [path for path in scripts if path != elk_asset]
+          if not core_scripts:
+              raise SystemExit('renderer build produced no non-ELK JavaScript assets')
+
+          core_max_asset = max(core_scripts, key=lambda path: path.stat().st_size)
+          core_max_bytes = core_max_asset.stat().st_size
+          core_total_bytes = sum(path.stat().st_size for path in core_scripts)
+          elk_bytes = elk_asset.stat().st_size
+          total_bytes = core_total_bytes + elk_bytes
+
+          core_max_budget = 700 * 1024
+          core_total_budget = 4000 * 1024
+          elk_budget = 1536 * 1024
+
           report = {
-              'schemaVersion': 1,
+              'schemaVersion': 2,
               'scriptCount': len(scripts),
-              'maxSingleJsBytes': max_bytes,
-              'maxSingleJsPath': max_asset.relative_to(root).as_posix(),
+              'coreScriptCount': len(core_scripts),
+              'coreMaxSingleJsBytes': core_max_bytes,
+              'coreMaxSingleJsPath': core_max_asset.relative_to(root).as_posix(),
+              'coreTotalJsBytes': core_total_bytes,
+              'elkJsBytes': elk_bytes,
+              'elkJsPath': elk_asset.relative_to(root).as_posix(),
               'totalJsBytes': total_bytes,
-              'budgets': {'maxSingleJsBytes': max_budget, 'totalJsBytes': total_budget},
+              'budgets': {
+                  'coreMaxSingleJsBytes': core_max_budget,
+                  'coreTotalJsBytes': core_total_budget,
+                  'elkJsBytes': elk_budget,
+              },
           }
           report_path = Path('build/reports/renderer-bundle-budget.json')
           report_path.parent.mkdir(parents=True, exist_ok=True)
           report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
           print(json.dumps(report, sort_keys=True))
-          if max_bytes > max_budget:
-              raise SystemExit(f'largest renderer JS asset {max_asset.name} is {max_bytes} bytes; budget is {max_budget}')
-          if total_bytes > total_budget:
-              raise SystemExit(f'renderer JS total is {total_bytes} bytes; budget is {total_budget}')
+
+          if core_max_bytes > core_max_budget:
+              raise SystemExit(
+                  f'largest non-ELK renderer JS asset {core_max_asset.name} is {core_max_bytes} bytes; '
+                  f'budget is {core_max_budget}'
+              )
+          if core_total_bytes > core_total_budget:
+              raise SystemExit(
+                  f'non-ELK renderer JS total is {core_total_bytes} bytes; budget is {core_total_budget}'
+              )
+          if elk_bytes > elk_budget:
+              raise SystemExit(
+                  f'Mermaid ELK lazy chunk {elk_asset.name} is {elk_bytes} bytes; budget is {elk_budget}'
+              )
           PY
 
       - name: Prepare Plugin Artifact

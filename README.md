@@ -38,7 +38,7 @@ The target has these non-negotiable properties:
 - optional renderer/JCEF failure cannot make source editing unavailable;
 - local resources and external navigation are host-owned capabilities.
 
-ADR 0002 preserves renderer continuity during migration: Mermaid `11.17.2` and KaTeX `^0.18.7` are extracted from editor-specific integration, reused behind one derived-renderer service, and then consumed by native inlays. They are not deleted and recreated as collateral editor work.
+ADR 0002 preserves renderer continuity across the native-editor migration. The retained production engines are Mermaid `12.0.0` and KaTeX `^0.18.7`, reused behind one derived-renderer service and consumed by native inlays. Mermaid 12 keeps MarkFlow's established presentation contract explicit with classic look and Dagre layout rather than inheriting the new upstream defaults.
 
 JCEF/TypeScript/Vite/Node may remain only for actual isolated renderer consumers after editor migration. They do not become editor authority again.
 
