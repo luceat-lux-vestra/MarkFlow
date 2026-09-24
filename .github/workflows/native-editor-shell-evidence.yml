@@ -16,6 +16,7 @@ on:
       - 'docs/architecture/native-editor-shell-selection.md'
       - 'docs/architecture/0001-native-authority-projection-architecture.md'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/native-editor-shell-evidence.yml'
       - 'build.gradle.kts'
@@ -38,6 +39,7 @@ concurrency:
 
 jobs:
   probe:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Real IntelliJ native editor shell probe
     runs-on: ubuntu-latest
     timeout-minutes: 15
