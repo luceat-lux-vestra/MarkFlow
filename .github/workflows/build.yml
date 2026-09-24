@@ -8,7 +8,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -275,12 +275,14 @@ jobs:
       pull-requests: write
     steps:
       - name: Maximize Build Space
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -288,12 +290,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Java
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Qodana - Code Inspection
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: JetBrains/qodana-action@10be11607eb323a180e2b76b26c9c5cdceac3e77 # v2026.2.1
         with:
           args: --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
@@ -303,7 +307,7 @@ jobs:
       # The Qodana annotation/check output is not the authoritative gate. Missing or
       # malformed SARIF, scanner failure, and High/Critical findings all fail this job.
       - name: Enforce Qodana High severity gate
-        if: ${{ always() }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
         env:
           QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
         run: |
@@ -327,24 +331,28 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Maximize Build Space
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -352,15 +360,17 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
       - name: Run Plugin Verification tasks
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: ./gradlew verifyPlugin
 
       - name: Collect Plugin Verifier Result
-        if: ${{ always() }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pluginVerifier-result

@@ -10,6 +10,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
@@ -28,6 +29,7 @@ concurrency:
 
 jobs:
   audit:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Hardening audit
     runs-on: ubuntu-latest
     timeout-minutes: 20

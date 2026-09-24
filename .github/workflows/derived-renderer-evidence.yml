@@ -20,6 +20,7 @@ on:
       - 'webview/src/app/derived-renderer-service.ts'
       - 'webview/src/app/browser-derived-renderer-backends.ts'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/derived-renderer-evidence.yml'
       - 'build.gradle.kts'
@@ -52,6 +53,7 @@ concurrency:
 
 jobs:
   probe:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Isolated JCEF renderer (${{ matrix.id }})
     runs-on: ubuntu-latest
     timeout-minutes: 20

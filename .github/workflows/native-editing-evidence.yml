@@ -19,6 +19,7 @@ on:
       - 'docs/architecture/native-markdown-projection-foundation.md'
       - 'docs/architecture/README.md'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/native-editing-evidence.yml'
       - 'build.gradle.kts'
@@ -44,6 +45,7 @@ concurrency:
 
 jobs:
   probe:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Real IntelliJ native editing probe
     runs-on: ubuntu-latest
     timeout-minutes: 15

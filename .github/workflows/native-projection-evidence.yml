@@ -20,6 +20,7 @@ on:
       - 'docs/architecture/0001-native-authority-projection-architecture.md'
       - 'docs/architecture/README.md'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/native-projection-evidence.yml'
       - 'build.gradle.kts'
@@ -46,6 +47,7 @@ concurrency:
 
 jobs:
   probe:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Real IntelliJ native projection probe
     runs-on: ubuntu-latest
     timeout-minutes: 15
