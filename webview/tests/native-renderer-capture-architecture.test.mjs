@@ -34,7 +34,7 @@ test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentat
     assert.equal(bootstrap.includes("renderToString"), false);
     assert.equal(bootstrap.includes("mermaid.render"), false);
     assert.equal(packageJson.dependencies.katex, "^0.18.7");
-    assert.equal(packageJson.dependencies.mermaid, "11.17.2");
+    assert.equal(packageJson.dependencies.mermaid, "12.0.0");
     assert.equal(packageJson.overrides?.mermaid?.katex, "$katex");
     const katexPackages = Object.entries(packageLock.packages)
         .filter(([location]) => location === "node_modules/katex" || location.endsWith("/node_modules/katex"));

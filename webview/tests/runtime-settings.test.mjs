@@ -24,6 +24,8 @@ test("renderer defaults are fail-closed and deterministic", () => {
     assert.equal(resolved.mermaidZoomPercent, 100);
     const config = settings.createMermaidPreviewConfig(resolved);
     assert.equal(config.securityLevel, "strict");
+    assert.equal(config.layout, "dagre");
+    assert.equal(config.look, "classic");
     assert.equal(config.theme, "default");
     assert.equal(config.htmlLabels, false);
     assert.equal(config.flowchart.htmlLabels, false);

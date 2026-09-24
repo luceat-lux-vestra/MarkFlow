@@ -51,7 +51,7 @@ The renderer migration completed by extracting one editor-independent service, a
 
 The resulting invariants are:
 
-- Mermaid `11.17.2` and KaTeX `^0.18.7` are the retained production renderer engines unless a separate accepted renderer decision replaces them;
+- Mermaid `12.0.0` and KaTeX `^0.18.7` are the retained production renderer engines unless a separate accepted renderer decision replaces them; Mermaid 12 must keep the approved classic look and Dagre layout explicit rather than inheriting upstream defaults;
 - there is one production renderer engine per capability and no browser-editor adapter/session authority;
 - TypeScript/Vite/Node are renderer-only build/runtime dependencies;
 - JCEF is an optional isolated renderer backend and never gates typing, save, undo/redo, settings, or exact-source fallback;

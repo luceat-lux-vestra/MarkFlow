@@ -167,15 +167,15 @@ internal object DerivedRendererProbe {
                     check(result.content?.contains("<svg") == true)
                     checkPresentationArtifact(result)
                 },
-                next = ::runMermaidMathSuccess,
+                next = ::runMermaidMathLiteralFallback,
             )
         }
 
-        private fun runMermaidMathSuccess() {
+        private fun runMermaidMathLiteralFallback() {
             runRenderCase(
-                id = "mermaid-math-success",
+                id = "mermaid-math-literal-fallback",
                 request = request(
-                    id = "mermaid-math-success",
+                    id = "mermaid-math-literal-fallback",
                     kind = DerivedRendererKind.MERMAID,
                     source = "graph TD; A[\"\u0024\u0024a^2 + b^2 = c^2\u0024\u0024\"]-->B",
                     configJson = MERMAID_CONFIG,
@@ -183,13 +183,28 @@ internal object DerivedRendererProbe {
                 verify = { result ->
                     check(result.status == "success")
                     check(result.mediaType == "image/svg+xml")
-                    val content = requireNotNull(result.content) { "Mermaid math SVG content missing" }
+                    val content = requireNotNull(result.content) { "Mermaid math-literal SVG content missing" }
                     check(content.contains("<svg"))
-                    check(content.contains("katex") || content.contains("<math")) {
-                        "Mermaid math output did not contain KaTeX/MathML markup"
+                    check(content.contains("\u0024\u0024a^2")) {
+                        "Mermaid math-literal output lost the opening literal delimiter/source"
+                    }
+                    check(content.contains("c^2\u0024\u0024")) {
+                        "Mermaid math-literal output lost the closing literal delimiter/source"
+                    }
+                    check(!content.contains("<foreignObject")) {
+                        "Mermaid math-literal output unexpectedly enabled HTML labels"
+                    }
+                    check(!content.contains("<math")) {
+                        "Mermaid math-literal output unexpectedly activated MathML"
+                    }
+                    check(!content.contains("class=\"katex")) {
+                        "Mermaid math-literal output unexpectedly activated KaTeX HTML markup"
+                    }
+                    check(content.contains("data-look=\"classic\"")) {
+                        "Mermaid math-literal output did not preserve classic look"
                     }
                     checkPresentationArtifact(result)
-                    persistMermaidMathArtifacts(result)
+                    persistMermaidMathLiteralFallbackArtifacts(result)
                 },
                 next = ::runMermaidFailure,
             )
@@ -356,14 +371,14 @@ internal object DerivedRendererProbe {
             }
         }
 
-        private fun persistMermaidMathArtifacts(result: DerivedRendererRuntimeResult) {
+        private fun persistMermaidMathLiteralFallbackArtifacts(result: DerivedRendererRuntimeResult) {
             val directory = requireNotNull(output.parent) { "renderer probe output directory missing" }
             Files.createDirectories(directory)
-            val artifact = requireNotNull(result.presentationArtifact) { "Mermaid math PNG artifact missing" }
-            Files.write(directory.resolve("mermaid-math.png"), Base64.getDecoder().decode(artifact.contentBase64))
+            val artifact = requireNotNull(result.presentationArtifact) { "Mermaid math-literal PNG artifact missing" }
+            Files.write(directory.resolve("mermaid-math-literal-fallback.png"), Base64.getDecoder().decode(artifact.contentBase64))
             Files.writeString(
-                directory.resolve("mermaid-math.svg"),
-                requireNotNull(result.content) { "Mermaid math SVG artifact missing" },
+                directory.resolve("mermaid-math-literal-fallback.svg"),
+                requireNotNull(result.content) { "Mermaid math-literal SVG artifact missing" },
                 StandardCharsets.UTF_8,
             )
         }

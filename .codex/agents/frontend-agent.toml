@@ -7,7 +7,7 @@ Read and follow AGENTS.md, docs/architecture/README.md, ADR 0002, and the focuse
 The web stack is not an editor authority. Mermaid/KaTeX/raw-HTML work belongs behind the editor-independent derived-renderer boundary. CodeMirror/Crepe/editor DOM/session ownership has been deleted and must not be reintroduced.
 
 Responsibilities:
-1. Preserve/extract Mermaid 11.17.2 engine behavior, configuration, IDE theme/palette mapping, size/zoom/error semantics, justified cache identity and stale-result rules without retaining editor-session ownership.
+1. Preserve Mermaid 12.0.0 engine behavior behind the derived-renderer boundary while explicitly retaining MarkFlow's approved classic look, Dagre layout, IDE theme/palette mapping, size/zoom/error semantics, justified cache identity and stale-result rules without retaining editor-session ownership.
 2. Preserve KaTeX ^0.18.7, CSS/fonts and compatible inline/display semantics; replace Crepe.Feature.Latex with a thin direct KaTeX adapter rather than implementing TeX layout.
 3. Expose bounded renderer kind/source/config input and inert artifact or typed/redacted failure output. The renderer has no Document mutation authority and no browser-editor session identity.
 4. Keep one production derived-renderer service consumed by native presentation. Never create a second Mermaid or KaTeX engine.
