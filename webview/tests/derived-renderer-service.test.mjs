@@ -1,23 +1,23 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import {mkdtemp, rm} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import ts from "typescript";
+import {pathToFileURL} from "node:url";
+import {compileTypeScriptFixtures} from "./typescript-cli.mjs";
 
-const sourceUrl = new URL("../src/app/derived-renderer-service.ts", import.meta.url);
-const source = await readFile(sourceUrl, "utf8");
-const transpiled = ts.transpileModule(source, {
-    compilerOptions: {
-        target: ts.ScriptTarget.ES2023,
-        module: ts.ModuleKind.ESNext,
-        strict: true
-    },
-    fileName: "derived-renderer-service.ts"
-}).outputText;
-const moduleUrl = `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
+const tempRoot = await mkdtemp(path.join(os.tmpdir(), "markflow-derived-renderer-service-"));
+await compileTypeScriptFixtures({
+    sourceNames: ["derived-renderer-service.ts"],
+    outDir: tempRoot,
+    target: "ES2023"
+});
 const {
     DerivedRendererBackendUnavailableError,
     DerivedRendererService
-} = await import(moduleUrl);
+} = await import(pathToFileURL(path.join(tempRoot, "derived-renderer-service.js")).href);
+
+test.after(async () => rm(tempRoot, {recursive: true, force: true}));
 
 const identity = (sourceGeneration = "s1", configGeneration = "c1") => ({sourceGeneration, configGeneration});
 const success = (content = "<svg/>", mediaType = "image/svg+xml") => async () => ({content, mediaType});
