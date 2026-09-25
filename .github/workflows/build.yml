@@ -8,7 +8,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -17,6 +17,7 @@ on:
         type: string
 
 permissions:
+  checks: read # Needed to inspect prior exact-SHA check results for Fast evidence reuse.
   contents: read
 
 concurrency:
@@ -29,14 +30,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Reuse exact-SHA Fast evidence
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_CHECK: Build
+        run: |
+          set -euo pipefail
+          checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
+          current_run="/actions/runs/${GITHUB_RUN_ID}/"
+          latest="$(jq -c --arg name "$EXPECTED_CHECK" --arg current_run "$current_run" '
+            [.check_runs[]
+             | select(.name == $name and .app.slug == "github-actions")
+             | select(((.details_url // "") | contains($current_run)) | not)]
+            | if length == 0 then empty else max_by(.id) end
+          ' <<<"$checks")"
+          if [ -z "$latest" ]; then
+            echo "::error::No prior '$EXPECTED_CHECK' check exists for exact HEAD $EXPECTED_SHA."
+            exit 1
+          fi
+          status="$(jq -r '.status' <<<"$latest")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::Latest prior '$EXPECTED_CHECK' evidence for exact HEAD $EXPECTED_SHA is status=$status conclusion=$conclusion; refusing stale-success reuse."
+            exit 1
+          fi
+          echo "Reused latest successful Fast evidence for $EXPECTED_CHECK at $EXPECTED_SHA."
+
       - name: Maximize Build Space
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Validate dispatched target
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (github.event_name == 'workflow_dispatch') }}
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
@@ -55,32 +85,29 @@ jobs:
           printf 'Validated main-history target: %s\n' "$TARGET_SHA"
 
       - name: Fetch Sources
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
-      - name: Reject squash CI-skip directives
-        if: ${{ github.event_name == 'pull_request' }}
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
-        run: python3 .github/scripts/check-squash-message-safety.py
 
       - name: Record dispatched validation target
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (github.event_name == 'workflow_dispatch') }}
         env:
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           printf 'Validation target: %s\n' "$TARGET_SHA"
 
       - name: Setup Java
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -88,12 +115,15 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Build plugin
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         run: ./gradlew buildPlugin
 
       - name: Enforce renderer bundle budget
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -166,6 +196,7 @@ jobs:
           PY
 
       - name: Prepare Plugin Artifact
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         id: artifact
         shell: bash
         run: |
@@ -182,6 +213,7 @@ jobs:
           printf 'filename=%s\n' "${filename%.zip}" >> "$GITHUB_OUTPUT"
 
       - name: Verify packaged webview is renderer-only
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -232,12 +264,14 @@ jobs:
           PY
 
       - name: Upload artifact
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.artifact.outputs.filename }}
           path: ./build/distributions/content/*/*
 
       - name: Upload renderer bundle budget
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: renderer-bundle-budget
@@ -250,25 +284,57 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Reuse exact-SHA Fast evidence
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_CHECK: Test
+        run: |
+          set -euo pipefail
+          checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
+          current_run="/actions/runs/${GITHUB_RUN_ID}/"
+          latest="$(jq -c --arg name "$EXPECTED_CHECK" --arg current_run "$current_run" '
+            [.check_runs[]
+             | select(.name == $name and .app.slug == "github-actions")
+             | select(((.details_url // "") | contains($current_run)) | not)]
+            | if length == 0 then empty else max_by(.id) end
+          ' <<<"$checks")"
+          if [ -z "$latest" ]; then
+            echo "::error::No prior '$EXPECTED_CHECK' check exists for exact HEAD $EXPECTED_SHA."
+            exit 1
+          fi
+          status="$(jq -r '.status' <<<"$latest")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::Latest prior '$EXPECTED_CHECK' evidence for exact HEAD $EXPECTED_SHA is status=$status conclusion=$conclusion; refusing stale-success reuse."
+            exit 1
+          fi
+          echo "Reused latest successful Fast evidence for $EXPECTED_CHECK at $EXPECTED_SHA."
+
       - name: Maximize Build Space
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -276,25 +342,29 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
       - name: Run Tests
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         run: ./gradlew check
 
       - name: Run webview source tests
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         working-directory: webview
         run: npm ci --no-audit --no-fund && npm run test:source
 
       - name: Collect Tests Result
-        if: ${{ failure() }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (failure()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tests-result
           path: ${{ github.workspace }}/build/reports/tests
 
       - name: Upload Kover Coverage Report
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kover-coverage

@@ -118,13 +118,15 @@ fi
 squash_guard=".github/scripts/check-squash-message-safety.py"
 [ -f "$squash_guard" ] || die "squash message safety guard is missing"
 python3 "$squash_guard" --self-test >/dev/null || die "squash message safety guard fixtures failed"
-grep -Fq 'types: [opened, synchronize, reopened, edited, ready_for_review]' "$build_workflow" || die "required Build workflow does not revalidate squash metadata edits and final-gate readiness"
+grep -Fq 'types: [opened, synchronize, reopened, ready_for_review]' "$build_workflow" || die "required Build workflow does not revalidate final-gate readiness"
 grep -q '^  workflow_dispatch:$' "$build_workflow" || die "required Build workflow has no exact-SHA recovery trigger"
 grep -q '^      target_sha:$' "$build_workflow" || die "required Build recovery trigger has no target_sha input"
-grep -q 'Reject squash CI-skip directives' "$build_workflow" || die "required Build workflow does not reject unsafe squash metadata"
-grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' "$build_workflow" || die "squash guard does not inspect PR title"
-grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" "$build_workflow" || die "squash guard does not inspect PR body"
-grep -q 'python3 .github/scripts/check-squash-message-safety.py' "$build_workflow" || die "required Build workflow does not invoke squash message safety guard"
+failure_workflow=".github/workflows/failure-declaration.yml"
+grep -q '^[[:space:]]*- edited$' "$failure_workflow" || die "failure declaration workflow does not revalidate squash metadata edits"
+grep -q 'Reject squash CI-skip directives' "$failure_workflow" || die "failure declaration workflow does not reject unsafe squash metadata"
+grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' "$failure_workflow" || die "squash guard does not inspect PR title"
+grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" "$failure_workflow" || die "squash guard does not inspect PR body"
+grep -q 'python3 .github/scripts/check-squash-message-safety.py' "$failure_workflow" || die "failure declaration workflow does not invoke squash message safety guard"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$build_workflow" "required Build workflow"
 
@@ -153,9 +155,9 @@ grep -q 'uses: actions/upload-artifact@' <<<"$coverage_block" || die "Kover cove
 grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artifact name is missing"
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
-if grep -q '^[[:space:]]*if:' <<<"$coverage_block"; then
-  die "Kover coverage artifact step must not be conditionally suppressed"
-fi
+coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
+expected_coverage_if='if: ${{ github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' }}'
+[ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact must only be suppressed by exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
 fi

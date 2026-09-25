@@ -10,7 +10,8 @@ on:
       - synchronize
       - edited
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: failure-triage-${{ github.event.pull_request.number }}
@@ -22,6 +23,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Check out exact PR head for squash-message policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Reject squash CI-skip directives
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: python3 .github/scripts/check-squash-message-safety.py
+
       - name: Validate failure-remediation declaration
         uses: luceat-lux-vestra/.github/actions/failure-declaration@f35a983aa477772bc0cb579f7fe1f47c4ff852a0
         with:
