@@ -38,8 +38,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
           EXPECTED_JOB: Build
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
+          if [ "$SAME_REPOSITORY" != "true" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR cannot reuse base-repository Build evidence; Final will execute the local Fast checks."
+            exit 0
+          fi
           base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$BASE_SHA" --jq '.sha')"
           head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$EXPECTED_SHA" --jq '.sha')"
           if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
@@ -325,8 +331,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
           EXPECTED_JOB: Test
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
+          if [ "$SAME_REPOSITORY" != "true" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR cannot reuse base-repository Build evidence; Final will execute the local Fast checks."
+            exit 0
+          fi
           base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$BASE_SHA" --jq '.sha')"
           head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$EXPECTED_SHA" --jq '.sha')"
           if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
