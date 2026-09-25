@@ -17,7 +17,7 @@ on:
         type: string
 
 permissions:
-  checks: read # Needed to inspect prior exact-SHA check results for Fast evidence reuse.
+  actions: read # Needed to inspect the canonical exact-SHA build.yml workflow run.
   contents: read
 
 concurrency:
@@ -31,42 +31,77 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Reuse exact-SHA Fast evidence
+        id: fast-evidence
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_CHECK: Build
+          EXPECTED_JOB: Build
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
-          checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
-          current_run="/actions/runs/${GITHUB_RUN_ID}/"
-          latest="$(jq -c --arg name "$EXPECTED_CHECK" --arg current_run "$current_run" '
-            [.check_runs[]
-             | select(.name == $name and .app.slug == "github-actions")
-             | select(((.details_url // "") | contains($current_run)) | not)]
-            | if length == 0 then empty else max_by(.id) end
-          ' <<<"$checks")"
-          if [ -z "$latest" ]; then
-            echo "::error::No prior '$EXPECTED_CHECK' check exists for exact HEAD $EXPECTED_SHA."
-            exit 1
+          if [ "$SAME_REPOSITORY" != "true" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR cannot reuse base-repository workflow evidence; Final will execute the local Fast checks."
+            exit 0
           fi
-          status="$(jq -r '.status' <<<"$latest")"
-          conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
-          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
-            echo "::error::Latest prior '$EXPECTED_CHECK' evidence for exact HEAD $EXPECTED_SHA is status=$status conclusion=$conclusion; refusing stale-success reuse."
-            exit 1
+          if ! base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$BASE_SHA" --jq '.sha' 2>/dev/null)"; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Base branch has no canonical build.yml producer; Final will execute the local Fast checks."
+            exit 0
           fi
-          echo "Reused latest successful Fast evidence for $EXPECTED_CHECK at $EXPECTED_SHA."
+          head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$EXPECTED_SHA" --jq '.sha')"
+          if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fast producer workflow changed on this PR; Final will execute local Fast checks instead of trusting self-modified evidence."
+            exit 0
+          fi
 
+          for _ in $(seq 1 60); do
+            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
+            latest="$(jq -c --arg sha "$EXPECTED_SHA" --arg current "$GITHUB_RUN_ID" '
+              [.workflow_runs[]
+               | select(.head_sha == $sha and .event == "pull_request")
+               | select((.id | tostring) != $current)]
+              | if length == 0 then empty else max_by(.id) end
+            ' <<<"$runs")"
+            if [ -z "$latest" ]; then sleep 5; continue; fi
+            status="$(jq -r '.status' <<<"$latest")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+            if [ "$status" != "completed" ]; then sleep 5; continue; fi
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::Canonical build.yml workflow for exact HEAD $EXPECTED_SHA concluded '$conclusion'; refusing stale or failed evidence."
+              exit 1
+            fi
+            run_id="$(jq -r '.id' <<<"$latest")"
+            jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
+            if [ "$matching_jobs" != "1" ]; then
+              echo "::error::Canonical run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
+              exit 1
+            fi
+            job_status="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | .status' <<<"$jobs")"
+            job_conclusion="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")"
+            if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
+              echo "::error::Canonical '$EXPECTED_JOB' evidence for exact HEAD $EXPECTED_SHA is status=$job_status conclusion=$job_conclusion."
+              exit 1
+            fi
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing canonical successful '$EXPECTED_JOB' evidence for exact HEAD $EXPECTED_SHA."
+            exit 0
+          done
+          echo "::error::Timed out waiting for canonical exact-SHA '$EXPECTED_JOB' evidence at $EXPECTED_SHA."
+          exit 1
       - name: Maximize Build Space
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Validate dispatched target
-        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && (github.event_name == 'workflow_dispatch') }}
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
@@ -85,7 +120,7 @@ jobs:
           printf 'Validated main-history target: %s\n' "$TARGET_SHA"
 
       - name: Fetch Sources
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -93,21 +128,21 @@ jobs:
 
 
       - name: Record dispatched validation target
-        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && (github.event_name == 'workflow_dispatch') }}
         env:
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           printf 'Validation target: %s\n' "$TARGET_SHA"
 
       - name: Setup Java
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -115,15 +150,15 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Build plugin
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         run: ./gradlew buildPlugin
 
       - name: Enforce renderer bundle budget
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -196,7 +231,7 @@ jobs:
           PY
 
       - name: Prepare Plugin Artifact
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         id: artifact
         shell: bash
         run: |
@@ -213,7 +248,7 @@ jobs:
           printf 'filename=%s\n' "${filename%.zip}" >> "$GITHUB_OUTPUT"
 
       - name: Verify packaged webview is renderer-only
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -264,14 +299,14 @@ jobs:
           PY
 
       - name: Upload artifact
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.artifact.outputs.filename }}
           path: ./build/distributions/content/*/*
 
       - name: Upload renderer bundle budget
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: renderer-bundle-budget
@@ -285,56 +320,91 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Reuse exact-SHA Fast evidence
+        id: fast-evidence
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_CHECK: Test
+          EXPECTED_JOB: Test
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
-          checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
-          current_run="/actions/runs/${GITHUB_RUN_ID}/"
-          latest="$(jq -c --arg name "$EXPECTED_CHECK" --arg current_run "$current_run" '
-            [.check_runs[]
-             | select(.name == $name and .app.slug == "github-actions")
-             | select(((.details_url // "") | contains($current_run)) | not)]
-            | if length == 0 then empty else max_by(.id) end
-          ' <<<"$checks")"
-          if [ -z "$latest" ]; then
-            echo "::error::No prior '$EXPECTED_CHECK' check exists for exact HEAD $EXPECTED_SHA."
-            exit 1
+          if [ "$SAME_REPOSITORY" != "true" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR cannot reuse base-repository workflow evidence; Final will execute the local Fast checks."
+            exit 0
           fi
-          status="$(jq -r '.status' <<<"$latest")"
-          conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
-          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
-            echo "::error::Latest prior '$EXPECTED_CHECK' evidence for exact HEAD $EXPECTED_SHA is status=$status conclusion=$conclusion; refusing stale-success reuse."
-            exit 1
+          if ! base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$BASE_SHA" --jq '.sha' 2>/dev/null)"; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Base branch has no canonical build.yml producer; Final will execute the local Fast checks."
+            exit 0
           fi
-          echo "Reused latest successful Fast evidence for $EXPECTED_CHECK at $EXPECTED_SHA."
+          head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/build.yml?ref=$EXPECTED_SHA" --jq '.sha')"
+          if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fast producer workflow changed on this PR; Final will execute local Fast checks instead of trusting self-modified evidence."
+            exit 0
+          fi
 
+          for _ in $(seq 1 60); do
+            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
+            latest="$(jq -c --arg sha "$EXPECTED_SHA" --arg current "$GITHUB_RUN_ID" '
+              [.workflow_runs[]
+               | select(.head_sha == $sha and .event == "pull_request")
+               | select((.id | tostring) != $current)]
+              | if length == 0 then empty else max_by(.id) end
+            ' <<<"$runs")"
+            if [ -z "$latest" ]; then sleep 5; continue; fi
+            status="$(jq -r '.status' <<<"$latest")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+            if [ "$status" != "completed" ]; then sleep 5; continue; fi
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::Canonical build.yml workflow for exact HEAD $EXPECTED_SHA concluded '$conclusion'; refusing stale or failed evidence."
+              exit 1
+            fi
+            run_id="$(jq -r '.id' <<<"$latest")"
+            jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
+            if [ "$matching_jobs" != "1" ]; then
+              echo "::error::Canonical run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
+              exit 1
+            fi
+            job_status="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | .status' <<<"$jobs")"
+            job_conclusion="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")"
+            if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
+              echo "::error::Canonical '$EXPECTED_JOB' evidence for exact HEAD $EXPECTED_SHA is status=$job_status conclusion=$job_conclusion."
+              exit 1
+            fi
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing canonical successful '$EXPECTED_JOB' evidence for exact HEAD $EXPECTED_SHA."
+            exit 0
+          done
+          echo "::error::Timed out waiting for canonical exact-SHA '$EXPECTED_JOB' evidence at $EXPECTED_SHA."
+          exit 1
       - name: Maximize Build Space
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -342,29 +412,29 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
       - name: Run Tests
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         run: ./gradlew check
 
       - name: Run webview source tests
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         working-directory: webview
         run: npm ci --no-audit --no-fund && npm run test:source
 
       - name: Collect Tests Result
-        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review') && (failure()) }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && (failure()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tests-result
           path: ${{ github.workspace }}/build/reports/tests
 
       - name: Upload Kover Coverage Report
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kover-coverage
