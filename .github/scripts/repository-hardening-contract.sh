@@ -156,7 +156,7 @@ grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artif
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
 coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
-expected_coverage_if='if: ${{ github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' }}'
+expected_coverage_if='if: ${{ github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"' }}'
 [ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact must only be suppressed by exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
