@@ -2,7 +2,7 @@
 
 Release/publication is a separate irreversible gate from implementation merge.
 
-This document defines the repository-level release boundary and authorization discipline. Track #61 owns the active publication path's immutable-tag, version/artifact identity, signing, provenance, and recovery implementation. Until that Track's exit criteria are proven against merged `main` and live settings, this document must not be read as evidence that publication is safe.
+This document defines the repository-level release boundary and authorization discipline. Track #61 completed the publication-path design and implementation for immutable tags, version/artifact identity, signing, provenance, and recovery. This document is the maintained operational contract after that Track's closure; closure of #61 does not authorize any particular release or weaken the per-release evidence and maintainer-authorization requirements below.
 
 The operational recovery procedure for an ambiguous or partial Marketplace publication is maintained in [`recovery.md`](./recovery.md).
 

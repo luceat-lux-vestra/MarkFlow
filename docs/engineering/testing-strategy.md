@@ -41,7 +41,7 @@ Cover real IntelliJ behavior for:
 
 ### Derived renderers
 
-Mermaid/KaTeX migration evidence must prove the **same extracted renderer service**, not a duplicate engine:
+Mermaid/KaTeX renderer evidence must prove the **same production renderer service**, not a duplicate engine:
 
 - Mermaid representative success/error corpus, theme/palette/size/zoom/error settings;
 - KaTeX inline/display success/error and density;

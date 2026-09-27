@@ -46,7 +46,7 @@ A narrow tag-name classifier is applied only after the parser has established an
 
 ## Sanitization policy
 
-The sanitizer is deliberately stricter than general-purpose browser HTML sanitization because #82 does not grant raw HTML an ambient capability side path.
+The sanitizer is deliberately stricter than general-purpose browser HTML sanitization because the trust policy completed through #82 does not grant raw HTML an ambient capability side path.
 
 Accepted preview output contains only static formatting/table elements. Source attributes are not copied into the preview. The complete preview fails closed when input contains capability-bearing or active constructs, including:
 
@@ -58,7 +58,7 @@ Accepted preview output contains only static formatting/table elements. Source a
 - `style`;
 - `href`, `src`, `srcset`, `action`, `poster`, `background`, `xlink:href` and equivalent navigation/resource attributes.
 
-This means even an otherwise benign raw-HTML `href`/`src` is preview-blocked until an explicit host-mediated policy is implemented. Markdown links and document-relative Markdown images continue to use the dedicated #147 host-owned navigation/resource path. Raw HTML cannot bypass it.
+This means even an otherwise benign raw-HTML `href`/`src` is preview-blocked under the current fail-closed policy. Enabling such preview capabilities would require a future explicit host-mediated policy. Markdown links and document-relative Markdown images continue to use the dedicated #147 host-owned navigation/resource path. Raw HTML cannot bypass it.
 
 Blocked preview is not an editor error: exact Markdown source remains visible and editable.
 
@@ -78,6 +78,6 @@ Sanitizer input and output are bounded to 64 KiB each and node processing is bou
 - disposal removes owned folds/inlays and invalidates pending work;
 - presentation install checks that source text and modification stamp remain unchanged.
 
-## Production cutover boundary
+## Production cutover disposition
 
-#149 proves the target raw-HTML planner, trust boundary, renderer and per-editor presentation owner. It does **not** change the normal production editor provider. #153 must attach this owner to the selected production native presentation path and run the retained full-product acceptance/regression matrix before production cutover can complete.
+#149 established the raw-HTML planner, trust boundary, renderer and per-editor presentation owner without changing editor authority. #153 subsequently attached this owner to the production native presentation path and completed cutover with the retained acceptance/regression evidence. The raw-HTML boundary described here is therefore a production contract, not a pending migration step.

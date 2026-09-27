@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Historical plan.** This file predates the completed Architecture Leap (#52/#84/#156) and may name browser-editor components that no longer exist. It is retained for repository archaeology only; use `../README.md`, `../docs/README.md`, and `../docs/architecture/README.md` for current behavior and architecture.
+
 # MarkFlow Audit And Boundary Map
 
 ## Goal

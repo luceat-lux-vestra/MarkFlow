@@ -1,6 +1,6 @@
 # Native host resources and navigation
 
-Status: #147 target implementation/evidence boundary for Architecture Leap #52.
+Status: production host-resource/navigation contract established by completed #147 under the closed Architecture Leap #52.
 
 ## Decision
 
@@ -39,15 +39,16 @@ The historical source-native browser bridge delegated its HTTP(S) authorization 
 
 ## Ownership and non-goals
 
-#147 owns existing Markdown local-image projection and external navigation only.
+Historical execution ownership was split across the Leap Tasks:
 
-- #150/#151 own drag/drop, chooser and clipboard image-file import plus Markdown insertion.
-- #149 owns raw-HTML source preservation and isolated/sanitized derived preview.
-- #152 owns remaining ordinary Markdown WYSIWYG parity.
-- #153 owns production `FileEditorProvider` cutover and fallback/recovery policy.
-- #154 owns removal of the temporary browser editor/protocol/loopback migration surface.
+- #147 established Markdown local-image projection and external navigation;
+- #150/#151 completed drag/drop, chooser and clipboard image-file import plus Markdown insertion;
+- #149 completed raw-HTML source preservation and isolated/sanitized derived preview;
+- #152 completed ordinary Markdown WYSIWYG parity;
+- #153 completed production native-editor cutover;
+- #154 removed the temporary browser editor/protocol/loopback migration surface.
 
-No code in #147 changes the production editor provider.
+These Tasks are closed. Their boundaries remain provenance for the production host-resource contract; they are not an active dependency graph.
 
 ## Required evidence
 

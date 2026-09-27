@@ -1,6 +1,8 @@
 # Leap target architecture comparison
 
-Status: architecture decision evidence for #140 / gate #139
+Status: historical architecture-selection evidence for completed #140 / gate #139
+
+> Current state: the selected native-authority architecture was implemented through #143–#156; #84 and #52 are closed. Future-tense/current-repository wording below is preserved as decision-time evidence. Use `README.md` and `docs/architecture/README.md` for current runtime and architecture status.
 
 Base audited: `main` at `93488a039845f3c601da7a557fbabf34c19a9928`
 

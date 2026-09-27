@@ -1,6 +1,6 @@
 # Leap migration inventory and execution map
 
-Status: repository migration authority for #141 under accepted ADR 0001 and ADR 0002; execution status reconciled through completed #155 renderer/toolchain convergence with #156 active as the final quality gate
+Status: completed migration authority/provenance for #141 under accepted ADR 0001 and ADR 0002; #143–#156, #84, and #52 are closed
 
 Original #141 audited base:
 
@@ -16,7 +16,7 @@ Current execution resolutions relevant to this inventory:
 - #143 is completed and selected **`PLATFORM_TEXT_EDITOR_AUGMENTATION`** — normal IntelliJ platform text-editor augmentation, not a MarkFlow-owned replacement `FileEditor` shell;
 - #145 is completed and establishes the immutable snapshot/parser/projection-plan/per-editor-controller foundation over that selected shell;
 - #146 established target paste/state/representative-rich-edit ownership as platform paste/command/undo/`FileEditorState` semantics plus narrowly scoped MarkFlow payload/local-edit behavior;
-- #153 and #154 are completed, production editing is platform-native, superseded browser editor/provider/protocol machinery is deleted, and #155 completed retained renderer-only dependency/toolchain/JCEF/settings convergence. #156 is the active final quality/convergence gate.
+- #153 and #154 completed production native editing and superseded browser editor/provider/protocol removal; #155 completed retained renderer-only dependency/toolchain/JCEF/settings convergence; #156 completed the final quality/convergence gate, after which #84 and #52 closed.
 
 ## Authority hierarchy
 
@@ -50,7 +50,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 5. Dirty/save/undo/redo and source durability use IntelliJ semantics, not browser flush/debounce/retry.
 6. Stale parse/projection/render results apply only to the exact current source/config identity.
 7. Unsupported/ambiguous/malformed/renderer-failed content degrades to exact source.
-8. Mermaid and KaTeX remain separately gated renderer dependencies; #222 migrates the retained Mermaid engine from `11.17.2` to `12.0.0` while preserving the approved classic/Dagre presentation contract.
+8. Mermaid and KaTeX remain separately gated renderer dependencies; completed #222 migrated the retained Mermaid engine from `11.17.2` to `12.0.0` while preserving the approved classic/Dagre presentation contract.
 9. Local resources and external navigation are host-owned capabilities.
 10. Optional renderer/JCEF failure never makes source editing unavailable.
 11. Every temporary old-editor mechanism has an explicit owner and deletion criterion.
@@ -60,7 +60,7 @@ Sunk cost, recency, test volume and smaller diff size are not retention argument
 
 The rows below preserve the audited migration responsibility while recording the final disposition. Historical migration-only rows whose deletion/replacement criteria have been satisfied are marked `RESOLVED`; no `TEMPORARY` production mechanism remains unresolved at #156 entry. A superseded row is historical evidence, not permission to recreate the mechanism.
 
-| Audited responsibility / mechanism | Classification | Target disposition | Temporary owner / deletion criterion |
+| Audited responsibility / mechanism | Classification | Target disposition | Historical temporary owner / deletion criterion |
 | --- | --- | --- | --- |
 | #78 product/fidelity contract + hostile/fidelity corpus | `RETAIN` | Product/evidence authority independent of editor implementation | Permanent while capability remains supported |
 | `MarkFlowFileSupport` supported-file recognition | `RETAIN` | Host-level recognition | Revisit only by product-scope decision |
@@ -117,7 +117,7 @@ No temporary item may be retained merely for rollback comfort.
 - **#153 — COMPLETED**: production native-editor cutover made the old editor unreachable as a normal authority.
 - **#154 — COMPLETED**: deleted superseded browser editors, source sync protocols, editor trust/resource realm, browser lease/recovery and mechanism-only tests.
 - **#155 — COMPLETED**: dependency/toolchain/JCEF/settings convergence is complete over actual retained renderer consumers.
-- **#156 — ACTIVE**: prove no hidden temporary mechanism remains through final compatibility/lifecycle/performance/release convergence.
+- **#156 — COMPLETED**: final compatibility/lifecycle/performance/release convergence proved no unresolved production `TEMPORARY` mechanism remained.
 
 #156 entry audit: unresolved `TEMPORARY` production rows = **0**. Any reintroduced temporary editor/protocol/trust mechanism is a new failure, not rollback compatibility.
 
@@ -195,7 +195,7 @@ Audited contributor/agent/engineering authority that could otherwise direct work
 | `SECURITY.md` | JCEF editor/protocol as generic target trust boundary | host resources + optional isolated renderer target; deleted editor surfaces are no longer live trust boundaries |
 | `docs/engineering/testing-strategy.md` | host↔web synchronization as permanent contract suite | native source/projection/renderer proof; deleted protocol harnesses stay absent after purge |
 | `README.md` | target described as browser custom editor + native fallback/coexistence | describes native production editing and optional renderer-only JCEF accurately |
-| `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records the completed #143–#155 migration chain and #156 as the active final convergence gate |
+| `docs/architecture/README.md` | transitional wording around PR #142 / pre-#143 execution state | records the completed #143–#156 migration chain and closed #84/#52 state |
 
 Historical `plans/*`, CHANGELOG entries and decision-time ADR context are preserved as historical record rather than rewritten into current runtime claims. #154 removed the temporary browser editor mechanisms; current guidance/tests may retain only explicit historical context or negative absence checks, not instructions to recreate them.
 
@@ -219,7 +219,7 @@ Historical `plans/*`, CHANGELOG entries and decision-time ADR context are preser
 - **#153 — COMPLETED** `task(leap): cut production MarkFlow editing over to the native projection architecture` — production native ownership and post-main evidence are complete.
 - **#154 — COMPLETED** `task(leap): purge superseded browser editors, sync protocols and editor trust machinery` — the unreachable browser editing architecture and editor transport machinery are removed.
 - **#155 — COMPLETED** `task(build): converge renderer dependencies, toolchain, JCEF packaging and settings after editor purge` — renderer-only tooling/JCEF/settings convergence is merged and post-main proven.
-- **#156 — ACTIVE** `task(quality): prove native Leap convergence across compatibility, lifecycle, performance and release gates` — the only remaining #143–#156 migration task; completion makes #84 eligible to close.
+- **#156 — COMPLETED** `task(quality): prove native Leap convergence across compatibility, lifecycle, performance and release gates` — final convergence completed; #84 and #52 subsequently closed.
 
 ## Dependency graph
 
@@ -256,10 +256,10 @@ Historical `plans/*`, CHANGELOG entries and decision-time ADR context are preser
 #156 final compatibility/lifecycle/performance/release convergence
         |
         v
-#84 eligible to close
+#84 completed
 ```
 
-#139/#141 are completed architecture-reset gates, not the full implementation gate. #52 remains open through implementation/convergence.
+#139/#141 are completed architecture-reset gates. The downstream implementation/convergence graph also completed through #156; #84 and #52 are closed.
 
 ## Resolved and deferred lower-level choices
 
@@ -295,7 +295,7 @@ No deferred optimization or future feature may be presented as compatibility jus
 
 The original #141 inventory required #142 acceptance, repository classification, stale-guidance reconciliation, Track/backlog consistency, #136/#137 disposition, explicit temporary ownership/deletion criteria, exact-final-HEAD CI/ruleset/thread review, squash merge with `expected_head_sha`, and post-main SHA/tree/signature/CI verification before #141/#139 completion.
 
-Those gates were completed through #157. They are retained here as historical proof context, not as instructions to reopen #139/#141 or to treat already-resolved #143/#145 as an UNKNOWN. #146–#155 are completed. #156 alone owns the current exact-final-HEAD and post-main convergence gate before #84 becomes eligible to close.
+Those gates were completed through #157. They are retained here as historical proof context, not as instructions to reopen #139/#141 or to treat already-resolved #143/#145 as an UNKNOWN. #146–#156 are completed, and #84/#52 are closed. Future changes use the repository's normal exact-final-HEAD and post-main proof obligations rather than reopening the completed Leap convergence gate.
 
 ## Review obligations for ongoing reconciliation
 

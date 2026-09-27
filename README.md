@@ -7,6 +7,8 @@
 
 MarkFlow is an IntelliJ IDEA plugin for WYSIWYG-first Markdown editing.
 
+The Architecture Leap tracked by #52, #84, and #156 is complete. Current development builds on the native-editor architecture described below; the old browser-editor plans and migration mechanisms are historical evidence only.
+
 ## Current runtime
 
 Production editing uses IntelliJ's platform text editor. The IntelliJ `Document` is the sole mutable Markdown authority, and MarkFlow augments that native editor with source-neutral presentation rather than maintaining a second browser editor.
@@ -24,11 +26,11 @@ Current behavior includes:
 
 JCEF is an optional derived-renderer backend behind `markflow-jcef.xml`. If it is unavailable or disabled, rich renderer output degrades while native source editing, save, undo/redo, settings, and exact-source access remain available.
 
-## Accepted Leap architecture
+## Current architecture
 
 ADR 0001 / PR #142 selected **IntelliJ-native authoritative editing + in-place source-neutral Markdown projection + isolated derived renderers**.
 
-The target has these non-negotiable properties:
+The current architecture has these non-negotiable properties:
 
 - IntelliJ `Document` is the sole mutable live Markdown authority;
 - a native IntelliJ `Editor` edits that same `Document` directly;
@@ -67,6 +69,16 @@ MarkFlow uses the native IntelliJ `Document`/`Editor` as the authoritative Markd
 
 Mermaid and KaTeX remain supported through one isolated derived-renderer service. JCEF is optional renderer infrastructure; renderer failure does not gate source editing, save, undo/redo, or exact-source access.
 <!-- Plugin description end -->
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Architecture](docs/architecture/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Release process](docs/release/process.md)
+
+Historical bootstrap plans are retained under [`plans/`](plans/README.md) for repository archaeology and are not current implementation guidance.
 
 ## License
 

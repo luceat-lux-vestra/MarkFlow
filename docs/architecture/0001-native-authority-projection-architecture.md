@@ -6,6 +6,8 @@
 - Owners: @luceat-lux-vestra
 - Related issues/PRs: #52, #78, #79, #80, #81, #82, #83, #84, #99, #139, #140, #141, PR #142
 
+> Current implementation note (2026-09-27): this accepted decision has been implemented. #143–#156, #84, and #52 are closed; production editing uses the native IntelliJ `Document`/`Editor` architecture selected here. Statements below about the repository "currently" containing transitional browser-editor generations describe the decision-time 2026-09-07 context.
+
 ## Context
 
 Leap exists to satisfy MarkFlow's product and source-fidelity contract without preserving an implementation merely because it exists.

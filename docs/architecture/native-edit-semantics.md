@@ -90,7 +90,7 @@ No action in this boundary authorizes whole-document reconstruction. Ambiguous r
 
 Caret, selection, multicaret and scroll state remain per-editor platform state owned by `TextEditor`/`FileEditor`. Split editors may maintain different presentation state over one shared authoritative `Document`; normal source edits may move another caret through platform range tracking.
 
-The historical browser-shaped `MarkFlowEditorState` remains migration state only. It is not target native state authority and is not extended by #152.
+The deleted browser-shaped `MarkFlowEditorState` is historical migration evidence only. It is not native state authority and must not be restored as compatibility state.
 
 ## Failure and ownership behavior
 
@@ -128,7 +128,7 @@ There is no browser ACK/revision/recovery, debounce/flush, delayed autosave, glo
 
 Unit tests separately prove the disposition matrix, transferable flavor preservation, parser code gates and multicaret/column destination calculations.
 
-## Migration ownership
+## Historical migration ownership and final disposition
 
 - #143: platform editor shell, retained;
 - #145: immutable projection plan/controller, retained;
@@ -137,6 +137,6 @@ Unit tests separately prove the disposition matrix, transferable flavor preserva
 - #153: production native cutover;
 - #154: browser editor/protocol/state/trust purge;
 - #155: dependency/toolchain/JCEF/settings convergence, completed;
-- #156: final compatibility/lifecycle/performance/release convergence, active.
+- #156: final compatibility/lifecycle/performance/release convergence, completed.
 
-No part of #146 or #152 authorizes deleting the temporary production editor before #153/#154.
+Historical ordering note: #146/#152 did not authorize early production cutover or browser deletion; #153/#154 later completed those steps. The resulting semantics in this document are the production contract.

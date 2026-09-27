@@ -1,12 +1,12 @@
 # Leap Convergence Gate
 
-This document is the repository-visible quality contract for #156. It converts the final native Leap compatibility, lifecycle, performance, and release obligations into reproducible evidence. CI green is necessary but not sufficient; missing or unclassified evidence remains a failure.
+This document was established as the repository-visible quality contract for #156. #156, #84, and #52 are closed after the initial convergence proof, but the compatibility, lifecycle, performance, and release obligations below remain maintained regression/release guardrails until deliberately revised. CI green is necessary but not sufficient; missing or unclassified evidence remains a failure.
 
 ## Maintained IntelliJ envelope
 
 MarkFlow's public compatibility floor remains build 262 / IntelliJ IDEA 2026.2+.
 
-The #156 runtime matrix is pinned rather than floating:
+The maintained runtime matrix established by #156 is pinned rather than floating:
 
 | Role | IntelliJ target | Required runtime evidence |
 | --- | --- | --- |
@@ -75,9 +75,9 @@ Mermaid 12's full ESM distribution emits ELK as a separate lazy chunk. MarkFlow 
 
 Current renderer code splitting may be changed only when measurement shows a useful improvement without weakening Mermaid/KaTeX behavior, lazy loading, or lifecycle ownership.
 
-## Release gate
+## Ongoing regression / release gate
 
-Before #156 can close:
+The #156 closure proved this gate for the initial native convergence. Future changes or releases that touch this envelope must continue to require:
 
 1. exact-final-HEAD Build/Test/Qodana/Plugin Verifier and all native/renderer/Starter evidence workflows pass;
 2. both maintained runtime matrix entries pass without rerun-based reclassification;
@@ -87,6 +87,6 @@ Before #156 can close:
 6. released settings migration tests remain green and removed keys are not serialized again;
 7. unresolved review threads are zero and the reviewed HEAD/base/main identities are fresh;
 8. squash merge uses the exact reviewed HEAD;
-9. merged-main identity and push-triggered post-main workflows pass before #156 or #84 is closed.
+9. merged-main identity and the applicable push-triggered post-main workflows pass for the reviewed change or release candidate.
 
 Any UNKNOWN, UNVERIFIED, insufficiently classified compatibility/lifecycle/performance/release behavior remains FAIL.
