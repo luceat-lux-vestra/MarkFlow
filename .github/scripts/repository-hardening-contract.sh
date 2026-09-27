@@ -206,6 +206,7 @@ if grep -Eq '^\| .*`TEMPORARY`' docs/architecture/leap-migration-inventory.md; t
 fi
 grep -q '^## Dependency update governance$' GOVERNANCE.md || die "dependency update governance contract is missing"
 grep -q 'PR titles and bodies must not contain GitHub Actions skip directives' GOVERNANCE.md || die "squash message safety governance is missing"
-grep -q 'exact-SHA `workflow_dispatch` recovery input' GOVERNANCE.md || die "exact-SHA post-main recovery governance is missing"
+grep -q 'If a default-branch workflow is ever suppressed before a run exists' GOVERNANCE.md || die "missing default-branch suppression recovery governance"
+grep -q 'treat the original missing run as an audit anomaly rather than as PASS' GOVERNANCE.md || die "missing fail-closed audit-anomaly governance"
 
 echo "repository hardening contract checks passed"
