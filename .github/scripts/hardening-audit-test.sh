@@ -55,13 +55,13 @@ jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"'
 mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
 expect_fail "$wrong_target" policy_producers "uses privileged pull_request_target"
 
-privileged_failure_triage="$TMP/privileged-failure-triage"
-copy_root "$privileged_failure_triage"
-jq '(.required[] | select(.context == "failure-triage")).trigger = "pull_request_target"' \
-  "$privileged_failure_triage/.github/merge-gate-policy.json" > "$privileged_failure_triage/.github/merge-gate-policy.json.tmp"
-mv "$privileged_failure_triage/.github/merge-gate-policy.json.tmp" "$privileged_failure_triage/.github/merge-gate-policy.json"
-perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_failure_triage/.github/workflows/failure-declaration.yml"
-expect_fail "$privileged_failure_triage" policy_producers "uses privileged pull_request_target"
+privileged_metadata_safety="$TMP/privileged-metadata-safety"
+copy_root "$privileged_metadata_safety"
+jq '(.required[] | select(.context == "PR Metadata Safety")).trigger = "pull_request_target"' \
+  "$privileged_metadata_safety/.github/merge-gate-policy.json" > "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp"
+mv "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp" "$privileged_metadata_safety/.github/merge-gate-policy.json"
+perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_metadata_safety/.github/workflows/pr-metadata-safety.yml"
+expect_fail "$privileged_metadata_safety" policy_producers "uses privileged pull_request_target"
 
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
@@ -232,7 +232,7 @@ jq -n '{
           {context: "Test", integration_id: 15368},
           {context: "Inspect code", integration_id: 15368},
           {context: "Verify plugin", integration_id: 15368},
-          {context: "failure-triage", integration_id: 15368}
+          {context: "PR Metadata Safety", integration_id: 15368}
         ]
       }}
     ]
