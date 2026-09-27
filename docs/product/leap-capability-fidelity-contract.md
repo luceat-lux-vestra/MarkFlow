@@ -1,12 +1,11 @@
 # Leap capability and fidelity contract
 
-Status: authoritative product contract for Leap Epic #52
+Status: authoritative product contract established under completed #78 / closed Leap Epic #52 and retained for current development
 
 This document records the approved product and source-fidelity direction from
 [#78](https://github.com/luceat-lux-vestra/MarkFlow/issues/78) and the
 [#52 Architecture Leap Epic](https://github.com/luceat-lux-vestra/MarkFlow/issues/52).
-It is product authority for downstream work under #79–#84. It does not claim
-that the current MarkFlow runtime already conforms to this contract.
+It remains product authority for current and future work. #156 established the initial native-runtime convergence against this contract before #84/#52 closed; each future change must still prove that it preserves the applicable contract rather than inheriting conformance automatically.
 
 Architecture mechanisms are intentionally not product authority. Accepted ADRs
 under #139/#140 decide how this contract is implemented. In particular, a
@@ -27,7 +26,7 @@ only, not runtime conformance.
 MarkFlow is a WYSIWYG-first Markdown editor for IntelliJ-based IDEs. It is not
 a Markdown compiler and it is not an alternate source-of-truth store.
 
-The supported target files are:
+The supported files are:
 
 - `.md`
 - `.markdown`
@@ -126,7 +125,7 @@ product support claim.
 | Inline and display math with KaTeX-compatible semantics | **Supported as derived preview** | Math source remains authoritative. A renderer error preserves source and degrades visibly/diagnosably. KaTeX-compatible support survives editor/runtime migration. |
 | Raw HTML | Supported as source-preserved content with a separately sanitized/isolated preview | Source is never rewritten to sanitize preview. Active content fails closed; blocked preview remains recoverable/editable source. |
 | Document-relative local images/resources | Supported under a capability-scoped host trust policy | A load failure leaves source unchanged. Opening a document never grants arbitrary filesystem access. |
-| Remote resources | Not an implicit entitlement of Markdown rendering | Claim support only after #82 defines an allowed default or explicit opt-in and its privacy consequence. Until then, fail closed or classify as degraded/unsupported. |
+| Remote resources | Not an implicit entitlement of Markdown rendering | The current policy remains fail-closed/degraded by default. Enabling remote loading requires a future explicit product and trust/privacy decision; renderer content does not gain ambient network authority. |
 | Markdown-aware paste outside code blocks | Supported | Prefer `text/markdown`; parse Markdown-like plain text where appropriate. BOM/line-ending cleanup and parsing normalization apply only to the inserted payload. |
 | Paste inside code blocks | Literal/default paste behavior | Existing source around the insertion remains unchanged. |
 | Unknown/unsupported Markdown extensions | Unsupported or degraded, explicitly classified per input | Prefer source preservation and a safe opaque/degraded presentation over destructive normalization. |
@@ -141,15 +140,15 @@ Editor/runtime migration must therefore preserve their supported behavior. ADR
 renderer engines and replace only editor-specific adapters unless a separate,
 evidence-backed renderer-replacement decision is approved.
 
-The migration must not intentionally maintain two independent Mermaid or KaTeX
-engines in steady-state production.
+Production must not intentionally maintain two independent Mermaid or KaTeX
+engines in steady-state.
 
 ### Raw HTML and trust boundary
 
 Raw HTML is untrusted content. Inline and block source must be preserved, while
 preview sanitization/isolation is a separate concern. Script, event-handler,
 active style, ambient resource capability, permissive navigation, and
-equivalent behavior fail closed under #82. URLs in raw HTML follow the same
+equivalent behavior fail closed under the trust policy completed through #82. URLs in raw HTML follow the same
 resource/navigation policy as Markdown links and images; raw HTML does not
 create a permissive side path.
 
@@ -157,7 +156,7 @@ create a permissive side path.
 
 Ordinary document-relative local resources are supported only through an
 explicit, bounded host capability. There is no arbitrary local-file access. An
-external link uses an explicit host-owned navigation path under #82. Source
+external link uses the explicit host-owned navigation path established through #82. Source
 remains unchanged when a resource or navigation request is blocked or cannot
 be loaded.
 
@@ -193,15 +192,14 @@ presentation state while observing the same authoritative IntelliJ `Document`.
 
 ## Product settings versus implementation knobs
 
-The following are product/user settings when supported by the final renderer:
+The following are product/user settings in the maintained renderer contract:
 
 - theme source and IDE palette integration;
 - font family and base size;
 - preview/source-reveal presentation behavior where exposed;
 - Mermaid size/zoom/error-display behavior;
 - KaTeX display density;
-- a security-sensitive renderer policy only when #82 can expose it safely and
-  explain its effect.
+- renderer security policy remains fail-closed; Mermaid is fixed at `securityLevel: strict`. Exposing or relaxing a security-sensitive policy requires a new explicit product/security decision.
 
 Browser/renderer pool size, prewarm, cache, idle eviction, retry, debounce,
 worker cardinality, transport batching, and similar performance/lifecycle

@@ -12,9 +12,9 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 defines replacement-first Leap policy. #139 architecture reset and #141 repository-wide migration classification/stale-guidance/backlog reconciliation are completed. #140 records the first-principles comparison, and PR #142 merged ADR 0001 and ADR 0002. #143 subsequently completed the native editor shell proof. #153 completed the production native-editor cutover with post-main evidence, #154 completed deletion of the superseded browser editor/session/protocol/trust machinery, and #155 completed dependency/toolchain/JCEF/settings convergence over the retained renderer-only stack. #156 now owns final compatibility/lifecycle/performance/release convergence.
+Issue #52 established the replacement-first Leap policy. #139 and #141 are completed architecture-reset and repository-wide migration-reconciliation gates, PR #142 accepted ADR 0001/0002, #143–#152 established the native target capabilities, #153 completed production native-editor cutover, #154 purged the superseded browser editor/session/protocol/trust machinery, #155 converged retained renderer-only dependencies/tooling/settings, and #156 completed final compatibility/lifecycle/performance/release convergence. #84 and the parent Leap Epic #52 are closed; these records now provide acceptance and migration provenance rather than active work.
 
-## Accepted target
+## Current architecture
 
 ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, source-neutral Markdown projection layer**.
 
@@ -26,7 +26,7 @@ ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migr
 
 #146 resolves native edit-ownership details above that foundation without creating a second editor authority: **IntelliJ's normal paste action, command/undo stack and opaque `FileEditorState` remain authoritative, while MarkFlow may preprocess only an inserted Markdown payload and apply narrowly source-local rich edit commands to explicit native selections**. The implementation/evidence contract is recorded in `native-edit-semantics.md`.
 
-Target principles:
+Current architecture principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
 2. **Native editing uses the platform text-editor shell.** MarkFlow augments the normal native editor; it does not introduce a target replacement `FileEditorProvider`.
@@ -69,10 +69,10 @@ Do not:
 - **#153 completed** — production file opening/editing now uses the platform-native editor and post-main verification closed the cutover gate;
 - **#154 completed** — obsolete browser editor, custom document/session/revision protocols, browser editing trust/resource realm and editor-only frontend/tooling are purged while renderer infrastructure is retained;
 - **#155 completed** — dependency/toolchain/JCEF packaging and settings are converged over the retained renderer-only stack;
-- **#156 active** — final compatibility/lifecycle/performance/release convergence;
-- #156 -> #84 eligible to close.
+- **#156 completed** — final compatibility/lifecycle/performance/release convergence;
+- **#84 and #52 completed** — the quality Track and parent Leap Epic are closed after convergence.
 
-Transient Task state belongs in #52 and the individual Task issue rather than this architecture index. #139 and #141 are completed. #52 remains open until implementation/convergence completes.
+The #143–#156 Tasks and #52/#84 remain useful provenance for why the current architecture exists. New work should use this architecture index, the accepted ADRs/product contracts, and a focused current issue rather than treating the closed Leap graph as an active migration backlog.
 
 ## When an ADR is required
 

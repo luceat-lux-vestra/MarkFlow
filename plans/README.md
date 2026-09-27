@@ -1,18 +1,15 @@
-# MarkFlow planning documents
+# Historical MarkFlow planning documents
 
-The numbered planning files in this directory predate the architecture leap tracked by GitHub issue #52.
+The numbered planning files in this directory predate the Architecture Leap tracked by GitHub issue #52 and describe browser-editor-era implementation work.
 
-They are retained as historical context and evidence of earlier investigations. They are **not architectural authority** and must not be used to require preservation of the current browser-pool, bridge, synchronization, source-preservation, module, or editor-engine design.
+They are retained only as historical context and repository archaeology. The Leap (#52/#84/#156) and the repository/release hardening tracks (#54/#60/#61) are complete, the production editor is IntelliJ-native, and the browser editor/session/protocol architecture described by these plans has been removed.
 
-For new work:
+For current work, use:
 
-1. complete repository hardening owned by #54 and Tracks #51, #60, and #61; do not begin #52 runtime implementation or create its execution issues;
-2. after hardening settles, wait for the architecture owner to perform the #52 fresh-main product/fidelity audit and target-architecture design;
-3. wait for the architecture owner to create the complete initial #52 execution child-issue set;
-4. attach implementation and evidence to an approved child issue and use an accepted ADR/RFC when a contract or ownership boundary is involved;
-5. preserve proven user-visible behavior and executable evidence rather than old implementation structure;
-6. update or delete stale planning documents as the leap replaces their assumptions.
+1. `../README.md` for current runtime behavior;
+2. `../docs/README.md` for the maintained documentation map;
+3. `../docs/architecture/README.md` and accepted ADRs for architecture authority;
+4. `../AGENTS.md` / `../CONTRIBUTING.md` for engineering and review rules;
+5. the focused current GitHub issue or Task for change-specific scope and evidence.
 
-The absence of #52 execution child issues before that audit/design is intentional. These historical plans must not be used to create a premature issue hierarchy or select the target architecture.
-
-A future cleanup phase should remove superseded plans once the resulting architecture is documented in canonical repository documentation.
+Any heading such as **Current State**, **Current Bottlenecks**, or a file/class name inside a numbered plan means "current when that historical plan was written", not current repository state. Do not restore a deleted browser-editor mechanism merely because it appears in these files.

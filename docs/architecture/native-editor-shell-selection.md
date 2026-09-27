@@ -1,6 +1,8 @@
 # Native editor shell selection
 
-Status: target execution decision for #143 under accepted ADR 0001
+Status: production integration decision established by completed #143 under accepted ADR 0001
+
+> Completion note: #143 selected this shell and the downstream #144–#156 migration chain is closed. Sections below that describe proof dependencies or candidate work in future tense are retained as #143 decision-time evidence unless explicitly stated as a current production requirement.
 
 - Parent Epic: #52
 - Tracks: #81, #79
@@ -15,7 +17,7 @@ Select **augmentation of the normal IntelliJ platform text editor** as MarkFlow'
 
 The target does not register a replacement MarkFlow `FileEditorProvider`. MarkFlow attaches one source-neutral presentation controller to each relevant native `Editor` through the maintained `EditorFactoryListener` lifecycle. The platform text editor remains responsible for the `FileEditor`, native `Editor`, authoritative `Document`, focus/data context, input, caret/selection/multicaret, keymaps, clipboard, state, dirty/save and undo/redo semantics.
 
-At the #143 decision point this proof did **not** cut production over: the JCEF-backed `MarkFlowEditorProvider` and `MarkFlowEditor` were still temporary migration code. #153 later completed production cutover, and #154 owns deletion of that superseded editor/protocol/trust surface.
+At the #143 decision point this proof did **not** cut production over: the JCEF-backed `MarkFlowEditorProvider` and `MarkFlowEditor` were still temporary migration code. #153 later completed production cutover, and #154 completed deletion of that superseded editor/protocol/trust surface.
 
 ## Candidate comparison
 
@@ -67,7 +69,7 @@ At the #143 proof point MarkFlow migration code still declared `com.intellij.mod
 - it does **not** prove the current MarkFlow package loads when the `com.intellij.modules.jcef` plugin itself is absent or disabled;
 - it must not be cited as evidence that Mermaid/KaTeX renderer packaging is JCEF-independent.
 
-Renderer execution/dependency isolation is owned by #144. Before production cutover #153, native source-editing correctness must no longer depend on renderer/JCEF availability. If #144 retains JCEF as the renderer substrate, JCEF-specific code and dependency ownership must be isolated below the derived-renderer boundary so renderer disablement/failure cannot disable native Markdown editing.
+Historical dependency note: #144 established renderer execution/dependency isolation before #153 production cutover. The resulting production requirement remains that native source-editing correctness does not depend on renderer/JCEF availability, and retained JCEF-specific code stays isolated below the derived-renderer boundary so renderer disablement/failure cannot disable native Markdown editing.
 
 The JetBrains `com.intellij.mermaid` plugin is also a valid platform-dependency candidate for #144, but exact 2026.2 source review found no maintained public render-to-SVG service: its Markdown preview/export implementation is JCEF-backed and internal/private. #144 must not depend on those internals; it may reuse maintained Mermaid language services or promote the plugin to renderer dependency if a supported artifact API becomes available.
 

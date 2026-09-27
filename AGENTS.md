@@ -10,11 +10,11 @@ The accepted Leap architecture is **IntelliJ-native authoritative editing with i
 
 For non-trivial work, read in this order:
 
-1. `README.md` for current shipped/runtime behavior and target-transition notice;
+1. `README.md` for current shipped/runtime behavior and project status;
 2. `docs/architecture/README.md` for architecture authority and accepted target invariants;
 3. ADR 0001 and ADR 0002 for native source authority and Mermaid/KaTeX continuity;
-4. GitHub issue #52 for Leap execution policy and #141 for the migration map while migration is active;
-5. the focused Track/Task and relevant tests/evidence.
+4. GitHub issues #52 and #141 as historical Leap execution/inventory records when a migration decision needs provenance;
+5. the focused current issue/Task and relevant tests/evidence.
 
 The historical `plans/*` documents and superseded implementation-specific tests are context/evidence only. They never override #78, accepted ADRs, reconciled Tracks, or the focused target Task.
 
@@ -203,6 +203,6 @@ A PASS is valid only for the reviewed HEAD SHA. Any HEAD movement invalidates it
 
 - Keep each PR to one coherent independently reviewable purpose.
 - Preserve unrelated user changes.
-- Do not combine production cutover, broad purge, dependency convergence and final quality proof into one rewrite PR; use the dependency graph from #141/#143–#156.
+- The #141/#143–#156 migration graph is closed. Do not revive or bundle its completed cutover/purge phases into new work; keep each new change focused on its current contract and evidence.
 - Do not claim benchmark, compatibility, security, leak, lifecycle or runtime evidence that was not actually demonstrated.
 - When a lower-level target choice remains `UNRESOLVED`, stop at the dedicated proof/ADR Task instead of silently preserving current mechanism.

@@ -6,6 +6,8 @@
 - Owners: @luceat-lux-vestra
 - Related issues/PRs: #52, #78, #81, #82, #83, #84, #99, #139, #140, #141, PR #142
 
+> Current implementation note (2026-09-27): the renderer-continuity decision remains authoritative, but its version references below record the 2026-09-07 adoption baseline. Completed #222 later migrated the retained Mermaid engine from `11.17.2` to `12.0.0` while explicitly preserving MarkFlow's classic look and Dagre layout contract. KaTeX remains `^0.18.7`.
+
 ## Context
 
 ADR 0001 removes JCEF/JavaScript from the **editing correctness path** by selecting an IntelliJ-native editor over the authoritative `Document`.
@@ -16,7 +18,7 @@ That decision does **not** remove MarkFlow's supported derived-rendering capabil
 - inline and display math with KaTeX-compatible semantics as a supported derived preview;
 - source-preserved degradation when either renderer fails.
 
-Current `main` already carries maintained JavaScript renderer dependencies:
+At adoption, `main` already carried maintained JavaScript renderer dependencies:
 
 - `mermaid` `11.17.2`;
 - `katex` `^0.18.7`.
@@ -217,7 +219,7 @@ Issue #144 keeps **Candidate A, isolated IntelliJ JCEF/TypeScript execution, as 
 
 The decision is intentionally conservative:
 
-- Mermaid remains `11.17.2` and KaTeX remains `^0.18.7`; there is no renderer-engine rewrite.
+- At adoption, Mermaid remained `11.17.2` and KaTeX remained `^0.18.7`; the editor migration itself did not rewrite renderer engines. Mermaid's later #222 upgrade was a separate reviewed renderer migration.
 - The MarkFlow `DerivedRendererService` owns bounded source/config input, explicit source/config generation identity, timeout/retry, cancellation/disposal, cache bounds, typed/redacted failures, and inert SVG/HTML artifacts independently of Crepe/CodeMirror/editor-session identity.
 - Mermaid engine invocation and direct KaTeX `renderToString` invocation have one MarkFlow production owner in the browser renderer backend. The temporary Crepe/CodeMirror adapters consume the service and remain presentation/editor adapters only until #153/#154.
 - KaTeX uses direct `renderToString` with `trust: false` and `throwOnError: false`; existing KaTeX CSS/fonts remain the presentation assets. No custom TeX layout is introduced.

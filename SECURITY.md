@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-MarkFlow is under active pre-release development. Security fixes are applied to the latest supported code on `main` unless a released version is explicitly documented as supported.
+MarkFlow is under active development. Security fixes are applied to the latest supported code on `main` unless a released version is explicitly documented as supported.
 
 A supported-version matrix must be published before treating any release line as maintained.
 

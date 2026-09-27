@@ -142,7 +142,7 @@ The workflow validator fails closed on missing/unexpected cases or missing detai
 
 Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editing Evidence and the retained shell/resource/derived evidence workflows remain independent gates when selected by the diff.
 
-## Migration ownership
+## Historical migration ownership and final disposition
 
 - #143: platform text-editor shell, retained;
 - #145: immutable native projection authority and lifecycle foundation, retained;
@@ -154,6 +154,6 @@ Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editi
 - #153: production native cutover;
 - #154: mandatory browser editor/protocol/trust purge;
 - #155: dependency/toolchain/JCEF/settings convergence, completed;
-- #156: final compatibility/lifecycle/performance/release convergence, active.
+- #156: final compatibility/lifecycle/performance/release convergence, completed.
 
-No part of #145/#152 authorizes production cutover or browser deletion before #153/#154.
+Historical ordering note: #145/#152 did not authorize early production cutover or browser deletion; #153/#154 later completed those steps. The projection model described here is now the production foundation.

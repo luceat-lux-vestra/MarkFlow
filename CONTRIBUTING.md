@@ -6,7 +6,7 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 
 - Search existing issues and pull requests first.
 - Read `AGENTS.md`, `docs/architecture/README.md`, and the focused subsystem/Task documentation.
-- Treat #78, accepted ADR 0001/0002, reconciled #79–#84 Tracks, and #141's migration map as authoritative over current implementation and historical phase wording.
+- Treat the #78 product contract and accepted ADR 0001/0002 as architectural/product authority. Completed #79–#84 Tracks, #141, and #143–#156 are acceptance/migration provenance; they do not represent an active Leap backlog.
 - Production editing is native IntelliJ `Document`/`Editor` authority with source-neutral derived presentation. The deleted browser editor, host↔web sync, source revisions, browser pool, editor loopback realm and editor JCEF lifecycle must not be restored as compatibility machinery.
 - Mermaid/KaTeX are retained product renderer capabilities. Do not delete/rewrite them merely because their current editor adapter is superseded.
 - Significant changes to source authority, native editor shell, projection semantics, renderer engine/runtime boundary, trust/resource/navigation policy, settings migration, compatibility, or release behavior require an explicit issue and architecture decision when not already covered by an accepted Task/ADR.
@@ -17,7 +17,7 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 1. Start from a focused issue with explicit exit criteria and architecture dependency.
 2. Branch from fresh current `main`.
 3. Keep one coherent independently reviewable purpose per pull request.
-4. Classify affected migration responsibilities (`RETAIN`, `EXTRACT`, `REPLACE`, `DELETE`, `TEMPORARY`, `UNRESOLVED`) where Leap migration is involved.
+4. For a new architecture migration, classify affected responsibilities explicitly (`RETAIN`, `EXTRACT`, `REPLACE`, `DELETE`, `TEMPORARY`, `UNRESOLVED`) rather than inheriting the closed Leap backlog.
 5. Give every temporary mechanism an owner and deletion criterion.
 6. Add tests/evidence appropriate to success, failure, recovery, regression, compatibility, lifecycle, edge, ownership and adversarial risk.
 7. Open a pull request using the repository template.
@@ -81,4 +81,4 @@ Deleted browser-editor, source-sync, recovery, and editor-trust mechanisms are n
 
 ## Release boundary
 
-Merging implementation does not authorize publication. Marketplace/release publication is a separate irreversible gate governed by `docs/release/process.md` and Track #61.
+Merging implementation does not authorize publication. Marketplace/release publication is a separate irreversible gate governed by `docs/release/process.md`; completed Track #61 remains the provenance/design record for that process.

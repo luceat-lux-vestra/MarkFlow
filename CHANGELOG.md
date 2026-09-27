@@ -4,7 +4,10 @@
 
 ## [Unreleased]
 
+The unreleased line describes the current native-editor implementation. Browser-editor-only implementation bullets superseded by the completed Architecture Leap are not presented as current product behavior.
+
 ### Changed
+- Completed the Architecture Leap to IntelliJ-native authoritative `Document`/`Editor` editing with source-neutral projection; the superseded browser editor/session/protocol stack is removed.
 - Preserved original Markdown formatting during save by keeping the raw source text stable.
 - Performance optimizations.
 - Raised the minimum IDE to IntelliJ IDEA 2026.2 (`pluginSinceBuild` from `252` to `262`) and aligned the platform target and the Java toolchain (21 to 25) with it.
@@ -12,7 +15,7 @@
 - IDE_SYNC Mermaid appearance now derives arrow, node, and label colors from the captured palette and invalidates only when Mermaid-relevant palette values change.
 
 ### Fixed
-- Skipped browser pre-warm and editor takeover when JCEF is unavailable in the IDE runtime instead of failing with an error.
+- Native Markdown source editing, save, undo/redo, settings, and exact-source access remain available when optional JCEF renderer infrastructure is unavailable.
 - The body font family is now a dropdown of installed families (single value); the IDE-configured
   font is the default and is shown as `IDE Default (<actual family>)`; an explicit selection of
   the same installed family remains distinct. The webview quotes the family so a persisted value
@@ -25,18 +28,14 @@
   a settings round-trip; text contrast selection now uses the higher WCAG black/white endpoint.
 
 ### Added
-- Typora-style WYSIWYG Markdown editing experience via a custom IntelliJ `FileEditor`.
-- Automatic takeover of Markdown files (`.md`, `.markdown`, `.mdown`, `.mkdn`) with the MarkFlow editor.
-- Two-way synchronization between IntelliJ document text and the JCEF webview editor.
-- Editor UI state persistence and restore (scroll position, cursor, and selection).
+- WYSIWYG-first Markdown presentation on the normal IntelliJ platform text editor for `.md`, `.markdown`, `.mdown`, and `.mkdn` files while the IntelliJ `Document` remains authoritative.
+- Native caret, selection, scroll, dirty/save, and undo/redo behavior through IntelliJ editor semantics.
 - Mermaid diagram live preview support in Markdown code blocks.
 - KaTeX math rendering support for inline and block formulas.
 - Markdown clipboard paste now preserves Markdown structure, while code blocks keep the default paste behavior.
-- Raw HTML support for inline and block HTML with XSS sanitization via Milkdown integration.
-- Packaged webview loading through classloader resources with shared local HTTP serving.
-- Configurable MarkFlow settings panel (theme source and preview defaults).
-- Extended Mermaid preview controls (size mode, zoom, error display behavior) and diagram security level configuration.
-- Runtime settings synchronization from IntelliJ to webview with sequenced updates to reduce stale apply races.
-- Pooled JCEF browsers with split-editor reuse and configurable idle eviction timeout.
+- Source-preserved raw HTML with isolated/sanitized derived presentation.
+- Configurable MarkFlow settings for theme source, typography, Mermaid size/zoom/error behavior, and KaTeX density.
+- Isolated renderer settings synchronization with stale-result rejection; Mermaid security is fixed fail-closed at `securityLevel: strict`.
+- Host-owned local-image presentation and external navigation without granting the renderer ambient filesystem/navigation authority.
 - Body font family (IDE default shown by its actual family name, plus installed families) and IntelliJ editor-range base font size (px)
   controls in the MarkFlow General settings, applied through Crepe's `--crepe-base-font-size`.

@@ -17,10 +17,10 @@ Authority order is:
 1. #78 product/source-fidelity contract;
 2. accepted ADRs, currently ADR 0001 and ADR 0002;
 3. reconciled #79–#84 responsibility Tracks;
-4. focused target Tasks, including #143–#156;
+4. completed target implementation/convergence Tasks #143–#156 as acceptance evidence under those contracts;
 5. current implementation/tests/historical docs as evidence only.
 
-#139/#141 architecture reset and migration reconciliation are completed. #153 completed production native-editor cutover and #154 completed browser-editor/protocol/trust purge. #155 dependency/toolchain/JCEF/settings convergence is completed. Remaining Leap convergence is owned by #156; that completion, not historical implementation presence, determines when #52/#84 become eligible to close.
+#139/#141 architecture reset and migration reconciliation, #153 production native-editor cutover, #154 browser-editor/protocol/trust purge, #155 dependency/toolchain/JCEF/settings convergence, and #156 final compatibility/lifecycle/performance/release convergence are completed. #84 and the parent Leap Epic #52 are closed. These issues remain repository-visible acceptance/provenance records, not active migration work.
 
 ## Maintainer responsibilities
 
@@ -59,7 +59,7 @@ Dependabot is a discovery and maintenance mechanism, not authority to merge a de
 
 ## Release governance
 
-Release/publication is a separate irreversible decision. Merging a pull request, passing CI, creating a draft release, or closing a runtime/hardening issue does not authorize Marketplace publication. Detailed tag, version, artifact, signing and recovery provenance belongs to the release Track/process.
+Release/publication is a separate irreversible decision. Merging a pull request, passing CI, creating a draft release, or closing a runtime/hardening issue does not authorize Marketplace publication. Detailed tag, version, artifact, signing and recovery provenance is governed by the maintained release process and the completed Track #61 record.
 
 ## Evolution
 

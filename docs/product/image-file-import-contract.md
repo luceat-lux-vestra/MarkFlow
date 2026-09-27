@@ -6,7 +6,7 @@ This document is the normative #150 addendum to the #78 Leap capability and
 fidelity contract. It resolves the image-file **import/insertion** choices
 intentionally left open by #78, #99, and ADR 0001. Existing Markdown
 image-reference rendering is a separate capability implemented by #147.
-Implementation belongs to #151.
+Implementation was completed by #151.
 
 The historical public report only establishes that image insertion/display was a
 user-visible problem; its original detail is no longer available. The gesture and
@@ -140,7 +140,7 @@ region is unchanged.
 
 ## Host/VFS and Document transaction boundary
 
-The product contract requires this ordering; exact API calls belong to #151:
+The product contract requires this ordering; #151 implemented the corresponding API/runtime path:
 
 1. resolve the current saved local document context and explicit user-supplied
    image authority;
