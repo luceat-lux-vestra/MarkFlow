@@ -122,6 +122,7 @@ grep -q '^        id: change-scope$' "$build_workflow" || die "required Build jo
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
 grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
+grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
 [ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on required Build"
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every required product-validation context must materialize a docs-only success path"
