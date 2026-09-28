@@ -50,28 +50,20 @@ expect_pass "$baseline" release_preflight
 
 wrong_target="$TMP/wrong-target"
 copy_root "$wrong_target"
-jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"' \
+jq '(.required[] | select(.context == "Merge Gate")).trigger = "pull_request_target"' \
   "$wrong_target/.github/merge-gate-policy.json" > "$wrong_target/.github/merge-gate-policy.json.tmp"
 mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
 expect_fail "$wrong_target" policy_producers "uses privileged pull_request_target"
-
-privileged_metadata_safety="$TMP/privileged-metadata-safety"
-copy_root "$privileged_metadata_safety"
-jq '(.required[] | select(.context == "PR Metadata Safety")).trigger = "pull_request_target"' \
-  "$privileged_metadata_safety/.github/merge-gate-policy.json" > "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp"
-mv "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp" "$privileged_metadata_safety/.github/merge-gate-policy.json"
-perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_metadata_safety/.github/workflows/pr-metadata-safety.yml"
-expect_fail "$privileged_metadata_safety" policy_producers "uses privileged pull_request_target"
 
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
 perl -0pi -e 's/ref: \$\{\{ github\.event\.repository\.default_branch \}\}/ref: \$\{\{ github\.ref_name \}\}/' "$caller_selected_ref/.github/workflows/hardening-audit.yml"
 expect_fail "$caller_selected_ref" live_readback_boundary "does not checkout the default branch"
 
-renamed="$TMP/renamed"
-copy_root "$renamed"
-perl -0pi -e 's/    name: Build\n/    name: Renamed Build\n/' "$renamed/.github/workflows/build.yml"
-expect_fail "$renamed" policy_producers "does not match job"
+renamed_component="$TMP/renamed-component"
+copy_root "$renamed_component"
+perl -0pi -e 's/    name: Build\n/    name: Renamed Build\n/' "$renamed_component/.github/workflows/build.yml"
+expect_fail "$renamed_component" policy_producers "component 'Build' does not match job 'build' name 'Renamed Build'"
 
 filtered="$TMP/filtered"
 copy_root "$filtered"
@@ -80,18 +72,45 @@ expect_fail "$filtered" policy_producers "filters pull_request by path"
 
 missing="$TMP/missing"
 copy_root "$missing"
-perl -0pi -e 's/\.github\/workflows\/build\.yml/.github\/workflows\/missing.yml/' "$missing/.github/merge-gate-policy.json"
+jq '.required[0].workflow = ".github/workflows/missing.yml"' \
+  "$missing/.github/merge-gate-policy.json" > "$missing/.github/merge-gate-policy.json.tmp"
+mv "$missing/.github/merge-gate-policy.json.tmp" "$missing/.github/merge-gate-policy.json"
 expect_fail "$missing" policy_producers "missing workflow"
 
-conditional="$TMP/conditional"
-copy_root "$conditional"
-perl -0pi -e 's/  build:\n    name: Build\n/  build:\n    name: Build\n    if: false\n/' "$conditional/.github/workflows/build.yml"
-expect_fail "$conditional" policy_producers "conditionally skipped"
+conditional_component="$TMP/conditional-component"
+copy_root "$conditional_component"
+perl -0pi -e 's/  build:\n    name: Build\n/  build:\n    name: Build\n    if: false\n/' "$conditional_component/.github/workflows/build.yml"
+expect_fail "$conditional_component" policy_producers "component 'Build' is conditionally skipped"
+
+continue_component="$TMP/continue-component"
+copy_root "$continue_component"
+perl -0pi -e 's/  test:\n    name: Test\n/  test:\n    name: Test\n    continue-on-error: true\n/' "$continue_component/.github/workflows/build.yml"
+expect_fail "$continue_component" policy_producers "component 'Test' continues on error"
+
+missing_component="$TMP/missing-component"
+copy_root "$missing_component"
+perl -0pi -e 's/needs: \[ build, test, inspectCode, verify, metadataSafety, dependencyReview \]/needs: [ build, test, inspectCode, verify, metadataSafety ]/' "$missing_component/.github/workflows/build.yml"
+expect_fail "$missing_component" policy_producers "needs do not exactly match authoritative component jobs"
+
+no_always="$TMP/no-always"
+copy_root "$no_always"
+perl -0pi -e 's/    if: \$\{\{ always\(\) \}\}\n//' "$no_always/.github/workflows/build.yml"
+expect_fail "$no_always" policy_producers "Merge Gate must use job-level always() condition"
+
+aggregate_continue="$TMP/aggregate-continue"
+copy_root "$aggregate_continue"
+perl -0pi -e 's/  mergeGate:\n    name: Merge Gate\n/  mergeGate:\n    name: Merge Gate\n    continue-on-error: true\n/' "$aggregate_continue/.github/workflows/build.yml"
+expect_fail "$aggregate_continue" policy_producers "Merge Gate must not continue on error"
 
 noop="$TMP/noop"
 copy_root "$noop"
-perl -0pi -e 's/  build:\n.*?\n  test:/  build:\n    name: Build\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n\n  test:/s' "$noop/.github/workflows/build.yml"
+perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
 expect_fail "$noop" policy_producers "fake or no-op job"
+
+missing_result_check="$TMP/missing-result-check"
+copy_root "$missing_result_check"
+perl -0pi -e 's/          TEST_RESULT: \$\{\{ needs\.test\.result \}\}/          TEST_RESULT: success/' "$missing_result_check/.github/workflows/build.yml"
+expect_fail "$missing_result_check" policy_producers "does not inspect component 'Test' result"
 
 mutable="$TMP/mutable"
 copy_root "$mutable"
@@ -206,7 +225,7 @@ jq -n '{
     rules: [{type: "deletion"}, {type: "non_fast_forward"}]
   }
 }' > "$ruleset_fixture"
-expect_fail "$baseline" ruleset_sync "policy requires context 'Build'" "$ruleset_fixture"
+expect_fail "$baseline" ruleset_sync "policy requires context 'Merge Gate'" "$ruleset_fixture"
 
 semantic_drift_fixture="$TMP/semantic-drift-rulesets.json"
 jq -n '{
@@ -228,11 +247,7 @@ jq -n '{
       {type: "required_status_checks", parameters: {
         strict_required_status_checks_policy: true,
         required_status_checks: [
-          {context: "Build", integration_id: 15368},
-          {context: "Test", integration_id: 15368},
-          {context: "Inspect code", integration_id: 15368},
-          {context: "Verify plugin", integration_id: 15368},
-          {context: "PR Metadata Safety", integration_id: 15368}
+          {context: "Merge Gate", integration_id: 15368}
         ]
       }}
     ]
@@ -284,7 +299,7 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
     printf '%s\n' '[{"id":1,"name":"main protection"}]'
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
-  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"PR Metadata Safety","integration_id":15368},{"context":"Dependency Review","integration_id":15368}]}}]}'
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Merge Gate","integration_id":15368}]}}]}'
 elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture" ]; then
   if [ "${MOCK_SECURITY_DRIFT:-}" = 1 ]; then
     printf '%s\n' '{"visibility":"public","security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}}'

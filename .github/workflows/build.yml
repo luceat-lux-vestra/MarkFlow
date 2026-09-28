@@ -6,7 +6,7 @@
 name: Build
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -20,12 +20,68 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && 'metadata' || 'validation' }}
   cancel-in-progress: true
 
 jobs:
+  headEvidence:
+    name: Head validation evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Head validation anchor
+        if: ${{ github.event_name != 'pull_request' || (github.event.action != 'edited' && github.event.pull_request.draft == false) }}
+        run: echo "This run is authoritative validation for the exact head rather than a metadata-only replay."
+
+      - name: Reuse exact-SHA head validation
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              [ "$run_id" != "$GITHUB_RUN_ID" ] || continue
+
+              status="$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .status' <<<"$runs")"
+              [ "$status" = "completed" ] || continue
+
+              jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+              anchor_count="$(jq '[.jobs[]
+                | select(.name == "Head validation evidence")
+                | .steps[]?
+                | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+              [ "$anchor_count" = "1" ] || continue
+
+              valid=true
+              for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
+                count="$(jq --arg name "$component" '[.jobs[] | select(.name == $name and .status == "completed" and .conclusion == "success")] | length' <<<"$jobs")"
+                if [ "$count" != "1" ]; then
+                  valid=false
+                  break
+                fi
+              done
+              if [ "$valid" = true ]; then
+                echo "Reused canonical exact-SHA product/dependency evidence from run $run_id for $EXPECTED_SHA."
+                exit 0
+              fi
+            done < <(jq -r --arg current "$GITHUB_RUN_ID" --arg sha "$EXPECTED_SHA" '
+              [.workflow_runs[]
+               | select(.head_sha == $sha)
+               | select((.id | tostring) != $current)]
+              | sort_by(.id) | reverse | .[].id
+            ' <<<"$runs")
+            sleep 5
+          done
+          echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
+          exit 1
+
   build:
     name: Build
+    needs: [ headEvidence ]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -37,6 +93,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}
@@ -46,6 +103,8 @@ jobs:
 
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "Non-PR validation always uses the full product-validation path."
+          elif [ "$EVENT_ACTION" = "edited" ]; then
+            echo "PR metadata edit uses the dedicated metadata-only fast path."
           elif ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
             echo "::warning::Changed-file count is empty or malformed; using full validation."
           else
@@ -79,9 +138,13 @@ jobs:
         if: ${{ steps.change-scope.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
+      - name: Metadata-only event fast path
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
+
       - name: Reuse exact-SHA Fast evidence
         id: fast-evidence
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -128,6 +191,15 @@ jobs:
 
             run_id="$(jq -r '.id' <<<"$latest")"
             jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            anchor_count="$(jq '[.jobs[]
+              | select(.name == "Head validation evidence")
+              | .steps[]?
+              | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+            if [ "$anchor_count" != "1" ]; then
+              echo "reuse=false" >> "$GITHUB_OUTPUT"
+              echo "Latest prior exact-SHA run is not canonical head validation; executing local Fast checks."
+              exit 0
+            fi
             matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
             if [ "$matching_jobs" != "1" ]; then
               echo "::error::Canonical Build run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
@@ -147,14 +219,14 @@ jobs:
           exit 1
 
       - name: Maximize Build Space
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Validate dispatched target
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
@@ -173,7 +245,7 @@ jobs:
           printf 'Validated main-history target: %s\n' "$TARGET_SHA"
 
       - name: Fetch Sources
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -181,21 +253,21 @@ jobs:
 
 
       - name: Record dispatched validation target
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
         env:
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           printf 'Validation target: %s\n' "$TARGET_SHA"
 
       - name: Setup Java
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -203,15 +275,15 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Build plugin
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         run: ./gradlew buildPlugin
 
       - name: Enforce renderer bundle budget
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -284,7 +356,7 @@ jobs:
           PY
 
       - name: Prepare Plugin Artifact
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         id: artifact
         shell: bash
         run: |
@@ -301,7 +373,7 @@ jobs:
           printf 'filename=%s\n' "${filename%.zip}" >> "$GITHUB_OUTPUT"
 
       - name: Verify packaged webview is renderer-only
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -352,14 +424,14 @@ jobs:
           PY
 
       - name: Upload artifact
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.artifact.outputs.filename }}
           path: ./build/distributions/content/*/*
 
       - name: Upload renderer bundle budget
-        if: ${{ steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: renderer-bundle-budget
@@ -376,9 +448,13 @@ jobs:
         if: ${{ needs.build.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
+      - name: Metadata-only event fast path
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
+
       - name: Reuse exact-SHA Fast evidence
         id: fast-evidence
-        if: ${{ needs.build.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -425,6 +501,15 @@ jobs:
 
             run_id="$(jq -r '.id' <<<"$latest")"
             jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            anchor_count="$(jq '[.jobs[]
+              | select(.name == "Head validation evidence")
+              | .steps[]?
+              | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+            if [ "$anchor_count" != "1" ]; then
+              echo "reuse=false" >> "$GITHUB_OUTPUT"
+              echo "Latest prior exact-SHA run is not canonical head validation; executing local Fast checks."
+              exit 0
+            fi
             matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
             if [ "$matching_jobs" != "1" ]; then
               echo "::error::Canonical Build run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
@@ -444,28 +529,28 @@ jobs:
           exit 1
 
       - name: Maximize Build Space
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -473,29 +558,29 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
       - name: Run Tests
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         run: ./gradlew check
 
       - name: Run webview source tests
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         working-directory: webview
         run: npm ci --no-audit --no-fund && npm run test:source
 
       - name: Collect Tests Result
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tests-result
           path: ${{ github.workspace }}/build/reports/tests
 
       - name: Upload Kover Coverage Report
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kover-coverage
@@ -516,15 +601,19 @@ jobs:
         if: ${{ needs.build.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
+      - name: Metadata-only event fast path
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
+
       - name: Maximize Build Space
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -532,14 +621,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Qodana - Code Inspection
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: JetBrains/qodana-action@10be11607eb323a180e2b76b26c9c5cdceac3e77 # v2026.2.1
         with:
           args: --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
@@ -549,7 +638,7 @@ jobs:
       # The Qodana annotation/check output is not the authoritative gate. Missing or
       # malformed SARIF, scanner failure, and High/Critical findings all fail this job.
       - name: Enforce Qodana High severity gate
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         env:
           QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
         run: |
@@ -576,29 +665,33 @@ jobs:
         if: ${{ needs.build.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
+      - name: Metadata-only event fast path
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
+
       - name: Maximize Build Space
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false
           large-packages: false
 
       - name: Fetch Sources
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Node
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
@@ -606,18 +699,93 @@ jobs:
           cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: true
 
       - name: Run Plugin Verification tasks
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         run: ./gradlew verifyPlugin
 
       - name: Collect Plugin Verifier Result
-        if: ${{ needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pluginVerifier-result
           path: ${{ github.workspace }}/build/reports/pluginVerifier
+
+  metadataSafety:
+    name: PR Metadata Safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Non-PR recovery fast path
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "PR metadata safety is not applicable to trusted exact-SHA recovery."
+
+      - name: Check out exact PR head for squash-message policy
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Reject squash CI-skip directives
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: python3 .github/scripts/check-squash-message-safety.py
+
+  dependencyReview:
+    name: Dependency Review
+    needs: [ headEvidence ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Non-dependency event fast path
+        if: ${{ github.event_name != 'pull_request' || github.event.action == 'edited' || github.event.pull_request.draft == true }}
+        run: echo "Dependency diff is unchanged or not applicable for this event."
+
+      - name: Review dependency changes
+        if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false }}
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
+  mergeGate:
+    name: Merge Gate
+    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every authoritative component
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          INSPECT_CODE_RESULT: ${{ needs.inspectCode.result }}
+          VERIFY_PLUGIN_RESULT: ${{ needs.verify.result }}
+          PR_METADATA_SAFETY_RESULT: ${{ needs.metadataSafety.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependencyReview.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for component in \
+            "Build=$BUILD_RESULT" \
+            "Test=$TEST_RESULT" \
+            "Inspect code=$INSPECT_CODE_RESULT" \
+            "Verify plugin=$VERIFY_PLUGIN_RESULT" \
+            "PR Metadata Safety=$PR_METADATA_SAFETY_RESULT" \
+            "Dependency Review=$DEPENDENCY_REVIEW_RESULT"; do
+            name="${component%%=*}"
+            result="${component#*=}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$name concluded '$result'; Merge Gate fails closed."
+              failed=1
+            fi
+          done
+          [ "$failed" -eq 0 ]
+          echo "All authoritative merge-gate components succeeded."
+

@@ -68,14 +68,16 @@ policy_array_has_unique_contexts() {
 }
 
 check_policy_shape() {
-  local clean=1 class other context workflow job wf jobname staged_count
-  for class in required staged_required advisory release_only; do
+  local clean=1 class other context workflow job wf jobname staged_count required_count component_count aggregate_workflow
+
+  for class in required staged_required advisory release_only merge_gate_components; do
     if ! jq -e --arg class "$class" '.[$class] | type == "array"' "$POLICY" >/dev/null; then
       finding policy_shape "policy field '$class' is not an array"; clean=0
     elif ! policy_array_has_unique_contexts "$class"; then
       finding policy_shape "policy field '$class' contains duplicate contexts"; clean=0
     fi
   done
+
   for class in required staged_required advisory release_only; do
     while IFS= read -r context; do
       [ -n "$context" ] || continue
@@ -85,8 +87,36 @@ check_policy_shape() {
           finding policy_shape "context '$context' appears in both '$class' and '$other' classifications"; clean=0
         fi
       done
+      if jq -e --arg context "$context" '.merge_gate_components[]?.context == $context' "$POLICY" >/dev/null; then
+        finding policy_shape "context '$context' appears both as a policy classification and as a merge-gate component"; clean=0
+      fi
     done < <(jq -r --arg class "$class" '.[$class][]?.context // empty' "$POLICY")
   done
+
+  required_count="$(jq '.required | length' "$POLICY")"
+  [ "$required_count" -eq 1 ] || { finding policy_shape "policy must declare exactly one live required context"; clean=0; }
+  jq -e '.required[0].context == "Merge Gate"' "$POLICY" >/dev/null || { finding policy_shape "the sole live required context must be 'Merge Gate'"; clean=0; }
+
+  component_count="$(jq '.merge_gate_components | length' "$POLICY")"
+  [ "$component_count" -eq 6 ] || { finding policy_shape "Merge Gate must declare exactly six authoritative components"; clean=0; }
+  if ! jq -e '
+    (.merge_gate_components | map(.context) | sort) ==
+    (["Build","Test","Inspect code","Verify plugin","PR Metadata Safety","Dependency Review"] | sort)
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "Merge Gate authoritative component set drifted"; clean=0
+  fi
+
+  aggregate_workflow="$(jq -r '.required[0].workflow // empty' "$POLICY")"
+  while IFS=$'\t' read -r context workflow job; do
+    [ -n "$context" ] || continue
+    [ "$workflow" = "$aggregate_workflow" ] || { finding policy_shape "Merge Gate component '$context' is not in the aggregate workflow"; clean=0; }
+    wf="$ROOT/$workflow"
+    if [ ! -f "$wf" ]; then finding policy_shape "Merge Gate component '$context' names missing workflow '$workflow'"; clean=0; continue; fi
+    if ! job_exists "$wf" "$job"; then finding policy_shape "Merge Gate component '$context' names missing job '$job'"; clean=0; continue; fi
+    jobname="$(unquote "$(job_field "$wf" "$job" name)")"
+    [ "$jobname" = "$context" ] || { finding policy_shape "Merge Gate component '$context' does not match job '$job' name '$jobname'"; clean=0; }
+  done < <(jq -r '.merge_gate_components[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+
   staged_count="$(jq '.staged_required | map(select(.context == "Hardening audit")) | length' "$POLICY")"
   [ "$staged_count" -eq 1 ] || { finding policy_shape "Hardening audit must remain exactly one staged_required context"; clean=0; }
   while IFS=$'\t' read -r context workflow job; do
@@ -97,6 +127,7 @@ check_policy_shape() {
     jobname="$(unquote "$(job_field "$wf" "$job" name)")"
     [ "$jobname" = "$context" ] || { finding policy_shape "staged context '$context' does not match job name '$jobname'"; clean=0; }
   done < <(jq -r '.staged_required[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+
   if ! jq -e '
     .security_settings
     | type == "object"
@@ -116,7 +147,8 @@ check_policy_shape() {
   ' "$POLICY" >/dev/null; then
     finding policy_shape "security_settings declaration is incomplete or unsupported"; clean=0
   fi
-  [ "$clean" -eq 1 ] && info policy_shape "policy classifications are unique and internally consistent"
+
+  [ "$clean" -eq 1 ] && info policy_shape "single required Merge Gate and its six authoritative components are internally consistent"
   return 0
 }
 
@@ -128,29 +160,104 @@ job_is_substantive() {
 }
 
 check_policy_producers() {
-  local n i context workflow job trigger wf jobname block cond ontext clean
-  n="$(jq '.required | length' "$POLICY")"
-  [ "$n" -gt 0 ] || { finding policy_producers "the policy declares no required contexts"; return 0; }
-  for i in $(seq 0 $((n - 1))); do
-    context="$(jq -r ".required[$i].context" "$POLICY")"; workflow="$(jq -r ".required[$i].workflow" "$POLICY")"; job="$(jq -r ".required[$i].job" "$POLICY")"; trigger="$(jq -r ".required[$i].trigger // \"pull_request\"" "$POLICY")"; wf="$ROOT/$workflow"; clean=1
-    if [ ! -f "$wf" ]; then finding policy_producers "required context '$context' names missing workflow '$workflow'"; continue; fi
-    if ! job_exists "$wf" "$job"; then finding policy_producers "required context '$context' names missing job '$job'"; continue; fi
-    block="$(job_block "$wf" "$job")"; jobname="$(unquote "$(job_field "$wf" "$job" name)")"
-    if [ -z "$jobname" ]; then finding policy_producers "job '$job' has no explicit name"; clean=0; elif [ "$jobname" != "$context" ]; then finding policy_producers "required context '$context' does not match job '$job' name '$jobname'"; clean=0; fi
-    if printf '%s\n' "$block" | grep -qE '^    if:'; then cond="$(printf '%s\n' "$block" | grep -m1 -E '^    if:')"; finding policy_producers "required context '$context' is conditionally skipped ($cond)"; clean=0; fi
-    if ! job_is_substantive "$block"; then finding policy_producers "required context '$context' is produced by a fake or no-op job"; clean=0; fi
-    case "$trigger" in
-      pull_request) ;;
-      pull_request_target)
-        finding policy_producers "required context '$context' uses privileged pull_request_target; required PR gates must use pull_request"; clean=0
-        ;;
-      *) finding policy_producers "required context '$context' declares unsupported PR trigger '$trigger'"; clean=0 ;;
-    esac
-    ontext="$(on_block "$wf")"
-    if ! printf '%s\n' "$ontext" | grep -qE "^[[:space:]]*${trigger}:?[[:space:]]*($|#)"; then finding policy_producers "required context '$context' workflow is not triggered by $trigger"; clean=0; fi
-    if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then finding policy_producers "required workflow '$workflow' filters $trigger by path"; clean=0; fi
-    [ "$clean" -eq 1 ] && info policy_producers "'$context' <- $workflow:$job"
-  done
+  local context workflow job trigger wf jobname block cond ontext clean needs actual_needs expected_needs
+  local component_context component_workflow component_job component_block component_name
+
+  context="$(jq -r '.required[0].context // empty' "$POLICY")"
+  workflow="$(jq -r '.required[0].workflow // empty' "$POLICY")"
+  job="$(jq -r '.required[0].job // empty' "$POLICY")"
+  trigger="$(jq -r '.required[0].trigger // "pull_request"' "$POLICY")"
+  [ -n "$context" ] || { finding policy_producers "the policy declares no required context"; return 0; }
+
+  wf="$ROOT/$workflow"
+  clean=1
+  if [ ! -f "$wf" ]; then
+    finding policy_producers "required context '$context' names missing workflow '$workflow'"
+    return 0
+  fi
+  if ! job_exists "$wf" "$job"; then
+    finding policy_producers "required context '$context' names missing job '$job'"
+    return 0
+  fi
+
+  block="$(job_block "$wf" "$job")"
+  jobname="$(unquote "$(job_field "$wf" "$job" name)")"
+  if [ -z "$jobname" ]; then
+    finding policy_producers "job '$job' has no explicit name"; clean=0
+  elif [ "$jobname" != "$context" ]; then
+    finding policy_producers "required context '$context' does not match job '$job' name '$jobname'"; clean=0
+  fi
+
+  cond="$(printf '%s\n' "$block" | grep -m1 -E '^    if:' || true)"
+  if [ "$cond" != '    if: ${{ always() }}' ]; then
+    finding policy_producers "Merge Gate must use job-level always() condition"; clean=0
+  fi
+  if printf '%s\n' "$block" | grep -qE '^    continue-on-error:[[:space:]]*true[[:space:]]*$'; then
+    finding policy_producers "Merge Gate must not continue on error"; clean=0
+  fi
+  if ! job_is_substantive "$block"; then
+    finding policy_producers "required context '$context' is produced by a fake or no-op job"; clean=0
+  fi
+
+  case "$trigger" in
+    pull_request) ;;
+    pull_request_target)
+      finding policy_producers "required context '$context' uses privileged pull_request_target; required PR gates must use pull_request"; clean=0
+      ;;
+    *) finding policy_producers "required context '$context' declares unsupported PR trigger '$trigger'"; clean=0 ;;
+  esac
+
+  ontext="$(on_block "$wf")"
+  if ! printf '%s\n' "$ontext" | grep -qE "^[[:space:]]*$trigger:?[[:space:]]*($|#)"; then
+    finding policy_producers "required context '$context' workflow is not triggered by $trigger"; clean=0
+  fi
+  if printf '%s\n' "$ontext" | grep -qE '^[[:space:]]+paths(-ignore)?:'; then
+    finding policy_producers "required workflow '$workflow' filters $trigger by path"; clean=0
+  fi
+
+  needs="$(job_field "$wf" "$job" needs)"
+  actual_needs="$(printf '%s' "$needs" | tr -d ' []')"
+  expected_needs="$(jq -r '[.merge_gate_components[].job] | join(",")' "$POLICY")"
+  if [ "$actual_needs" != "$expected_needs" ]; then
+    finding policy_producers "Merge Gate needs do not exactly match authoritative component jobs"; clean=0
+  fi
+
+  while IFS=$'\t' read -r component_context component_workflow component_job; do
+    [ -n "$component_context" ] || continue
+    if [ "$component_workflow" != "$workflow" ]; then
+      finding policy_producers "Merge Gate component '$component_context' is outside aggregate workflow '$workflow'"; clean=0; continue
+    fi
+    if ! job_exists "$wf" "$component_job"; then
+      finding policy_producers "Merge Gate component '$component_context' names missing job '$component_job'"; clean=0; continue
+    fi
+
+    component_block="$(job_block "$wf" "$component_job")"
+    component_name="$(unquote "$(job_field "$wf" "$component_job" name)")"
+    if [ "$component_name" != "$component_context" ]; then
+      finding policy_producers "Merge Gate component '$component_context' does not match job '$component_job' name '$component_name'"; clean=0
+    fi
+    if printf '%s\n' "$component_block" | grep -qE '^    if:'; then
+      finding policy_producers "Merge Gate component '$component_context' is conditionally skipped"; clean=0
+    fi
+    if printf '%s\n' "$component_block" | grep -qE '^    continue-on-error:[[:space:]]*true[[:space:]]*$'; then
+      finding policy_producers "Merge Gate component '$component_context' continues on error"; clean=0
+    fi
+    if ! job_is_substantive "$component_block"; then
+      finding policy_producers "Merge Gate component '$component_context' is fake or no-op"; clean=0
+    fi
+    if ! printf '%s\n' "$block" | grep -Fq "needs.$component_job.result"; then
+      finding policy_producers "Merge Gate does not inspect component '$component_context' result"; clean=0
+    fi
+  done < <(jq -r '.merge_gate_components[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "success" ]; then'; then
+    finding policy_producers "Merge Gate does not fail closed on non-success component results"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq '[ "$failed" -eq 0 ]'; then
+    finding policy_producers "Merge Gate does not enforce aggregate failure state"; clean=0
+  fi
+
+  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' directly and fail-closed aggregates all six authoritative component jobs"
   return 0
 }
 

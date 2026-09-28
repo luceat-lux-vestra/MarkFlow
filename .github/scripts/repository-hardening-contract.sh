@@ -116,16 +116,35 @@ docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"
 
+grep -Fq "github.event.action == 'edited' && 'metadata' || 'validation'" "$build_workflow" || die "Build workflow does not isolate metadata-edit concurrency from head validation"
+
+head_evidence_job="$(awk '
+  /^  headEvidence:$/ { on=1 }
+  on && /^  build:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$head_evidence_job" ] || die "Head validation evidence job could not be located"
+grep -q '^    name: Head validation evidence$' <<<"$head_evidence_job" || die "head validation evidence job name drifted"
+grep -q 'name: Head validation anchor' <<<"$head_evidence_job" || die "head validation evidence has no canonical-run anchor"
+grep -q 'name: Reuse exact-SHA head validation' <<<"$head_evidence_job" || die "metadata-only replay does not verify exact-SHA head evidence"
+grep -Fq 'github.event.action == '"'"'edited'"'"'' <<<"$head_evidence_job" || die "head validation reuse is not scoped to metadata edits"
+for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
+  grep -Fq "\"$component\"" <<<"$head_evidence_job" || die "head validation reuse does not require successful $component evidence"
+done
+grep -Fq '    needs: [ headEvidence ]' "$build_workflow" || die "Build component does not depend on head validation evidence"
+[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "2" ] || die "Build and Dependency Review must both depend on head validation evidence"
+
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
-grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "required Build job does not expose docs-only classification"
-grep -q '^        id: change-scope$' "$build_workflow" || die "required Build job is missing the changed-file classifier step"
+grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "Build component does not expose docs-only classification"
+grep -q '^        id: change-scope$' "$build_workflow" || die "Build component is missing the changed-file classifier step"
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
 grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
 grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
 [ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on required Build"
-[ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every required product-validation context must materialize a docs-only success path"
+[ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a docs-only success path"
+[ "$(grep -Fc '      - name: Metadata-only event fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a metadata-only success path"
 [ "$(grep -Fc "steps.change-scope.outputs.docs_only == 'true'" "$build_workflow" || true)" = "1" ] || die "Build docs-only path must use its own classifier output"
 [ "$(grep -Fc "needs.build.outputs.docs_only == 'true'" "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify docs-only paths must consume required Build output"
 
@@ -140,10 +159,12 @@ step_if() {
 build_plugin_if="$(step_if "Build plugin")"
 [ -n "$build_plugin_if" ] || die "Build plugin has no step-level guard"
 grep -Fq "steps.change-scope.outputs.docs_only != 'true'" <<<"$build_plugin_if" || die "Build plugin is not guarded by Build-owned docs-only classification"
+grep -Fq "github.event.action != 'edited'" <<<"$build_plugin_if" || die "Build plugin is not suppressed on metadata-only events"
 for heavy_step in "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
   heavy_if="$(step_if "$heavy_step")"
   [ -n "$heavy_if" ] || die "$heavy_step has no step-level guard"
-  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by required Build docs-only output"
+  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by Build component docs-only output"
+  grep -Fq "github.event.action != 'edited'" <<<"$heavy_if" || die "$heavy_step is not suppressed on metadata-only events"
 done
 
 if grep -qi 'codecov' "$build_workflow"; then
@@ -152,17 +173,50 @@ fi
 squash_guard=".github/scripts/check-squash-message-safety.py"
 [ -f "$squash_guard" ] || die "squash message safety guard is missing"
 python3 "$squash_guard" --self-test >/dev/null || die "squash message safety guard fixtures failed"
-grep -Fq 'types: [opened, synchronize, reopened, ready_for_review]' "$build_workflow" || die "required Build workflow does not revalidate final-gate readiness"
+grep -Fq 'types: [opened, synchronize, reopened, edited, ready_for_review]' "$build_workflow" || die "required Build workflow does not revalidate final-gate readiness and metadata edits"
 grep -q '^  workflow_dispatch:$' "$build_workflow" || die "required Build workflow has no exact-SHA recovery trigger"
 grep -q '^      target_sha:$' "$build_workflow" || die "required Build recovery trigger has no target_sha input"
-metadata_workflow=".github/workflows/pr-metadata-safety.yml"
-[ -f "$metadata_workflow" ] || die "PR Metadata Safety workflow is missing"
-grep -Fq 'types: [opened, reopened, synchronize, edited, ready_for_review]' "$metadata_workflow" || die "PR Metadata Safety does not revalidate metadata edits and head changes"
-grep -q 'name: PR Metadata Safety' "$metadata_workflow" || die "PR Metadata Safety required context name drifted"
-grep -q 'Reject squash CI-skip directives' "$metadata_workflow" || die "PR Metadata Safety does not reject unsafe squash metadata"
-grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' "$metadata_workflow" || die "squash guard does not inspect PR title"
-grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" "$metadata_workflow" || die "squash guard does not inspect PR body"
-grep -q 'python3 .github/scripts/check-squash-message-safety.py' "$metadata_workflow" || die "PR Metadata Safety does not invoke squash message safety guard"
+[ ! -e .github/workflows/pr-metadata-safety.yml ] || die "standalone PR Metadata Safety workflow must stay deleted after graph consolidation"
+[ ! -e .github/workflows/dependency-review.yml ] || die "standalone Dependency Review workflow must stay deleted after graph consolidation"
+
+metadata_job="$(awk '
+  /^  metadataSafety:$/ { on=1 }
+  on && /^  dependencyReview:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$metadata_job" ] || die "integrated PR Metadata Safety job could not be located"
+grep -q '^    name: PR Metadata Safety$' <<<"$metadata_job" || die "PR Metadata Safety component name drifted"
+grep -q 'Reject squash CI-skip directives' <<<"$metadata_job" || die "PR Metadata Safety does not reject unsafe squash metadata"
+grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' <<<"$metadata_job" || die "squash guard does not inspect PR title"
+grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" <<<"$metadata_job" || die "squash guard does not inspect PR body"
+grep -q 'python3 .github/scripts/check-squash-message-safety.py' <<<"$metadata_job" || die "PR Metadata Safety does not invoke squash message safety guard"
+
+dependency_job="$(awk '
+  /^  dependencyReview:$/ { on=1 }
+  on && /^  mergeGate:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$dependency_job" ] || die "integrated Dependency Review job could not be located"
+grep -q '^    name: Dependency Review$' <<<"$dependency_job" || die "Dependency Review component name drifted"
+grep -q 'uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294' <<<"$dependency_job" || die "Dependency Review action pin drifted"
+grep -q 'fail-on-severity: moderate' <<<"$dependency_job" || die "Dependency Review severity gate drifted"
+
+merge_gate_job="$(awk '
+  /^  mergeGate:$/ { on=1 }
+  on { print }
+' "$build_workflow")"
+[ -n "$merge_gate_job" ] || die "Merge Gate job could not be located"
+grep -q '^    name: Merge Gate$' <<<"$merge_gate_job" || die "Merge Gate required context name drifted"
+grep -Fq 'needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]' <<<"$merge_gate_job" || die "Merge Gate component dependency set drifted"
+grep -Fq 'if: ${{ always() }}' <<<"$merge_gate_job" || die "Merge Gate does not use always()"
+grep -Fq 'needs.build.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Build result"
+grep -Fq 'needs.test.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Test result"
+grep -Fq 'needs.inspectCode.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Inspect code result"
+grep -Fq 'needs.verify.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Verify plugin result"
+grep -Fq 'needs.metadataSafety.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect PR Metadata Safety result"
+grep -Fq 'needs.dependencyReview.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Dependency Review result"
+grep -Fq 'if [ "$result" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not fail closed on non-success component results"
+grep -Fq '[ "$failed" -eq 0 ]' <<<"$merge_gate_job" || die "Merge Gate does not enforce aggregate failure state"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$build_workflow" "required Build workflow"
 
@@ -179,9 +233,9 @@ test_job="$(awk '
   on && /^  inspectCode:$/ { exit }
   on { print }
 ' "$build_workflow")"
-[ -n "$test_job" ] || die "required Test job could not be located"
+[ -n "$test_job" ] || die "Test component could not be located"
 coverage_count="$(grep -c '^[[:space:]]*- name: Upload Kover Coverage Report$' <<<"$test_job" || true)"
-[ "$coverage_count" = "1" ] || die "required Test job must contain exactly one Kover coverage artifact step"
+[ "$coverage_count" = "1" ] || die "Test component must contain exactly one Kover coverage artifact step"
 coverage_block="$(awk '
   /^[[:space:]]*- name: Upload Kover Coverage Report$/ { on=1; start=NR }
   on && NR > start && /^      - name:/ { exit }
@@ -192,7 +246,7 @@ grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artif
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
 coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
-expected_coverage_if='if: ${{ needs.build.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
+expected_coverage_if='if: ${{ github.event.action != '"'"'edited'"'"' && needs.build.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
 [ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact may only be suppressed by trusted docs-only scope or exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
