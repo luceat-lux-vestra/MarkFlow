@@ -58,7 +58,7 @@ jobs:
               echo "::warning::Trusted base docs-only classifier is unavailable; using full validation."
             elif ! gh api --paginate -H 'Accept: application/vnd.github+json' \
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
-              --jq '.[].filename' > "$tmp/files"; then
+              --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
               echo "::warning::Changed-file API read failed; using full validation."
             else
               result="$(python3 "$tmp/classifier.py" --expected-count "$EXPECTED_COUNT" < "$tmp/files" 2>"$tmp/classifier.err")"
