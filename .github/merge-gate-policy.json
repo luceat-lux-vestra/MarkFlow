@@ -49,11 +49,11 @@
       "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
     },
     {
-      "context": "failure-triage",
-      "workflow": ".github/workflows/failure-declaration.yml",
-      "job": "failure-triage",
+      "context": "PR Metadata Safety",
+      "workflow": ".github/workflows/pr-metadata-safety.yml",
+      "job": "metadata-safety",
       "trigger": "pull_request",
-      "covers": "Unprivileged exact-PR classification-before-remediation metadata gate. The validator executes only the immutable central action, requires no repository write authority, and preserves the existing failure-triage required-check identity."
+      "covers": "PR title/body squash-message safety. Revalidates metadata edits and rejects GitHub Actions skip directives before they can enter the squash commit message."
     },
     {
       "context": "Dependency Review",

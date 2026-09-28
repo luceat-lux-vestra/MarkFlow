@@ -55,13 +55,13 @@ jq '(.required[] | select(.context == "Build")).trigger = "pull_request_target"'
 mv "$wrong_target/.github/merge-gate-policy.json.tmp" "$wrong_target/.github/merge-gate-policy.json"
 expect_fail "$wrong_target" policy_producers "uses privileged pull_request_target"
 
-privileged_failure_triage="$TMP/privileged-failure-triage"
-copy_root "$privileged_failure_triage"
-jq '(.required[] | select(.context == "failure-triage")).trigger = "pull_request_target"' \
-  "$privileged_failure_triage/.github/merge-gate-policy.json" > "$privileged_failure_triage/.github/merge-gate-policy.json.tmp"
-mv "$privileged_failure_triage/.github/merge-gate-policy.json.tmp" "$privileged_failure_triage/.github/merge-gate-policy.json"
-perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_failure_triage/.github/workflows/failure-declaration.yml"
-expect_fail "$privileged_failure_triage" policy_producers "uses privileged pull_request_target"
+privileged_metadata_safety="$TMP/privileged-metadata-safety"
+copy_root "$privileged_metadata_safety"
+jq '(.required[] | select(.context == "PR Metadata Safety")).trigger = "pull_request_target"' \
+  "$privileged_metadata_safety/.github/merge-gate-policy.json" > "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp"
+mv "$privileged_metadata_safety/.github/merge-gate-policy.json.tmp" "$privileged_metadata_safety/.github/merge-gate-policy.json"
+perl -0pi -e 's/^  pull_request:/  pull_request_target:/m' "$privileged_metadata_safety/.github/workflows/pr-metadata-safety.yml"
+expect_fail "$privileged_metadata_safety" policy_producers "uses privileged pull_request_target"
 
 caller_selected_ref="$TMP/caller-selected-ref"
 copy_root "$caller_selected_ref"
@@ -232,7 +232,7 @@ jq -n '{
           {context: "Test", integration_id: 15368},
           {context: "Inspect code", integration_id: 15368},
           {context: "Verify plugin", integration_id: 15368},
-          {context: "failure-triage", integration_id: 15368}
+          {context: "PR Metadata Safety", integration_id: 15368}
         ]
       }}
     ]
@@ -284,7 +284,7 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
     printf '%s\n' '[{"id":1,"name":"main protection"}]'
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
-  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"failure-triage","integration_id":15368},{"context":"Dependency Review","integration_id":15368}]}}]}'
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Build","integration_id":15368},{"context":"Test","integration_id":15368},{"context":"Inspect code","integration_id":15368},{"context":"Verify plugin","integration_id":15368},{"context":"PR Metadata Safety","integration_id":15368},{"context":"Dependency Review","integration_id":15368}]}}]}'
 elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture" ]; then
   if [ "${MOCK_SECURITY_DRIFT:-}" = 1 ]; then
     printf '%s\n' '{"visibility":"public","security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}}'

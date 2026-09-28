@@ -41,7 +41,7 @@ def validate(title: str, body: str) -> int:
 
     print(
         "::error::PR title/body contains GitHub Actions skip directive(s) that could "
-        "suppress post-main validation when copied into a squash commit: "
+        "suppress default-branch workflows when copied into a squash commit: "
         + ", ".join(detected)
     )
     print(
