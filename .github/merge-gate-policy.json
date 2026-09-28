@@ -1,15 +1,12 @@
 {
   "$comment": [
     "Canonical, machine-checkable merge-gate policy for MarkFlow.",
-    "The required/advisory/staged/release-only arrays are the only policy classification.",
-    "The audit compares the required producer definitions with workflow files and, when an",
-    "explicit repository-administration credential is supplied, with the live rulesets.",
-    "Scheduled/manual workflow execution is credential-less by default; privileged live",
-    "readback is explicit opt-in or external exit-audit evidence, never inferred from CI.",
-    "A staged control is not claimed to be live or required until the corresponding evidence",
-    "and live settings change have both been completed."
+    "The live main ruleset requires only the aggregate Merge Gate context.",
+    "merge_gate_components are authoritative internal component jobs and are validated as a closed dependency graph.",
+    "The audit compares required producer definitions with workflow files and, when an explicit repository-administration credential is supplied, with the live rulesets.",
+    "Scheduled/manual workflow execution is credential-less by default; privileged live readback is explicit opt-in or external exit-audit evidence, never inferred from CI."
   ],
-  "version": 2,
+  "version": 3,
   "repository": "luceat-lux-vestra/MarkFlow",
   "protected_branch": "main",
   "ruleset_name": "main protection",
@@ -25,42 +22,11 @@
   },
   "required": [
     {
-      "context": "Build",
+      "context": "Merge Gate",
       "workflow": ".github/workflows/build.yml",
-      "job": "build",
-      "covers": "Kotlin/Gradle compile, webview TypeScript production build, plugin packaging"
-    },
-    {
-      "context": "Test",
-      "workflow": ".github/workflows/build.yml",
-      "job": "test",
-      "covers": "Gradle check (Kotlin unit tests) and the webview source test suite"
-    },
-    {
-      "context": "Inspect code",
-      "workflow": ".github/workflows/build.yml",
-      "job": "inspectCode",
-      "covers": "Authoritative Qodana static-analysis job, including its fail-closed SARIF threshold"
-    },
-    {
-      "context": "Verify plugin",
-      "workflow": ".github/workflows/build.yml",
-      "job": "verify",
-      "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets"
-    },
-    {
-      "context": "PR Metadata Safety",
-      "workflow": ".github/workflows/pr-metadata-safety.yml",
-      "job": "metadata-safety",
+      "job": "mergeGate",
       "trigger": "pull_request",
-      "covers": "PR title/body squash-message safety. Revalidates metadata edits and rejects GitHub Actions skip directives before they can enter the squash commit message."
-    },
-    {
-      "context": "Dependency Review",
-      "workflow": ".github/workflows/dependency-review.yml",
-      "job": "review",
-      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above",
-      "promotion_evidence": "PR #234 exact HEAD d7df6a2991e255c9cd56eb4d37a1da21a5002eeb produced successful Dependency Review run 35501629755. Promotion completed through PR #248 and authoritative live readback on 2026-09-22: ruleset 22021368 already required Dependency Review with GitHub Actions integration id 15368 and no bypass actors."
+      "covers": "Fail-closed aggregation of Build, Test, Inspect code, Verify plugin, PR Metadata Safety, and Dependency Review. The job runs with always() and succeeds only when every authoritative component result is exactly success."
     }
   ],
   "staged_required": [
@@ -120,9 +86,9 @@
   "staged": [
     {
       "check": "ruleset_sync",
-      "blocked_by": "The staged Hardening audit is intentionally not present in the live required contexts until an unprivileged fork PR proves it cannot wedge external contributions; current required contexts are still compared exactly during authoritative readback.",
+      "blocked_by": "Privileged live ruleset comparison remains report-only; the checked-in required set is the single Merge Gate context.",
       "promote_to": "gate",
-      "when": "after fork execution evidence justifies Hardening audit promotion and the live ruleset/policy change is reviewed atomically; no long-lived Actions admin credential is required"
+      "when": "during explicit hardening exit audits and after any live ruleset change"
     },
     {
       "check": "release_tag_ruleset",
@@ -132,9 +98,9 @@
     },
     {
       "check": "required_context_promotion",
-      "blocked_by": "Same-repository PR/merged-main reliability and external live readback are proven; unprivileged fork-PR execution is not yet proven and the repository currently has no forks.",
+      "blocked_by": "Hardening audit remains staged separately from the single Merge Gate until unprivileged fork execution is proven.",
       "promote_to": "ruleset",
-      "when": "after an unprivileged fork PR proves Hardening audit execution on its exact head, followed by fresh ordinary-PR/main evidence and authoritative live readback; add the context to required and the live main ruleset in one reviewed change"
+      "when": "after an unprivileged fork PR proves Hardening audit execution and a separate reviewed policy decision explicitly chooses whether to aggregate or require that control"
     }
   ],
   "security_analysis_exceptions": [
@@ -165,5 +131,43 @@
       ],
       "default_setup_state": "not-configured"
     }
-  }
+  },
+  "merge_gate_components": [
+    {
+      "context": "Build",
+      "workflow": ".github/workflows/build.yml",
+      "job": "build",
+      "covers": "Kotlin/Gradle compile, webview TypeScript production build, plugin packaging; conservative docs-only and metadata-only fast paths retain the required job identity."
+    },
+    {
+      "context": "Test",
+      "workflow": ".github/workflows/build.yml",
+      "job": "test",
+      "covers": "Gradle check (Kotlin unit tests) and the webview source test suite; conservative docs-only and metadata-only fast paths retain the component identity."
+    },
+    {
+      "context": "Inspect code",
+      "workflow": ".github/workflows/build.yml",
+      "job": "inspectCode",
+      "covers": "Authoritative Qodana static-analysis job, including its fail-closed SARIF threshold; conservative docs-only and metadata-only fast paths retain the component identity."
+    },
+    {
+      "context": "Verify plugin",
+      "workflow": ".github/workflows/build.yml",
+      "job": "verify",
+      "covers": "IntelliJ plugin structure verification and Plugin Verifier compatibility targets; conservative docs-only and metadata-only fast paths retain the component identity."
+    },
+    {
+      "context": "PR Metadata Safety",
+      "workflow": ".github/workflows/build.yml",
+      "job": "metadataSafety",
+      "covers": "PR title/body squash-message safety. Revalidates edited metadata and rejects GitHub Actions skip directives before they can enter the squash commit message."
+    },
+    {
+      "context": "Dependency Review",
+      "workflow": ".github/workflows/build.yml",
+      "job": "dependencyReview",
+      "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above. Metadata-only events preserve the component without rerunning an unchanged dependency diff."
+    }
+  ]
 }
