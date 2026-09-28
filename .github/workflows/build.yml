@@ -20,12 +20,68 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && 'metadata' || 'validation' }}
   cancel-in-progress: true
 
 jobs:
+  headEvidence:
+    name: Head validation evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Head validation anchor
+        if: ${{ github.event_name != 'pull_request' || (github.event.action != 'edited' && github.event.pull_request.draft == false) }}
+        run: echo "This run is authoritative validation for the exact head rather than a metadata-only replay."
+
+      - name: Reuse exact-SHA head validation
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              [ "$run_id" != "$GITHUB_RUN_ID" ] || continue
+
+              status="$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .status' <<<"$runs")"
+              [ "$status" = "completed" ] || continue
+
+              jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+              anchor_count="$(jq '[.jobs[]
+                | select(.name == "Head validation evidence")
+                | .steps[]?
+                | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+              [ "$anchor_count" = "1" ] || continue
+
+              valid=true
+              for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
+                count="$(jq --arg name "$component" '[.jobs[] | select(.name == $name and .status == "completed" and .conclusion == "success")] | length' <<<"$jobs")"
+                if [ "$count" != "1" ]; then
+                  valid=false
+                  break
+                fi
+              done
+              if [ "$valid" = true ]; then
+                echo "Reused canonical exact-SHA product/dependency evidence from run $run_id for $EXPECTED_SHA."
+                exit 0
+              fi
+            done < <(jq -r --arg current "$GITHUB_RUN_ID" --arg sha "$EXPECTED_SHA" '
+              [.workflow_runs[]
+               | select(.head_sha == $sha)
+               | select((.id | tostring) != $current)]
+              | sort_by(.id) | reverse | .[].id
+            ' <<<"$runs")
+            sleep 5
+          done
+          echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
+          exit 1
+
   build:
     name: Build
+    needs: [ headEvidence ]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -135,6 +191,15 @@ jobs:
 
             run_id="$(jq -r '.id' <<<"$latest")"
             jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            anchor_count="$(jq '[.jobs[]
+              | select(.name == "Head validation evidence")
+              | .steps[]?
+              | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+            if [ "$anchor_count" != "1" ]; then
+              echo "reuse=false" >> "$GITHUB_OUTPUT"
+              echo "Latest prior exact-SHA run is not canonical head validation; executing local Fast checks."
+              exit 0
+            fi
             matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
             if [ "$matching_jobs" != "1" ]; then
               echo "::error::Canonical Build run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
@@ -436,6 +501,15 @@ jobs:
 
             run_id="$(jq -r '.id' <<<"$latest")"
             jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            anchor_count="$(jq '[.jobs[]
+              | select(.name == "Head validation evidence")
+              | .steps[]?
+              | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
+            if [ "$anchor_count" != "1" ]; then
+              echo "reuse=false" >> "$GITHUB_OUTPUT"
+              echo "Latest prior exact-SHA run is not canonical head validation; executing local Fast checks."
+              exit 0
+            fi
             matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
             if [ "$matching_jobs" != "1" ]; then
               echo "::error::Canonical Build run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
@@ -666,6 +740,7 @@ jobs:
 
   dependencyReview:
     name: Dependency Review
+    needs: [ headEvidence ]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
