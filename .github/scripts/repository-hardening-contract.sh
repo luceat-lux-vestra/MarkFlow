@@ -116,9 +116,27 @@ docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"
 
+grep -Fq "github.event.action == 'edited' && 'metadata' || 'validation'" "$build_workflow" || die "Build workflow does not isolate metadata-edit concurrency from head validation"
+
+head_evidence_job="$(awk '
+  /^  headEvidence:$/ { on=1 }
+  on && /^  build:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$head_evidence_job" ] || die "Head validation evidence job could not be located"
+grep -q '^    name: Head validation evidence$' <<<"$head_evidence_job" || die "head validation evidence job name drifted"
+grep -q 'name: Head validation anchor' <<<"$head_evidence_job" || die "head validation evidence has no canonical-run anchor"
+grep -q 'name: Reuse exact-SHA head validation' <<<"$head_evidence_job" || die "metadata-only replay does not verify exact-SHA head evidence"
+grep -Fq 'github.event.action == '"'"'edited'"'"'' <<<"$head_evidence_job" || die "head validation reuse is not scoped to metadata edits"
+for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
+  grep -Fq "\"$component\"" <<<"$head_evidence_job" || die "head validation reuse does not require successful $component evidence"
+done
+grep -Fq '    needs: [ headEvidence ]' "$build_workflow" || die "Build component does not depend on head validation evidence"
+[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "2" ] || die "Build and Dependency Review must both depend on head validation evidence"
+
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
-grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "required Build job does not expose docs-only classification"
-grep -q '^        id: change-scope$' "$build_workflow" || die "required Build job is missing the changed-file classifier step"
+grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "Build component does not expose docs-only classification"
+grep -q '^        id: change-scope$' "$build_workflow" || die "Build component is missing the changed-file classifier step"
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
 grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
@@ -145,7 +163,7 @@ grep -Fq "github.event.action != 'edited'" <<<"$build_plugin_if" || die "Build p
 for heavy_step in "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
   heavy_if="$(step_if "$heavy_step")"
   [ -n "$heavy_if" ] || die "$heavy_step has no step-level guard"
-  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by required Build docs-only output"
+  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by Build component docs-only output"
   grep -Fq "github.event.action != 'edited'" <<<"$heavy_if" || die "$heavy_step is not suppressed on metadata-only events"
 done
 
@@ -215,9 +233,9 @@ test_job="$(awk '
   on && /^  inspectCode:$/ { exit }
   on { print }
 ' "$build_workflow")"
-[ -n "$test_job" ] || die "required Test job could not be located"
+[ -n "$test_job" ] || die "Test component could not be located"
 coverage_count="$(grep -c '^[[:space:]]*- name: Upload Kover Coverage Report$' <<<"$test_job" || true)"
-[ "$coverage_count" = "1" ] || die "required Test job must contain exactly one Kover coverage artifact step"
+[ "$coverage_count" = "1" ] || die "Test component must contain exactly one Kover coverage artifact step"
 coverage_block="$(awk '
   /^[[:space:]]*- name: Upload Kover Coverage Report$/ { on=1; start=NR }
   on && NR > start && /^      - name:/ { exit }
