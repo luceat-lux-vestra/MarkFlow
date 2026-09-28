@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import PurePosixPath
+
 
 ROOT_DOCS = frozenset(
     {
@@ -18,6 +20,15 @@ ROOT_DOCS = frozenset(
     }
 )
 DOC_PREFIXES = ("docs/", "plans/")
+SIMPLE_STATUSES = frozenset({"added", "modified", "removed"})
+MOVE_STATUSES = frozenset({"renamed", "copied"})
+
+
+@dataclass(frozen=True)
+class Change:
+    status: str
+    filename: str
+    previous_filename: str = ""
 
 
 def is_allowed_path(path: str) -> bool:
@@ -34,44 +45,82 @@ def is_allowed_path(path: str) -> bool:
     return path.endswith(".md") and any(path.startswith(prefix) for prefix in DOC_PREFIXES)
 
 
-def classify(paths: list[str], expected_count: int) -> bool:
-    if expected_count <= 0 or not paths:
+def is_docs_only_change(change: Change) -> bool:
+    if change.status in SIMPLE_STATUSES:
+        return not change.previous_filename and is_allowed_path(change.filename)
+
+    if change.status in MOVE_STATUSES:
+        return (
+            bool(change.previous_filename)
+            and is_allowed_path(change.filename)
+            and is_allowed_path(change.previous_filename)
+        )
+
+    return False
+
+
+def classify(changes: list[Change], expected_count: int) -> bool:
+    if expected_count <= 0 or not changes:
         return False
-    if len(paths) != expected_count:
+    if len(changes) != expected_count:
         return False
-    if len(set(paths)) != len(paths):
+    if len(set(changes)) != len(changes):
         return False
-    return all(is_allowed_path(path) for path in paths)
+    return all(is_docs_only_change(change) for change in changes)
+
+
+def parse_record(line: str) -> Change | None:
+    fields = line.rstrip("\n").split("\t")
+    if len(fields) != 3:
+        return None
+    status, filename, previous_filename = fields
+    if not status or not filename:
+        return None
+    return Change(status=status, filename=filename, previous_filename=previous_filename)
 
 
 def self_test() -> None:
     positive = [
-        ["README.md"],
-        ["AGENTS.md", "GOVERNANCE.md"],
-        ["docs/architecture/overview.md"],
-        ["docs/release/recovery.md", "plans/001-native-editor.md"],
+        [Change("modified", "README.md")],
+        [Change("modified", "AGENTS.md"), Change("modified", "GOVERNANCE.md")],
+        [Change("added", "docs/architecture/overview.md")],
+        [Change("removed", "plans/001-native-editor.md")],
+        [Change("renamed", "docs/new-name.md", "docs/old-name.md")],
+        [Change("copied", "plans/copy.md", "plans/source.md")],
     ]
     negative = [
         [],
-        [".github/pull_request_template.md"],
-        ["examples/demo.md"],
-        ["fixtures/sample.md"],
-        ["src/test/resources/sample.md"],
-        ["webview/README.md"],
-        ["docs/architecture/diagram.yml"],
-        ["README.md", "src/main/kotlin/App.kt"],
-        ["../README.md"],
-        ["docs/../README.md"],
-        ["docs/readme.MD"],
+        [Change("modified", ".github/pull_request_template.md")],
+        [Change("modified", "examples/demo.md")],
+        [Change("modified", "fixtures/sample.md")],
+        [Change("modified", "src/test/resources/sample.md")],
+        [Change("modified", "webview/README.md")],
+        [Change("modified", "docs/architecture/diagram.yml")],
+        [Change("modified", "README.md"), Change("modified", "src/main/kotlin/App.kt")],
+        [Change("modified", "../README.md")],
+        [Change("modified", "docs/../README.md")],
+        [Change("modified", "docs/readme.MD")],
+        [Change("renamed", "docs/runtime-moved-here.md", "src/main/kotlin/App.kt")],
+        [Change("renamed", "docs/new-name.md", "")],
+        [Change("copied", "docs/copy.md", "webview/runtime.ts")],
+        [Change("changed", "README.md")],
+        [Change("modified", "README.md", "docs/old.md")],
     ]
 
-    for paths in positive:
-        assert classify(paths, len(paths)), paths
-    for paths in negative:
-        assert not classify(paths, len(paths)), paths
+    for changes in positive:
+        assert classify(changes, len(changes)), changes
+    for changes in negative:
+        assert not classify(changes, len(changes)), changes
 
-    assert not classify(["README.md"], 2)
-    assert not classify(["README.md", "README.md"], 2)
+    one = [Change("modified", "README.md")]
+    assert not classify(one, 2)
+    assert not classify(one + one, 2)
+
+    assert parse_record("modified\tREADME.md\t\n") == Change("modified", "README.md")
+    assert parse_record("renamed\tdocs/new.md\tdocs/old.md\n") == Change(
+        "renamed", "docs/new.md", "docs/old.md"
+    )
+    assert parse_record("broken\n") is None
 
 
 def main() -> int:
@@ -88,8 +137,15 @@ def main() -> int:
     if args.expected_count is None:
         parser.error("--expected-count is required unless --self-test is used")
 
-    paths = [line.rstrip("\n") for line in sys.stdin]
-    print("true" if classify(paths, args.expected_count) else "false")
+    changes: list[Change] = []
+    for line in sys.stdin:
+        change = parse_record(line)
+        if change is None:
+            print("false")
+            return 0
+        changes.append(change)
+
+    print("true" if classify(changes, args.expected_count) else "false")
     return 0
 
 
