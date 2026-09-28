@@ -43,6 +43,8 @@ A review PASS belongs to one exact PR HEAD SHA. If HEAD changes, review again. `
 
 Because repository squash commits use PR metadata, PR titles and bodies must not contain GitHub Actions skip directives. Required `PR Metadata Safety` validation re-runs on metadata edits and fails closed on recognized skip markers and `skip-checks: true` trailers. Automated/API squash merges must also provide an explicitly sanitized commit message instead of inheriting arbitrary PR body text. If a default-branch workflow is ever suppressed before a run exists, use the applicable exact-SHA recovery path and treat the original missing run as an audit anomaly rather than as PASS.
 
+Documentation-only pull requests may skip heavy product validation only when the required `Build` job classifies every changed path against the trusted base-revision allowlist. The required `Build`, `Test`, `Inspect code`, and `Verify plugin` contexts still materialize and succeed; unknown paths, non-documentation changes, rename/copy provenance outside the allowlist, changed-file metadata failures, or classifier uncertainty fall back to full validation.
+
 Repository hardening is owned separately from runtime Leap work. Runtime architecture acceptance never follows from repository CI green alone.
 
 ## Dependency update governance
