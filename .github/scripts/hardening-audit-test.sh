@@ -95,7 +95,7 @@ expect_fail "$missing_component" policy_producers "needs do not exactly match au
 no_always="$TMP/no-always"
 copy_root "$no_always"
 perl -0pi -e 's/    if: \$\{\{ always\(\) \}\}\n//' "$no_always/.github/workflows/build.yml"
-expect_fail "$no_always" policy_producers "Merge Gate must use job-level if:"
+expect_fail "$no_always" policy_producers "Merge Gate must use job-level always() condition"
 
 aggregate_continue="$TMP/aggregate-continue"
 copy_root "$aggregate_continue"
