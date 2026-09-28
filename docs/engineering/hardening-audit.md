@@ -38,6 +38,14 @@ matched entry without an id stop the readback. The main ruleset must have
 ruleset must have `target=tag` and exactly `include=["~ALL"]`; both must have
 `exclude=[]`.
 
+The main ruleset requires one GitHub Actions context: `Merge Gate`. The
+checked-in policy separately declares the six authoritative internal
+components—`Build`, `Test`, `Inspect code`, `Verify plugin`,
+`PR Metadata Safety`, and `Dependency Review`. They execute in the same
+workflow dependency graph. The aggregate job uses `always()` and fails unless
+every component result is exactly `success`; a failed, cancelled, skipped, or
+missing component is therefore not treated as PASS.
+
 ## Staged-context re-evaluation — 2026-09-07
 
 The original staging reason has been re-evaluated against current evidence,
@@ -111,13 +119,14 @@ treating the prior hardening completion as permanent evidence.
 
 New controls are deliberately classified before promotion:
 
-- `Dependency Review` is **required**. PR #234 proved the ordinary-PR
-  producer, and PR #248 reconciled the checked-in merge-gate policy after the
-  live `main protection` ruleset already required the same context. The
-  2026-09-22 authoritative readback confirmed ruleset `22021368`, GitHub
-  Actions integration id `15368`, and no bypass actors. Dependency Review is
-  PR-diff-scoped, so merged-main execution is N/A; post-merge proof is the
-  policy/ruleset readback rather than a nonexistent main check run.
+- `Dependency Review` remains an **authoritative merge-gate component**.
+  PR #234 proved the ordinary-PR producer, and PR #248 historically promoted
+  it as a direct required context. The later single-gate consolidation keeps
+  the same dependency-diff admission semantics but makes `Merge Gate` the
+  sole live required status context. The component still runs on relevant PR
+  head changes and its result is consumed directly by the aggregate; metadata-
+  only edits retain the component identity without rerunning an unchanged
+  dependency diff.
 - CodeQL for JavaScript/TypeScript and GitHub Actions is advisory security
   analysis. A Java/Kotlin leg was exercised during this reassessment with both
   `build-mode:none` and `autobuild`; the current CodeQL v4.38.1 / CLI 2.27.0
@@ -170,6 +179,7 @@ or live rulesets.
 An authoritative live pass means that a designated admin-capable readback
 successfully read the live state and every expected comparison passed. Static
 workflow analysis and fixture validation are supporting evidence; they are not
-substitutes for live GitHub administration evidence. Promotion of `Hardening
-audit` into the required contexts remains a separate reviewed
-policy-and-ruleset decision.
+substitutes for live GitHub administration evidence. Promotion of `Hardening audit` remains a separate reviewed
+policy-and-ruleset decision; any future promotion must explicitly decide
+whether that control becomes another live requirement or is incorporated into
+the single `Merge Gate` graph.
