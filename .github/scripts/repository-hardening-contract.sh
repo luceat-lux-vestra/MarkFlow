@@ -126,8 +126,8 @@ grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workf
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
 [ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on required Build"
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every required product-validation context must materialize a docs-only success path"
-[ "$(grep -Fc "if: ${{ steps.change-scope.outputs.docs_only == 'true' }}" "$build_workflow" || true)" = "1" ] || die "Build docs-only path must use its own classifier output"
-[ "$(grep -Fc "if: ${{ needs.build.outputs.docs_only == 'true' }}" "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify docs-only paths must consume required Build output"
+[ "$(grep -Fc "steps.change-scope.outputs.docs_only == 'true'" "$build_workflow" || true)" = "1" ] || die "Build docs-only path must use its own classifier output"
+[ "$(grep -Fc "needs.build.outputs.docs_only == 'true'" "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify docs-only paths must consume required Build output"
 
 step_if() {
   local step_name="$1"
