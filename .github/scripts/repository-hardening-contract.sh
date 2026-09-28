@@ -116,16 +116,17 @@ docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"
 
-grep -q '^  scope:$' "$build_workflow" || die "Build workflow is missing the change-scope classifier job"
-grep -q '^    name: Classify change scope$' "$build_workflow" || die "Build workflow change-scope job name drifted"
-grep -Fq 'docs_only: ${{ steps.classify.outputs.docs_only }}' "$build_workflow" || die "Build workflow does not expose docs-only scope output"
+[ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
+grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "required Build job does not expose docs-only classification"
+grep -q '^        id: change-scope$' "$build_workflow" || die "required Build job is missing the changed-file classifier step"
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
 grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
-[ "$(grep -Fc '    needs: [ scope ]' "$build_workflow" || true)" = "1" ] || die "Build must depend on change-scope classification"
-[ "$(grep -Fc '    needs: [ scope, build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on scope and Build"
+[ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on required Build"
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every required product-validation context must materialize a docs-only success path"
+[ "$(grep -Fc "if: ${{ steps.change-scope.outputs.docs_only == 'true' }}" "$build_workflow" || true)" = "1" ] || die "Build docs-only path must use its own classifier output"
+[ "$(grep -Fc "if: ${{ needs.build.outputs.docs_only == 'true' }}" "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify docs-only paths must consume required Build output"
 
 step_if() {
   local step_name="$1"
@@ -135,10 +136,13 @@ step_if() {
     found && /^      - name:/ { exit }
   ' "$build_workflow"
 }
-for heavy_step in "Build plugin" "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
+build_plugin_if="$(step_if "Build plugin")"
+[ -n "$build_plugin_if" ] || die "Build plugin has no step-level guard"
+grep -Fq "steps.change-scope.outputs.docs_only != 'true'" <<<"$build_plugin_if" || die "Build plugin is not guarded by Build-owned docs-only classification"
+for heavy_step in "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
   heavy_if="$(step_if "$heavy_step")"
   [ -n "$heavy_if" ] || die "$heavy_step has no step-level guard"
-  grep -Fq "needs.scope.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by the docs-only scope"
+  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by required Build docs-only output"
 done
 
 if grep -qi 'codecov' "$build_workflow"; then
@@ -187,7 +191,7 @@ grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artif
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
 coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
-expected_coverage_if='if: ${{ needs.scope.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
+expected_coverage_if='if: ${{ needs.build.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
 [ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact may only be suppressed by trusted docs-only scope or exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
