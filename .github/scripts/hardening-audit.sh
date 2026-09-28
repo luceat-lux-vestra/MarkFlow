@@ -190,7 +190,7 @@ check_policy_producers() {
 
   cond="$(printf '%s\n' "$block" | grep -m1 -E '^    if:' || true)"
   if [ "$cond" != '    if: ${{ always() }}' ]; then
-    finding policy_producers "Merge Gate must use job-level if: ${{ always() }}"; clean=0
+    finding policy_producers "Merge Gate must use job-level always() condition"; clean=0
   fi
   if printf '%s\n' "$block" | grep -qE '^    continue-on-error:[[:space:]]*true[[:space:]]*$'; then
     finding policy_producers "Merge Gate must not continue on error"; clean=0
