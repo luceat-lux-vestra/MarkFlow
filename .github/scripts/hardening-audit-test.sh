@@ -219,13 +219,21 @@ jq -n '{
     }}]
   },
   release_tag: {
-    name: "release tag immutability", enforcement: "active", bypass_actors: [],
+    name: "publication tags", enforcement: "active", bypass_actors: [],
     target: "tag",
-    conditions: {ref_name: {include: ["~ALL"], exclude: []}},
-    rules: [{type: "deletion"}, {type: "non_fast_forward"}]
+    conditions: {ref_name: {include: ["refs/tags/v*"], exclude: []}},
+    rules: [{type: "deletion"}, {type: "update"}]
   }
 }' > "$ruleset_fixture"
 expect_fail "$baseline" ruleset_sync "policy requires context 'Merge Gate'" "$ruleset_fixture"
+
+status=0
+output="$(HARDENING_AUDIT_TOKEN=fixture GITHUB_REPOSITORY=fixture bash "$AUDIT" --root "$baseline" --only release_tag_ruleset --ruleset-fixture "$ruleset_fixture" 2>&1)" || status=$?
+[ "$status" -eq 0 ] || { echo "publication-tag ruleset fixture failed" >&2; printf '%s\n' "$output" >&2; exit 1; }
+
+wrong_publication_scope="$TMP/wrong-publication-scope.json"
+jq '.release_tag.conditions.ref_name.include = ["~ALL"]' "$ruleset_fixture" > "$wrong_publication_scope"
+expect_fail "$baseline" release_tag_ruleset "include scope is not exactly 'refs/tags/v*'" "$wrong_publication_scope"
 
 semantic_drift_fixture="$TMP/semantic-drift-rulesets.json"
 jq -n '{
@@ -253,10 +261,10 @@ jq -n '{
     ]
   },
   release_tag: {
-    name: "release tag immutability", enforcement: "active", bypass_actors: [],
+    name: "publication tags", enforcement: "active", bypass_actors: [],
     target: "tag",
-    conditions: {ref_name: {include: ["~ALL"], exclude: []}},
-    rules: [{type: "deletion"}, {type: "non_fast_forward"}]
+    conditions: {ref_name: {include: ["refs/tags/v*"], exclude: []}},
+    rules: [{type: "deletion"}, {type: "update"}]
   }
 }' > "$semantic_drift_fixture"
 expect_fail "$baseline" ruleset_sync "review or squash-only parameters drifted" "$semantic_drift_fixture"
@@ -270,13 +278,20 @@ jq '.main.target = "tag" | .main.conditions.ref_name.exclude = [] | .main.rules 
 expect_fail "$baseline" ruleset_sync "target is not 'branch'" "$scope_target_fixture"
 
 incomplete_ruleset="$TMP/incomplete-ruleset.json"
-jq -n '{main: {name: "main protection"}, release_tag: {name: "release tag immutability"}}' > "$incomplete_ruleset"
+jq -n '{main: {name: "main protection"}, release_tag: {name: "publication tags"}}' > "$incomplete_ruleset"
 expect_fail "$baseline" ruleset_sync "omitted an authoritative field" "$incomplete_ruleset"
 
 live_without_credential="$TMP/live-without-credential"
 copy_root "$live_without_credential"
 expect_live_fail "$live_without_credential" ruleset_sync "authoritative HARDENING_AUDIT_TOKEN is unavailable"
 expect_live_fail "$live_without_credential" security_settings "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+expect_live_fail "$live_without_credential" actions_event_policies "authoritative HARDENING_AUDIT_TOKEN is unavailable"
+
+missing_event_policy="$TMP/missing-event-policy"
+copy_root "$missing_event_policy"
+jq 'del(.actions_event_policies.retired)' "$missing_event_policy/.github/merge-gate-policy.json" > "$missing_event_policy/.github/merge-gate-policy.json.tmp"
+mv "$missing_event_policy/.github/merge-gate-policy.json.tmp" "$missing_event_policy/.github/merge-gate-policy.json"
+expect_fail "$missing_event_policy" policy_shape "Actions event-policy retirement declaration is incomplete or unsupported"
 
 missing_security_policy="$TMP/missing-security-policy"
 copy_root "$missing_security_policy"
@@ -318,6 +333,12 @@ elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/actions/permissions/workf
   printf '%s\n' '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}'
 elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/code-scanning/default-setup" ]; then
   printf '%s\n' '{"state":"not-configured"}'
+elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture/actions/policies" ]; then
+  if [ "${MOCK_EVENT_POLICY_DRIFT:-}" = 1 ]; then
+    printf '%s\n' '{"total_count":1,"policies":[{"id":5152,"name":"Allow audited failure triage workflow","target":"actions","enforcement":"active"}]}'
+  else
+    printf '%s\n' '{"total_count":0,"policies":[]}'
+  fi
 else
   echo "unexpected gh invocation" >&2
   exit 92
@@ -339,5 +360,14 @@ status=0
 output="$(PATH="$mock_bin:$PATH" MOCK_SECURITY_DRIFT=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only security_settings 2>&1)" || status=$?
 [ "$status" -ne 0 ] || { echo "security settings drift fixture unexpectedly passed" >&2; exit 1; }
 case "$output" in *"secret_scanning_push_protection"*) ;; *) echo "security drift fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
+
+status=0
+output="$(PATH="$mock_bin:$PATH" GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only actions_event_policies 2>&1)" || status=$?
+[ "$status" -eq 0 ] || { echo "Actions event-policy fixture failed" >&2; printf '%s\n' "$output" >&2; exit 1; }
+
+status=0
+output="$(PATH="$mock_bin:$PATH" MOCK_EVENT_POLICY_DRIFT=1 GITHUB_REPOSITORY=fixture HARDENING_AUDIT_TOKEN=designated-token GH_TOKEN=ordinary-token bash "$AUDIT" --root "$token_wrapper" --only actions_event_policies 2>&1)" || status=$?
+[ "$status" -ne 0 ] || { echo "retired Actions event-policy drift fixture unexpectedly passed" >&2; exit 1; }
+case "$output" in *"retired Actions event policy 5152 still exists"*) ;; *) echo "event-policy drift fixture failed for the wrong reason" >&2; printf '%s\n' "$output" >&2; exit 1 ;; esac
 
 echo "hardening-audit negative fixtures passed"
