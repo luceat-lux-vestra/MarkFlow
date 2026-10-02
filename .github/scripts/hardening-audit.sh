@@ -148,6 +148,27 @@ check_policy_shape() {
     finding policy_shape "security_settings declaration is incomplete or unsupported"; clean=0
   fi
 
+  if ! jq -e '
+    (.release_ruleset_name == "publication tags")
+    and (.release_ruleset_ref_pattern == "refs/tags/v*")
+    and (.release_ruleset_required_rule_types == ["deletion","update"])
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "publication-tag ruleset declaration is incomplete or unsupported"; clean=0
+  fi
+
+  if ! jq -e '
+    (.actions_event_policies.expected_active_ids == [])
+    and (.actions_event_policies.retired | type == "array")
+    and (.actions_event_policies.retired | length == 1)
+    and (.actions_event_policies.retired[0].id == 5152)
+    and (.actions_event_policies.retired[0].former_workflow == ".github/workflows/failure-triage.yml")
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "Actions event-policy retirement declaration is incomplete or unsupported"; clean=0
+  fi
+  if [ -e "$ROOT/.github/workflows/failure-triage.yml" ]; then
+    finding policy_shape "retired failure-triage.yml unexpectedly exists"; clean=0
+  fi
+
   [ "$clean" -eq 1 ] && info policy_shape "single required Merge Gate and its six authoritative components are internally consistent"
   return 0
 }
@@ -462,7 +483,7 @@ validate_ruleset_common() {
   else
     expected_name="$(jq -r '.release_ruleset_name' "$POLICY")"
     expected_target=tag
-    expected_include='~ALL'
+    expected_include="$(jq -r '.release_ruleset_ref_pattern' "$POLICY")"
   fi
   if ! jq -e 'type == "object" and (.name | type == "string") and (.target | type == "string") and (.enforcement | type == "string") and (.bypass_actors | type == "array") and (.conditions.ref_name.include | type == "array") and (.conditions.ref_name.exclude | type == "array") and (.rules | type == "array")' <<< "$detail" >/dev/null; then
     finding "$kind" "live ruleset omitted an authoritative field; refusing to infer a safe default"; return 1
@@ -505,8 +526,47 @@ check_release_tag_ruleset() {
   if ! ruleset_readback_available; then finding release_tag_ruleset "authoritative HARDENING_AUDIT_TOKEN is unavailable; release-tag safety is unverified"; return 0; fi
   if ! detail="$(read_ruleset_detail release_tag)"; then finding release_tag_ruleset "could not read complete release-tag ruleset"; return 0; fi
   if ! validate_ruleset_common release_tag "$detail"; then return 0; fi
-  for required_type in deletion non_fast_forward; do jq -e --arg type "$required_type" '.rules | any(.type == $type)' <<< "$detail" >/dev/null || { finding release_tag_ruleset "release-tag ruleset lacks '$required_type' protection"; clean=0; }; done
-  [ "$clean" -eq 1 ] && info release_tag_ruleset "authoritative release-tag ruleset is active, immutable, and bypass-free"; return 0
+  while IFS= read -r required_type; do
+    [ -n "$required_type" ] || continue
+    jq -e --arg type "$required_type" '.rules | any(.type == $type)' <<< "$detail" >/dev/null ||
+      { finding release_tag_ruleset "release-tag ruleset lacks '$required_type' protection"; clean=0; }
+  done < <(jq -r '.release_ruleset_required_rule_types[]' "$POLICY")
+  [ "$clean" -eq 1 ] && info release_tag_ruleset "authoritative publication-tag ruleset is active, immutable, scoped to v*, and bypass-free"; return 0
+}
+
+check_actions_event_policies() {
+  local detail expected_count live_count retired_id policy_id clean=1
+  if [ "$NETWORK" -eq 0 ]; then info actions_event_policies "skipped (--no-network)"; return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then finding actions_event_policies "gh and GITHUB_REPOSITORY are required for Actions event-policy readback"; return 0; fi
+  if [ -z "${HARDENING_AUDIT_TOKEN:-}" ]; then finding actions_event_policies "authoritative HARDENING_AUDIT_TOKEN is unavailable; Actions event-policy state is unverified"; return 0; fi
+  if ! detail="$(authoritative_gh api "repos/${GITHUB_REPOSITORY}/actions/policies" 2>/dev/null)"; then
+    finding actions_event_policies "could not read authoritative repository Actions event policies"; return 0
+  fi
+  if ! jq -e 'type == "object" and (.total_count | type == "number") and (.policies | type == "array")' <<< "$detail" >/dev/null; then
+    finding actions_event_policies "Actions event-policy response omitted authoritative fields"; return 0
+  fi
+
+  expected_count="$(jq '.actions_event_policies.expected_active_ids | length' "$POLICY")"
+  live_count="$(jq '.policies | length' <<< "$detail")"
+  if [ "$live_count" -ne "$expected_count" ]; then
+    finding actions_event_policies "live Actions event-policy count $live_count does not match canonical expected active count $expected_count"; clean=0
+  fi
+
+  while IFS= read -r retired_id; do
+    [ -n "$retired_id" ] || continue
+    if jq -e --argjson id "$retired_id" '.policies | any(.id == $id)' <<< "$detail" >/dev/null; then
+      finding actions_event_policies "retired Actions event policy $retired_id still exists"; clean=0
+    fi
+  done < <(jq -r '.actions_event_policies.retired[].id' "$POLICY")
+
+  while IFS= read -r policy_id; do
+    [ -n "$policy_id" ] || continue
+    if ! jq -e --argjson id "$policy_id" '.policies | any(.id == $id)' <<< "$detail" >/dev/null; then
+      finding actions_event_policies "expected active Actions event policy $policy_id is missing"; clean=0
+    fi
+  done < <(jq -r '.actions_event_policies.expected_active_ids[]' "$POLICY")
+
+  [ "$clean" -eq 1 ] && info actions_event_policies "authoritative repository Actions event-policy state matches canonical policy"; return 0
 }
 
 check_label_references() {
@@ -619,7 +679,7 @@ check_negative_tests() {
   return 0
 }
 
-ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows live_readback_boundary workflow_static_analysis release_preflight ruleset_sync release_tag_ruleset label_references repository_settings security_settings"
+ALL_CHECKS="policy_shape policy_producers negative_tests action_pinning workflow_permissions workflow_security privileged_workflows live_readback_boundary workflow_static_analysis release_preflight ruleset_sync release_tag_ruleset actions_event_policies label_references repository_settings security_settings"
 should_run() {
   local name="$1" configured
   if [ -n "$ONLY" ]; then [ "$ONLY" = "$name" ]; return; fi
@@ -652,6 +712,7 @@ for check in $ALL_CHECKS; do
     release_preflight) check_release_preflight ;;
     ruleset_sync) check_ruleset_sync ;;
     release_tag_ruleset) check_release_tag_ruleset ;;
+    actions_event_policies) check_actions_event_policies ;;
     label_references) check_label_references ;;
     repository_settings) check_repository_settings ;;
     security_settings) check_security_settings ;;
