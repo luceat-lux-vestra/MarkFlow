@@ -10,7 +10,7 @@
   "repository": "luceat-lux-vestra/MarkFlow",
   "protected_branch": "main",
   "ruleset_name": "main protection",
-  "release_ruleset_name": "release tag immutability",
+  "release_ruleset_name": "publication tags",
   "actions_integration_id": 15368,
   "repository_settings": {
     "allow_squash_merge": true,
@@ -81,7 +81,8 @@
     "release_tag_ruleset": "report",
     "label_references": "report",
     "repository_settings": "report",
-    "security_settings": "report"
+    "security_settings": "report",
+    "actions_event_policies": "report"
   },
   "staged": [
     {
@@ -169,5 +170,20 @@
       "job": "dependencyReview",
       "covers": "PR dependency-diff admission; rejects newly introduced known vulnerabilities at moderate severity or above. Metadata-only events preserve the component without rerunning an unchanged dependency diff."
     }
-  ]
+  ],
+  "release_ruleset_ref_pattern": "refs/tags/v*",
+  "release_ruleset_required_rule_types": [
+    "deletion",
+    "update"
+  ],
+  "actions_event_policies": {
+    "expected_active_ids": [],
+    "retired": [
+      {
+        "id": 5152,
+        "former_workflow": ".github/workflows/failure-triage.yml",
+        "reason": "PR #286 retired the failure-triage pull_request_target workflow and removed the machine-enforced failure-classification/declaration protocol."
+      }
+    ]
+  }
 }
