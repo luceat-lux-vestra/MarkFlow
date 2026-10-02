@@ -27,16 +27,29 @@ not require either the variable or the secret for normal PR, push, scheduled,
 or manual hardening audits.
 
 When authoritative live readback is performed, it checks the live
-`main protection` ruleset, the `release tag immutability` ruleset, repository
-labels referenced by automation, repository merge settings, and public-repository security settings against
-`.github/merge-gate-policy.json`. The security readback covers Dependency Graph/SBOM availability, Dependabot alerts and security updates, Secret Scanning, Push Protection, Private Vulnerability Reporting, Actions default workflow permissions, and CodeQL authority/default-setup state.
+`main protection` ruleset, the `publication tags` ruleset, repository Actions
+event policies, labels referenced by automation, repository merge settings, and
+public-repository security settings against `.github/merge-gate-policy.json`.
+The security readback covers Dependency Graph/SBOM availability, Dependabot
+alerts and security updates, Secret Scanning, Push Protection, Private
+Vulnerability Reporting, Actions default workflow permissions, and CodeQL
+authority/default-setup state.
 
 Ruleset identity is fail-closed: the live ruleset list must contain exactly
-one entry for each canonical name. Zero matches, duplicate names, or a
-matched entry without an id stop the readback. The main ruleset must have
-`target=branch` and exactly `include=["~DEFAULT_BRANCH"]`, while the release
-ruleset must have `target=tag` and exactly `include=["~ALL"]`; both must have
-`exclude=[]`.
+one entry for each canonical name. Zero matches, duplicate names, or a matched
+entry without an id stop the readback. The main ruleset must have
+`target=branch` and exactly `include=["~DEFAULT_BRANCH"]`. The publication
+tag ruleset must have `target=tag`, exactly `include=["refs/tags/v*"]`, and
+both deletion and update protection. Both rulesets require `exclude=[]` and
+no bypass actors.
+
+Repository Actions event-policy identity is also fail-closed. MarkFlow has no
+current workflow that requires a path-scoped `pull_request_target` exception,
+so the canonical active policy set is empty. Historical policy `5152`, which
+existed only for the retired `.github/workflows/failure-triage.yml`, is
+explicitly recorded as required absent. Any remaining or newly introduced live
+event policy therefore requires a reviewed policy change rather than being
+silently accepted.
 
 The main ruleset requires one GitHub Actions context: `Merge Gate`. The
 checked-in policy separately declares the six authoritative internal
@@ -57,9 +70,11 @@ not historical assumptions:
 - merged-main evidence exists on exact `main`
   `9f882f92f7e875ea9c1b14207a6eb020568ec750`; push run `34092433264`
   completed successfully;
-- an authenticated external hardening readback on that same `main` confirmed
-  the live `main protection` and `release tag immutability` rulesets plus
-  repository merge settings still match the checked-in policy;
+- an authenticated external hardening readback on that same historical
+  `main` confirmed the then-current `main protection` and
+  `release tag immutability` rulesets plus repository merge settings. That
+  point-in-time evidence predates the later SemVer publication-tag migration
+  and is not the current tag-ruleset contract;
 - the repository currently has no forks, so there is no unprivileged fork-PR
   execution proving this additional context cannot wedge a first external
   contribution.
