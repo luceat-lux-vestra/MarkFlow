@@ -44,29 +44,38 @@ assert_webview_dependency_trigger() {
   [ "$lock_count" = "2" ] || die "$label must watch webview/package-lock.json for both push and pull_request"
 }
 
-assert_node26_setup_count() {
-  local workflow="$1" label="$2" expected="$3" count
-  count="$(grep -Ec '^[[:space:]]+node-version:[[:space:]]+26$' "$workflow" || true)"
-  [ "$count" = "$expected" ] || die "$label must select Node 26 in every Gradle job (expected $expected, found $count)"
+assert_gradle_managed_node() {
+  local workflow="$1" label="$2"
+  if grep -Fq 'actions/setup-node@' "$workflow"; then
+    die "$label must exercise Gradle-managed renderer Node provisioning instead of actions/setup-node"
+  fi
 }
 
-[ "$(tr -d '[:space:]' < .nvmrc)" = "26" ] || die ".nvmrc must select Node 26"
+[ "$(tr -d '[:space:]' < .nvmrc)" = "26.10.0" ] || die ".nvmrc must pin renderer Node 26.10.0"
 jq -e '.engines.node == ">=26 <27"' webview/package.json >/dev/null || die "webview package must constrain Node to the 26.x line"
 jq -e '.devDependencies["@types/node"] | startswith("^26.")' webview/package.json >/dev/null || die "@types/node must align to Node 26"
-grep -Fq 'major!==26' build.gradle.kts || die "Gradle renderer build does not fail closed outside Node 26"
-grep -Fq 'dependsOn(verifyRendererNode)' build.gradle.kts || die "npmInstallWebview does not enforce the Node 26 verification task"
+grep -Fq 'url = uri("https://nodejs.org/dist/")' build.gradle.kts || die "Gradle renderer build must resolve Node from the official distribution repository"
+grep -Fq 'artifact("v[revision]/[artifact]-v[revision]-[classifier].[ext]")' build.gradle.kts || die "Gradle renderer Node repository must use the pinned distribution artifact pattern"
+grep -Fq 'val provisionRendererNode by tasks.registering(Sync::class)' build.gradle.kts || die "Gradle renderer build must own Node provisioning"
+grep -Fq 'dependsOn(provisionRendererNode)' build.gradle.kts || die "renderer Node verification must depend on Gradle provisioning"
+grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || die "renderer tasks must execute the Gradle-provisioned Node binary"
+grep -Fq 'val testWebviewSource by tasks.registering(Exec::class)' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
+if grep -Fq 'commandLine("node"' build.gradle.kts || grep -Fq 'commandLine("npm"' build.gradle.kts; then
+  die "renderer Gradle tasks must not depend on PATH-resolved node/npm executables"
+fi
+grep -Fq 'run: ./gradlew testWebviewSource' .github/workflows/build.yml || die "Build workflow must run webview source tests through Gradle-managed Node"
 
-assert_node26_setup_count ".github/workflows/build.yml" "Build workflow" 3
-assert_node26_setup_count ".github/workflows/release.yml" "Release workflow" 1
-assert_node26_setup_count ".github/workflows/starter-driver-e2e.yml" "Starter Driver workflow" 1
-assert_node26_setup_count ".github/workflows/native-editor-shell-evidence.yml" "Native Editor Shell workflow" 1
-assert_node26_setup_count ".github/workflows/native-editing-evidence.yml" "Native Editing workflow" 1
-assert_node26_setup_count ".github/workflows/derived-renderer-evidence.yml" "Derived Renderer workflow" 1
-assert_node26_setup_count ".github/workflows/native-host-resources-evidence.yml" "Native Host Resources workflow" 1
-assert_node26_setup_count ".github/workflows/native-projection-evidence.yml" "Native Projection workflow" 1
-assert_node26_setup_count ".github/workflows/no-jcef-native-editing-evidence.yml" "No-JCEF Native Editing workflow" 1
-assert_node26_setup_count ".github/workflows/native-image-import-evidence.yml" "Native Image Import workflow" 1
-assert_node26_setup_count ".github/workflows/native-derived-presentation-evidence.yml" "Native Derived Presentation workflow" 1
+assert_gradle_managed_node ".github/workflows/build.yml" "Build workflow"
+assert_gradle_managed_node ".github/workflows/release.yml" "Release workflow"
+assert_gradle_managed_node ".github/workflows/starter-driver-e2e.yml" "Starter Driver workflow"
+assert_gradle_managed_node ".github/workflows/native-editor-shell-evidence.yml" "Native Editor Shell workflow"
+assert_gradle_managed_node ".github/workflows/native-editing-evidence.yml" "Native Editing workflow"
+assert_gradle_managed_node ".github/workflows/derived-renderer-evidence.yml" "Derived Renderer workflow"
+assert_gradle_managed_node ".github/workflows/native-host-resources-evidence.yml" "Native Host Resources workflow"
+assert_gradle_managed_node ".github/workflows/native-projection-evidence.yml" "Native Projection workflow"
+assert_gradle_managed_node ".github/workflows/no-jcef-native-editing-evidence.yml" "No-JCEF Native Editing workflow"
+assert_gradle_managed_node ".github/workflows/native-image-import-evidence.yml" "Native Image Import workflow"
+assert_gradle_managed_node ".github/workflows/native-derived-presentation-evidence.yml" "Native Derived Presentation workflow"
 
 for workflow in \
   ".github/workflows/native-projection-evidence.yml" \
