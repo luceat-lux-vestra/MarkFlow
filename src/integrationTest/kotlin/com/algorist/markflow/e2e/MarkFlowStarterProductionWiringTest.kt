@@ -110,6 +110,8 @@ class MarkFlowStarterProductionWiringTest {
                                     bridge.derivedDecodedArtifacts(editor.editor) >= 3 &&
                                     bridge.derivedOwnedInlays(editor.editor) >= 3 &&
                                     bridge.derivedOwnedFolds(editor.editor) >= 3 &&
+                                    bridge.derivedCollapsedFolds(editor.editor) ==
+                                        bridge.derivedOwnedFolds(editor.editor) &&
                                     bridge.derivedRendererFailures(editor.editor) == 0L &&
                                     bridge.derivedMissingArtifacts(editor.editor) == 0L
                             }
@@ -124,6 +126,7 @@ class MarkFlowStarterProductionWiringTest {
                             "decoded=${bridge.derivedDecodedArtifacts(editor.editor)} " +
                             "inlays=${bridge.derivedOwnedInlays(editor.editor)} " +
                             "folds=${bridge.derivedOwnedFolds(editor.editor)} " +
+                            "collapsed=${bridge.derivedCollapsedFolds(editor.editor)} " +
                             "failures=${bridge.derivedRendererFailures(editor.editor)} " +
                             "missing=${bridge.derivedMissingArtifacts(editor.editor)} " +
                             "foldTopology=${bridge.derivedFoldTopology(editor.editor)}"
@@ -155,6 +158,9 @@ class MarkFlowStarterProductionWiringTest {
                 val derivedOwnedFolds = driver.withContext(OnDispatcher.EDT) {
                     bridge.derivedOwnedFolds(editor.editor)
                 }
+                val derivedCollapsedFolds = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedCollapsedFolds(editor.editor)
+                }
                 val derivedRendererFailures = driver.withContext(OnDispatcher.EDT) {
                     bridge.derivedRendererFailures(editor.editor)
                 }
@@ -184,6 +190,10 @@ class MarkFlowStarterProductionWiringTest {
                 }
                 check(derivedOwnedFolds >= 3) {
                     "production derived renderer did not install representative source folds: $derivedOwnedFolds"
+                }
+                check(derivedCollapsedFolds == derivedOwnedFolds) {
+                    "production derived renderer left rendered source folds expanded: " +
+                        "collapsed=$derivedCollapsedFolds owned=$derivedOwnedFolds"
                 }
                 check(derivedRendererFailures == 0L) {
                     "production derived renderer reported failures: $derivedRendererFailures"
@@ -225,6 +235,7 @@ private interface NativeProductionWiringBridgeRemote {
     fun derivedDecodedArtifacts(editor: Editor): Int
     fun derivedOwnedInlays(editor: Editor): Int
     fun derivedOwnedFolds(editor: Editor): Int
+    fun derivedCollapsedFolds(editor: Editor): Int
     fun derivedRendererFailures(editor: Editor): Long
     fun derivedMissingArtifacts(editor: Editor): Long
     fun derivedFoldTopology(editor: Editor): String

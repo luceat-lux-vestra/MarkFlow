@@ -34,6 +34,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(3L, evidence.accessibilityFallbacks)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(0, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         assertEquals(0, runtime.rendered.size)
         assertEquals(sourceBefore, myFixture.editor.document.text)
         Disposer.dispose(controller)
@@ -62,6 +63,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(3, evidence.pendingRequests)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(3, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         projections.forEach { projection ->
             val range = projection.sourceRange
             val reserved = editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)
@@ -120,6 +122,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(0, evidence.decodedArtifacts)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(3, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         assertEquals(editedSource, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }
@@ -148,6 +151,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(0, evidence.decodedArtifacts)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(3, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         assertEquals(sourceBefore, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }
@@ -170,6 +174,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(1, evidence.ownedErrorInlays)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(0, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         assertEquals(sourceBefore, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }
@@ -192,6 +197,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(0, evidence.ownedErrorInlays)
         assertEquals(0, evidence.ownedInlays)
         assertEquals(0, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
         assertEquals(sourceBefore, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }

@@ -140,6 +140,11 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).derivedEvidenceSnapshot()?.ownedFolds ?: 0
     }
 
+    fun derivedCollapsedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.collapsedFolds ?: 0
+    }
+
     fun derivedRendererFailures(editor: Editor): Long {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).derivedEvidenceSnapshot()?.rendererFailures ?: 0L
