@@ -169,14 +169,14 @@ val fenced = true
                     }
                     check(evidence.ownedHighlighters == evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters)
                     check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
-                    check(headingSyntaxFoldCollapsed(first.editor, firstController)) {
-                        "heading syntax marker was not visually reduced outside active context"
+                    check(evidence.headingModels == 1 && evidence.headingInlays == 1 && evidence.headingFolds == 2) {
+                        "inactive heading did not install one native heading inlay with owned source folds: $evidence"
                     }
                     check(first.editor.document === second.editor.document)
                     "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
                         "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
                         "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
-                        "headingCollapsed=true sharedDocument=true"
+                        "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
@@ -187,30 +187,30 @@ val fenced = true
                     first.editor.caretModel.removeSecondaryCarets()
                     first.editor.selectionModel.removeSelection()
                     first.editor.caretModel.moveToOffset(fixture.headingContentOffset)
-                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
-                        "active heading did not reveal its exact Markdown marker"
+                    check(!headingRichPresentationVisible(firstController)) {
+                        "active heading did not reveal exact Markdown source"
                     }
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
+                    check(headingRichPresentationVisible(firstController))
 
                     first.editor.selectionModel.setSelection(0, fixture.headingEndOffset)
-                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
+                    check(!headingRichPresentationVisible(firstController)) {
                         "selection intersecting heading did not reveal exact Markdown"
                     }
                     first.editor.selectionModel.removeSelection()
-                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
+                    check(headingRichPresentationVisible(firstController))
 
                     val secondaryOffset = fixture.bodyOffset + 4
                     val secondary = requireNotNull(
                         first.editor.caretModel.addCaret(first.editor.offsetToVisualPosition(secondaryOffset))
                     ) { "secondary caret unavailable for multicaret reveal proof" }
                     secondary.setSelection(0, fixture.headingEndOffset)
-                    check(!headingSyntaxFoldCollapsed(first.editor, firstController)) {
+                    check(!headingRichPresentationVisible(firstController)) {
                         "secondary-caret selection did not reveal exact Markdown"
                     }
                     secondary.removeSelection()
                     check(first.editor.caretModel.removeCaret(secondary))
-                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
+                    check(headingRichPresentationVisible(firstController))
 
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
@@ -497,20 +497,13 @@ Plain body line for inactive caret state.
         private fun createController(editor: Editor): NativePresentationController =
             NativePresentationController(editor).also(liveControllers::add)
 
-        private fun headingSyntaxFoldCollapsed(
-            editor: Editor,
+        private fun headingRichPresentationVisible(
             controller: NativePresentationController,
         ): Boolean {
-            val plan = requireNotNull(controller.currentPlan)
-            val heading = plan.projections.first { it.kind == NativeProjectionKind.HEADING }
-            val syntax = heading.syntaxRanges.single()
-            val matching = editor.foldingModel.allFoldRegions.filter { region ->
-                region.startOffset == syntax.startOffset && region.endOffset == syntax.endOffset
-            }
-            check(matching.size == 1) {
-                "expected exactly one owned heading syntax fold at ${syntax.startOffset}..${syntax.endOffset}, observed ${matching.size}"
-            }
-            return !matching.single().isExpanded
+            val evidence = controller.evidenceSnapshot()
+            return evidence.headingModels == 1 &&
+                evidence.headingInlays == 1 &&
+                evidence.headingFolds == 2
         }
 
         private fun validateProjectionRanges(source: String, projection: NativeProjection) {
