@@ -56,11 +56,11 @@ jq -e '.engines.node == ">=26 <27"' webview/package.json >/dev/null || die "webv
 jq -e '.devDependencies["@types/node"] | startswith("^26.")' webview/package.json >/dev/null || die "@types/node must align to Node 26"
 grep -Fq 'url = uri("https://nodejs.org/dist/")' build.gradle.kts || die "Gradle renderer build must resolve Node from the official distribution repository"
 grep -Fq 'artifact("v[revision]/[artifact]-v[revision]-[classifier].[ext]")' build.gradle.kts || die "Gradle renderer Node repository must use the pinned distribution artifact pattern"
-grep -Fq 'val provisionRendererNode by tasks.registering(Sync::class)' build.gradle.kts || die "Gradle renderer build must own Node provisioning"
+grep -Fq 'val provisionRendererNode = tasks.register<Sync>("provisionRendererNode")' build.gradle.kts || die "Gradle renderer build must own Node provisioning"
 grep -Fq 'dependsOn(provisionRendererNode)' build.gradle.kts || die "renderer Node verification must depend on Gradle provisioning"
 grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || die "renderer tasks must execute the Gradle-provisioned Node binary"
 grep -Fq 'environment("PATH", rendererNodePath.get())' build.gradle.kts || die "renderer npm tasks must expose the Gradle-provisioned Node binary to child scripts"
-grep -Fq 'val testWebviewSource by tasks.registering(Exec::class)' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
+grep -Fq 'val testWebviewSource = tasks.register<Exec>("testWebviewSource")' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
 if grep -Fq 'commandLine("node"' build.gradle.kts || grep -Fq 'commandLine("npm"' build.gradle.kts; then
   die "renderer Gradle tasks must not depend on PATH-resolved node/npm executables"
 fi

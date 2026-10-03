@@ -7,6 +7,7 @@ import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import java.io.File
 
 plugins {
     id("java") // Java support.
@@ -40,10 +41,9 @@ val rendererNodeArch = when (System.getProperty("os.arch").lowercase()) {
 val rendererNodeClassifier = "$rendererNodeOs-$rendererNodeArch"
 val rendererNodeArchiveExtension = if (Os.isFamily(Os.FAMILY_WINDOWS)) "zip" else "tar.gz"
 val rendererNodeArchiveRoot = "node-v$rendererNodeVersion-$rendererNodeClassifier"
-val rendererNodeDistribution by configurations.creating {
+val rendererNodeDistribution = configurations.create("rendererNodeDistribution") {
     isCanBeConsumed = false
     isCanBeResolved = true
-    isVisible = false
 }
 
 // Set the JVM language level used to build the project.
@@ -225,7 +225,7 @@ val rendererNodePath = rendererNodeExecutable.map { executable ->
     val inheritedPath = providers.environmentVariable("PATH").orNull.orEmpty()
     listOf(executable.asFile.parentFile.absolutePath, inheritedPath)
         .filter { it.isNotBlank() }
-        .joinToString(java.io.File.pathSeparator)
+        .joinToString(File.pathSeparator)
 }
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
@@ -239,7 +239,7 @@ val noJcefNativeEditingProbeProjectDir = layout.buildDirectory.dir("no-jcef-nati
 val nativeHostResourcesProbeOutput = layout.buildDirectory.file("native-host-resources-probe/evidence.json")
 val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-resources-probe/project")
 
-val provisionRendererNode by tasks.registering(Sync::class) {
+val provisionRendererNode = tasks.register<Sync>("provisionRendererNode") {
     group = "build setup"
     description = "Provisions the exact renderer Node distribution declared by .nvmrc"
     from(
@@ -271,7 +271,7 @@ val provisionRendererNode by tasks.registering(Sync::class) {
     }
 }
 
-val verifyRendererNode by tasks.registering(Exec::class) {
+val verifyRendererNode = tasks.register<Exec>("verifyRendererNode") {
     group = "verification"
     description = "Verifies the Gradle-provisioned renderer Node version"
     dependsOn(provisionRendererNode)
@@ -284,7 +284,7 @@ val verifyRendererNode by tasks.registering(Exec::class) {
     }
 }
 
-val npmInstallWebview by tasks.registering(Exec::class) {
+val npmInstallWebview = tasks.register<Exec>("npmInstallWebview") {
     group = "build"
     description = "Installs webview dependencies with the Gradle-provisioned Node/npm toolchain"
     dependsOn(verifyRendererNode)
@@ -303,7 +303,7 @@ val npmInstallWebview by tasks.registering(Exec::class) {
     }
 }
 
-val buildWebview by tasks.registering(Exec::class) {
+val buildWebview = tasks.register<Exec>("buildWebview") {
     group = "build"
     description = "Builds the renderer-only Vite frontend"
     workingDir = webviewDir
@@ -328,7 +328,7 @@ val buildWebview by tasks.registering(Exec::class) {
     }
 }
 
-val testWebviewSource by tasks.registering(Exec::class) {
+val testWebviewSource = tasks.register<Exec>("testWebviewSource") {
     group = "verification"
     description = "Runs renderer source tests with the Gradle-provisioned Node/npm toolchain"
     workingDir = webviewDir
