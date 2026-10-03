@@ -1,6 +1,9 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.event.MouseEvent
 
 class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
@@ -288,6 +291,61 @@ Tail
             assertEquals(0, evidence.headingFolds)
             assertEquals(0, evidence.inlineOwnedHighlighters)
             assertEquals(0, evidence.inlineOwnedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testHeadingInlayLeftClickRevealsSourceAndMovesCaretToParserContent() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-click.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val heading = plan.projections.single { it.kind == NativeProjectionKind.HEADING }
+        val contentOffset = heading.contentRanges.single().startOffset
+        val controller = NativeHeadingPresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val inlay = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .single { it.renderer is NativeHeadingInlayRenderer }
+            val click = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                0,
+                0,
+                1,
+                false,
+                MouseEvent.BUTTON1,
+            )
+            val inlayOffset = inlay.offset.coerceIn(0, editor.document.textLength)
+            val event = EditorMouseEvent(
+                editor,
+                click,
+                EditorMouseEventArea.EDITING_AREA,
+                inlayOffset,
+                editor.offsetToLogicalPosition(inlayOffset),
+                editor.offsetToVisualPosition(inlayOffset),
+                false,
+                null,
+                inlay,
+                null,
+            )
+
+            assertTrue(controller.handleMouseReveal(event))
+            val evidence = controller.evidenceSnapshot()
+            assertTrue(click.isConsumed)
+            assertEquals(1L, evidence.mouseReveals)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(contentOffset, editor.caretModel.primaryCaret.offset)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
