@@ -104,8 +104,6 @@ private class NativeInlinePresentationController(
 
     fun clearPresentation() = owner.clearPresentation()
 
-    fun clearPresentation() = owner.clearPresentation()
-
     fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) = owner.applyPlan(plan, enabled)
 
     fun refreshActivity(plan: NativeProjectionPlan, enabled: Boolean) = owner.refreshActivity(plan, enabled)
@@ -136,6 +134,8 @@ private class NativeBlockPresentationController(
         keyFor = ::blockKeyFor,
         placeholderFor = ::blockPlaceholderFor,
     )
+
+    fun clearPresentation() = owner.clearPresentation()
 
     fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) = owner.applyPlan(plan, enabled)
 
