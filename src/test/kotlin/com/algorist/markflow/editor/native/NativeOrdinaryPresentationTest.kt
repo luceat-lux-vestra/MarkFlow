@@ -376,6 +376,67 @@ Tail
         }
     }
 
+    fun testHeadingPresentationCoexistsWithCollapsedForeignSyntaxFold() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-foreign-fold.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val heading = plan.projections.single { it.kind == NativeProjectionKind.HEADING }
+        val syntax = heading.syntaxRanges.single()
+        var foreignFold: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreignFold = editor.foldingModel.addFoldRegion(
+                syntax.startOffset,
+                syntax.endOffset,
+                "platform heading syntax",
+            )
+            requireNotNull(foreignFold).isExpanded = false
+        }
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val inactive = controller.evidenceSnapshot()
+            assertEquals(1, inactive.headingModels)
+            assertEquals(1, inactive.headingInlays)
+            assertEquals(2, inactive.headingFolds)
+            assertTrue(requireNotNull(foreignFold).isValid)
+            assertFalse(requireNotNull(foreignFold).isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(foreignFold).isExpanded = true
+            }
+            editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
+            assertEquals(0, controller.evidenceSnapshot().headingInlays)
+            assertEquals(0, controller.evidenceSnapshot().headingFolds)
+            assertTrue(requireNotNull(foreignFold).isValid)
+            assertTrue(requireNotNull(foreignFold).isExpanded)
+
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(foreignFold).isExpanded = false
+            }
+            editor.caretModel.moveToOffset(tailOffset)
+            assertEquals(1, controller.evidenceSnapshot().headingInlays)
+            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+            assertTrue(requireNotNull(foreignFold).isValid)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+            assertTrue(requireNotNull(foreignFold).isValid)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(foreignFold).takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+    }
+
     fun testHeadingTypographyScaleIsStrictlyDescendingFromH1ToH6() {
         val scales = (1..6).map(::nativeHeadingFontScale)
         assertTrue(scales.zipWithNext().all { (higher, lower) -> higher > lower })
