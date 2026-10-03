@@ -125,7 +125,8 @@ class MarkFlowStarterProductionWiringTest {
                             "inlays=${bridge.derivedOwnedInlays(editor.editor)} " +
                             "folds=${bridge.derivedOwnedFolds(editor.editor)} " +
                             "failures=${bridge.derivedRendererFailures(editor.editor)} " +
-                            "missing=${bridge.derivedMissingArtifacts(editor.editor)}"
+                            "missing=${bridge.derivedMissingArtifacts(editor.editor)} " +
+                            "foldTopology=${bridge.derivedFoldTopology(editor.editor)}"
                     }
                     throw AssertionError(
                         "production Mermaid/KaTeX presentation did not converge: $evidence",
@@ -226,5 +227,6 @@ private interface NativeProductionWiringBridgeRemote {
     fun derivedOwnedFolds(editor: Editor): Int
     fun derivedRendererFailures(editor: Editor): Long
     fun derivedMissingArtifacts(editor: Editor): Long
+    fun derivedFoldTopology(editor: Editor): String
     fun rawHtmlFragments(editor: Editor): Int
 }
