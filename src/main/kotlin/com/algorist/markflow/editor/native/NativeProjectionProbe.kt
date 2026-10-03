@@ -196,14 +196,20 @@ val fenced = true
                     first.editor.selectionModel.removeSelection()
                     first.editor.caretModel.moveToOffset(fixture.headingContentOffset)
                     check(!headingRichPresentationVisible(firstController)) {
-                        "active heading did not reveal exact Markdown source"
+                        "active heading retained MarkFlow rich presentation"
+                    }
+                    check(headingExactSourceVisible(first.editor, firstController)) {
+                        "active heading remained concealed by a collapsed fold"
                     }
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
                     check(headingRichPresentationVisible(firstController))
 
                     first.editor.selectionModel.setSelection(0, fixture.headingEndOffset)
                     check(!headingRichPresentationVisible(firstController)) {
-                        "selection intersecting heading did not reveal exact Markdown"
+                        "selection intersecting heading retained MarkFlow rich presentation"
+                    }
+                    check(headingExactSourceVisible(first.editor, firstController)) {
+                        "selection intersecting heading remained concealed by a collapsed fold"
                     }
                     first.editor.selectionModel.removeSelection()
                     check(headingRichPresentationVisible(firstController))
@@ -214,7 +220,10 @@ val fenced = true
                     ) { "secondary caret unavailable for multicaret reveal proof" }
                     secondary.setSelection(0, fixture.headingEndOffset)
                     check(!headingRichPresentationVisible(firstController)) {
-                        "secondary-caret selection did not reveal exact Markdown"
+                        "secondary-caret selection retained MarkFlow rich presentation"
+                    }
+                    check(headingExactSourceVisible(first.editor, firstController)) {
+                        "secondary-caret selection left heading source concealed"
                     }
                     secondary.removeSelection()
                     check(first.editor.caretModel.removeCaret(secondary))
@@ -513,6 +522,23 @@ Plain body line for inactive caret state.
                 evidence.headingInlays == 1 &&
                 evidence.headingFolds > 0 &&
                 evidence.headingFullyConcealed == 1
+        }
+
+        private fun headingExactSourceVisible(
+            editor: Editor,
+            controller: NativePresentationController,
+        ): Boolean {
+            val heading = controller.currentPlan
+                ?.projections
+                ?.singleOrNull { projection -> projection.kind == NativeProjectionKind.HEADING }
+                ?: return false
+            val range = heading.sourceRange
+            return editor.foldingModel.allFoldRegions.none { fold ->
+                fold.isValid &&
+                    !fold.isExpanded &&
+                    fold.startOffset < range.endOffset &&
+                    fold.endOffset > range.startOffset
+            }
         }
 
         private fun validateProjectionRanges(source: String, projection: NativeProjection) {
