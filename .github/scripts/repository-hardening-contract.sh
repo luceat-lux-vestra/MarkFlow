@@ -59,6 +59,7 @@ grep -Fq 'artifact("v[revision]/[artifact]-v[revision]-[classifier].[ext]")' bui
 grep -Fq 'val provisionRendererNode by tasks.registering(Sync::class)' build.gradle.kts || die "Gradle renderer build must own Node provisioning"
 grep -Fq 'dependsOn(provisionRendererNode)' build.gradle.kts || die "renderer Node verification must depend on Gradle provisioning"
 grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || die "renderer tasks must execute the Gradle-provisioned Node binary"
+grep -Fq 'environment("PATH", rendererNodePath.get())' build.gradle.kts || die "renderer npm tasks must expose the Gradle-provisioned Node binary to child scripts"
 grep -Fq 'val testWebviewSource by tasks.registering(Exec::class)' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
 if grep -Fq 'commandLine("node"' build.gradle.kts || grep -Fq 'commandLine("npm"' build.gradle.kts; then
   die "renderer Gradle tasks must not depend on PATH-resolved node/npm executables"

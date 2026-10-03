@@ -221,6 +221,12 @@ val rendererNodeArchive = rendererNodeDistribution.elements.map { files ->
     }
     resolved.single()
 }
+val rendererNodePath = rendererNodeExecutable.map { executable ->
+    val inheritedPath = providers.environmentVariable("PATH").orNull.orEmpty()
+    listOf(executable.asFile.parentFile.absolutePath, inheritedPath)
+        .filter { it.isNotBlank() }
+        .joinToString(java.io.File.pathSeparator)
+}
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
 val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
@@ -286,6 +292,7 @@ val npmInstallWebview by tasks.registering(Exec::class) {
     inputs.files(file("webview/package.json"), file("webview/package-lock.json"))
     outputs.dir(file("webview/node_modules"))
     doFirst {
+        environment("PATH", rendererNodePath.get())
         commandLine(
             rendererNodeExecutable.get().asFile.absolutePath,
             rendererNpmCli.get().asFile.absolutePath,
@@ -311,6 +318,7 @@ val buildWebview by tasks.registering(Exec::class) {
     )
     outputs.dir(webviewOutputDir)
     doFirst {
+        environment("PATH", rendererNodePath.get())
         commandLine(
             rendererNodeExecutable.get().asFile.absolutePath,
             rendererNpmCli.get().asFile.absolutePath,
@@ -332,6 +340,7 @@ val testWebviewSource by tasks.registering(Exec::class) {
         file("webview/package-lock.json"),
     )
     doFirst {
+        environment("PATH", rendererNodePath.get())
         commandLine(
             rendererNodeExecutable.get().asFile.absolutePath,
             rendererNpmCli.get().asFile.absolutePath,
