@@ -62,6 +62,13 @@ class NativeDegradationE2EDriver(private val driver: Driver) {
         }
     }
 
+    fun headingFullyConcealed(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingFullyConcealed(editor.editor)
+        }
+    }
+
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
@@ -73,4 +80,5 @@ private interface NativeDegradationE2EBridgeRemote {
     fun headingModels(editor: Editor): Int
     fun headingOwnedInlays(editor: Editor): Int
     fun headingOwnedFolds(editor: Editor): Int
+    fun headingFullyConcealed(editor: Editor): Int
 }
