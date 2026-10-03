@@ -186,7 +186,10 @@ internal object NativeDerivedPresentationProbe {
                     first.editor.caretModel.moveToOffset(fixture.inlineMathOffset)
                     val inlineReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
                     check(inlineReveal.ownedInlays == 2 && inlineReveal.ownedFolds == 3) {
-                        "inline math source did not reveal exactly with its reserved fold expanded: $inlineReveal"
+                        "inline math source did not retain the expected reservation ownership: $inlineReveal"
+                    }
+                    check(derivedFoldExpanded(firstController, first.editor, NativeDerivedProjectionKind.KATEX_INLINE)) {
+                        "inline math reserved fold did not expand for exact-source reveal"
                     }
                     check(requireNotNull(secondController.derivedEvidenceSnapshot()).ownedInlays == 3)
 
@@ -196,7 +199,10 @@ internal object NativeDerivedPresentationProbe {
                     first.editor.selectionModel.setSelection(fixture.displayMathStart, fixture.displayMathEnd)
                     val displayReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
                     check(displayReveal.ownedInlays == 2 && displayReveal.ownedFolds == 3) {
-                        "display math source did not reveal exactly with its reserved fold expanded: $displayReveal"
+                        "display math source did not retain the expected reservation ownership: $displayReveal"
+                    }
+                    check(derivedFoldExpanded(firstController, first.editor, NativeDerivedProjectionKind.KATEX_DISPLAY)) {
+                        "display math reserved fold did not expand for exact-source reveal"
                     }
                     first.editor.selectionModel.removeSelection()
                     check(requireNotNull(firstController.derivedEvidenceSnapshot()).ownedInlays == 3)
@@ -358,6 +364,21 @@ internal object NativeDerivedPresentationProbe {
                 "selected provider returned ${fileEditor.javaClass.name}, not TextEditor"
             }
             return PlatformEditorHandle(provider, fileEditor, fileEditor.editor).also(liveEditors::add)
+        }
+
+        private fun derivedFoldExpanded(
+            controller: NativePresentationController,
+            editor: Editor,
+            kind: NativeDerivedProjectionKind,
+        ): Boolean {
+            val plan = controller.currentPlan ?: return false
+            val projection = NativeDerivedProjectionPlanner.plan(plan).singleOrNull { candidate ->
+                candidate.kind == kind
+            } ?: return false
+            return editor.foldingModel.getFoldRegion(
+                projection.sourceRange.startOffset,
+                projection.sourceRange.endOffset,
+            )?.isExpanded == true
         }
 
         private fun createRealController(handle: PlatformEditorHandle): NativePresentationController {
