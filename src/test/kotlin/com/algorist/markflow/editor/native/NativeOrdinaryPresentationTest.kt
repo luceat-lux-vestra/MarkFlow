@@ -298,6 +298,29 @@ Tail
         }
     }
 
+    fun testEscapedHeadingTextAlsoFailsClosedToExactSource() {
+        val source = "# Heading with \\*literal\\*\n\nTail\n"
+        myFixture.configureByText("heading-escaped.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.headingModels)
+            assertEquals(0, evidence.headingInlays)
+            assertEquals(0, evidence.headingFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testHeadingInlayLeftClickRevealsSourceAndMovesCaretToParserContent() {
         val source = "# Heading\n\nTail\n"
         myFixture.configureByText("heading-click.md", source)
