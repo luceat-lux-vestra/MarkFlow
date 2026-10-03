@@ -113,13 +113,16 @@ class MarkFlowStarterDegradedPathTest {
                         message = "READY production projection installs native heading presentation before failure",
                         timeout = 10.seconds,
                         getter = {
-                            Triple(
+                            listOf(
                                 degradation.headingModels(editor),
                                 degradation.headingOwnedInlays(editor),
                                 degradation.headingOwnedFolds(editor),
+                                degradation.headingFullyConcealed(editor),
                             )
                         },
-                        checker = { (models, inlays, folds) -> models == 1 && inlays == 1 && folds == 2 },
+                        checker = { (models, inlays, folds, concealed) ->
+                            models == 1 && inlays == 1 && folds > 0 && concealed == 1
+                        },
                     )
 
                     degradation.degradeToSource(editor)
@@ -140,6 +143,9 @@ class MarkFlowStarterDegradedPathTest {
                     }
                     check(degradation.headingOwnedFolds(editor) == 0) {
                         "source fallback retained native heading folds"
+                    }
+                    check(degradation.headingFullyConcealed(editor) == 0) {
+                        "source fallback retained semantic heading concealment"
                     }
                     check(markFlow.source(editor) == sourceBeforeDegrade) {
                         "entering source fallback changed authoritative Markdown source"
