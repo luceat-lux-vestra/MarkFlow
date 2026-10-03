@@ -127,6 +127,7 @@ internal class NativePresentationController(
         val sourceBefore = document.immutableCharSequence.toString()
         val stampBefore = document.modificationStamp
 
+        ordinaryPresentation.clearPresentation()
         currentPlan = plan
         val richEnabled = isRichPresentationEnabled()
         ordinaryPresentation.applyPlan(plan, richEnabled)
