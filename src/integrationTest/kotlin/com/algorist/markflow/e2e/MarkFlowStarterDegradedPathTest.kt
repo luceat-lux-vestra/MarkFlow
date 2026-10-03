@@ -110,10 +110,16 @@ class MarkFlowStarterDegradedPathTest {
                         "degraded-path acceptance did not start from a READY projection plan"
                     }
                     waitFor(
-                        message = "READY projection owns native syntax presentation before failure",
+                        message = "READY production projection installs native heading presentation before failure",
                         timeout = 10.seconds,
-                        getter = { degradation.ownedFolds(editor) },
-                        checker = { folds -> folds >= 1 },
+                        getter = {
+                            Triple(
+                                degradation.headingModels(editor),
+                                degradation.headingOwnedInlays(editor),
+                                degradation.headingOwnedFolds(editor),
+                            )
+                        },
+                        checker = { (models, inlays, folds) -> models == 1 && inlays == 1 && folds == 2 },
                     )
 
                     degradation.degradeToSource(editor)
@@ -125,6 +131,15 @@ class MarkFlowStarterDegradedPathTest {
                     }
                     check(degradation.ownedFolds(editor) == 0) {
                         "source fallback retained MarkFlow-owned folds"
+                    }
+                    check(degradation.headingModels(editor) == 0) {
+                        "source fallback retained a heading presentation model"
+                    }
+                    check(degradation.headingOwnedInlays(editor) == 0) {
+                        "source fallback retained a native heading inlay"
+                    }
+                    check(degradation.headingOwnedFolds(editor) == 0) {
+                        "source fallback retained native heading folds"
                     }
                     check(markFlow.source(editor) == sourceBeforeDegrade) {
                         "entering source fallback changed authoritative Markdown source"
