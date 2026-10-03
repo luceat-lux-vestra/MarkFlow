@@ -39,6 +39,57 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         Disposer.dispose(controller)
     }
 
+    fun testPendingRendererReservesExpandedSourceFoldsBeforeForeignMarkdownFoldingCanClaimExactRanges() {
+        myFixture.configureByText("reserved.md", representativeSource())
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(editor.document.text.indexOf("Plain body") + 2)
+        val sourceBefore = editor.document.text
+        val stampBefore = editor.document.modificationStamp
+        val runtime = DeferredRuntime()
+        val controller = NativeDerivedPresentationController(
+            editor = editor,
+            runtime = runtime,
+            settingsProvider = { runtimeSettings() },
+            richPresentationEnabled = { true },
+        )
+        val currentPlan = plan(configGeneration = 1L)
+        val projections = NativeDerivedProjectionPlanner.plan(currentPlan)
+
+        controller.applyPlan(currentPlan)
+        val evidence = controller.evidenceSnapshot()
+
+        assertEquals(3, projections.size)
+        assertEquals(3, evidence.pendingRequests)
+        assertEquals(0, evidence.ownedInlays)
+        assertEquals(3, evidence.ownedFolds)
+        projections.forEach { projection ->
+            val range = projection.sourceRange
+            val reserved = editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)
+            assertNotNull("derived source range was not reserved: $projection", reserved)
+            assertTrue("pending renderer reservation must keep exact source expanded", reserved!!.isExpanded)
+
+            var competing: com.intellij.openapi.editor.FoldRegion? = null
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                competing = editor.foldingModel.addFoldRegion(
+                    range.startOffset,
+                    range.endOffset,
+                    "foreign markdown fold",
+                )
+            }
+            assertNull("foreign exact-range fold unexpectedly displaced MarkFlow reservation", competing)
+        }
+        assertEquals(sourceBefore, editor.document.text)
+        assertEquals(stampBefore, editor.document.modificationStamp)
+
+        Disposer.dispose(controller)
+        projections.forEach { projection ->
+            val range = projection.sourceRange
+            assertNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset))
+        }
+        assertEquals(sourceBefore, editor.document.text)
+        assertEquals(stampBefore, editor.document.modificationStamp)
+    }
+
     fun testRapidDocumentEditCancelsPendingGenerationAndLateSuccessCannotOverwrite() {
         myFixture.configureByText("pending.md", representativeSource())
         myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("Plain body") + 2)
@@ -68,7 +119,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         val evidence = controller.evidenceSnapshot()
         assertEquals(0, evidence.decodedArtifacts)
         assertEquals(0, evidence.ownedInlays)
-        assertEquals(0, evidence.ownedFolds)
+        assertEquals(3, evidence.ownedFolds)
         assertEquals(editedSource, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }
@@ -96,7 +147,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         val evidence = controller.evidenceSnapshot()
         assertEquals(0, evidence.decodedArtifacts)
         assertEquals(0, evidence.ownedInlays)
-        assertEquals(0, evidence.ownedFolds)
+        assertEquals(3, evidence.ownedFolds)
         assertEquals(sourceBefore, myFixture.editor.document.text)
         Disposer.dispose(controller)
     }
