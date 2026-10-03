@@ -33,32 +33,45 @@ internal data class NativeOrdinaryPresentationEvidence(
 /**
  * Ordinary-Markdown presentation boundary for #312.
  *
- * Inline and block syntax have independent ownership/lifecycle so richer block presentation can
- * evolve without coupling heading/list/quote behavior to lightweight inline syntax presentation.
- * Both owners remain source-neutral and operate only on parser-proven [NativeProjectionPlan] ranges.
+ * Inline and block syntax have independent ownership while this coordinator preserves the previous
+ * projection-order application and single folding-batch semantics. Richer block presentation can
+ * therefore evolve without coupling heading/list/quote behavior to lightweight inline syntax.
  */
 internal class NativeOrdinaryPresentationController(
     private val editor: Editor,
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
+    private var disposed = false
 
     fun clearPresentation() {
+        requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        inline.clearPresentation()
-        block.clearPresentation()
+        inline.clearHighlighters()
+        block.clearHighlighters()
+        clearFolds()
     }
 
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
+        requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        inline.applyPlan(plan, richPresentationEnabled)
-        block.applyPlan(plan, richPresentationEnabled)
+        if (plan.status != ProjectionPlanStatus.READY || !richPresentationEnabled) return
+
+        installRangeHighlighters(plan)
+        reconcileSyntaxFolds(plan)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
+        requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        inline.refreshActivity(plan, richPresentationEnabled)
-        block.refreshActivity(plan, richPresentationEnabled)
+        inline.clearHighlighters()
+        block.clearHighlighters()
+        if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
+            installRangeHighlighters(plan)
+            reconcileSyntaxFolds(plan)
+        } else {
+            clearFolds()
+        }
     }
 
     fun evidenceSnapshot(): NativeOrdinaryPresentationEvidence {
@@ -74,16 +87,103 @@ internal class NativeOrdinaryPresentationController(
         )
     }
 
-    override fun dispose() {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        inline.dispose()
-        block.dispose()
+    private fun installRangeHighlighters(plan: NativeProjectionPlan) {
+        plan.projections.forEach { projection ->
+            inline.installHighlighterIfSupported(projection)
+            block.installHighlighterIfSupported(projection)
+        }
     }
+
+    /**
+     * Preserve the old global desired-fold ordering and one folding batch while keeping ownership
+     * maps separate. Exact-range duplicates across layers retain the previous last-entry-wins
+     * desired-map semantics before platform fold coexistence is checked.
+     */
+    private fun reconcileSyntaxFolds(plan: NativeProjectionPlan) {
+        val desired = plan.projections
+            .asSequence()
+            .flatMap { projection ->
+                val owner = foldOwner(projection.kind) ?: return@flatMap emptySequence()
+                projection.syntaxRanges.asSequence().map { range ->
+                    FoldEntry(owner, projection, range)
+                }
+            }
+            .associateBy { entry -> FoldKey(entry.range.startOffset, entry.range.endOffset) }
+
+        val inlineKeys = desired
+            .filterValues { entry -> entry.owner === inline }
+            .keys
+        val blockKeys = desired
+            .filterValues { entry -> entry.owner === block }
+            .keys
+
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            inline.removeObsoleteFoldsInBatch(inlineKeys)
+            block.removeObsoleteFoldsInBatch(blockKeys)
+            desired.values.forEach { entry ->
+                entry.owner.reconcileFoldInBatch(entry.projection, entry.range, plan.identity.source)
+            }
+        }
+    }
+
+    private fun foldOwner(kind: NativeProjectionKind): NativeOrdinaryPresentationLayerController? = when {
+        inline.supportsFold(kind) -> inline
+        block.supportsFold(kind) -> block
+        else -> null
+    }
+
+    private fun clearFolds() {
+        if (editor.isDisposed) {
+            inline.dropFoldOwnership()
+            block.dropFoldOwnership()
+            return
+        }
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            inline.clearFoldsInBatch()
+            block.clearFoldsInBatch()
+        }
+    }
+
+    private fun requireAlive() {
+        check(!disposed) { "ordinary Markdown presentation controller is disposed" }
+        check(!editor.isDisposed) { "native editor is disposed" }
+    }
+
+    override fun dispose() {
+        if (disposed) return
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        inline.clearHighlighters()
+        block.clearHighlighters()
+        clearFolds()
+        disposed = true
+    }
+}
+
+private interface NativeOrdinaryPresentationLayerController {
+    fun supportsFold(kind: NativeProjectionKind): Boolean
+
+    fun installHighlighterIfSupported(projection: NativeProjection)
+
+    fun removeObsoleteFoldsInBatch(desiredKeys: Set<FoldKey>)
+
+    fun reconcileFoldInBatch(
+        projection: NativeProjection,
+        range: ProjectionRange,
+        source: String,
+    )
+
+    fun clearHighlighters()
+
+    fun clearFoldsInBatch()
+
+    fun dropFoldOwnership()
+
+    fun evidenceSnapshot(): NativeSyntaxPresentationEvidence
 }
 
 private class NativeInlinePresentationController(
     editor: Editor,
-) : Disposable {
+) : NativeOrdinaryPresentationLayerController {
     private val owner = NativeSyntaxPresentationOwner(
         editor = editor,
         highlightKinds = setOf(
@@ -102,20 +202,32 @@ private class NativeInlinePresentationController(
         placeholderFor = { _, _, _ -> ZERO_WIDTH_PLACEHOLDER },
     )
 
-    fun clearPresentation() = owner.clearPresentation()
+    override fun supportsFold(kind: NativeProjectionKind): Boolean = owner.supportsFold(kind)
 
-    fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) = owner.applyPlan(plan, enabled)
+    override fun installHighlighterIfSupported(projection: NativeProjection) =
+        owner.installHighlighterIfSupported(projection)
 
-    fun refreshActivity(plan: NativeProjectionPlan, enabled: Boolean) = owner.refreshActivity(plan, enabled)
+    override fun removeObsoleteFoldsInBatch(desiredKeys: Set<FoldKey>) =
+        owner.removeObsoleteFoldsInBatch(desiredKeys)
 
-    fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = owner.evidenceSnapshot()
+    override fun reconcileFoldInBatch(
+        projection: NativeProjection,
+        range: ProjectionRange,
+        source: String,
+    ) = owner.reconcileFoldInBatch(projection, range, source)
 
-    override fun dispose() = owner.dispose()
+    override fun clearHighlighters() = owner.clearHighlighters()
+
+    override fun clearFoldsInBatch() = owner.clearFoldsInBatch()
+
+    override fun dropFoldOwnership() = owner.dropFoldOwnership()
+
+    override fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = owner.evidenceSnapshot()
 }
 
 private class NativeBlockPresentationController(
     editor: Editor,
-) : Disposable {
+) : NativeOrdinaryPresentationLayerController {
     private val owner = NativeSyntaxPresentationOwner(
         editor = editor,
         highlightKinds = setOf(
@@ -135,15 +247,27 @@ private class NativeBlockPresentationController(
         placeholderFor = ::blockPlaceholderFor,
     )
 
-    fun clearPresentation() = owner.clearPresentation()
+    override fun supportsFold(kind: NativeProjectionKind): Boolean = owner.supportsFold(kind)
 
-    fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) = owner.applyPlan(plan, enabled)
+    override fun installHighlighterIfSupported(projection: NativeProjection) =
+        owner.installHighlighterIfSupported(projection)
 
-    fun refreshActivity(plan: NativeProjectionPlan, enabled: Boolean) = owner.refreshActivity(plan, enabled)
+    override fun removeObsoleteFoldsInBatch(desiredKeys: Set<FoldKey>) =
+        owner.removeObsoleteFoldsInBatch(desiredKeys)
 
-    fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = owner.evidenceSnapshot()
+    override fun reconcileFoldInBatch(
+        projection: NativeProjection,
+        range: ProjectionRange,
+        source: String,
+    ) = owner.reconcileFoldInBatch(projection, range, source)
 
-    override fun dispose() = owner.dispose()
+    override fun clearHighlighters() = owner.clearHighlighters()
+
+    override fun clearFoldsInBatch() = owner.clearFoldsInBatch()
+
+    override fun dropFoldOwnership() = owner.dropFoldOwnership()
+
+    override fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = owner.evidenceSnapshot()
 }
 
 private data class NativeSyntaxPresentationEvidence(
@@ -152,38 +276,93 @@ private data class NativeSyntaxPresentationEvidence(
     val collapsedFolds: Int,
 )
 
+private data class FoldKey(
+    val startOffset: Int,
+    val endOffset: Int,
+)
+
+private data class FoldEntry(
+    val owner: NativeOrdinaryPresentationLayerController,
+    val projection: NativeProjection,
+    val range: ProjectionRange,
+)
+
 private class NativeSyntaxPresentationOwner(
     private val editor: Editor,
     private val highlightKinds: Set<NativeProjectionKind>,
     private val foldableKinds: Set<NativeProjectionKind>,
     private val keyFor: (NativeProjectionKind) -> TextAttributesKey,
     private val placeholderFor: (NativeProjection, ProjectionRange, String) -> String,
-) : Disposable {
+) {
     private val highlighters = mutableListOf<RangeHighlighter>()
     private val folds = LinkedHashMap<FoldKey, FoldRegion>()
-    private var disposed = false
 
-    fun clearPresentation() {
-        requireAlive()
-        clear()
+    fun supportsFold(kind: NativeProjectionKind): Boolean = kind in foldableKinds
+
+    fun installHighlighterIfSupported(projection: NativeProjection) {
+        if (projection.kind !in highlightKinds || isActive(projection)) return
+        val range = projection.sourceRange
+        highlighters += editor.markupModel.addRangeHighlighter(
+            keyFor(projection.kind),
+            range.startOffset,
+            range.endOffset,
+            HighlighterLayer.ADDITIONAL_SYNTAX,
+            HighlighterTargetArea.EXACT_RANGE,
+        )
     }
 
-    fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) {
-        requireAlive()
-        if (plan.status != ProjectionPlanStatus.READY || !enabled) return
-        installRangeHighlighters(plan)
-        reconcileSyntaxFolds(plan)
-    }
-
-    fun refreshActivity(plan: NativeProjectionPlan, enabled: Boolean) {
-        requireAlive()
-        clearHighlighters()
-        if (plan.status == ProjectionPlanStatus.READY && enabled) {
-            installRangeHighlighters(plan)
-            reconcileSyntaxFolds(plan)
-        } else {
-            clearFolds()
+    fun removeObsoleteFoldsInBatch(desiredKeys: Set<FoldKey>) {
+        val obsolete = folds.keys.filter { key -> key !in desiredKeys || folds[key]?.isValid != true }
+        obsolete.forEach { key ->
+            folds.remove(key)?.takeIf(FoldRegion::isValid)?.let(editor.foldingModel::removeFoldRegion)
         }
+    }
+
+    fun reconcileFoldInBatch(
+        projection: NativeProjection,
+        range: ProjectionRange,
+        source: String,
+    ) {
+        check(projection.kind in foldableKinds) {
+            "projection ${projection.kind} does not belong to this ordinary presentation owner"
+        }
+        val key = FoldKey(range.startOffset, range.endOffset)
+        val active = isActive(projection)
+        val owned = folds[key]
+        if (owned?.isValid == true) {
+            owned.isExpanded = active
+            return
+        }
+        if (editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset) != null) {
+            return
+        }
+        val region = editor.foldingModel.addFoldRegion(
+            range.startOffset,
+            range.endOffset,
+            placeholderFor(projection, range, source),
+        ) ?: return
+        region.isExpanded = active
+        folds[key] = region
+    }
+
+    fun clearHighlighters() {
+        if (!editor.isDisposed) {
+            highlighters.forEach { highlighter ->
+                if (highlighter.isValid) editor.markupModel.removeHighlighter(highlighter)
+            }
+        }
+        highlighters.clear()
+    }
+
+    fun clearFoldsInBatch() {
+        folds.values.forEach { fold ->
+            if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
+        }
+        folds.clear()
+    }
+
+    fun dropFoldOwnership() {
+        folds.clear()
     }
 
     fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = NativeSyntaxPresentationEvidence(
@@ -191,67 +370,6 @@ private class NativeSyntaxPresentationOwner(
         folds = folds.values.count { it.isValid },
         collapsedFolds = folds.values.count { it.isValid && !it.isExpanded },
     )
-
-    private fun installRangeHighlighters(plan: NativeProjectionPlan) {
-        plan.projections
-            .asSequence()
-            .filter { projection -> projection.kind in highlightKinds }
-            .filterNot(::isActive)
-            .forEach { projection ->
-                val range = projection.sourceRange
-                highlighters += editor.markupModel.addRangeHighlighter(
-                    keyFor(projection.kind),
-                    range.startOffset,
-                    range.endOffset,
-                    HighlighterLayer.ADDITIONAL_SYNTAX,
-                    HighlighterTargetArea.EXACT_RANGE,
-                )
-            }
-    }
-
-    /**
-     * Reconcile only folds owned by this ordinary-presentation layer. If the platform already owns
-     * the exact same range, leave it alone; a later refresh can install MarkFlow's fallback after
-     * that foreign fold disappears.
-     */
-    private fun reconcileSyntaxFolds(plan: NativeProjectionPlan) {
-        val desired = plan.projections
-            .asSequence()
-            .filter { projection -> projection.kind in foldableKinds }
-            .flatMap { projection -> projection.syntaxRanges.asSequence().map { range -> projection to range } }
-            .associateBy { (_, range) -> FoldKey(range.startOffset, range.endOffset) }
-
-        val obsolete = folds.keys.filter { key -> key !in desired || folds[key]?.isValid != true }
-        if (obsolete.isNotEmpty()) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                obsolete.forEach { key ->
-                    folds.remove(key)?.takeIf(FoldRegion::isValid)?.let(editor.foldingModel::removeFoldRegion)
-                }
-            }
-        }
-
-        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            desired.forEach { (key, pair) ->
-                val (projection, range) = pair
-                val active = isActive(projection)
-                val owned = folds[key]
-                if (owned?.isValid == true) {
-                    owned.isExpanded = active
-                    return@forEach
-                }
-                if (editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset) != null) {
-                    return@forEach
-                }
-                val region = editor.foldingModel.addFoldRegion(
-                    range.startOffset,
-                    range.endOffset,
-                    placeholderFor(projection, range, plan.identity.source),
-                ) ?: return@forEach
-                region.isExpanded = active
-                folds[key] = region
-            }
-        }
-    }
 
     private fun isActive(projection: NativeProjection): Boolean =
         ReadAction.computeBlocking<Boolean, RuntimeException> {
@@ -261,48 +379,6 @@ private class NativeSyntaxPresentationOwner(
                     (caret.hasSelection() && range.intersects(caret.selectionStart, caret.selectionEnd))
             }
         }
-
-    private fun clear() {
-        clearHighlighters()
-        clearFolds()
-    }
-
-    private fun clearFolds() {
-        if (folds.isNotEmpty() && !editor.isDisposed) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                folds.values.forEach { fold ->
-                    if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
-                }
-            }
-        }
-        folds.clear()
-    }
-
-    private fun clearHighlighters() {
-        if (!editor.isDisposed) {
-            highlighters.forEach { highlighter ->
-                if (highlighter.isValid) editor.markupModel.removeHighlighter(highlighter)
-            }
-        }
-        highlighters.clear()
-    }
-
-    private fun requireAlive() {
-        check(!disposed) { "ordinary syntax presentation owner is disposed" }
-        check(!editor.isDisposed) { "native editor is disposed" }
-    }
-
-    override fun dispose() {
-        if (disposed) return
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        clear()
-        disposed = true
-    }
-
-    private data class FoldKey(
-        val startOffset: Int,
-        val endOffset: Int,
-    )
 }
 
 private fun blockPlaceholderFor(
