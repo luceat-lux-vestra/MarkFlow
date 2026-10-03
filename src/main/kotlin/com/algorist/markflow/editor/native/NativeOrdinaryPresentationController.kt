@@ -22,6 +22,7 @@ internal data class NativeOrdinaryPresentationEvidence(
     val headingModels: Int,
     val headingInlays: Int,
     val headingFolds: Int,
+    val headingFullyConcealed: Int,
     val headingLevels: List<Int>,
 ) {
     val blockFolds: Int
@@ -104,6 +105,7 @@ internal class NativeOrdinaryPresentationController(
             headingModels = headingEvidence.models,
             headingInlays = headingEvidence.ownedInlays,
             headingFolds = headingEvidence.ownedFolds,
+            headingFullyConcealed = headingEvidence.fullyConcealed,
             headingLevels = headingEvidence.levels,
         )
     }
