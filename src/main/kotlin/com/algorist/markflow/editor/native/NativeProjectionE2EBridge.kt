@@ -58,6 +58,21 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).evidenceSnapshot().ownedFolds
     }
 
+    fun headingModels(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().headingModels
+    }
+
+    fun headingOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().headingInlays
+    }
+
+    fun headingOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().headingFolds
+    }
+
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val projectionKind = runCatching { NativeProjectionKind.valueOf(kind) }.getOrNull() ?: return false
