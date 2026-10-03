@@ -428,6 +428,10 @@ internal class NativeDerivedPresentationController(
         if (inlay.isValid) inlay.dispose()
     }
 
+    private fun clearErrorPresentation() {
+        errorInlays.keys.toList().forEach(::removeErrorInlay)
+    }
+
     private fun removeErrorInlay(key: ProjectionKey) {
         val inlay = errorInlays.remove(key) ?: return
         if (inlay.isValid) inlay.dispose()
