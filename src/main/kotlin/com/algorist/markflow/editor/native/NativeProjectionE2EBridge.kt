@@ -77,6 +77,26 @@ internal object NativeProjectionE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).evidenceSnapshot().headingFullyConcealed
     }
+    fun headingFoldTopology(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireController(editor)
+        val heading = controller.currentPlan
+            ?.projections
+            ?.singleOrNull { projection -> projection.kind == NativeProjectionKind.HEADING }
+            ?: return "heading=none"
+        val range = heading.sourceRange
+        val folds = editor.foldingModel.allFoldRegions
+            .asSequence()
+            .filter { fold -> fold.isValid }
+            .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
+            .sortedWith(compareBy({ fold -> fold.startOffset }, { fold -> fold.endOffset }))
+            .joinToString(separator = ",") { fold ->
+                "${fold.startOffset}-${fold.endOffset}:${if (fold.isExpanded) "E" else "C"}"
+            }
+        return "heading=${range.startOffset}-${range.endOffset};syntax=" +
+            heading.syntaxRanges.joinToString(",") { syntax -> "${syntax.startOffset}-${syntax.endOffset}" } +
+            ";folds=$folds"
+    }
 
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
