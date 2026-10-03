@@ -56,8 +56,9 @@ class MarkFlowStarterProductionWiringTest {
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(pluginPath)
             }.applyVMOptionsPatch {
-                // The production native owner must attach even when the optional JCEF renderer is absent.
-                addSystemProperty("ide.browser.jcef.enabled", false)
+                // This scenario proves the normal production derived-renderer path. The separate
+                // degraded-path Starter test owns JCEF-disabled ordinary source-editing acceptance.
+                addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
@@ -88,6 +89,23 @@ class MarkFlowStarterProductionWiringTest {
                     checker = { ready -> ready },
                 )
 
+                waitFor(
+                    message = "production Mermaid/KaTeX renderer produces decoded native presentation",
+                    timeout = 30.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            bridge.derivedFragments(editor.editor) >= 3 &&
+                                bridge.derivedPendingRequests(editor.editor) == 0 &&
+                                bridge.derivedDecodedArtifacts(editor.editor) >= 3 &&
+                                bridge.derivedOwnedInlays(editor.editor) >= 3 &&
+                                bridge.derivedOwnedFolds(editor.editor) >= 3 &&
+                                bridge.derivedRendererFailures(editor.editor) == 0L &&
+                                bridge.derivedMissingArtifacts(editor.editor) == 0L
+                        }
+                    },
+                    checker = { ready -> ready },
+                )
+
                 val hostLocalImages = driver.withContext(OnDispatcher.EDT) {
                     bridge.hostLocalImages(editor.editor)
                 }
@@ -96,6 +114,24 @@ class MarkFlowStarterProductionWiringTest {
                 }
                 val derivedFragments = driver.withContext(OnDispatcher.EDT) {
                     bridge.derivedFragments(editor.editor)
+                }
+                val derivedPendingRequests = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedPendingRequests(editor.editor)
+                }
+                val derivedDecodedArtifacts = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedDecodedArtifacts(editor.editor)
+                }
+                val derivedOwnedInlays = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedOwnedInlays(editor.editor)
+                }
+                val derivedOwnedFolds = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedOwnedFolds(editor.editor)
+                }
+                val derivedRendererFailures = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedRendererFailures(editor.editor)
+                }
+                val derivedMissingArtifacts = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedMissingArtifacts(editor.editor)
                 }
                 val rawHtmlFragments = driver.withContext(OnDispatcher.EDT) {
                     bridge.rawHtmlFragments(editor.editor)
@@ -108,6 +144,24 @@ class MarkFlowStarterProductionWiringTest {
                 }
                 check(derivedFragments >= 3) {
                     "production controller did not wire representative Mermaid/KaTeX fragments: $derivedFragments"
+                }
+                check(derivedPendingRequests == 0) {
+                    "production derived renderer left pending requests: $derivedPendingRequests"
+                }
+                check(derivedDecodedArtifacts >= 3) {
+                    "production derived renderer did not decode representative artifacts: $derivedDecodedArtifacts"
+                }
+                check(derivedOwnedInlays >= 3) {
+                    "production derived renderer did not install representative native inlays: $derivedOwnedInlays"
+                }
+                check(derivedOwnedFolds >= 3) {
+                    "production derived renderer did not install representative source folds: $derivedOwnedFolds"
+                }
+                check(derivedRendererFailures == 0L) {
+                    "production derived renderer reported failures: $derivedRendererFailures"
+                }
+                check(derivedMissingArtifacts == 0L) {
+                    "production derived renderer completed without presentation artifacts: $derivedMissingArtifacts"
                 }
                 check(rawHtmlFragments >= 2) {
                     "production controller did not wire representative raw HTML fragments: $rawHtmlFragments"
@@ -139,5 +193,11 @@ private interface NativeProductionWiringBridgeRemote {
     fun hostLocalImages(editor: Editor): Int
     fun hostExternalLinks(editor: Editor): Int
     fun derivedFragments(editor: Editor): Int
+    fun derivedPendingRequests(editor: Editor): Int
+    fun derivedDecodedArtifacts(editor: Editor): Int
+    fun derivedOwnedInlays(editor: Editor): Int
+    fun derivedOwnedFolds(editor: Editor): Int
+    fun derivedRendererFailures(editor: Editor): Long
+    fun derivedMissingArtifacts(editor: Editor): Long
     fun rawHtmlFragments(editor: Editor): Int
 }

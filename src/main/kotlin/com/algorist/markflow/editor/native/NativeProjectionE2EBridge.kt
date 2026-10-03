@@ -120,6 +120,36 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).derivedEvidenceSnapshot()?.derivedFragments ?: 0
     }
 
+    fun derivedPendingRequests(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.pendingRequests ?: 0
+    }
+
+    fun derivedDecodedArtifacts(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.decodedArtifacts ?: 0
+    }
+
+    fun derivedOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.ownedInlays ?: 0
+    }
+
+    fun derivedOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.ownedFolds ?: 0
+    }
+
+    fun derivedRendererFailures(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.rendererFailures ?: 0L
+    }
+
+    fun derivedMissingArtifacts(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.missingArtifacts ?: 0L
+    }
+
     fun rawHtmlFragments(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).rawHtmlEvidenceSnapshot()?.fragments ?: 0

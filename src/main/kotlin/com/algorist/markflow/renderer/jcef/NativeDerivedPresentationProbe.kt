@@ -361,7 +361,7 @@ internal object NativeDerivedPresentationProbe {
         }
 
         private fun createRealController(handle: PlatformEditorHandle): NativePresentationController {
-            val runtime = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+            val runtime = DerivedRendererRuntimeProvider.createOrNull()
                 ?: error("real derived renderer runtime unavailable")
             return createController(handle, runtime)
         }

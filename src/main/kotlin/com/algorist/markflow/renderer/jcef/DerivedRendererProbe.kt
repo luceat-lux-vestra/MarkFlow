@@ -82,7 +82,7 @@ internal object DerivedRendererProbe {
 
                 JcefDerivedRendererRuntime.failNextBrowserConstructionForDiagnostics()
                 val createFailure = runCatching {
-                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                    DerivedRendererRuntimeProvider.createOrNull()
                 }.exceptionOrNull()
                 check(createFailure != null) { "diagnostic renderer runtime creation failure did not fail" }
                 check(JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics == baselineLiveInstances) {
@@ -100,7 +100,7 @@ internal object DerivedRendererProbe {
                 )
 
                 val cleanupFailureRuntime =
-                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                    DerivedRendererRuntimeProvider.createOrNull()
                 check(cleanupFailureRuntime is JcefDerivedRendererRuntime) {
                     "renderer runtime unavailable before temp-root cleanup recovery proof"
                 }
@@ -117,7 +117,7 @@ internal object DerivedRendererProbe {
                 val retainedRoot = requireNotNull(MarkFlowWebviewResourceManager.extractedRootForDiagnostics())
 
                 val recoveredRuntime =
-                    DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                    DerivedRendererRuntimeProvider.createOrNull()
                 check(recoveredRuntime is JcefDerivedRendererRuntime) {
                     "renderer runtime did not recover after retained temp-root cleanup failure"
                 }
@@ -137,7 +137,7 @@ internal object DerivedRendererProbe {
                 )
 
                 val createStartedAt = System.nanoTime()
-                val created = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                val created = DerivedRendererRuntimeProvider.createOrNull()
                 val createElapsedMs = (System.nanoTime() - createStartedAt) / 1_000_000L
                 check(created is JcefDerivedRendererRuntime) { "isolated JCEF renderer runtime factory unavailable" }
                 runtime = created
@@ -320,7 +320,7 @@ internal object DerivedRendererProbe {
                 runtime = null
                 val lifecycleStartedAt = System.nanoTime()
                 repeat(REPEATED_DISPOSAL_CYCLES) {
-                    val current = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+                    val current = DerivedRendererRuntimeProvider.createOrNull()
                     check(current is JcefDerivedRendererRuntime)
                     current.dispose()
                 }
