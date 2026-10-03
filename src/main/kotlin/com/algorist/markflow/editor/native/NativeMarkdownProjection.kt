@@ -88,6 +88,7 @@ internal data class NativeProjection(
     val syntaxRanges: List<ProjectionRange> = emptyList(),
     val contentRanges: List<ProjectionRange> = emptyList(),
     val block: Boolean,
+    val headingLevel: Int? = null,
 )
 
 internal enum class ProjectionPlanStatus {
@@ -220,6 +221,7 @@ internal object NativeMarkdownProjectionPlanner {
             syntaxRanges = syntaxRangesFor(kind, node, source, sourceRange),
             contentRanges = contentRangesFor(kind, node, source, sourceRange),
             block = kind in BLOCK_KINDS,
+            headingLevel = if (kind == NativeProjectionKind.HEADING) headingLevelFor(node.type) else null,
         )
     }
 
@@ -291,11 +293,58 @@ internal object NativeMarkdownProjectionPlanner {
         source: String,
         sourceRange: ProjectionRange,
     ): List<ProjectionRange> = when (kind) {
+        NativeProjectionKind.HEADING ->
+            headingVisibleRange(node, source, sourceRange)?.let(::listOf).orEmpty()
         NativeProjectionKind.TABLE_HEADER,
         NativeProjectionKind.TABLE_ROW,
         -> directChildRanges(node, setOf(GFMTokenTypes.CELL), source, sourceRange)
         NativeProjectionKind.LINK -> linkVisibleRange(node, source, sourceRange)?.let(::listOf).orEmpty()
         else -> emptyList()
+    }
+
+    private fun headingLevelFor(type: IElementType): Int? = when (type) {
+        MarkdownElementTypes.ATX_1,
+        MarkdownElementTypes.SETEXT_1,
+        -> 1
+        MarkdownElementTypes.ATX_2,
+        MarkdownElementTypes.SETEXT_2,
+        -> 2
+        MarkdownElementTypes.ATX_3 -> 3
+        MarkdownElementTypes.ATX_4 -> 4
+        MarkdownElementTypes.ATX_5 -> 5
+        MarkdownElementTypes.ATX_6 -> 6
+        else -> null
+    }
+
+    /**
+     * Derives one visible heading range from the parser-proven heading node and marker token bounds.
+     * No semantic text reconstruction is performed: leading/trailing whitespace inside the parser
+     * heading content is excluded only from presentation while all original bytes remain authoritative.
+     */
+    private fun headingVisibleRange(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): ProjectionRange? {
+        val syntax = directChildRanges(
+            node,
+            setOf(
+                MarkdownTokenTypes.ATX_HEADER,
+                MarkdownTokenTypes.SETEXT_1,
+                MarkdownTokenTypes.SETEXT_2,
+            ),
+            source,
+            sourceRange,
+        )
+        if (syntax.isEmpty()) return null
+
+        val isSetext = node.type == MarkdownElementTypes.SETEXT_1 || node.type == MarkdownElementTypes.SETEXT_2
+        var start = if (isSetext) sourceRange.startOffset else syntax.first().endOffset
+        var end = if (isSetext || syntax.size > 1) syntax.last().startOffset else sourceRange.endOffset
+
+        while (start < end && source[start].isWhitespace()) start += 1
+        while (end > start && source[end - 1].isWhitespace()) end -= 1
+        return projectionRangeOrNull(start, end, source)
     }
 
     private fun linkSyntaxRanges(
