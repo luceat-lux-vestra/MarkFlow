@@ -158,6 +158,46 @@ val fenced = 1
         )
     }
 
+    fun testHeadingLevelsAndVisibleRangesRemainParserBounded() {
+        val source = """# H1
+## H2 ##
+### H3
+#### H4
+##### H5
+###### H6
+
+Setext one
+==========
+
+Setext two
+----------
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val headings = plan.projections.filter { it.kind == NativeProjectionKind.HEADING }
+        assertEquals(8, headings.size)
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 1, 2), headings.map { it.headingLevel })
+        assertEquals(
+            listOf("H1", "H2", "H3", "H4", "H5", "H6", "Setext one", "Setext two"),
+            headings.map { heading ->
+                val visible = heading.contentRanges.single()
+                assertTrue(visible.startOffset >= heading.sourceRange.startOffset)
+                assertTrue(visible.endOffset <= heading.sourceRange.endOffset)
+                source.substring(visible.startOffset, visible.endOffset)
+            },
+        )
+
+        val h2 = headings[1]
+        assertEquals(
+            listOf("##", "##"),
+            h2.syntaxRanges.map { range -> source.substring(range.startOffset, range.endOffset) },
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testInlineReferenceAndShortcutLinksExposeOnlyParserProvenVisibleLabels() {
         val source = """[inline label](https://example.com "title")
 
