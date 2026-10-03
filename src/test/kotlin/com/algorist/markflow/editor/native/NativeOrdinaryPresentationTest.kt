@@ -32,6 +32,16 @@ After
         try {
             val evidence = controller.evidenceSnapshot()
             assertEquals(ProjectionPlanStatus.READY, evidence.planStatus)
+            assertTrue("expected inline-owned ordinary highlighters", evidence.inlineOwnedHighlighters >= 3)
+            assertTrue("expected inline-owned ordinary syntax folds", evidence.inlineOwnedFolds > 0)
+            assertTrue("expected block-owned ordinary highlighters", evidence.blockOwnedHighlighters >= 2)
+            assertTrue("expected block-owned ordinary syntax folds", evidence.blockOwnedFolds > 0)
+            assertEquals(
+                evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters,
+                evidence.ownedHighlighters,
+            )
+            assertEquals(evidence.inlineOwnedFolds + evidence.blockOwnedFolds, evidence.ownedFolds)
+            assertEquals(evidence.inlineCollapsedFolds + evidence.blockCollapsedFolds, evidence.collapsedFolds)
             assertTrue("expected MarkFlow-owned ordinary syntax folds", evidence.ownedFolds >= 8)
             assertTrue(evidence.collapsedFolds > 0)
 
@@ -114,6 +124,10 @@ After
             assertEquals(0, evidence.ownedHighlighters)
             assertEquals(0, evidence.ownedFolds)
             assertEquals(0, evidence.collapsedFolds)
+            assertEquals(0, evidence.inlineOwnedHighlighters)
+            assertEquals(0, evidence.inlineOwnedFolds)
+            assertEquals(0, evidence.blockOwnedHighlighters)
+            assertEquals(0, evidence.blockOwnedFolds)
             assertEquals(1L, evidence.sourceFallbacks)
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)
@@ -121,4 +135,56 @@ After
             controller.dispose()
         }
     }
+    fun testInlineOnlyFixtureUsesOnlyInlinePresentationOwner() {
+        val source = "A [link](https://example.com) with *emphasis*, **strong**, and `code`.\n\nTail\n"
+        myFixture.configureByText("inline-only.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertTrue(evidence.inlineOwnedHighlighters >= 4)
+            assertTrue(evidence.inlineOwnedFolds > 0)
+            assertEquals(0, evidence.blockOwnedHighlighters)
+            assertEquals(0, evidence.blockOwnedFolds)
+            assertEquals(evidence.inlineOwnedHighlighters, evidence.ownedHighlighters)
+            assertEquals(evidence.inlineOwnedFolds, evidence.ownedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testBlockOnlyFixtureUsesOnlyBlockPresentationOwner() {
+        val source = "# Heading\n\n- item\n\n> quote\n\n---\n\nTail\n"
+        myFixture.configureByText("block-only.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.inlineOwnedHighlighters)
+            assertEquals(0, evidence.inlineOwnedFolds)
+            assertTrue(evidence.blockOwnedHighlighters >= 2)
+            assertTrue(evidence.blockOwnedFolds > 0)
+            assertEquals(evidence.blockOwnedHighlighters, evidence.ownedHighlighters)
+            assertEquals(evidence.blockOwnedFolds, evidence.ownedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
 }

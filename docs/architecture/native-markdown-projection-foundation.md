@@ -1,6 +1,6 @@
 # Native Markdown projection foundation
 
-Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity under ADR 0001
+Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity and corrective #312 inline/block ownership under ADR 0001
 
 ## Decision
 
@@ -22,7 +22,9 @@ NativeProjectionPlan
       │ exact-current identity gate
       ▼
 NativePresentationController (one per Editor)
-      ├── source-neutral ordinary Markdown folds/highlighters
+      ├── NativeOrdinaryPresentationController
+      │     ├── inline syntax presentation owner
+      │     └── block syntax presentation owner
       ├── NativeTablePresentationController
       ├── #147 host-resource presentation
       └── #148 derived renderer presentation
@@ -71,9 +73,11 @@ Link projection similarly uses parser-proven link text/label children. If a stab
 
 ## Source-neutral ordinary presentation
 
-`NativePresentationController` owns only presentation it creates. It never calls a `Document` mutation API.
+`NativePresentationController` coordinates lifecycle/listeners and delegates ordinary Markdown to `NativeOrdinaryPresentationController`. The ordinary controller has separate inline and block syntax owners; each removes only the highlighters/folds it created and never calls a `Document` mutation API.
 
-Inactive supported constructs may use public editor highlighters and folding to conceal parser-proven syntax while leaving the authoritative source unchanged. Current #152 presentation includes:
+The corrective #312 split is an ownership boundary, not a claim that block WYSIWYG fidelity is complete. Inline emphasis/strong/link/inline-code remain lightweight syntax presentation. Heading/list/blockquote/fenced-code/thematic block presentation now has a distinct owner so later #309/#152 work can add block layout/inlay/component behavior without coupling it to inline syntax handling.
+
+Inactive supported constructs may use public editor highlighters and folding to conceal parser-proven syntax while leaving the authoritative source unchanged. The behavior preserved through #312 includes:
 
 - heading/emphasis/strong/inline-code/fence syntax concealment;
 - link syntax concealment around a parser-proven visible label;
@@ -130,6 +134,7 @@ These are lexical-fidelity constraints, not merely visual-equivalence claims.
 #152 adds mandatory parity evidence for:
 
 - the actual #78 ordinary fidelity corpus files mapped through the runtime parser/projection path with exact source identity;
+- #312 inline-only and block-only ownership isolation plus aggregate-evidence consistency, while preserving the existing marker/link/source-reveal behavior;
 - the expanded ordinary projection kinds and parser ranges;
 - source-neutral list/quote/link/thematic ordinary presentation plus boundary reveal;
 - exact-source accessibility fallback;
@@ -154,6 +159,6 @@ Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editi
 - #153: production native cutover;
 - #154: mandatory browser editor/protocol/trust purge;
 - #155: dependency/toolchain/JCEF/settings convergence, completed;
-- #156: final compatibility/lifecycle/performance/release convergence, completed.
+- #156: final compatibility/lifecycle/performance/release convergence, reopened under corrective track #309 and pending re-proof.
 
 Historical ordering note: #145/#152 did not authorize early production cutover or browser deletion; #153/#154 later completed those steps. The projection model described here is now the production foundation.
