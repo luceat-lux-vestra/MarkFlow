@@ -185,8 +185,8 @@ internal object NativeDerivedPresentationProbe {
 
                     first.editor.caretModel.moveToOffset(fixture.inlineMathOffset)
                     val inlineReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
-                    check(inlineReveal.ownedInlays == 2 && inlineReveal.ownedFolds == 2) {
-                        "inline math source did not reveal exactly: $inlineReveal"
+                    check(inlineReveal.ownedInlays == 2 && inlineReveal.ownedFolds == 3) {
+                        "inline math source did not reveal exactly with its reserved fold expanded: $inlineReveal"
                     }
                     check(requireNotNull(secondController.derivedEvidenceSnapshot()).ownedInlays == 3)
 
@@ -195,8 +195,8 @@ internal object NativeDerivedPresentationProbe {
 
                     first.editor.selectionModel.setSelection(fixture.displayMathStart, fixture.displayMathEnd)
                     val displayReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
-                    check(displayReveal.ownedInlays == 2 && displayReveal.ownedFolds == 2) {
-                        "display math source did not reveal exactly: $displayReveal"
+                    check(displayReveal.ownedInlays == 2 && displayReveal.ownedFolds == 3) {
+                        "display math source did not reveal exactly with its reserved fold expanded: $displayReveal"
                     }
                     first.editor.selectionModel.removeSelection()
                     check(requireNotNull(firstController.derivedEvidenceSnapshot()).ownedInlays == 3)
