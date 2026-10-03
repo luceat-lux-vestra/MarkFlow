@@ -128,6 +128,9 @@ After
             assertEquals(0, evidence.inlineOwnedFolds)
             assertEquals(0, evidence.blockOwnedHighlighters)
             assertEquals(0, evidence.blockOwnedFolds)
+            assertEquals(1, evidence.headingModels)
+            assertEquals(0, evidence.headingInlays)
+            assertEquals(0, evidence.headingFolds)
             assertEquals(1L, evidence.sourceFallbacks)
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)
@@ -185,6 +188,117 @@ After
         } finally {
             controller.dispose()
         }
+    }
+
+
+    fun testInactivePlainHeadingsUseNativeHierarchyWithoutChangingSource() {
+        val source = """# H1
+## H2 ##
+### H3
+#### H4
+##### H5
+###### H6
+
+Setext one
+==========
+
+Setext two
+----------
+
+Tail
+"""
+        myFixture.configureByText("headings.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(8, evidence.headingModels)
+            assertEquals(8, evidence.headingInlays)
+            assertEquals(16, evidence.headingFolds)
+            assertEquals(listOf(1, 2, 3, 4, 5, 6, 1, 2), evidence.headingLevels)
+
+            val renderers = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { inlay -> inlay.renderer as? NativeHeadingInlayRenderer }
+            assertEquals(8, renderers.size)
+            assertEquals(
+                listOf("H1", "H2", "H3", "H4", "H5", "H6", "Setext one", "Setext two"),
+                renderers.map(NativeHeadingInlayRenderer::displayText),
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testActiveHeadingRevealsExactSourceAndRestoresInactivePresentation() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-reveal.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            assertEquals(1, controller.evidenceSnapshot().headingInlays)
+            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+
+            editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
+            assertEquals(0, controller.evidenceSnapshot().headingInlays)
+            assertEquals(0, controller.evidenceSnapshot().headingFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertEquals(1, controller.evidenceSnapshot().headingInlays)
+            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testComplexHeadingFailsClosedToExactSourceUntilInlineRichHeadingSupportExists() {
+        val source = "# Heading with *emphasis*\n\nTail\n"
+        myFixture.configureByText("heading-complex.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.headingModels)
+            assertEquals(0, evidence.headingInlays)
+            assertEquals(0, evidence.headingFolds)
+            assertEquals(0, evidence.inlineOwnedHighlighters)
+            assertEquals(0, evidence.inlineOwnedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testHeadingTypographyScaleIsStrictlyDescendingFromH1ToH6() {
+        val scales = (1..6).map(::nativeHeadingFontScale)
+        assertTrue(scales.zipWithNext().all { (higher, lower) -> higher > lower })
+        assertEquals(1.0f, scales.last())
     }
 
 }
