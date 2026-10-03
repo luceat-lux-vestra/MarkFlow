@@ -150,6 +150,30 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).derivedEvidenceSnapshot()?.missingArtifacts ?: 0L
     }
 
+    fun derivedFoldTopology(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireController(editor)
+        val derived = controller.currentPlan
+            ?.let(NativeDerivedProjectionPlanner::plan)
+            .orEmpty()
+        val folds = editor.foldingModel.allFoldRegions
+            .asSequence()
+            .filter { fold -> fold.isValid }
+            .sortedWith(compareBy({ fold -> fold.startOffset }, { fold -> fold.endOffset }))
+            .toList()
+
+        return derived.joinToString(separator = ";") { projection ->
+            val range = projection.sourceRange
+            val overlaps = folds
+                .asSequence()
+                .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
+                .joinToString(separator = ",") { fold ->
+                    "${fold.startOffset}-${fold.endOffset}:${if (fold.isExpanded) "E" else "C"}"
+                }
+            "${projection.kind}[${range.startOffset}-${range.endOffset}]{$overlaps}"
+        }
+    }
+
     fun rawHtmlFragments(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).rawHtmlEvidenceSnapshot()?.fragments ?: 0
