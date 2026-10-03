@@ -23,6 +23,7 @@ import kotlin.math.min
 internal data class NativeHeadingModel(
     val sourceRange: ProjectionRange,
     val contentRange: ProjectionRange,
+    val syntaxRanges: List<ProjectionRange>,
     val level: Int,
     val text: String,
 )
@@ -80,6 +81,7 @@ internal object NativeHeadingProjectionPlanner {
                 NativeHeadingModel(
                     sourceRange = heading.sourceRange,
                     contentRange = contentRange,
+                    syntaxRanges = heading.syntaxRanges,
                     level = level,
                     text = text,
                 )
@@ -205,19 +207,34 @@ internal class NativeHeadingPresentationController(
     private fun installIfCurrent(identity: ProjectionSourceIdentity, model: NativeHeadingModel) {
         if (!isCurrent(identity) || isActive(model)) return
         val key = HeadingKey.of(model)
-        if (owned[key]?.let { it.inlay.isValid && it.folds.all(FoldRegion::isValid) } == true) return
+        if (owned[key]?.let(::isFullyConcealed) == true) return
         removeOwned(key)
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
         val foldRanges = headingFoldRanges(model, sourceBefore) ?: return
         val installedFolds = mutableListOf<FoldRegion>()
+        val coverageFolds = mutableListOf<FoldRegion>()
         var foldsInstalled = true
         editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            for (range in foldRanges) {
+            for ((startOffset, endOffset) in foldRanges) {
+                val coveredByForeignSyntaxFold = editor.foldingModel.allFoldRegions.firstOrNull { fold ->
+                    fold.isValid &&
+                        !fold.isExpanded &&
+                        fold.startOffset <= startOffset &&
+                        fold.endOffset >= endOffset &&
+                        model.syntaxRanges.any { syntax ->
+                            startOffset >= syntax.startOffset && endOffset <= syntax.endOffset
+                        }
+                }
+                if (coveredByForeignSyntaxFold != null) {
+                    coverageFolds += coveredByForeignSyntaxFold
+                    continue
+                }
+
                 val fold = editor.foldingModel.addFoldRegion(
-                    range.startOffset,
-                    range.endOffset,
+                    startOffset,
+                    endOffset,
                     ZERO_WIDTH_PLACEHOLDER,
                 )
                 if (fold == null) {
@@ -225,6 +242,7 @@ internal class NativeHeadingPresentationController(
                     break
                 }
                 installedFolds += fold
+                coverageFolds += fold
                 fold.isExpanded = false
                 if (fold.isExpanded) {
                     foldsInstalled = false
@@ -236,9 +254,10 @@ internal class NativeHeadingPresentationController(
                     if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
                 }
                 installedFolds.clear()
+                coverageFolds.clear()
             }
         }
-        if (!foldsInstalled || installedFolds.size != foldRanges.size) return
+        if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
 
         val renderer = NativeHeadingInlayRenderer(editor, model)
         val inlay = editor.inlayModel.addBlockElement(
@@ -252,7 +271,11 @@ internal class NativeHeadingPresentationController(
             removeFolds(installedFolds)
             return
         }
-        owned[key] = OwnedHeadingPresentation(installedFolds.toList(), inlay)
+        owned[key] = OwnedHeadingPresentation(
+            folds = installedFolds.toList(),
+            coverageFolds = coverageFolds.toList(),
+            inlay = inlay,
+        )
 
         check(editor.document.modificationStamp == stampBefore) {
             "native heading presentation changed the authoritative Document modification stamp"
@@ -269,11 +292,41 @@ internal class NativeHeadingPresentationController(
         if (codePoints < 2) return null
         val tailStart = Character.offsetByCodePoints(source, range.endOffset, -1)
         if (tailStart <= range.startOffset || tailStart >= range.endOffset) return null
-        return listOf(
-            ProjectionRange(range.startOffset, tailStart),
-            ProjectionRange(tailStart, range.endOffset),
-        )
+
+        val boundaries = linkedSetOf(range.startOffset, tailStart, range.endOffset)
+        model.syntaxRanges.forEach { syntax ->
+            if (syntax.startOffset > range.startOffset && syntax.startOffset < range.endOffset) {
+                boundaries += syntax.startOffset
+            }
+            if (syntax.endOffset > range.startOffset && syntax.endOffset < range.endOffset) {
+                boundaries += syntax.endOffset
+            }
+        }
+        editor.foldingModel.allFoldRegions
+            .asSequence()
+            .filter(FoldRegion::isValid)
+            .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
+            .forEach { fold ->
+                if (fold.startOffset > range.startOffset && fold.startOffset < range.endOffset) {
+                    boundaries += fold.startOffset
+                }
+                if (fold.endOffset > range.startOffset && fold.endOffset < range.endOffset) {
+                    boundaries += fold.endOffset
+                }
+            }
+
+        return boundaries
+            .sorted()
+            .zipWithNext()
+            .mapNotNull { (startOffset, endOffset) ->
+                if (endOffset > startOffset) ProjectionRange(startOffset, endOffset) else null
+            }
     }
+
+    private fun isFullyConcealed(presentation: OwnedHeadingPresentation): Boolean =
+        presentation.inlay.isValid &&
+            presentation.coverageFolds.isNotEmpty() &&
+            presentation.coverageFolds.all { fold -> fold.isValid && !fold.isExpanded }
 
     private fun isCurrent(identity: ProjectionSourceIdentity): Boolean =
         currentPlanIdentity == identity && matchesCurrentIdentity(identity)
@@ -338,6 +391,7 @@ internal class NativeHeadingPresentationController(
 
     private data class OwnedHeadingPresentation(
         val folds: List<FoldRegion>,
+        val coverageFolds: List<FoldRegion>,
         val inlay: Inlay<*>,
     )
 
@@ -355,9 +409,6 @@ internal class NativeHeadingInlayRenderer(
 
     val contentOffset: Int
         get() = model.contentRange.startOffset
-
-    val level: Int
-        get() = model.level
 
     val displayText: String
         get() = model.text
