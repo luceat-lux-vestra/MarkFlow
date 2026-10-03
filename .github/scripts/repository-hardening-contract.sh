@@ -62,11 +62,15 @@ grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || 
 grep -Fq 'environment("PATH", rendererNodePath.get())' build.gradle.kts || die "renderer npm tasks must expose the Gradle-provisioned Node binary to child scripts"
 grep -Fq 'val testWebviewSource = tasks.register<Exec>("testWebviewSource")' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
 grep -Fq 'disabledForTestTasks.add("integrationTest")' build.gradle.kts || die "Kover onCheck coverage must not pull Starter/Driver integrationTest into ordinary check/build"
-[ -f '.run/Build.run.xml' ] || die "shared Build run configuration is missing"
-grep -Fq '<option value="build" />' '.run/Build.run.xml' || die "shared Build run configuration must invoke Gradle build"
-if grep -Fq '<option value="integrationTest" />' '.run/Build.run.xml'; then
-  die "shared Build run configuration must not invoke Starter/Driver integrationTest"
+[ -f '.run/Build Plugin.run.xml' ] || die "shared Build Plugin run configuration is missing"
+grep -Fq 'name="Build Plugin"' '.run/Build Plugin.run.xml' || die "shared build-only run configuration must be named Build Plugin"
+grep -Fq '<option value="buildPlugin" />' '.run/Build Plugin.run.xml' || die "shared Build Plugin run configuration must invoke Gradle buildPlugin"
+if grep -Fq '<option value="build" />' '.run/Build Plugin.run.xml' \
+  || grep -Fq '<option value="check" />' '.run/Build Plugin.run.xml' \
+  || grep -Fq '<option value="integrationTest" />' '.run/Build Plugin.run.xml'; then
+  die "shared Build Plugin run configuration must not invoke build/check/Starter E2E"
 fi
+[ ! -e '.run/Build.run.xml' ] || die "stale shared Build -> build configuration must be removed"
 [ -f '.run/Run E2E.run.xml' ] || die "shared Run E2E configuration is missing"
 grep -Fq '<option value="integrationTest" />' '.run/Run E2E.run.xml' || die "shared Run E2E configuration must invoke integrationTest"
 if grep -Fq 'commandLine("node"' build.gradle.kts || grep -Fq 'commandLine("npm"' build.gradle.kts; then
