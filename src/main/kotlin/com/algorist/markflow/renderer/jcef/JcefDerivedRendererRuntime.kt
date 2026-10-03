@@ -89,8 +89,10 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
             installRequestPolicy(entryUrl)
             installMessageHandler()
             installLoadHandler()
-            // Negative control for #310: leave the isolated browser lazy to prove that the
-            // production-path acceptance rejects the pre-fix offscreen lifecycle.
+            // This renderer browser is intentionally offscreen and is never made displayable by
+            // a Swing component. Force native browser creation before loading so production uses
+            // the same lifecycle that the real-JCEF diagnostic probes previously required.
+            browser.createImmediately()
             browser.loadURL(entryUrl)
             liveInstances.incrementAndGet()
         } catch (failure: Throwable) {
