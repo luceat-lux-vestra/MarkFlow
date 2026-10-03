@@ -18,8 +18,8 @@ wrapper_sha="$(sed -n 's/^distributionSha256Sum=//p' "$wrapper")"
 [ -n "$wrapper_gradle" ] || die "Gradle wrapper distribution version could not be parsed"
 [ "$configured_gradle" = "$wrapper_gradle" ] || die "gradleVersion ($configured_gradle) does not match wrapper ($wrapper_gradle)"
 [[ "$wrapper_sha" =~ ^[0-9a-f]{64}$ ]] || die "Gradle wrapper distributionSha256Sum is missing or malformed"
-if [ "$wrapper_gradle" = "9.7.1" ] && [ "$wrapper_sha" != "acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a" ]; then
-  die "Gradle 9.7.1 distribution checksum does not match the reviewed upstream checksum"
+if [ "$wrapper_gradle" = "9.8.0" ] && [ "$wrapper_sha" != "bafd5ce9cfaea0fbccfdc8439a1ac42fbd4cd9c89dc9a988228d8a2639a58e6c" ]; then
+  die "Gradle 9.8.0 distribution checksum does not match the reviewed upstream checksum"
 fi
 
 assert_recovery_target_validation() {
