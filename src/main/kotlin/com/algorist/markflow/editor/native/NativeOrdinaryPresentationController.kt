@@ -43,6 +43,12 @@ internal class NativeOrdinaryPresentationController(
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
 
+    fun clearPresentation() {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        inline.clearPresentation()
+        block.clearPresentation()
+    }
+
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.applyPlan(plan, richPresentationEnabled)
@@ -95,6 +101,10 @@ private class NativeInlinePresentationController(
         keyFor = ::inlineKeyFor,
         placeholderFor = { _, _, _ -> ZERO_WIDTH_PLACEHOLDER },
     )
+
+    fun clearPresentation() = owner.clearPresentation()
+
+    fun clearPresentation() = owner.clearPresentation()
 
     fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) = owner.applyPlan(plan, enabled)
 
@@ -153,9 +163,13 @@ private class NativeSyntaxPresentationOwner(
     private val folds = LinkedHashMap<FoldKey, FoldRegion>()
     private var disposed = false
 
-    fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) {
+    fun clearPresentation() {
         requireAlive()
         clear()
+    }
+
+    fun applyPlan(plan: NativeProjectionPlan, enabled: Boolean) {
+        requireAlive()
         if (plan.status != ProjectionPlanStatus.READY || !enabled) return
         installRangeHighlighters(plan)
         reconcileSyntaxFolds(plan)
