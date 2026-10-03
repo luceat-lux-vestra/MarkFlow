@@ -32,6 +32,7 @@ internal data class NativeHeadingPresentationEvidence(
     val models: Int,
     val ownedInlays: Int,
     val ownedFolds: Int,
+    val fullyConcealed: Int,
     val levels: List<Int>,
     val accessibilityFallbacks: Long,
     val mouseReveals: Long,
@@ -118,8 +119,9 @@ internal object NativeHeadingProjectionPlanner {
 /**
  * Source-neutral native heading presentation owned by one editor.
  *
- * Supported inactive headings conceal their exact source through owned folds and render a native
- * block inlay with H1-H6 typography. Active headings remove the rich presentation so the original
+ * Supported inactive headings conceal their exact source through MarkFlow-owned folds plus any
+ * already-collapsed parser-syntax fold owned by the platform, then render a native block inlay with
+ * H1-H6 typography. Active headings remove only MarkFlow-owned rich presentation so the original
  * Markdown is visible and directly editable.
  */
 internal class NativeHeadingPresentationController(
@@ -183,6 +185,7 @@ internal class NativeHeadingPresentationController(
         models = currentModels.size,
         ownedInlays = owned.values.count { it.inlay.isValid },
         ownedFolds = owned.values.sumOf { presentation -> presentation.folds.count(FoldRegion::isValid) },
+        fullyConcealed = owned.values.count(::isFullyConcealed),
         levels = currentModels.map(NativeHeadingModel::level),
         accessibilityFallbacks = accessibilityFallbacks,
         mouseReveals = mouseReveals,
