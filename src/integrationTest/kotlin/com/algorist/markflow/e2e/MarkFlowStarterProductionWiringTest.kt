@@ -89,22 +89,49 @@ class MarkFlowStarterProductionWiringTest {
                     checker = { ready -> ready },
                 )
 
-                waitFor(
-                    message = "production Mermaid/KaTeX renderer produces decoded native presentation",
-                    timeout = 30.seconds,
-                    getter = {
-                        driver.withContext(OnDispatcher.EDT) {
-                            bridge.derivedFragments(editor.editor) >= 3 &&
-                                bridge.derivedPendingRequests(editor.editor) == 0 &&
-                                bridge.derivedDecodedArtifacts(editor.editor) >= 3 &&
-                                bridge.derivedOwnedInlays(editor.editor) >= 3 &&
-                                bridge.derivedOwnedFolds(editor.editor) >= 3 &&
-                                bridge.derivedRendererFailures(editor.editor) == 0L &&
-                                bridge.derivedMissingArtifacts(editor.editor) == 0L
-                        }
-                    },
-                    checker = { ready -> ready },
-                )
+                // The product contract reveals exact Markdown source for the active construct.
+                // Starter can open a file with its primary caret inside the Mermaid block, which
+                // would intentionally remove that inlay/fold and make an inactive-render assertion
+                // self-contradictory. Move to a plain paragraph before proving rendered state.
+                val inactiveDerivedCaretOffset = expectedSource.indexOf("This fixture proves")
+                check(inactiveDerivedCaretOffset >= 0) {
+                    "deterministic production fixture lost the plain-paragraph caret anchor"
+                }
+                markFlow.resetToSingleCaret(editor, inactiveDerivedCaretOffset)
+
+                val rendererWaitFailure = runCatching {
+                    waitFor(
+                        message = "production Mermaid/KaTeX renderer produces decoded native presentation",
+                        timeout = 30.seconds,
+                        getter = {
+                            driver.withContext(OnDispatcher.EDT) {
+                                bridge.derivedFragments(editor.editor) >= 3 &&
+                                    bridge.derivedPendingRequests(editor.editor) == 0 &&
+                                    bridge.derivedDecodedArtifacts(editor.editor) >= 3 &&
+                                    bridge.derivedOwnedInlays(editor.editor) >= 3 &&
+                                    bridge.derivedOwnedFolds(editor.editor) >= 3 &&
+                                    bridge.derivedRendererFailures(editor.editor) == 0L &&
+                                    bridge.derivedMissingArtifacts(editor.editor) == 0L
+                            }
+                        },
+                        checker = { ready -> ready },
+                    )
+                }.exceptionOrNull()
+                if (rendererWaitFailure != null) {
+                    val evidence = driver.withContext(OnDispatcher.EDT) {
+                        "fragments=${bridge.derivedFragments(editor.editor)} " +
+                            "pending=${bridge.derivedPendingRequests(editor.editor)} " +
+                            "decoded=${bridge.derivedDecodedArtifacts(editor.editor)} " +
+                            "inlays=${bridge.derivedOwnedInlays(editor.editor)} " +
+                            "folds=${bridge.derivedOwnedFolds(editor.editor)} " +
+                            "failures=${bridge.derivedRendererFailures(editor.editor)} " +
+                            "missing=${bridge.derivedMissingArtifacts(editor.editor)}"
+                    }
+                    throw AssertionError(
+                        "production Mermaid/KaTeX presentation did not converge: $evidence",
+                        rendererWaitFailure,
+                    )
+                }
 
                 val hostLocalImages = driver.withContext(OnDispatcher.EDT) {
                     bridge.hostLocalImages(editor.editor)
