@@ -159,6 +159,6 @@ Normal Build/Test/Inspect code/Verify plugin, repository Hardening, Native Editi
 - #153: production native cutover;
 - #154: mandatory browser editor/protocol/trust purge;
 - #155: dependency/toolchain/JCEF/settings convergence, completed;
-- #156: final compatibility/lifecycle/performance/release convergence, completed.
+- #156: final compatibility/lifecycle/performance/release convergence, reopened under corrective track #309 and pending re-proof.
 
 Historical ordering note: #145/#152 did not authorize early production cutover or browser deletion; #153/#154 later completed those steps. The projection model described here is now the production foundation.
