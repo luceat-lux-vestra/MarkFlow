@@ -155,17 +155,28 @@ val fenced = true
 
                 case("inline-and-block-native-presentation") {
                     val evidence = firstController.evidenceSnapshot()
-                    check(evidence.ownedHighlighters >= 3) {
-                        "expected emphasis/strong/inline-code markup, observed ${evidence.ownedHighlighters}"
+                    check(evidence.inlineOwnedHighlighters >= 3) {
+                        "expected inline emphasis/strong/code markup, observed ${evidence.inlineOwnedHighlighters}"
                     }
-                    check(evidence.ownedFolds >= 1) {
-                        "expected parser-proven syntax folds, observed ${evidence.ownedFolds}"
+                    check(evidence.inlineOwnedFolds >= 1) {
+                        "expected inline parser-proven syntax folds, observed ${evidence.inlineOwnedFolds}"
                     }
+                    check(evidence.blockOwnedHighlighters >= 1) {
+                        "expected block code presentation markup, observed ${evidence.blockOwnedHighlighters}"
+                    }
+                    check(evidence.blockOwnedFolds >= 1) {
+                        "expected block parser-proven syntax folds, observed ${evidence.blockOwnedFolds}"
+                    }
+                    check(evidence.ownedHighlighters == evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters)
+                    check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
                     check(headingSyntaxFoldCollapsed(first.editor, firstController)) {
                         "heading syntax marker was not visually reduced outside active context"
                     }
                     check(first.editor.document === second.editor.document)
-                    "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} headingCollapsed=true sharedDocument=true"
+                    "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
+                        "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
+                        "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
+                        "headingCollapsed=true sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
