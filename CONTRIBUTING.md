@@ -67,13 +67,13 @@ The web validation remains required because #155 proved a retained renderer-only
 
 The committed IntelliJ run configurations intentionally keep local build and real-IDE acceptance separate:
 
-- `Build` → `build`: run the ordinary Gradle build/check lifecycle; it does not run Starter/Driver E2E.
+- `Build Plugin` → `buildPlugin`: assemble/package the plugin (including retained renderer assets) without running the normal `check` lifecycle or Starter/Driver E2E.
 - `Run Plugin` → `runIde`: launch the sandbox IDE with the developed plugin.
 - `Run Tests` → `check`: run the normal Gradle verification/unit-test lifecycle.
 - `Run E2E` → `integrationTest`: explicitly run the Starter/Driver real-IDE acceptance suite.
 - `Run Verifications` → `verifyPlugin`: run Plugin Verifier compatibility checks.
 
-`integrationTest` is a separately registered `testIdeUi` task and is intentionally not wired into `build`, `buildPlugin`, or `check`. E2E execution must be explicit.
+`integrationTest` is a separately registered `testIdeUi` task and is intentionally not wired into `build`, `buildPlugin`, or `check`. E2E execution must be explicit. The shared local build configuration intentionally uses `buildPlugin`; use `Run Tests` for `check` rather than the broader Gradle `build` lifecycle.
 
 Do not claim a check was run if it was not. Native editor/projection changes require real IntelliJ runtime scenarios where helper tests cannot prove behavior. Retained JCEF renderer changes require real renderer-runtime evidence where applicable.
 
