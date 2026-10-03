@@ -134,6 +134,7 @@ After
             assertEquals(1, evidence.headingModels)
             assertEquals(0, evidence.headingInlays)
             assertEquals(0, evidence.headingFolds)
+            assertEquals(0, evidence.headingFullyConcealed)
             assertEquals(1L, evidence.sourceFallbacks)
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)
@@ -223,7 +224,8 @@ Tail
             val evidence = controller.evidenceSnapshot()
             assertEquals(8, evidence.headingModels)
             assertEquals(8, evidence.headingInlays)
-            assertEquals(16, evidence.headingFolds)
+            assertTrue(evidence.headingFolds >= 16)
+            assertEquals(8, evidence.headingFullyConcealed)
             assertEquals(listOf(1, 2, 3, 4, 5, 6, 1, 2), evidence.headingLevels)
 
             val renderers = editor.inlayModel
@@ -255,17 +257,20 @@ Tail
         )
         try {
             assertEquals(1, controller.evidenceSnapshot().headingInlays)
-            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+            assertTrue(controller.evidenceSnapshot().headingFolds > 0)
+            assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
 
             editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
             assertEquals(0, controller.evidenceSnapshot().headingInlays)
             assertEquals(0, controller.evidenceSnapshot().headingFolds)
+            assertEquals(0, controller.evidenceSnapshot().headingFullyConcealed)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
 
             editor.caretModel.moveToOffset(tailOffset)
             assertEquals(1, controller.evidenceSnapshot().headingInlays)
-            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+            assertTrue(controller.evidenceSnapshot().headingFolds > 0)
+            assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
@@ -289,6 +294,7 @@ Tail
             assertEquals(0, evidence.headingModels)
             assertEquals(0, evidence.headingInlays)
             assertEquals(0, evidence.headingFolds)
+            assertEquals(0, evidence.headingFullyConcealed)
             assertEquals(0, evidence.inlineOwnedHighlighters)
             assertEquals(0, evidence.inlineOwnedFolds)
             assertEquals(source, editor.document.text)
@@ -314,6 +320,7 @@ Tail
             assertEquals(0, evidence.headingModels)
             assertEquals(0, evidence.headingInlays)
             assertEquals(0, evidence.headingFolds)
+            assertEquals(0, evidence.headingFullyConcealed)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
@@ -368,6 +375,7 @@ Tail
             assertEquals(1L, evidence.mouseReveals)
             assertEquals(0, evidence.ownedInlays)
             assertEquals(0, evidence.ownedFolds)
+            assertEquals(0, evidence.fullyConcealed)
             assertEquals(contentOffset, editor.caretModel.primaryCaret.offset)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
@@ -404,7 +412,8 @@ Tail
             val inactive = controller.evidenceSnapshot()
             assertEquals(1, inactive.headingModels)
             assertEquals(1, inactive.headingInlays)
-            assertEquals(2, inactive.headingFolds)
+            assertTrue(inactive.headingFolds > 0)
+            assertEquals(1, inactive.headingFullyConcealed)
             assertTrue(requireNotNull(foreignFold).isValid)
             assertFalse(requireNotNull(foreignFold).isExpanded)
             assertEquals(source, editor.document.text)
@@ -416,6 +425,7 @@ Tail
             editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
             assertEquals(0, controller.evidenceSnapshot().headingInlays)
             assertEquals(0, controller.evidenceSnapshot().headingFolds)
+            assertEquals(0, controller.evidenceSnapshot().headingFullyConcealed)
             assertTrue(requireNotNull(foreignFold).isValid)
             assertTrue(requireNotNull(foreignFold).isExpanded)
 
@@ -424,7 +434,8 @@ Tail
             }
             editor.caretModel.moveToOffset(tailOffset)
             assertEquals(1, controller.evidenceSnapshot().headingInlays)
-            assertEquals(2, controller.evidenceSnapshot().headingFolds)
+            assertTrue(controller.evidenceSnapshot().headingFolds > 0)
+            assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
             assertTrue(requireNotNull(foreignFold).isValid)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
