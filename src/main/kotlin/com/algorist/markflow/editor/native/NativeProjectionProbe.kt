@@ -169,14 +169,22 @@ val fenced = true
                     }
                     check(evidence.ownedHighlighters == evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters)
                     check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
-                    check(evidence.headingModels == 1 && evidence.headingInlays == 1 && evidence.headingFolds == 2) {
-                        "inactive heading did not install one native heading inlay with owned source folds: $evidence"
+                    check(
+                        evidence.headingModels == 1 &&
+                            evidence.headingInlays == 1 &&
+                            evidence.headingFolds > 0 &&
+                            evidence.headingFullyConcealed == 1
+                    ) {
+                        "inactive heading did not install one fully concealed native heading presentation: " +
+                            "models=${evidence.headingModels} inlays=${evidence.headingInlays} " +
+                            "ownedFolds=${evidence.headingFolds} concealed=${evidence.headingFullyConcealed}"
                     }
                     check(first.editor.document === second.editor.document)
                     "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
                         "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
                         "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
-                        "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} sharedDocument=true"
+                        "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} " +
+                        "headingConcealed=${evidence.headingFullyConcealed} sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
