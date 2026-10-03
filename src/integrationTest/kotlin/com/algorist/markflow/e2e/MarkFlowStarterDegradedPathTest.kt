@@ -101,10 +101,10 @@ class MarkFlowStarterDegradedPathTest {
                 markFlow.clickText(editor, rendererTarget)
                 val sourceBeforeDegrade = markFlow.source(editor)
                 val stampBeforeDegrade = markFlow.modificationStamp(editor)
-                markFlow.attachNativeProjection(editor)
+                markFlow.assertProductionProjectionAttached(editor)
                 try {
                     check(markFlow.isNativeProjectionAttached(editor)) {
-                        "native projection E2E controller did not attach"
+                        "production native MarkFlow projection is not attached"
                     }
                     check(markFlow.isNativeProjectionPlanReady(editor)) {
                         "degraded-path acceptance did not start from a READY projection plan"
@@ -216,9 +216,7 @@ class MarkFlowStarterDegradedPathTest {
                         "degraded-path save did not persist exact expected Markdown bytes"
                     }
                 } finally {
-                    if (markFlow.isNativeProjectionAttached(editor)) {
-                        markFlow.detachNativeProjection(editor)
-                    }
+                    markFlow.assertProductionProjectionStillAttached(editor)
                 }
 
                 markFlow.close(editor)

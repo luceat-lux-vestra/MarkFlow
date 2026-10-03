@@ -27,7 +27,10 @@ jobs:
   headEvidence:
     name: Head validation evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Metadata-only replays may begin while the canonical exact-head validation is still running.
+    # The full canonical graph routinely exceeds 15 minutes, so the waiter must outlive that
+    # observed duration without increasing GitHub API polling frequency.
+    timeout-minutes: 35
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || (github.event.action != 'edited' && github.event.pull_request.draft == false) }}
@@ -40,7 +43,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          for _ in $(seq 1 180); do
+          for _ in $(seq 1 120); do
             runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
@@ -74,7 +77,7 @@ jobs:
                | select((.id | tostring) != $current)]
               | sort_by(.id) | reverse | .[].id
             ' <<<"$runs")
-            sleep 5
+            sleep 15
           done
           echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
           exit 1

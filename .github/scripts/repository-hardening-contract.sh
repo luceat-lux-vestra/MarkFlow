@@ -61,6 +61,14 @@ grep -Fq 'dependsOn(provisionRendererNode)' build.gradle.kts || die "renderer No
 grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || die "renderer tasks must execute the Gradle-provisioned Node binary"
 grep -Fq 'environment("PATH", rendererNodePath.get())' build.gradle.kts || die "renderer npm tasks must expose the Gradle-provisioned Node binary to child scripts"
 grep -Fq 'val testWebviewSource = tasks.register<Exec>("testWebviewSource")' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
+grep -Fq 'disabledForTestTasks.add("integrationTest")' build.gradle.kts || die "Kover onCheck coverage must not pull Starter/Driver integrationTest into ordinary check/build"
+[ -f '.run/Build.run.xml' ] || die "shared Build run configuration is missing"
+grep -Fq '<option value="build" />' '.run/Build.run.xml' || die "shared Build run configuration must invoke Gradle build"
+if grep -Fq '<option value="integrationTest" />' '.run/Build.run.xml'; then
+  die "shared Build run configuration must not invoke Starter/Driver integrationTest"
+fi
+[ -f '.run/Run E2E.run.xml' ] || die "shared Run E2E configuration is missing"
+grep -Fq '<option value="integrationTest" />' '.run/Run E2E.run.xml' || die "shared Run E2E configuration must invoke integrationTest"
 if grep -Fq 'commandLine("node"' build.gradle.kts || grep -Fq 'commandLine("npm"' build.gradle.kts; then
   die "renderer Gradle tasks must not depend on PATH-resolved node/npm executables"
 fi

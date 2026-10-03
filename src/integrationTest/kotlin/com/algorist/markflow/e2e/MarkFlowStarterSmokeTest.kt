@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class MarkFlowStarterSmokeTest {
     @Test
-    fun launchesNativeFallbackRevealsFormatsPastesAndPersistsUserEditAcrossReopen() {
+    fun launchesProductionNativeEditorRevealsFormatsPastesAndPersistsUserEditAcrossReopen() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -132,10 +132,10 @@ class MarkFlowStarterSmokeTest {
 
                 val revealSourceBefore = markFlow.source(editor)
                 val revealStampBefore = markFlow.modificationStamp(editor)
-                markFlow.attachNativeProjection(editor)
+                markFlow.assertProductionProjectionAttached(editor)
                 try {
                     check(markFlow.isNativeProjectionAttached(editor)) {
-                        "native projection E2E controller did not attach"
+                        "production native MarkFlow projection is not attached"
                     }
                     check(markFlow.isNativeProjectionPlanReady(editor)) {
                         "native projection E2E plan is not READY"
@@ -178,7 +178,7 @@ class MarkFlowStarterSmokeTest {
                     check(markFlow.modificationStamp(editor) == revealStampBefore)
                     check(!markFlow.isDirty(editor))
                 } finally {
-                    markFlow.detachNativeProjection(editor)
+                    markFlow.assertProductionProjectionStillAttached(editor)
                 }
 
                 markFlow.selectRangeWithKeyboard(editor, formattingStart, formattingTarget.length)

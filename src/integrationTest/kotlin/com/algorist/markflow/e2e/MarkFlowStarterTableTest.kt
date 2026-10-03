@@ -88,16 +88,16 @@ class MarkFlowStarterTableTest {
                     "opening the table fixture must not dirty the authoritative Document"
                 }
 
-                // Keep the primary caret outside the table before attaching the pre-cutover E2E
-                // controller. The table must therefore start in its inactive rich presentation.
+                // Keep the primary caret outside the table before observing the production-owned
+                // projection. The table must therefore start in its inactive rich presentation.
                 markFlow.clickText(editor, "deterministic")
                 val sourceBeforeReveal = markFlow.source(editor)
                 val stampBeforeReveal = markFlow.modificationStamp(editor)
 
-                markFlow.attachNativeProjection(editor)
+                markFlow.assertProductionProjectionAttached(editor)
                 try {
                     check(markFlow.isNativeProjectionAttached(editor)) {
-                        "native projection E2E controller did not attach for table acceptance"
+                        "production native MarkFlow projection is not attached for table acceptance"
                     }
                     check(markFlow.isNativeProjectionPlanReady(editor)) {
                         "native table projection plan is not READY"
@@ -195,7 +195,7 @@ class MarkFlowStarterTableTest {
                         checker = { (inlays, folds) -> inlays == 1 && folds == 2 },
                     )
                 } finally {
-                    markFlow.detachNativeProjection(editor)
+                    markFlow.assertProductionProjectionStillAttached(editor)
                 }
 
                 check(markFlow.source(editor) == expectedSource) {
