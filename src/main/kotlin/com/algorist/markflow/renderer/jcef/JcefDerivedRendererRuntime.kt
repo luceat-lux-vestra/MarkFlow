@@ -30,9 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * JCEF execution adapter for #144. This realm hosts only derived rendering; it has no editor,
  * Document, source-sync, local-file, or external-navigation authority.
  */
-class JcefDerivedRendererRuntime(
-    createImmediatelyForDiagnostics: Boolean = false,
-) : DerivedRendererRuntime {
+class JcefDerivedRendererRuntime : DerivedRendererRuntime {
     private val gson = Gson()
     private val browser: JBCefBrowser
     private val messageQuery: JBCefJSQuery
@@ -91,7 +89,10 @@ class JcefDerivedRendererRuntime(
             installRequestPolicy(entryUrl)
             installMessageHandler()
             installLoadHandler()
-            if (createImmediatelyForDiagnostics) browser.createImmediately()
+            // This renderer browser is intentionally offscreen and is never made displayable by
+            // a Swing component. Force native browser creation before loading so production uses
+            // the same lifecycle that the real-JCEF diagnostic probes previously required.
+            browser.createImmediately()
             browser.loadURL(entryUrl)
             liveInstances.incrementAndGet()
         } catch (failure: Throwable) {

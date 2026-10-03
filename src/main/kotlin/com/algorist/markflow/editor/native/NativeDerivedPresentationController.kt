@@ -38,6 +38,7 @@ internal data class NativeDerivedPresentationEvidence(
     val decodedArtifacts: Int,
     val ownedInlays: Int,
     val ownedFolds: Int,
+    val collapsedFolds: Int,
     val ownedErrorInlays: Int,
     val staleResultsRejected: Long,
     val rendererFailures: Long,
@@ -65,7 +66,8 @@ internal class NativeDerivedPresentationController(
     private val gson = Gson()
     private val pending = LinkedHashMap<String, PendingRequest>()
     private val decoded = LinkedHashMap<ProjectionKey, DecodedArtifact>()
-    private val owned = LinkedHashMap<ProjectionKey, OwnedPresentation>()
+    private val reservedFolds = LinkedHashMap<ProjectionKey, FoldRegion>()
+    private val ownedInlays = LinkedHashMap<ProjectionKey, Inlay<*>>()
     private val errorMessages = LinkedHashMap<ProjectionKey, String>()
     private val errorInlays = LinkedHashMap<ProjectionKey, Inlay<*>>()
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
@@ -102,6 +104,10 @@ internal class NativeDerivedPresentationController(
         }
 
         currentDerived.forEach { projection ->
+            // Reserve the exact derived source range while it is still expanded. This keeps exact
+            // Markdown visible while rendering is pending, but prevents later platform Markdown
+            // folding from claiming the same range before the renderer artifact arrives.
+            reserveFold(projection)
             request(selectedRuntime, plan.identity, projection, settings)
         }
     }
@@ -114,7 +120,7 @@ internal class NativeDerivedPresentationController(
         currentDerived.forEach { projection ->
             val key = ProjectionKey.of(projection)
             if (isActive(projection)) {
-                removeOwned(key)
+                revealOwned(key)
                 removeErrorInlay(key)
             } else {
                 decoded[key]?.let { artifact -> installIfCurrent(plan.identity, projection, artifact) }
@@ -128,8 +134,9 @@ internal class NativeDerivedPresentationController(
         derivedFragments = currentDerived.size,
         pendingRequests = pending.size,
         decodedArtifacts = decoded.size,
-        ownedInlays = owned.values.count { it.inlay.isValid },
-        ownedFolds = owned.values.count { it.fold.isValid },
+        ownedInlays = ownedInlays.values.count { it.isValid },
+        ownedFolds = reservedFolds.values.count { it.isValid },
+        collapsedFolds = reservedFolds.values.count { it.isValid && !it.isExpanded },
         ownedErrorInlays = errorInlays.values.count { it.isValid },
         staleResultsRejected = staleResultsRejected,
         rendererFailures = rendererFailures,
@@ -190,10 +197,15 @@ internal class NativeDerivedPresentationController(
             if (disposed || editor.isDisposed) return@onEdt
             if (result.identity != expected.rendererIdentity || !isCurrent(expected.planIdentity)) {
                 staleResultsRejected += 1
+                if (isCurrent(expected.planIdentity)) {
+                    releaseOwned(ProjectionKey.of(expected.projection))
+                }
                 return@onEdt
             }
             if (result.status != "success") {
                 rendererFailures += 1
+                val key = ProjectionKey.of(expected.projection)
+                releaseOwned(key)
                 LOG.warn(
                     "MarkFlow native derived renderer failed kind=${expected.projection.kind} " +
                         "code=${result.code ?: "unknown"} retryable=${result.retryable}"
@@ -202,7 +214,6 @@ internal class NativeDerivedPresentationController(
                     expected.projection.kind == NativeDerivedProjectionKind.MERMAID &&
                     expected.mermaidErrorDisplay == MERMAID_INLINE_ERROR_BOX
                 ) {
-                    val key = ProjectionKey.of(expected.projection)
                     val message = expected.mermaidErrorMessage.take(MAX_ERROR_MESSAGE_CHARS)
                     errorMessages[key] = message
                     if (!isActive(expected.projection)) {
@@ -214,6 +225,7 @@ internal class NativeDerivedPresentationController(
             val artifact = result.presentationArtifact
             if (artifact == null) {
                 missingArtifacts += 1
+                releaseOwned(ProjectionKey.of(expected.projection))
                 return@onEdt
             }
             decodeArtifactAsync(expected, artifact)
@@ -234,6 +246,7 @@ internal class NativeDerivedPresentationController(
                 }
                 if (decodedArtifact == null) {
                     missingArtifacts += 1
+                    releaseOwned(ProjectionKey.of(expected.projection))
                     return@invokeLater
                 }
                 val key = ProjectionKey.of(expected.projection)
@@ -261,31 +274,24 @@ internal class NativeDerivedPresentationController(
         projection: NativeDerivedProjection,
         artifact: DecodedArtifact,
     ) {
-        if (!isCurrent(planIdentity) || isActive(projection)) return
+        if (!isCurrent(planIdentity)) return
         val key = ProjectionKey.of(projection)
-        if (owned[key]?.let { it.fold.isValid && it.inlay.isValid } == true) return
+        if (isActive(projection)) {
+            revealOwned(key)
+            return
+        }
         removeErrorInlay(key)
-        removeOwned(key)
+
+        val fold = reserveFold(projection) ?: return
+        if (ownedInlays[key]?.isValid == true && fold.isValid && !fold.isExpanded) return
+        removeOwnedInlay(key)
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
-        val foldingModel = editor.foldingModel
-        var fold: FoldRegion? = null
-        foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            fold = foldingModel.addFoldRegion(
-                projection.sourceRange.startOffset,
-                projection.sourceRange.endOffset,
-                ZERO_WIDTH_PLACEHOLDER,
-            )
-            fold?.isExpanded = false
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            if (fold.isValid) fold.isExpanded = false
         }
-        val installedFold = fold ?: return
-        if (installedFold.isExpanded) {
-            foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (installedFold.isValid) foldingModel.removeFoldRegion(installedFold)
-            }
-            return
-        }
+        if (!fold.isValid || fold.isExpanded) return
 
         val renderer = NativeRasterInlayRenderer(
             editor = editor,
@@ -309,18 +315,37 @@ internal class NativeDerivedPresentationController(
             )
         }
         if (inlay == null) {
-            foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (installedFold.isValid) foldingModel.removeFoldRegion(installedFold)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (fold.isValid) fold.isExpanded = true
             }
             return
         }
-        owned[key] = OwnedPresentation(installedFold, inlay)
+        ownedInlays[key] = inlay
 
         check(editor.document.modificationStamp == stampBefore) {
             "native derived presentation changed the authoritative Document modification stamp"
         }
         check(editor.document.immutableCharSequence.toString() == sourceBefore) {
             "native derived presentation changed the authoritative Document source"
+        }
+    }
+
+    private fun reserveFold(projection: NativeDerivedProjection): FoldRegion? {
+        val key = ProjectionKey.of(projection)
+        reservedFolds[key]?.takeIf(FoldRegion::isValid)?.let { return it }
+        reservedFolds.remove(key)
+
+        var fold: FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            fold = editor.foldingModel.addFoldRegion(
+                projection.sourceRange.startOffset,
+                projection.sourceRange.endOffset,
+                ZERO_WIDTH_PLACEHOLDER,
+            )
+        }
+        return fold?.also { installed ->
+            // addFoldRegion starts expanded. Keep it that way until a valid artifact is decoded.
+            reservedFolds[key] = installed
         }
     }
 
@@ -366,23 +391,47 @@ internal class NativeDerivedPresentationController(
     }
 
     private fun clearOwnedPresentation() {
-        owned.keys.toList().forEach(::removeOwned)
+        ownedInlays.values.forEach { inlay ->
+            if (inlay.isValid) inlay.dispose()
+        }
+        ownedInlays.clear()
+
+        if (reservedFolds.isNotEmpty() && !editor.isDisposed) {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                reservedFolds.values.forEach { fold ->
+                    if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
+                }
+            }
+        }
+        reservedFolds.clear()
+    }
+
+    private fun revealOwned(key: ProjectionKey) {
+        removeOwnedInlay(key)
+        val fold = reservedFolds[key] ?: return
+        if (!fold.isValid || editor.isDisposed) return
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            if (fold.isValid) fold.isExpanded = true
+        }
+    }
+
+    private fun releaseOwned(key: ProjectionKey) {
+        removeOwnedInlay(key)
+        val fold = reservedFolds.remove(key) ?: return
+        if (fold.isValid && !editor.isDisposed) {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
+            }
+        }
+    }
+
+    private fun removeOwnedInlay(key: ProjectionKey) {
+        val inlay = ownedInlays.remove(key) ?: return
+        if (inlay.isValid) inlay.dispose()
     }
 
     private fun clearErrorPresentation() {
         errorInlays.keys.toList().forEach(::removeErrorInlay)
-    }
-
-    private fun removeOwned(key: ProjectionKey) {
-        val presentation = owned.remove(key) ?: return
-        if (presentation.inlay.isValid) presentation.inlay.dispose()
-        if (presentation.fold.isValid && !editor.isDisposed) {
-            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (presentation.fold.isValid) {
-                    editor.foldingModel.removeFoldRegion(presentation.fold)
-                }
-            }
-        }
     }
 
     private fun removeErrorInlay(key: ProjectionKey) {
@@ -442,11 +491,6 @@ internal class NativeDerivedPresentationController(
 
     private data class DecodedArtifact(
         val image: BufferedImage,
-    )
-
-    private data class OwnedPresentation(
-        val fold: FoldRegion,
-        val inlay: Inlay<*>,
     )
 
     companion object {

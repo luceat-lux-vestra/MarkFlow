@@ -153,7 +153,8 @@ internal object NativeDerivedPresentationProbe {
                     it.derivedFragments == 3 &&
                     it.decodedArtifacts == 3 &&
                     it.ownedInlays == 3 &&
-                    it.ownedFolds == 3
+                    it.ownedFolds == 3 &&
+                    it.collapsedFolds == 3
             }
             if (ready) {
                 runAfterRealPresentationReady()
@@ -172,8 +173,18 @@ internal object NativeDerivedPresentationProbe {
                 case("real-mermaid-katex-inert-inlays") {
                     val firstEvidence = requireNotNull(firstController.derivedEvidenceSnapshot())
                     val secondEvidence = requireNotNull(secondController.derivedEvidenceSnapshot())
-                    check(firstEvidence.decodedArtifacts == 3 && firstEvidence.ownedInlays == 3 && firstEvidence.ownedFolds == 3)
-                    check(secondEvidence.decodedArtifacts == 3 && secondEvidence.ownedInlays == 3 && secondEvidence.ownedFolds == 3)
+                    check(
+                        firstEvidence.decodedArtifacts == 3 &&
+                            firstEvidence.ownedInlays == 3 &&
+                            firstEvidence.ownedFolds == 3 &&
+                            firstEvidence.collapsedFolds == 3
+                    )
+                    check(
+                        secondEvidence.decodedArtifacts == 3 &&
+                            secondEvidence.ownedInlays == 3 &&
+                            secondEvidence.ownedFolds == 3 &&
+                            secondEvidence.collapsedFolds == 3
+                    )
                     check(JcefDerivedRendererRuntime.liveInstanceCountForDiagnostics == baselineLiveRuntimes + 2)
                     checkSourceStable()
                     "decodedPng=6 inlays=6 folds=6 liveRuntimeDelta=2 sourceStable=true"
@@ -185,8 +196,15 @@ internal object NativeDerivedPresentationProbe {
 
                     first.editor.caretModel.moveToOffset(fixture.inlineMathOffset)
                     val inlineReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
-                    check(inlineReveal.ownedInlays == 2 && inlineReveal.ownedFolds == 2) {
-                        "inline math source did not reveal exactly: $inlineReveal"
+                    check(
+                        inlineReveal.ownedInlays == 2 &&
+                            inlineReveal.ownedFolds == 3 &&
+                            inlineReveal.collapsedFolds == 2
+                    ) {
+                        "inline math source did not retain the expected reservation ownership: $inlineReveal"
+                    }
+                    check(derivedFoldExpanded(firstController, first.editor, NativeDerivedProjectionKind.KATEX_INLINE)) {
+                        "inline math reserved fold did not expand for exact-source reveal"
                     }
                     check(requireNotNull(secondController.derivedEvidenceSnapshot()).ownedInlays == 3)
 
@@ -195,8 +213,15 @@ internal object NativeDerivedPresentationProbe {
 
                     first.editor.selectionModel.setSelection(fixture.displayMathStart, fixture.displayMathEnd)
                     val displayReveal = requireNotNull(firstController.derivedEvidenceSnapshot())
-                    check(displayReveal.ownedInlays == 2 && displayReveal.ownedFolds == 2) {
-                        "display math source did not reveal exactly: $displayReveal"
+                    check(
+                        displayReveal.ownedInlays == 2 &&
+                            displayReveal.ownedFolds == 3 &&
+                            displayReveal.collapsedFolds == 2
+                    ) {
+                        "display math source did not retain the expected reservation ownership: $displayReveal"
+                    }
+                    check(derivedFoldExpanded(firstController, first.editor, NativeDerivedProjectionKind.KATEX_DISPLAY)) {
+                        "display math reserved fold did not expand for exact-source reveal"
                     }
                     first.editor.selectionModel.removeSelection()
                     check(requireNotNull(firstController.derivedEvidenceSnapshot()).ownedInlays == 3)
@@ -360,8 +385,23 @@ internal object NativeDerivedPresentationProbe {
             return PlatformEditorHandle(provider, fileEditor, fileEditor.editor).also(liveEditors::add)
         }
 
+        private fun derivedFoldExpanded(
+            controller: NativePresentationController,
+            editor: Editor,
+            kind: NativeDerivedProjectionKind,
+        ): Boolean {
+            val plan = controller.currentPlan ?: return false
+            val projection = NativeDerivedProjectionPlanner.plan(plan).singleOrNull { candidate ->
+                candidate.kind == kind
+            } ?: return false
+            return editor.foldingModel.getFoldRegion(
+                projection.sourceRange.startOffset,
+                projection.sourceRange.endOffset,
+            )?.isExpanded == true
+        }
+
         private fun createRealController(handle: PlatformEditorHandle): NativePresentationController {
-            val runtime = DerivedRendererRuntimeProvider.createOrNull(createImmediatelyForDiagnostics = true)
+            val runtime = DerivedRendererRuntimeProvider.createOrNull()
                 ?: error("real derived renderer runtime unavailable")
             return createController(handle, runtime)
         }

@@ -60,7 +60,7 @@ data class DerivedRendererRuntimeResult(
 )
 
 interface DerivedRendererRuntimeFactory {
-    fun create(createImmediatelyForDiagnostics: Boolean = false): DerivedRendererRuntime
+    fun create(): DerivedRendererRuntime
 
     companion object {
         val EP_NAME: ExtensionPointName<DerivedRendererRuntimeFactory> =
@@ -69,8 +69,8 @@ interface DerivedRendererRuntimeFactory {
 }
 
 object DerivedRendererRuntimeProvider {
-    fun createOrNull(createImmediatelyForDiagnostics: Boolean = false): DerivedRendererRuntime? {
+    fun createOrNull(): DerivedRendererRuntime? {
         val factory = DerivedRendererRuntimeFactory.EP_NAME.extensionList.singleOrNull() ?: return null
-        return factory.create(createImmediatelyForDiagnostics)
+        return factory.create()
     }
 }
