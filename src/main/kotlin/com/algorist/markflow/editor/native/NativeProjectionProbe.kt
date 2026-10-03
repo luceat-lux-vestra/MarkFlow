@@ -334,12 +334,12 @@ val fenced = true
                     second.editor.selectionModel.removeSelection()
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
                     second.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                    check(headingSyntaxFoldCollapsed(first.editor, firstController))
-                    check(headingSyntaxFoldCollapsed(second.editor, secondController))
+                    check(headingRichPresentationVisible(firstController))
+                    check(headingRichPresentationVisible(secondController))
 
                     first.editor.caretModel.moveToOffset(fixture.headingContentOffset)
-                    check(!headingSyntaxFoldCollapsed(first.editor, firstController))
-                    check(headingSyntaxFoldCollapsed(second.editor, secondController)) {
+                    check(!headingRichPresentationVisible(firstController))
+                    check(headingRichPresentationVisible(secondController)) {
                         "first editor reveal leaked into second editor presentation"
                     }
                     check(first.editor.document === second.editor.document)
