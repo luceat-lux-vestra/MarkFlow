@@ -68,6 +68,12 @@ class NativeDegradationE2EDriver(private val driver: Driver) {
             bridge.headingFullyConcealed(editor.editor)
         }
     }
+    fun headingFoldTopology(editor: JEditorUiComponent): String {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingFoldTopology(editor.editor)
+        }
+    }
 
 }
 
@@ -81,4 +87,5 @@ private interface NativeDegradationE2EBridgeRemote {
     fun headingOwnedInlays(editor: Editor): Int
     fun headingOwnedFolds(editor: Editor): Int
     fun headingFullyConcealed(editor: Editor): Int
+    fun headingFoldTopology(editor: Editor): String
 }
