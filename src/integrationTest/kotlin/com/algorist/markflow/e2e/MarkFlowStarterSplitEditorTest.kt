@@ -142,9 +142,9 @@ class MarkFlowStarterSplitEditorTest {
                 var leftAttached = false
                 var rightAttached = false
                 try {
-                    markFlow.attachNativeProjection(left)
+                    markFlow.assertProductionProjectionAttached(left)
                     leftAttached = true
-                    markFlow.attachNativeProjection(right)
+                    markFlow.assertProductionProjectionAttached(right)
                     rightAttached = true
 
                     check(markFlow.isNativeProjectionPlanReady(left) && markFlow.isNativeProjectionPlanReady(right)) {
@@ -195,8 +195,8 @@ class MarkFlowStarterSplitEditorTest {
                         "per-editor presentation reveal dirtied the shared Document"
                     }
                 } finally {
-                    if (rightAttached) markFlow.detachNativeProjection(right)
-                    if (leftAttached) markFlow.detachNativeProjection(left)
+                    if (rightAttached) markFlow.assertProductionProjectionStillAttached(right)
+                    if (leftAttached) markFlow.assertProductionProjectionStillAttached(left)
                 }
 
                 check(markFlow.source(left) == sourceBeforeSplit && markFlow.source(right) == sourceBeforeSplit) {

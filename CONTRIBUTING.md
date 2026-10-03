@@ -65,6 +65,16 @@ Run the checks relevant to the change. For a normal code change, the expected ba
 
 The web validation remains required because #155 proved a retained renderer-only TypeScript/Vite/Node consumer after browser-editor purge. Gradle provisions the exact Node version pinned in `.nvmrc`; a globally installed `node`/`npm` is not a build prerequisite. Do not interpret retained web tooling as editor authority.
 
+The committed IntelliJ run configurations intentionally keep local build and real-IDE acceptance separate:
+
+- `Build` → `build`: run the ordinary Gradle build/check lifecycle; it does not run Starter/Driver E2E.
+- `Run Plugin` → `runIde`: launch the sandbox IDE with the developed plugin.
+- `Run Tests` → `check`: run the normal Gradle verification/unit-test lifecycle.
+- `Run E2E` → `integrationTest`: explicitly run the Starter/Driver real-IDE acceptance suite.
+- `Run Verifications` → `verifyPlugin`: run Plugin Verifier compatibility checks.
+
+`integrationTest` is a separately registered `testIdeUi` task and is intentionally not wired into `build`, `buildPlugin`, or `check`. E2E execution must be explicit.
+
 Do not claim a check was run if it was not. Native editor/projection changes require real IntelliJ runtime scenarios where helper tests cannot prove behavior. Retained JCEF renderer changes require real renderer-runtime evidence where applicable.
 
 ## Review standard

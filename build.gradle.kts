@@ -188,6 +188,13 @@ changelog {
 
 // Configure Kover coverage reporting.
 kover {
+    currentProject {
+        instrumentation {
+            // Starter/Driver is an explicit real-IDE acceptance gate. Keep Kover's onCheck report
+            // from pulling the expensive integrationTest task into ordinary check/build execution.
+            disabledForTestTasks.add("integrationTest")
+        }
+    }
     reports {
         total {
             xml {

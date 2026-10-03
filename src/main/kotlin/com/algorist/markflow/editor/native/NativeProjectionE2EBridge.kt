@@ -6,23 +6,13 @@ import com.intellij.openapi.editor.Editor
 /**
  * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
  *
- * The bridge no longer creates or owns presentation controllers. Every query resolves the controller
- * installed by [NativeMarkFlowProductionLifecycle] through the normal platform-editor opening path.
- * The retained [attach]/[detach] methods are compatibility assertions for the existing #193 suite:
- * they never mutate production ownership and fail the test when normal opening did not attach.
+ * The bridge never creates, attaches, detaches, or owns presentation controllers. Every query
+ * resolves the controller installed by [NativeMarkFlowProductionLifecycle] through the normal
+ * platform-editor opening path. Starter/Driver tests therefore observe production ownership rather
+ * than constructing a parallel test-only editor lifecycle.
  */
 @Suppress("unused")
 internal object NativeProjectionE2EBridge {
-    fun attach(editor: Editor): Boolean {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        return isAttached(editor)
-    }
-
-    fun detach(editor: Editor): Boolean {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        return isAttached(editor)
-    }
-
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return NativeMarkFlowProductionLifecycle.controller(editor) != null

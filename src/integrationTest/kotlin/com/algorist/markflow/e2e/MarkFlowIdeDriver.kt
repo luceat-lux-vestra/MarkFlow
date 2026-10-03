@@ -247,10 +247,12 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         driver.invokeAction("\$Redo", component = editor.component)
     }
 
-    fun attachNativeProjection(editor: JEditorUiComponent) {
+    fun assertProductionProjectionAttached(editor: JEditorUiComponent) {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         driver.withContext(OnDispatcher.EDT) {
-            check(bridge.attach(editor.editor)) { "native projection E2E controller was already attached" }
+            check(bridge.isAttached(editor.editor)) {
+                "production native MarkFlow projection was not attached by normal editor opening"
+            }
         }
     }
 
@@ -268,10 +270,12 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
     }
 
-    fun detachNativeProjection(editor: JEditorUiComponent) {
+    fun assertProductionProjectionStillAttached(editor: JEditorUiComponent) {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         driver.withContext(OnDispatcher.EDT) {
-            check(bridge.detach(editor.editor)) { "native projection E2E controller was not attached" }
+            check(bridge.isAttached(editor.editor)) {
+                "production native MarkFlow projection disappeared during the acceptance scenario"
+            }
         }
     }
 
@@ -369,8 +373,6 @@ private interface NativeClipboardE2EBridgeRemote {
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface NativeProjectionE2EBridgeRemote {
-    fun attach(editor: Editor): Boolean
-    fun detach(editor: Editor): Boolean
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
