@@ -8,6 +8,8 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.colors.EditorColors
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
@@ -88,15 +90,39 @@ internal object NativeProjectionProbe {
                     val stampBefore = document.modificationStamp
                     val dirtyBefore = FileDocumentManager.getInstance().isDocumentUnsaved(document)
                     val undoBefore = UndoManager.getInstance(project).isUndoAvailable(first.fileEditor)
+                    val themeCaretColor = EditorColorsManager.getInstance().globalScheme.getColor(EditorColors.CARET_COLOR)
+                    val firstCaretColorBefore = first.editor.colorsScheme.getColor(EditorColors.CARET_COLOR)
+                    val secondCaretColorBefore = second.editor.colorsScheme.getColor(EditorColors.CARET_COLOR)
+                    val firstCaretOverrideBefore = first.editor.caretModel.primaryCaret.visualAttributes.color
+                    val secondCaretOverrideBefore = second.editor.caretModel.primaryCaret.visualAttributes.color
+
+                    check(firstCaretColorBefore == themeCaretColor) {
+                        "Markdown editor caret color diverged from the active IDE theme before MarkFlow attach: " +
+                            "editor=$firstCaretColorBefore theme=$themeCaretColor"
+                    }
+                    check(secondCaretColorBefore == themeCaretColor)
+                    check(firstCaretOverrideBefore == null) {
+                        "Markdown editor already had a per-caret color override before MarkFlow attach: $firstCaretOverrideBefore"
+                    }
+                    check(secondCaretOverrideBefore == null)
 
                     firstController = createController(first.editor)
                     secondController = createController(second.editor)
 
+                    check(first.editor.colorsScheme.getColor(EditorColors.CARET_COLOR) == themeCaretColor) {
+                        "MarkFlow attach changed the IDE theme caret color"
+                    }
+                    check(second.editor.colorsScheme.getColor(EditorColors.CARET_COLOR) == themeCaretColor)
+                    check(first.editor.caretModel.primaryCaret.visualAttributes.color == firstCaretOverrideBefore) {
+                        "MarkFlow attach introduced a per-caret color override"
+                    }
+                    check(second.editor.caretModel.primaryCaret.visualAttributes.color == secondCaretOverrideBefore)
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
                     check(FileDocumentManager.getInstance().isDocumentUnsaved(document) == dirtyBefore)
                     check(UndoManager.getInstance(project).isUndoAvailable(first.fileEditor) == undoBefore)
-                    "sourceStable=true stampStable=true dirtyStable=true undoAvailabilityStable=true"
+                    "sourceStable=true stampStable=true dirtyStable=true undoAvailabilityStable=true " +
+                        "caretThemeAuthority=true caretOverride=false caretColor=$themeCaretColor"
                 }
 
                 case("parser-proven-projection-plan") {
