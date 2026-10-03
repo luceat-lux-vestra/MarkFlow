@@ -2,10 +2,12 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.gradle.api.tasks.Sync
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import java.io.File
 
 plugins {
     id("java") // Java support.
@@ -20,6 +22,29 @@ group = providers.gradleProperty("pluginGroup").get()
 
 val resolvedPluginVersion = providers.gradleProperty("buildVersion").orElse("0.0.0-dev")
 version = resolvedPluginVersion.get()
+
+val rendererNodeVersion = providers.fileContents(layout.projectDirectory.file(".nvmrc")).asText.get().trim()
+if (!Regex("""26\.\d+\.\d+""").matches(rendererNodeVersion)) {
+    throw GradleException(".nvmrc must pin an exact Node 26.x.y version; found '$rendererNodeVersion'")
+}
+val rendererNodeOs = when {
+    Os.isFamily(Os.FAMILY_MAC) -> "darwin"
+    Os.isFamily(Os.FAMILY_WINDOWS) -> "win"
+    Os.isFamily(Os.FAMILY_UNIX) -> "linux"
+    else -> throw GradleException("Unsupported OS for renderer Node provisioning: ${System.getProperty("os.name")}")
+}
+val rendererNodeArch = when (System.getProperty("os.arch").lowercase()) {
+    "aarch64", "arm64" -> "arm64"
+    "amd64", "x86_64" -> "x64"
+    else -> throw GradleException("Unsupported architecture for renderer Node provisioning: ${System.getProperty("os.arch")}")
+}
+val rendererNodeClassifier = "$rendererNodeOs-$rendererNodeArch"
+val rendererNodeArchiveExtension = if (Os.isFamily(Os.FAMILY_WINDOWS)) "zip" else "tar.gz"
+val rendererNodeArchiveRoot = "node-v$rendererNodeVersion-$rendererNodeClassifier"
+val rendererNodeDistribution = configurations.create("rendererNodeDistribution") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
 
 // Set the JVM language level used to build the project.
 kotlin {
@@ -41,6 +66,22 @@ val integrationTestImplementation by configurations.getting {
 repositories {
     mavenCentral()
 
+    // Resolve the exact Node distribution as a normal Gradle dependency so IDE-launched
+    // builds do not depend on the process PATH exposing a system node/npm installation.
+    ivy {
+        name = "NodeDistributions"
+        url = uri("https://nodejs.org/dist/")
+        patternLayout {
+            artifact("v[revision]/[artifact]-v[revision]-[classifier].[ext]")
+        }
+        metadataSources {
+            artifact()
+        }
+        content {
+            includeGroup("org.nodejs")
+        }
+    }
+
     // Add IntelliJ Platform repositories.
     intellijPlatform {
         defaultRepositories()
@@ -49,6 +90,11 @@ repositories {
 
 // Configure dependency coordinates.
 dependencies {
+    add(
+        rendererNodeDistribution.name,
+        "org.nodejs:node:$rendererNodeVersion:$rendererNodeClassifier@$rendererNodeArchiveExtension",
+    )
+
     testImplementation(libs.junit)
 
     integrationTestImplementation(libs.junitJupiter)
@@ -155,7 +201,32 @@ kover {
 val isCi = providers.environmentVariable("CI").orNull == "true"
 val webviewDir = file("webview")
 val webviewOutputDir = file("build/webview")
-val npmInstallCommand = if (isCi) "npm ci --no-audit --no-fund" else "npm install --no-audit --no-fund"
+val npmInstallSubcommand = if (isCi) "ci" else "install"
+val rendererNodeInstallDir = layout.buildDirectory.dir("renderer-node")
+val rendererNodeHome = rendererNodeInstallDir.map { it.dir(rendererNodeArchiveRoot) }
+val rendererNodeExecutable = rendererNodeHome.map {
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) it.file("node.exe") else it.file("bin/node")
+}
+val rendererNpmCli = rendererNodeHome.map {
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        it.file("node_modules/npm/bin/npm-cli.js")
+    } else {
+        it.file("lib/node_modules/npm/bin/npm-cli.js")
+    }
+}
+val rendererNodeArchive = rendererNodeDistribution.elements.map { files ->
+    val resolved = files.map { it.asFile }
+    if (resolved.size != 1) {
+        throw GradleException("Expected exactly one renderer Node distribution, found $resolved")
+    }
+    resolved.single()
+}
+val rendererNodePath = rendererNodeExecutable.map { executable ->
+    val inheritedPath = providers.environmentVariable("PATH").orNull.orEmpty()
+    listOf(executable.asFile.parentFile.absolutePath, inheritedPath)
+        .filter { it.isNotBlank() }
+        .joinToString(File.pathSeparator)
+}
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
 val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
@@ -168,63 +239,114 @@ val noJcefNativeEditingProbeProjectDir = layout.buildDirectory.dir("no-jcef-nati
 val nativeHostResourcesProbeOutput = layout.buildDirectory.file("native-host-resources-probe/evidence.json")
 val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-resources-probe/project")
 
-val verifyRendererNode by tasks.registering(Exec::class) {
-    group = "verification"
-    description = "Verifies the renderer toolchain runs on the supported Node 26 major"
-    commandLine(
-        "node",
-        "-e",
-        "const v=process.versions.node; const major=Number.parseInt(v.split('.')[0],10); if(major!==26){console.error('MarkFlow renderer requires Node 26.x; found '+v); process.exit(1);} console.log('Renderer Node '+v);"
+val provisionRendererNode = tasks.register<Sync>("provisionRendererNode") {
+    group = "build setup"
+    description = "Provisions the exact renderer Node distribution declared by .nvmrc"
+    from(
+        rendererNodeArchive.map { archive ->
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                zipTree(archive)
+            } else {
+                tarTree(resources.gzip(archive))
+            }
+        },
     )
+    into(rendererNodeInstallDir)
+
+    doLast {
+        val executable = rendererNodeExecutable.get().asFile
+        val npmCli = rendererNpmCli.get().asFile
+        if (!executable.isFile) {
+            throw GradleException("Provisioned renderer Node executable is missing: $executable")
+        }
+        if (!npmCli.isFile) {
+            throw GradleException("Provisioned renderer npm CLI is missing: $npmCli")
+        }
+        if (!Os.isFamily(Os.FAMILY_WINDOWS) && !executable.canExecute()) {
+            executable.setExecutable(true, false)
+        }
+        if (!Os.isFamily(Os.FAMILY_WINDOWS) && !executable.canExecute()) {
+            throw GradleException("Provisioned renderer Node executable is not executable: $executable")
+        }
+    }
 }
 
-val npmInstallWebview by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Installs webview dependencies"
-    dependsOn(verifyRendererNode)
-    workingDir = webviewDir
-
-    inputs.files(
-        file("webview/package.json"),
-        file("webview/package-lock.json")
-    )
-    outputs.dir(file("webview/node_modules"))
-
-    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+val verifyRendererNode = tasks.register<Exec>("verifyRendererNode") {
+    group = "verification"
+    description = "Verifies the Gradle-provisioned renderer Node version"
+    dependsOn(provisionRendererNode)
+    doFirst {
         commandLine(
-            "cmd",
-            "/c",
-            npmInstallCommand
-        )
-    } else {
-        commandLine(
-            "sh",
-            "-c",
-            npmInstallCommand
+            rendererNodeExecutable.get().asFile.absolutePath,
+            "-e",
+            "const expected='$rendererNodeVersion'; const actual=process.versions.node; if(actual!==expected){console.error('MarkFlow renderer requires Node '+expected+'; found '+actual); process.exit(1);} console.log('Renderer Node '+actual);",
         )
     }
 }
 
-val buildWebview by tasks.registering(Exec::class) {
+val npmInstallWebview = tasks.register<Exec>("npmInstallWebview") {
+    group = "build"
+    description = "Installs webview dependencies with the Gradle-provisioned Node/npm toolchain"
+    dependsOn(verifyRendererNode)
+    workingDir = webviewDir
+    inputs.files(file("webview/package.json"), file("webview/package-lock.json"))
+    outputs.dir(file("webview/node_modules"))
+    doFirst {
+        environment("PATH", rendererNodePath.get())
+        commandLine(
+            rendererNodeExecutable.get().asFile.absolutePath,
+            rendererNpmCli.get().asFile.absolutePath,
+            npmInstallSubcommand,
+            "--no-audit",
+            "--no-fund",
+        )
+    }
+}
+
+val buildWebview = tasks.register<Exec>("buildWebview") {
     group = "build"
     description = "Builds the renderer-only Vite frontend"
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
-
     inputs.files(
         fileTree("webview/src"),
         file("webview/derived-renderer.html"),
         file("webview/vite.derived-renderer.config.ts"),
         file("webview/tsconfig.json"),
         file("webview/package.json"),
-        file("webview/package-lock.json")
+        file("webview/package-lock.json"),
     )
     outputs.dir(webviewOutputDir)
+    doFirst {
+        environment("PATH", rendererNodePath.get())
+        commandLine(
+            rendererNodeExecutable.get().asFile.absolutePath,
+            rendererNpmCli.get().asFile.absolutePath,
+            "run",
+            "build",
+        )
+    }
+}
 
-    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-        commandLine("cmd", "/c", "npm run build")
-    } else {
-        commandLine("sh", "-c", "npm run build")
+val testWebviewSource = tasks.register<Exec>("testWebviewSource") {
+    group = "verification"
+    description = "Runs renderer source tests with the Gradle-provisioned Node/npm toolchain"
+    workingDir = webviewDir
+    dependsOn(npmInstallWebview)
+    inputs.files(
+        fileTree("webview/tests"),
+        fileTree("webview/src"),
+        file("webview/package.json"),
+        file("webview/package-lock.json"),
+    )
+    doFirst {
+        environment("PATH", rendererNodePath.get())
+        commandLine(
+            rendererNodeExecutable.get().asFile.absolutePath,
+            rendererNpmCli.get().asFile.absolutePath,
+            "run",
+            "test:source",
+        )
     }
 }
 

@@ -266,13 +266,6 @@ jobs:
           distribution: zulu
           java-version: 25
 
-      - name: Setup Node
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
         if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
@@ -549,13 +542,6 @@ jobs:
           distribution: zulu
           java-version: 25
 
-      - name: Setup Node
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
@@ -569,8 +555,7 @@ jobs:
 
       - name: Run webview source tests
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        working-directory: webview
-        run: npm ci --no-audit --no-fund && npm run test:source
+        run: ./gradlew testWebviewSource
 
       - name: Collect Tests Result
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
@@ -690,13 +675,6 @@ jobs:
           distribution: zulu
           java-version: 25
 
-      - name: Setup Node
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: webview/package-lock.json
 
       - name: Setup Gradle
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}

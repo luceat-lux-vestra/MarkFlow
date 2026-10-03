@@ -60,14 +60,10 @@ Run the checks relevant to the change. For a normal code change, the expected ba
 ./gradlew check
 ./gradlew buildPlugin
 ./gradlew verifyPlugin
-
-cd webview
-npm ci --no-audit --no-fund
-npm run test:source
-npm run build
+./gradlew testWebviewSource
 ```
 
-The web commands remain required because #155 proved a retained renderer-only TypeScript/Vite/Node consumer after browser-editor purge. Do not interpret retained web tooling as editor authority.
+The web validation remains required because #155 proved a retained renderer-only TypeScript/Vite/Node consumer after browser-editor purge. Gradle provisions the exact Node version pinned in `.nvmrc`; a globally installed `node`/`npm` is not a build prerequisite. Do not interpret retained web tooling as editor authority.
 
 Do not claim a check was run if it was not. Native editor/projection changes require real IntelliJ runtime scenarios where helper tests cannot prove behavior. Retained JCEF renderer changes require real renderer-runtime evidence where applicable.
 
