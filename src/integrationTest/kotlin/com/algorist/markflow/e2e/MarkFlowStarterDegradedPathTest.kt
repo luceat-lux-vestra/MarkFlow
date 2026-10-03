@@ -96,9 +96,19 @@ class MarkFlowStarterDegradedPathTest {
                     "opening unsupported/malformed source must not dirty the Document"
                 }
 
-                // Keep the heading inactive so the READY plan owns at least one syntax fold before
-                // the synthetic renderer failure is injected through the narrow E2E seam.
-                markFlow.clickText(editor, rendererTarget)
+                // Make the heading-inactive precondition deterministic in source coordinates.
+                // Driver clickOn(text) does not guarantee a caret move inside an editor; prior
+                // diagnostics showed the caret remaining in the heading while this test claimed it
+                // was inactive.
+                val rendererStart = expectedSource.indexOf(rendererTarget)
+                check(rendererStart >= 0)
+                markFlow.resetToSingleCaret(editor, rendererStart)
+                waitFor(
+                    message = "degraded-path caret leaves the heading before rich heading acceptance",
+                    timeout = 10.seconds,
+                    getter = { markFlow.primaryCaretOffset(editor) },
+                    checker = { offset -> offset == rendererStart },
+                )
                 val sourceBeforeDegrade = markFlow.source(editor)
                 val stampBeforeDegrade = markFlow.modificationStamp(editor)
                 markFlow.assertProductionProjectionAttached(editor)
@@ -165,8 +175,6 @@ class MarkFlowStarterDegradedPathTest {
                         "entering source fallback dirtied the authoritative Document"
                     }
 
-                    val rendererStart = markFlow.source(editor).indexOf(rendererTarget)
-                    check(rendererStart >= 0)
                     markFlow.selectRangeWithKeyboard(editor, rendererStart, rendererTarget.length)
                     check(degradation.isDegradedToSource(editor)) {
                         "caret/selection activity escaped typed source fallback before user edit"
