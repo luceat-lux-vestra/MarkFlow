@@ -173,8 +173,8 @@ private class NativeSyntaxPresentationOwner(
     }
 
     fun evidenceSnapshot(): NativeSyntaxPresentationEvidence = NativeSyntaxPresentationEvidence(
-        highlighters = highlighters.count(RangeHighlighter::isValid),
-        folds = folds.values.count(FoldRegion::isValid),
+        highlighters = highlighters.count { it.isValid },
+        folds = folds.values.count { it.isValid },
         collapsedFolds = folds.values.count { it.isValid && !it.isExpanded },
     )
 
