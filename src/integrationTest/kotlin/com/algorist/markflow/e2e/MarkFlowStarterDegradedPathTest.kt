@@ -109,22 +109,30 @@ class MarkFlowStarterDegradedPathTest {
                     check(markFlow.isNativeProjectionPlanReady(editor)) {
                         "degraded-path acceptance did not start from a READY projection plan"
                     }
-                    waitFor(
-                        message = "READY production projection installs native heading presentation before failure",
-                        timeout = 10.seconds,
-                        getter = {
-                            listOf(
-                                degradation.headingModels(editor),
-                                degradation.headingOwnedInlays(editor),
-                                degradation.headingOwnedFolds(editor),
-                                degradation.headingFullyConcealed(editor),
-                            )
-                        },
-                        checker = { (models, inlays, folds, concealed) ->
-                            models == 1 && inlays == 1 && folds > 0 && concealed == 1
-                        },
-                    )
-
+                    val headingWaitFailure = runCatching {
+                        waitFor(
+                            message = "READY production projection installs native heading presentation before failure",
+                            timeout = 10.seconds,
+                            getter = {
+                                listOf(
+                                    degradation.headingModels(editor),
+                                    degradation.headingOwnedInlays(editor),
+                                    degradation.headingOwnedFolds(editor),
+                                    degradation.headingFullyConcealed(editor),
+                                )
+                            },
+                            checker = { (models, inlays, folds, concealed) ->
+                                models == 1 && inlays == 1 && folds > 0 && concealed == 1
+                            },
+                        )
+                    }.exceptionOrNull()
+                    if (headingWaitFailure != null) {
+                        throw AssertionError(
+                            "production heading presentation did not converge: " +
+                                degradation.headingFoldTopology(editor),
+                            headingWaitFailure,
+                        )
+                    }
                     degradation.degradeToSource(editor)
                     check(degradation.isDegradedToSource(editor)) {
                         "typed renderer failure did not leave the controller in DEGRADED_TO_SOURCE"
