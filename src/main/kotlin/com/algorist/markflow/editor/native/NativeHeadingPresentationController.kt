@@ -69,7 +69,14 @@ internal object NativeHeadingProjectionPlanner {
                 if (hasNestedInline) return@mapNotNull null
                 if (!contentRange.isInside(source)) return@mapNotNull null
                 val text = source.substring(contentRange.startOffset, contentRange.endOffset)
-                if (text.isBlank() || text.contains('\n') || text.contains('\r')) return@mapNotNull null
+                if (
+                    text.isBlank() ||
+                    text.contains('\n') ||
+                    text.contains('\r') ||
+                    text.any(::isPresentationSensitiveInlineChar)
+                ) {
+                    return@mapNotNull null
+                }
                 NativeHeadingModel(
                     sourceRange = heading.sourceRange,
                     contentRange = contentRange,
@@ -79,6 +86,18 @@ internal object NativeHeadingProjectionPlanner {
             }
             .toList()
     }
+
+    private fun isPresentationSensitiveInlineChar(char: Char): Boolean =
+        char == '\\' ||
+            char == '*' ||
+            char == '_' ||
+            char == '[' ||
+            char == ']' ||
+            char == '`' ||
+            char == '<' ||
+            char == '>' ||
+            char == '&' ||
+            char == '~'
 
     fun unsupportedSourceRanges(plan: NativeProjectionPlan): List<ProjectionRange> {
         if (plan.status != ProjectionPlanStatus.READY) return emptyList()
