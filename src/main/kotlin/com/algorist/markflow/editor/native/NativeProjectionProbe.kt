@@ -511,7 +511,8 @@ Plain body line for inactive caret state.
             val evidence = controller.evidenceSnapshot()
             return evidence.headingModels == 1 &&
                 evidence.headingInlays == 1 &&
-                evidence.headingFolds == 2
+                evidence.headingFolds > 0 &&
+                evidence.headingFullyConcealed == 1
         }
 
         private fun validateProjectionRanges(source: String, projection: NativeProjection) {
