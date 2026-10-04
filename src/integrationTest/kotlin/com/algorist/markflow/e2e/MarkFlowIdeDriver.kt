@@ -291,6 +291,21 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
     }
 
+    fun listOwnedInlays(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listOwnedInlays(editor.editor) }
+    }
+
+    fun listOwnedFolds(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listOwnedFolds(editor.editor) }
+    }
+
+    fun listFullyConcealed(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listFullyConcealed(editor.editor) }
+    }
+
     fun taskRows(editor: JEditorUiComponent): Int {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         return driver.withContext(OnDispatcher.EDT) { bridge.listTaskRows(editor.editor) }
@@ -400,6 +415,9 @@ private interface NativeProjectionE2EBridgeRemote {
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
+    fun listOwnedInlays(editor: Editor): Int
+    fun listOwnedFolds(editor: Editor): Int
+    fun listFullyConcealed(editor: Editor): Int
     fun listTaskRows(editor: Editor): Int
     fun listCheckedTasks(editor: Editor): Int
     fun listTaskToggles(editor: Editor): Long
