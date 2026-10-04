@@ -479,8 +479,26 @@ internal class NativeFencedCodeInlayRenderer(
         if (metrics.stringWidth(text) <= maxWidth) return text
         val suffix = "..."
         val target = max(0, maxWidth - metrics.stringWidth(suffix))
-        var end = text.length
-        while (end > 0 && metrics.stringWidth(text.substring(0, end)) > target) end -= 1
+
+        var low = 0
+        var high = text.length
+        while (low < high) {
+            val mid = (low + high + 1) ushr 1
+            if (metrics.stringWidth(text.substring(0, mid)) <= target) {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+
+        var end = low
+        if (
+            end in 1 until text.length &&
+            Character.isHighSurrogate(text[end - 1]) &&
+            Character.isLowSurrogate(text[end])
+        ) {
+            end -= 1
+        }
         return text.substring(0, end) + suffix
     }
 
