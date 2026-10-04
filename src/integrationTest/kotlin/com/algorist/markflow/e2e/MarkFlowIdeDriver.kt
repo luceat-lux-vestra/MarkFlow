@@ -291,6 +291,45 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
     }
 
+    fun listOwnedInlays(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listOwnedInlays(editor.editor) }
+    }
+
+    fun listOwnedFolds(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listOwnedFolds(editor.editor) }
+    }
+
+    fun listFullyConcealed(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listFullyConcealed(editor.editor) }
+    }
+
+    fun taskRows(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listTaskRows(editor.editor) }
+    }
+
+    fun checkedTasks(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listCheckedTasks(editor.editor) }
+    }
+
+    fun taskToggles(editor: JEditorUiComponent): Long {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listTaskToggles(editor.editor) }
+    }
+
+    fun clickFirstTaskCheckbox(editor: JEditorUiComponent) {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        val x = driver.withContext(OnDispatcher.EDT) { bridge.taskListCheckboxCenterX(editor.editor) }
+        val y = driver.withContext(OnDispatcher.EDT) { bridge.taskListCheckboxCenterY(editor.editor) }
+        check(x >= 0 && y >= 0) { "native task-list checkbox is not visible in the editor viewport" }
+        editor.setFocus()
+        editor.click(Point(x, y))
+    }
+
     fun tableModels(editor: JEditorUiComponent): Int {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         return driver.withContext(OnDispatcher.EDT) { bridge.tableModels(editor.editor) }
@@ -376,6 +415,14 @@ private interface NativeProjectionE2EBridgeRemote {
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
+    fun listOwnedInlays(editor: Editor): Int
+    fun listOwnedFolds(editor: Editor): Int
+    fun listFullyConcealed(editor: Editor): Int
+    fun listTaskRows(editor: Editor): Int
+    fun listCheckedTasks(editor: Editor): Int
+    fun listTaskToggles(editor: Editor): Long
+    fun taskListCheckboxCenterX(editor: Editor): Int
+    fun taskListCheckboxCenterY(editor: Editor): Int
     fun tableModels(editor: Editor): Int
     fun tableOwnedInlays(editor: Editor): Int
     fun tableOwnedFolds(editor: Editor): Int

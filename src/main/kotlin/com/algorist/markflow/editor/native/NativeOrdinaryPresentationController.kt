@@ -36,6 +36,9 @@ internal data class NativeOrdinaryPresentationEvidence(
     val listMaxDepth: Int,
     val listDepths: List<Int>,
     val listMarkers: List<String>,
+    val taskRows: Int,
+    val checkedTasks: Int,
+    val taskToggles: Long,
 ) {
     val blockFolds: Int
         get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + listFolds
@@ -153,6 +156,9 @@ internal class NativeOrdinaryPresentationController(
             listMaxDepth = listEvidence.maxDepth,
             listDepths = listEvidence.depths,
             listMarkers = listEvidence.markers,
+            taskRows = listEvidence.taskRows,
+            checkedTasks = listEvidence.checkedTasks,
+            taskToggles = listEvidence.taskToggles,
         )
     }
 

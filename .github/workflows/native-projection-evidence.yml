@@ -155,6 +155,9 @@ jobs:
           degraded_detail = str(by_id['typed-degradation-falls-back-to-source'].get('detail', ''))
           if 'exactSourceFallback=true' not in degraded_detail or 'recovered=true' not in degraded_detail:
               raise SystemExit(f'typed degradation/recovery contract incomplete: {degraded_detail}')
+          presentation_detail = str(by_id['inline-and-block-native-presentation'].get('detail', ''))
+          if 'taskRows=2' not in presentation_detail or 'checkedTasks=1' not in presentation_detail:
+              raise SystemExit(f'native task-list presentation evidence incomplete: {presentation_detail}')
           reveal_detail = str(by_id['caret-and-selection-exact-source-reveal'].get('detail', ''))
           if 'multicaretSelectionReveal=true' not in reveal_detail:
               raise SystemExit(f'multicaret source-reveal evidence incomplete: {reveal_detail}')

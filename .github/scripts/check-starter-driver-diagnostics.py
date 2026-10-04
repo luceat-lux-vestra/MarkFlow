@@ -14,6 +14,7 @@ REQUIRED_SUITES = {
     "com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest",
     "com.algorist.markflow.e2e.MarkFlowStarterSmokeTest",
     "com.algorist.markflow.e2e.MarkFlowStarterTableTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterTaskListTest",
     "com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest",
 }
 MARKFLOW_MARKER = "com.algorist.markflow."

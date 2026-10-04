@@ -113,6 +113,52 @@ internal object NativeProjectionE2EBridge {
         return first.document === second.document
     }
 
+    fun listOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listInlays
+    }
+
+    fun listOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listFolds
+    }
+
+    fun listFullyConcealed(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listFullyConcealed
+    }
+
+    fun listTaskRows(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().taskRows
+    }
+
+    fun listCheckedTasks(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().checkedTasks
+    }
+
+    fun listTaskToggles(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().taskToggles
+    }
+
+    fun taskListCheckboxCenterX(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val inlay = requireTaskListInlay(editor)
+        val bounds = inlay.bounds ?: return -1
+        val renderer = inlay.renderer as NativeListInlayRenderer
+        return renderer.firstTaskCheckboxCenter(bounds)?.x ?: -1
+    }
+
+    fun taskListCheckboxCenterY(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val inlay = requireTaskListInlay(editor)
+        val bounds = inlay.bounds ?: return -1
+        val renderer = inlay.renderer as NativeListInlayRenderer
+        return renderer.firstTaskCheckboxCenter(bounds)?.y ?: -1
+    }
+
     fun tableModels(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).tableEvidenceSnapshot().tableModels
@@ -223,6 +269,15 @@ internal object NativeProjectionE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).rawHtmlEvidenceSnapshot()?.fragments ?: 0
     }
+
+    private fun requireTaskListInlay(editor: Editor) =
+        editor.inlayModel
+            .getBlockElementsInRange(0, editor.document.textLength)
+            .singleOrNull { inlay ->
+                val renderer = inlay.renderer as? NativeListInlayRenderer
+                renderer != null && renderer.taskRowCount > 0
+            }
+            ?: error("expected exactly one visible MarkFlow task-list inlay")
 
     private fun requireTableInlay(editor: Editor) =
         editor.inlayModel
