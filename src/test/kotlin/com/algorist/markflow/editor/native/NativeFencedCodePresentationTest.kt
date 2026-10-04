@@ -136,6 +136,41 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testCollapsedForeignFenceFoldFailsClosedWithoutChangingOwnership() {
+        val fence = "\u0060\u0060\u0060"
+        val source = fence + "kotlin\nval value = 1\n" + fence + "\n\nTail\n"
+        myFixture.configureByText("fenced-code-foreign-fold.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        var foreignFold: com.intellij.openapi.editor.FoldRegion? = null
+
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreignFold = editor.foldingModel.addFoldRegion(0, fence.length, "foreign")
+            requireNotNull(foreignFold).isExpanded = false
+        }
+        val foreign = requireNotNull(foreignFold)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val controller = NativeFencedCodePresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertTrue(foreign.isValid)
+            assertFalse(foreign.isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+
+        assertTrue(foreign.isValid)
+        assertFalse(foreign.isExpanded)
+    }
+
     fun testAccessibilityDispositionKeepsExactFenceSource() {
         val fence = "\u0060\u0060\u0060"
         val source = fence + "text\npayload\n" + fence + "\n\nTail\n"
