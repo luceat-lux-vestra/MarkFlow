@@ -78,6 +78,13 @@ internal object NativeBlockQuoteProjectionPlanner {
                 }
                 if (hasUnsupportedNestedProjection) return@mapNotNull null
 
+                val hasContiguousQuoteSibling = projections.any { candidate ->
+                    candidate !== quote &&
+                        candidate.kind == NativeProjectionKind.BLOCK_QUOTE &&
+                        quote.sourceRange.isContiguousWith(candidate.sourceRange, source)
+                }
+                if (hasContiguousQuoteSibling) return@mapNotNull null
+
                 var start = marker.endOffset
                 val endBound = quote.sourceRange.endOffset
                 while (start < endBound && (source[start] == ' ' || source[start] == '\t')) start += 1
@@ -117,6 +124,14 @@ internal object NativeBlockQuoteProjectionPlanner {
             .filter { it.kind == NativeProjectionKind.BLOCK_QUOTE }
             .map { it.sourceRange }
             .toList()
+
+    private fun ProjectionRange.isContiguousWith(other: ProjectionRange, source: String): Boolean {
+        val left = if (startOffset <= other.startOffset) this else other
+        val right = if (left === this) other else this
+        if (left.endOffset > right.startOffset) return true
+        val gap = source.substring(left.endOffset, right.startOffset)
+        return gap.isEmpty() || gap == "\n" || gap == "\r\n"
+    }
 
     private fun isPresentationSensitiveInlineChar(char: Char): Boolean =
         char == '\\' ||
