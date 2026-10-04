@@ -517,30 +517,27 @@ val fenced = true
                     }) {
                         "unsupported raw HTML received guessed native Markdown projection"
                     }
-                    "status=${plan.status} rangesInBounds=true rawHtmlOpaque=true"
-                }
 
-                case("fenced-code-disposition-exact-source-runtime") {
                     val root = requireNotNull(tempRoot) { "native projection temp root unavailable" }
-                    val path = root.resolve("fenced-disposition-proof.md")
+                    val fencePath = root.resolve("fenced-disposition-proof.md")
                     val fence = "\u0060\u0060\u0060"
                     val oversizedInfo = "x".repeat(1025)
-                    val source = fence + "text\n\n" + fence + "\n\n" +
+                    val fenceSource = fence + "text\n\n" + fence + "\n\n" +
                         fence + oversizedInfo + "\npayload\n" + fence + "\n\n" +
                         fence + "mermaid\ngraph TD; A-->B;\n" + fence + "\n\n" +
                         "Tail\n"
-                    Files.writeString(path, source, StandardCharsets.UTF_8)
-                    val file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
+                    Files.writeString(fencePath, fenceSource, StandardCharsets.UTF_8)
+                    val fenceFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(fencePath)
                         ?: error("fenced disposition proof VirtualFile unavailable")
-                    val document = FileDocumentManager.getInstance().getDocument(file)
+                    val fenceDocument = FileDocumentManager.getInstance().getDocument(fenceFile)
                         ?: error("fenced disposition proof Document unavailable")
-                    val stampBefore = document.modificationStamp
-                    val handle = createPlatformTextEditor(provider, file)
-                    handle.editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+                    val stampBefore = fenceDocument.modificationStamp
+                    val handle = createPlatformTextEditor(provider, fenceFile)
+                    handle.editor.caretModel.moveToOffset(fenceSource.indexOf("Tail") + 1)
                     val controller = createController(handle.editor)
 
-                    val plan = requireNotNull(controller.currentPlan)
-                    val ownership = NativeFencedCodeProjectionPlanner.dispositions(plan)
+                    val fencePlan = requireNotNull(controller.currentPlan)
+                    val ownership = NativeFencedCodeProjectionPlanner.dispositions(fencePlan)
                     check(
                         ownership.map(NativeFencedCodeOwnership::disposition) ==
                             listOf(
@@ -552,19 +549,19 @@ val fenced = true
                         "unexpected fenced-code ownership dispositions: ${ownership.map(NativeFencedCodeOwnership::disposition)}"
                     }
                     check(
-                        NativeDerivedProjectionPlanner.plan(plan)
+                        NativeDerivedProjectionPlanner.plan(fencePlan)
                             .count { projection -> projection.kind == NativeDerivedProjectionKind.MERMAID } == 1
                     ) {
                         "Mermaid fence did not remain owned by the derived projection path"
                     }
-                    val evidence = controller.evidenceSnapshot()
-                    check(evidence.fencedCodeModels == 0)
-                    check(evidence.fencedCodeInlays == 0)
-                    check(evidence.fencedCodeFolds == 0)
-                    check(evidence.blockOwnedHighlighters == 0) {
+                    val fenceEvidence = controller.evidenceSnapshot()
+                    check(fenceEvidence.fencedCodeModels == 0)
+                    check(fenceEvidence.fencedCodeInlays == 0)
+                    check(fenceEvidence.fencedCodeFolds == 0)
+                    check(fenceEvidence.blockOwnedHighlighters == 0) {
                         "exact-source/derived fences leaked into generic block highlighters"
                     }
-                    check(evidence.blockSyntaxOwnedFolds == 0) {
+                    check(fenceEvidence.blockSyntaxOwnedFolds == 0) {
                         "exact-source/derived fences leaked into generic block folds"
                     }
                     ownership.forEach { entry ->
@@ -572,12 +569,14 @@ val fenced = true
                             "fence disposition ${entry.disposition} retained collapsed source concealment"
                         }
                     }
-                    check(document.text == source)
-                    check(document.modificationStamp == stampBefore)
+                    check(fenceDocument.text == fenceSource)
+                    check(fenceDocument.modificationStamp == stampBefore)
 
                     disposeController(controller)
                     disposeEditor(handle)
-                    "exactFallbacks=2 mermaidDerived=1 genericHighlighters=0 genericFolds=0 sourceStable=true"
+                    "status=${plan.status} rangesInBounds=true rawHtmlOpaque=true " +
+                        "fenceExactFallbacks=2 mermaidDerived=1 genericFenceHighlighters=0 " +
+                        "genericFenceFolds=0 fenceSourceStable=true"
                 }
 
                 case("refresh-recreate-dispose-source-stability") {
