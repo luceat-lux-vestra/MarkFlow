@@ -389,7 +389,8 @@ internal class NativeListPresentationController(
     ): Boolean {
         removeOwned(key)
         editor.selectionModel.removeSelection()
-        editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset(rowIndex))
+        val contentOffset = renderer.contentOffset(rowIndex).coerceIn(0, editor.document.textLength)
+        editor.caretModel.primaryCaret.moveToOffset(contentOffset)
         mouseReveals += 1
         event.consume()
         return true
