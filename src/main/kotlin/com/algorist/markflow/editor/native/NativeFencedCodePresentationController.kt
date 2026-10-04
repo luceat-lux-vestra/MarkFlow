@@ -29,6 +29,18 @@ internal data class NativeFencedCodeModel(
     val code: String,
 )
 
+internal enum class NativeFencedCodeDisposition {
+    ORDINARY_RICH,
+    MERMAID_DERIVED,
+    EXACT_SOURCE,
+}
+
+internal data class NativeFencedCodeOwnership(
+    val sourceRange: ProjectionRange,
+    val disposition: NativeFencedCodeDisposition,
+    val model: NativeFencedCodeModel?,
+)
+
 internal data class NativeFencedCodePresentationEvidence(
     val models: Int,
     val ownedInlays: Int,
@@ -52,18 +64,41 @@ internal object NativeFencedCodeProjectionPlanner {
     private const val MAX_CODE_CHARS = 64 * 1024
     private const val MAX_CODE_LINES = 200
 
-    fun plan(plan: NativeProjectionPlan): List<NativeFencedCodeModel> {
-        if (plan.status != ProjectionPlanStatus.READY) return emptyList()
-        val source = plan.identity.source
-        return plan.projections
-            .asSequence()
-            .filter { it.kind == NativeProjectionKind.CODE_FENCE }
-            .mapNotNull { projection -> modelFor(projection, source) }
-            .toList()
-    }
+    fun plan(basePlan: NativeProjectionPlan): List<NativeFencedCodeModel> =
+        dispositions(basePlan).mapNotNull(NativeFencedCodeOwnership::model)
 
     fun sourceRanges(basePlan: NativeProjectionPlan): List<ProjectionRange> =
-        plan(basePlan).map(NativeFencedCodeModel::sourceRange)
+        dispositions(basePlan).map(NativeFencedCodeOwnership::sourceRange)
+
+    fun dispositions(basePlan: NativeProjectionPlan): List<NativeFencedCodeOwnership> {
+        if (basePlan.status != ProjectionPlanStatus.READY) return emptyList()
+        val source = basePlan.identity.source
+        return basePlan.projections
+            .asSequence()
+            .filter { projection -> projection.kind == NativeProjectionKind.CODE_FENCE }
+            .map { projection ->
+                val model = modelFor(projection, source)
+                when {
+                    model != null -> NativeFencedCodeOwnership(
+                        sourceRange = projection.sourceRange,
+                        disposition = NativeFencedCodeDisposition.ORDINARY_RICH,
+                        model = model,
+                    )
+                    NativeDerivedProjectionPlanner.isMermaidFence(source, projection.sourceRange) ->
+                        NativeFencedCodeOwnership(
+                            sourceRange = projection.sourceRange,
+                            disposition = NativeFencedCodeDisposition.MERMAID_DERIVED,
+                            model = null,
+                        )
+                    else -> NativeFencedCodeOwnership(
+                        sourceRange = projection.sourceRange,
+                        disposition = NativeFencedCodeDisposition.EXACT_SOURCE,
+                        model = null,
+                    )
+                }
+            }
+            .toList()
+    }
 
     private fun modelFor(
         projection: NativeProjection,
