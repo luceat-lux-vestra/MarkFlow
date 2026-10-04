@@ -152,8 +152,9 @@ internal object NativeBlockQuoteProjectionPlanner {
  * Native rich presentation for one editor's supported inactive blockquotes.
  *
  * The authoritative Markdown is never rewritten. Rich presentation is installed only when the
- * exact parser-bounded quote range can be source-neutrally concealed without colliding with an
- * existing fold. Active/selected quotes remove MarkFlow-owned presentation and reveal source.
+ * exact parser-bounded quote range can be source-neutrally concealed. A collapsed foreign fold may
+ * provide coverage only for parser-proven quote syntax; MarkFlow never removes that foreign fold.
+ * Active/selected quotes remove MarkFlow-owned presentation and reveal source.
  */
 internal class NativeBlockQuotePresentationController(
     private val editor: Editor,
