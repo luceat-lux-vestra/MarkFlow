@@ -147,6 +147,7 @@ These are lexical-fidelity constraints, not merely visual-equivalence claims.
 - #318 unordered/ordered list hierarchy with exact marker preservation, nested depth/indentation, native inlay/fold ownership, active exact-source reveal and split-editor ownership;
 - #320 flat native task-list checkbox presentation, exact one-character source-local toggle, active exact-source reveal, fail-closed unsupported forms, and real Starter/Driver click → Undo/Redo → save/reopen acceptance;
 - #323 parser-bounded GFM strikethrough projection, native strikeout effect, exact delimiter conceal/reveal, fidelity-corpus mapping, and production Starter/Driver reveal acceptance;
+- #330 explicit native inline semantics for emphasis (italic), strong (bold), and links (IDE hyperlink attributes), while retaining parser-owned delimiter conceal/reveal and exact source authority;
 - the expanded ordinary projection kinds and parser ranges;
 - source-neutral list/quote/link/thematic ordinary presentation plus boundary reveal;
 - exact-source accessibility fallback;

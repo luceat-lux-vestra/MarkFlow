@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.event.EditorMouseEventArea
@@ -16,6 +17,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import java.awt.Font
 import java.awt.event.MouseEvent
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -231,8 +233,8 @@ internal object NativeMarkdownParityProbe {
                                 "folds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
                         }
 
-                        val strikethrough = requireNotNull(controller.currentPlan)
-                            .projections
+                        val currentPlan = requireNotNull(controller.currentPlan)
+                        val strikethrough = currentPlan.projections
                             .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
                         check(strikethrough.syntaxRanges.size == 2)
                         check(strikethrough.syntaxRanges.all { range ->
@@ -245,9 +247,39 @@ internal object NativeMarkdownParityProbe {
                                 highlighter.getTextAttributes(fixture.editor.colorsScheme)?.effectType == EffectType.STRIKEOUT
                         }) { "strikethrough projection did not install a native strikeout effect" }
 
-                        val link = requireNotNull(controller.currentPlan)
-                            .projections
+                        val emphasis = currentPlan.projections
+                            .single { it.kind == NativeProjectionKind.EMPHASIS }
+                        val strong = currentPlan.projections
+                            .single { it.kind == NativeProjectionKind.STRONG }
+                        val link = currentPlan.projections
                             .single { it.kind == NativeProjectionKind.LINK }
+
+                        fun semanticAttributes(projection: NativeProjection) = requireNotNull(
+                            fixture.editor.markupModel.allHighlighters
+                                .singleOrNull { highlighter ->
+                                    highlighter.isValid &&
+                                        highlighter.startOffset == projection.sourceRange.startOffset &&
+                                        highlighter.endOffset == projection.sourceRange.endOffset
+                                }
+                                ?.getTextAttributes(fixture.editor.colorsScheme)
+                        ) { "missing semantic highlighter for ${projection.kind}" }
+
+                        check(semanticAttributes(emphasis).fontType and Font.ITALIC != 0) {
+                            "emphasis projection did not install native italic semantics"
+                        }
+                        check(semanticAttributes(strong).fontType and Font.BOLD != 0) {
+                            "strong projection did not install native bold semantics"
+                        }
+                        val expectedLink = requireNotNull(
+                            fixture.editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+                        ) { "IDE color scheme has no maintained hyperlink attributes" }
+                        val actualLink = semanticAttributes(link)
+                        check(actualLink.foregroundColor == expectedLink.foregroundColor)
+                        check(actualLink.effectColor == expectedLink.effectColor)
+                        check(actualLink.effectType == expectedLink.effectType) {
+                            "link projection did not use maintained hyperlink semantics"
+                        }
+
                         check(link.syntaxRanges.size == 2)
                         link.syntaxRanges.forEach { range ->
                             check(fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset) != null) {
@@ -262,7 +294,7 @@ internal object NativeMarkdownParityProbe {
                         }
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true strikethroughEffect=true linkConceal=true boundaryReveal=true sourceStable=true"
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true emphasisItalic=true strongBold=true strikethroughEffect=true linkHyperlink=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
                         Disposer.dispose(controller)
                     }
