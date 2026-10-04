@@ -289,4 +289,88 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
             controller.dispose()
         }
     }
+    fun testFenceDispositionSeparatesRichMermaidAndExactSourceFallback() {
+        val fence = "\u0060\u0060\u0060"
+        val source = fence + "kotlin\nval value = 1\n" + fence + "\n\n" +
+            fence + "mermaid\ngraph TD; A-->B;\n" + fence + "\n\n" +
+            fence + "text\n\n" + fence + "\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(41L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val ownership = NativeFencedCodeProjectionPlanner.dispositions(plan)
+        assertEquals(
+            listOf(
+                NativeFencedCodeDisposition.ORDINARY_RICH,
+                NativeFencedCodeDisposition.MERMAID_DERIVED,
+                NativeFencedCodeDisposition.EXACT_SOURCE,
+            ),
+            ownership.map(NativeFencedCodeOwnership::disposition),
+        )
+        assertEquals(3, NativeFencedCodeProjectionPlanner.sourceRanges(plan).size)
+        assertEquals(1, NativeFencedCodeProjectionPlanner.plan(plan).size)
+        assertEquals(
+            1,
+            NativeDerivedProjectionPlanner.plan(plan)
+                .count { projection -> projection.kind == NativeDerivedProjectionKind.MERMAID },
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testExactSourceAndMermaidFencesNeverLeakIntoGenericBlockOwner() {
+        val fence = "\u0060\u0060\u0060"
+        val oversizedInfo = "x".repeat(1025)
+        val source = fence + "text\n\n" + fence + "\n\n" +
+            fence + oversizedInfo + "\npayload\n" + fence + "\n\n" +
+            fence + "mermaid\ngraph TD; A-->B;\n" + fence + "\n\n" +
+            "Tail\n"
+        myFixture.configureByText("fenced-code-fallback-ownership.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val controller = NativePresentationController(editor, richPresentationEnabled = { true })
+
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            val ownership = NativeFencedCodeProjectionPlanner.dispositions(plan)
+            assertEquals(
+                listOf(
+                    NativeFencedCodeDisposition.EXACT_SOURCE,
+                    NativeFencedCodeDisposition.EXACT_SOURCE,
+                    NativeFencedCodeDisposition.MERMAID_DERIVED,
+                ),
+                ownership.map(NativeFencedCodeOwnership::disposition),
+            )
+            assertEquals(
+                1,
+                NativeDerivedProjectionPlanner.plan(plan)
+                    .count { projection -> projection.kind == NativeDerivedProjectionKind.MERMAID },
+            )
+
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.fencedCodeModels)
+            assertEquals(0, evidence.fencedCodeInlays)
+            assertEquals(0, evidence.fencedCodeFolds)
+            assertEquals(0, evidence.blockOwnedHighlighters)
+            assertEquals(0, evidence.blockSyntaxOwnedFolds)
+
+            ownership.forEach { entry ->
+                assertTrue(
+                    "fence disposition ${entry.disposition} retained collapsed MarkFlow source concealment",
+                    editor.foldingModel.allFoldRegions.none { fold ->
+                        fold.isValid &&
+                            !fold.isExpanded &&
+                            fold.startOffset < entry.sourceRange.endOffset &&
+                            fold.endOffset > entry.sourceRange.startOffset
+                    },
+                )
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
 }
