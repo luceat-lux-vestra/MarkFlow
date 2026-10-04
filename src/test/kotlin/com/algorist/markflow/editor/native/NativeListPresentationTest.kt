@@ -248,6 +248,28 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testCheckedUppercaseTaskToggleClearsOnlyStateCharacter() {
+        val source = "- [X] first task\n- [x] second task\n\nTail\n"
+        myFixture.configureByText("task-toggle-checked.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+        val controller = NativeListPresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, true)
+            val firstState = requireNotNull(model.rows[0].task).stateRange
+            val expected = source.replaceRange(firstState.startOffset, firstState.endOffset, " ")
+            assertTrue(controller.toggleTask(model.sourceRange, 0))
+            assertEquals(expected, editor.document.text)
+            assertEquals(source.length, editor.document.textLength)
+            assertEquals(1L, controller.evidenceSnapshot().taskToggles)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testListInlayClickRevealsSourceAndMovesCaretToFirstItemContent() {
         val source = "- first\n- second\n\nTail\n"
         myFixture.configureByText("list-click.md", source)
