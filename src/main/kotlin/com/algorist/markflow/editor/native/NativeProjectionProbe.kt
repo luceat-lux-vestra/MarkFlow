@@ -517,7 +517,66 @@ val fenced = true
                     }) {
                         "unsupported raw HTML received guessed native Markdown projection"
                     }
-                    "status=${plan.status} rangesInBounds=true rawHtmlOpaque=true"
+
+                    val root = requireNotNull(tempRoot) { "native projection temp root unavailable" }
+                    val fencePath = root.resolve("fenced-disposition-proof.md")
+                    val fence = "\u0060\u0060\u0060"
+                    val oversizedInfo = "x".repeat(1025)
+                    val fenceSource = fence + "text\n\n" + fence + "\n\n" +
+                        fence + oversizedInfo + "\npayload\n" + fence + "\n\n" +
+                        fence + "mermaid\ngraph TD; A-->B;\n" + fence + "\n\n" +
+                        "Tail\n"
+                    Files.writeString(fencePath, fenceSource, StandardCharsets.UTF_8)
+                    val fenceFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(fencePath)
+                        ?: error("fenced disposition proof VirtualFile unavailable")
+                    val fenceDocument = FileDocumentManager.getInstance().getDocument(fenceFile)
+                        ?: error("fenced disposition proof Document unavailable")
+                    val stampBefore = fenceDocument.modificationStamp
+                    val handle = createPlatformTextEditor(provider, fenceFile)
+                    handle.editor.caretModel.moveToOffset(fenceSource.indexOf("Tail") + 1)
+                    val controller = createController(handle.editor)
+
+                    val fencePlan = requireNotNull(controller.currentPlan)
+                    val ownership = NativeFencedCodeProjectionPlanner.dispositions(fencePlan)
+                    check(
+                        ownership.map(NativeFencedCodeOwnership::disposition) ==
+                            listOf(
+                                NativeFencedCodeDisposition.EXACT_SOURCE,
+                                NativeFencedCodeDisposition.EXACT_SOURCE,
+                                NativeFencedCodeDisposition.MERMAID_DERIVED,
+                            )
+                    ) {
+                        "unexpected fenced-code ownership dispositions: ${ownership.map(NativeFencedCodeOwnership::disposition)}"
+                    }
+                    check(
+                        NativeDerivedProjectionPlanner.plan(fencePlan)
+                            .count { projection -> projection.kind == NativeDerivedProjectionKind.MERMAID } == 1
+                    ) {
+                        "Mermaid fence did not remain owned by the derived projection path"
+                    }
+                    val fenceEvidence = controller.evidenceSnapshot()
+                    check(fenceEvidence.fencedCodeModels == 0)
+                    check(fenceEvidence.fencedCodeInlays == 0)
+                    check(fenceEvidence.fencedCodeFolds == 0)
+                    check(fenceEvidence.blockOwnedHighlighters == 0) {
+                        "exact-source/derived fences leaked into generic block highlighters"
+                    }
+                    check(fenceEvidence.blockSyntaxOwnedFolds == 0) {
+                        "exact-source/derived fences leaked into generic block folds"
+                    }
+                    ownership.forEach { entry ->
+                        check(exactSourceVisible(handle.editor, entry.sourceRange)) {
+                            "fence disposition ${entry.disposition} retained collapsed source concealment"
+                        }
+                    }
+                    check(fenceDocument.text == fenceSource)
+                    check(fenceDocument.modificationStamp == stampBefore)
+
+                    disposeController(controller)
+                    disposeEditor(handle)
+                    "status=${plan.status} rangesInBounds=true rawHtmlOpaque=true " +
+                        "fenceExactFallbacks=2 mermaidDerived=1 genericFenceHighlighters=0 " +
+                        "genericFenceFolds=0 fenceSourceStable=true"
                 }
 
                 case("refresh-recreate-dispose-source-stability") {
