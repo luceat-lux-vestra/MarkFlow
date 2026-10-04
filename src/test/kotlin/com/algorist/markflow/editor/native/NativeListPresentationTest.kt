@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -197,6 +198,29 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             } finally {
                 editor.document.setReadOnly(false)
             }
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testStaleTaskToggleFailsClosedWithoutMutation() {
+        val source = "- [ ] first task\n- [x] completed task\n\nTail\n"
+        myFixture.configureByText("task-stale.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+        val controller = NativeListPresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, true)
+            WriteCommandAction.runWriteCommandAction(project) {
+                editor.document.insertString(editor.document.textLength, "changed\n")
+            }
+            val changed = editor.document.text
+            assertFalse(controller.toggleTask(model.sourceRange, 0))
+            assertEquals(changed, editor.document.text)
+            assertEquals(0L, controller.evidenceSnapshot().taskToggles)
         } finally {
             controller.dispose()
         }
