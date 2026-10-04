@@ -265,6 +265,17 @@ def self_test() -> None:
         assert markflow_failure["verdict"] == "FAIL", markflow_failure
         assert markflow_failure["ide"]["markflowErrorWindows"], markflow_failure
 
+    with tempfile.TemporaryDirectory(prefix="markflow-starter-diagnostics-shard-") as temp:
+        root = Path(temp)
+        shard = {"com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"}
+        _write_required_suites(root, required_suites=shard)
+        _write_platform_log(root)
+        shard_result = analyze(root, required_suites=shard)
+        assert shard_result["verdict"] == "PASS", shard_result
+        full_result = analyze(root)
+        assert full_result["verdict"] == "FAIL", full_result
+        assert full_result["junit"]["missingSuites"], full_result
+
     with tempfile.TemporaryDirectory(prefix="markflow-starter-diagnostics-missing-") as temp:
         root = Path(temp)
         _write_required_suites(root)
