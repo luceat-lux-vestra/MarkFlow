@@ -1,9 +1,11 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.Font
 import java.awt.event.MouseEvent
 
 class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
@@ -174,6 +176,81 @@ After
             assertEquals(evidence.inlineOwnedFolds, evidence.ownedFolds)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testInactiveInlineSemanticsUseItalicBoldAndHyperlinkAttributesWithoutChangingSource() {
+        val source = "A *emphasis*, **strong**, and [link](https://example.com).\n\nTail\n"
+        myFixture.configureByText("inline-semantics.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val document = editor.document
+        val stampBefore = document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            val emphasis = plan.projections.single { projection ->
+                projection.kind == NativeProjectionKind.EMPHASIS &&
+                    source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset) == "*emphasis*"
+            }
+            val strong = plan.projections.single { projection ->
+                projection.kind == NativeProjectionKind.STRONG &&
+                    source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset) == "**strong**"
+            }
+            val link = plan.projections.single { projection ->
+                projection.kind == NativeProjectionKind.LINK &&
+                    source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
+                        .startsWith("[link]")
+            }
+
+            fun attributes(projection: NativeProjection) = requireNotNull(
+                editor.markupModel.allHighlighters
+                    .singleOrNull { highlighter ->
+                        highlighter.isValid &&
+                            highlighter.startOffset == projection.sourceRange.startOffset &&
+                            highlighter.endOffset == projection.sourceRange.endOffset
+                    }
+                    ?.getTextAttributes(editor.colorsScheme)
+            ) { "missing inactive semantic highlighter for ${projection.kind}" }
+
+            assertTrue(attributes(emphasis).fontType and Font.ITALIC != 0)
+            assertTrue(attributes(strong).fontType and Font.BOLD != 0)
+
+            val expectedLink = requireNotNull(
+                editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+            )
+            val actualLink = attributes(link)
+            assertEquals(expectedLink.foregroundColor, actualLink.foregroundColor)
+            assertEquals(expectedLink.effectColor, actualLink.effectColor)
+            assertEquals(expectedLink.effectType, actualLink.effectType)
+
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("emphasis") + 2)
+            assertFalse(
+                editor.markupModel.allHighlighters.any { highlighter ->
+                    highlighter.isValid &&
+                        highlighter.startOffset == emphasis.sourceRange.startOffset &&
+                        highlighter.endOffset == emphasis.sourceRange.endOffset
+                }
+            )
+            emphasis.syntaxRanges.forEach { range ->
+                assertTrue(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+            assertTrue(attributes(emphasis).fontType and Font.ITALIC != 0)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
         } finally {
             controller.dispose()
         }
