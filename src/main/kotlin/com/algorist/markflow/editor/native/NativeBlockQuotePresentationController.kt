@@ -340,14 +340,6 @@ internal class NativeBlockQuotePresentationController(
         if (tailStart <= range.startOffset || tailStart >= range.endOffset) return null
 
         val boundaries = linkedSetOf(range.startOffset, tailStart, range.endOffset)
-        model.syntaxRanges.forEach { syntax ->
-            if (syntax.startOffset > range.startOffset && syntax.startOffset < range.endOffset) {
-                boundaries += syntax.startOffset
-            }
-            if (syntax.endOffset > range.startOffset && syntax.endOffset < range.endOffset) {
-                boundaries += syntax.endOffset
-            }
-        }
         editor.foldingModel.allFoldRegions
             .asSequence()
             .filter(FoldRegion::isValid)
