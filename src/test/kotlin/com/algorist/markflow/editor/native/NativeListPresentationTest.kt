@@ -157,6 +157,51 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testTaskListAccessibilityFallbackKeepsExactSource() {
+        val source = "- [ ] first task\n- [x] completed task\n\nTail\n"
+        myFixture.configureByText("task-accessible.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { false })
+
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(2, evidence.taskRows)
+            assertEquals(1, evidence.checkedTasks)
+            assertEquals(0, evidence.listInlays)
+            assertEquals(0, evidence.listFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testReadOnlyTaskToggleFailsClosedWithoutMutation() {
+        val source = "- [ ] first task\n- [x] completed task\n\nTail\n"
+        myFixture.configureByText("task-read-only.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+        val controller = NativeListPresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, true)
+            editor.document.setReadOnly(true)
+            try {
+                assertFalse(controller.toggleTask(model.sourceRange, 0))
+                assertEquals(source, editor.document.text)
+                assertEquals(0L, controller.evidenceSnapshot().taskToggles)
+            } finally {
+                editor.document.setReadOnly(false)
+            }
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testTaskToggleChangesOnlyOneStateCharacter() {
         val source = "- [ ] first task\n- [X] second task\n\nTail\n"
         myFixture.configureByText("task-toggle.md", source)
