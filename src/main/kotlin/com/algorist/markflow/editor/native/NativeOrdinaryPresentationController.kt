@@ -7,10 +7,14 @@ import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.colors.CodeInsightColors
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Font
 import java.util.LinkedHashMap
 
 internal data class NativeOrdinaryPresentationEvidence(
@@ -316,6 +320,7 @@ private class NativeInlinePresentationController(
         ),
         keyFor = ::inlineKeyFor,
         placeholderFor = { _, _, _ -> ZERO_WIDTH_PLACEHOLDER },
+        attributesFor = { kind -> inlineSemanticAttributes(editor, kind) },
     )
 
     override fun supportsFold(kind: NativeProjectionKind): Boolean = owner.supportsFold(kind)
@@ -408,6 +413,7 @@ private class NativeSyntaxPresentationOwner(
     private val foldableKinds: Set<NativeProjectionKind>,
     private val keyFor: (NativeProjectionKind) -> TextAttributesKey,
     private val placeholderFor: (NativeProjection, ProjectionRange, String) -> String,
+    private val attributesFor: (NativeProjectionKind) -> TextAttributes? = { null },
 ) {
     private val highlighters = mutableListOf<RangeHighlighter>()
     private val folds = LinkedHashMap<FoldKey, FoldRegion>()
@@ -417,13 +423,24 @@ private class NativeSyntaxPresentationOwner(
     fun installHighlighterIfSupported(projection: NativeProjection) {
         if (projection.kind !in highlightKinds || isActive(projection)) return
         val range = projection.sourceRange
-        highlighters += editor.markupModel.addRangeHighlighter(
-            keyFor(projection.kind),
-            range.startOffset,
-            range.endOffset,
-            HighlighterLayer.ADDITIONAL_SYNTAX,
-            HighlighterTargetArea.EXACT_RANGE,
-        )
+        val semanticAttributes = attributesFor(projection.kind)
+        highlighters += if (semanticAttributes != null) {
+            editor.markupModel.addRangeHighlighter(
+                range.startOffset,
+                range.endOffset,
+                HighlighterLayer.ADDITIONAL_SYNTAX,
+                semanticAttributes,
+                HighlighterTargetArea.EXACT_RANGE,
+            )
+        } else {
+            editor.markupModel.addRangeHighlighter(
+                keyFor(projection.kind),
+                range.startOffset,
+                range.endOffset,
+                HighlighterLayer.ADDITIONAL_SYNTAX,
+                HighlighterTargetArea.EXACT_RANGE,
+            )
+        }
     }
 
     fun removeObsoleteFoldsInBatch(desiredKeys: Set<FoldKey>) {
@@ -517,6 +534,23 @@ private fun blockPlaceholderFor(
     NativeProjectionKind.BLOCK_QUOTE -> QUOTE_PLACEHOLDER
     NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_PLACEHOLDER
     else -> ZERO_WIDTH_PLACEHOLDER
+}
+
+private fun inlineSemanticAttributes(editor: Editor, kind: NativeProjectionKind): TextAttributes? = when (kind) {
+    NativeProjectionKind.EMPHASIS -> TextAttributes().apply {
+        fontType = Font.ITALIC
+    }
+    NativeProjectionKind.STRONG -> TextAttributes().apply {
+        fontType = Font.BOLD
+    }
+    NativeProjectionKind.LINK ->
+        editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)?.clone()
+            ?: TextAttributes().apply {
+                foregroundColor = editor.colorsScheme.defaultForeground
+                effectColor = editor.colorsScheme.defaultForeground
+                effectType = EffectType.LINE_UNDERSCORE
+            }
+    else -> null
 }
 
 private fun inlineKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
