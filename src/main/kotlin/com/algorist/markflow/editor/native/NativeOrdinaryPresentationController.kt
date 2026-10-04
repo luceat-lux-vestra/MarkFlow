@@ -28,12 +28,20 @@ internal data class NativeOrdinaryPresentationEvidence(
     val blockQuoteInlays: Int,
     val blockQuoteFolds: Int,
     val blockQuoteFullyConcealed: Int,
+    val listModels: Int,
+    val listRows: Int,
+    val listInlays: Int,
+    val listFolds: Int,
+    val listFullyConcealed: Int,
+    val listMaxDepth: Int,
+    val listDepths: List<Int>,
+    val listMarkers: List<String>,
 ) {
     val blockFolds: Int
-        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds
+        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + listFolds
 
     val blockCollapsedFolds: Int
-        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds
+        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + listFolds
 
     val ownedHighlighters: Int
         get() = inlineHighlighters + blockHighlighters
@@ -59,6 +67,7 @@ internal class NativeOrdinaryPresentationController(
     private val block = NativeBlockPresentationController(editor)
     private val headings = NativeHeadingPresentationController(editor)
     private val blockQuotes = NativeBlockQuotePresentationController(editor)
+    private val lists = NativeListPresentationController(editor)
     private var disposed = false
 
     fun clearPresentation() {
@@ -68,22 +77,27 @@ internal class NativeOrdinaryPresentationController(
         block.clearHighlighters()
         headings.clearPresentation()
         blockQuotes.clearPresentation()
+        lists.clearPresentation()
         clearFolds()
     }
 
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
-        val headingPlan = plan.withoutProjectionsInside(blockQuoteSourceRanges)
+        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
+        val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
+        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
+        val headingPlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
-            blockQuoteSourceRanges
+            blockQuoteSourceRanges +
+            listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
             reconcileSyntaxFolds(plan, exactSourceRanges)
         }
         headings.applyPlan(headingPlan, richPresentationEnabled)
-        blockQuotes.applyPlan(plan, richPresentationEnabled)
+        blockQuotes.applyPlan(blockQuotePlan, richPresentationEnabled)
+        lists.applyPlan(plan, richPresentationEnabled)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
@@ -91,10 +105,13 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
-        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
-        val headingPlan = plan.withoutProjectionsInside(blockQuoteSourceRanges)
+        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
+        val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
+        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
+        val headingPlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
-            blockQuoteSourceRanges
+            blockQuoteSourceRanges +
+            listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
             reconcileSyntaxFolds(plan, exactSourceRanges)
@@ -102,7 +119,8 @@ internal class NativeOrdinaryPresentationController(
             clearFolds()
         }
         headings.refreshActivity(headingPlan, richPresentationEnabled)
-        blockQuotes.refreshActivity(plan, richPresentationEnabled)
+        blockQuotes.refreshActivity(blockQuotePlan, richPresentationEnabled)
+        lists.refreshActivity(plan, richPresentationEnabled)
     }
 
     fun evidenceSnapshot(): NativeOrdinaryPresentationEvidence {
@@ -110,6 +128,7 @@ internal class NativeOrdinaryPresentationController(
         val blockEvidence = block.evidenceSnapshot()
         val headingEvidence = headings.evidenceSnapshot()
         val blockQuoteEvidence = blockQuotes.evidenceSnapshot()
+        val listEvidence = lists.evidenceSnapshot()
         return NativeOrdinaryPresentationEvidence(
             inlineHighlighters = inlineEvidence.highlighters,
             inlineFolds = inlineEvidence.folds,
@@ -126,6 +145,14 @@ internal class NativeOrdinaryPresentationController(
             blockQuoteInlays = blockQuoteEvidence.ownedInlays,
             blockQuoteFolds = blockQuoteEvidence.ownedFolds,
             blockQuoteFullyConcealed = blockQuoteEvidence.fullyConcealed,
+            listModels = listEvidence.models,
+            listRows = listEvidence.rows,
+            listInlays = listEvidence.ownedInlays,
+            listFolds = listEvidence.ownedFolds,
+            listFullyConcealed = listEvidence.fullyConcealed,
+            listMaxDepth = listEvidence.maxDepth,
+            listDepths = listEvidence.depths,
+            listMarkers = listEvidence.markers,
         )
     }
 
@@ -207,6 +234,7 @@ internal class NativeOrdinaryPresentationController(
         block.clearHighlighters()
         headings.dispose()
         blockQuotes.dispose()
+        lists.dispose()
         clearFolds()
         disposed = true
     }

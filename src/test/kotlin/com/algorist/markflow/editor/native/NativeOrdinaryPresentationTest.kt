@@ -42,6 +42,11 @@ After
             assertEquals(1, evidence.blockQuoteModels)
             assertEquals(1, evidence.blockQuoteInlays)
             assertEquals(1, evidence.blockQuoteFullyConcealed)
+            assertEquals(2, evidence.listModels)
+            assertEquals(2, evidence.listRows)
+            assertEquals(2, evidence.listInlays)
+            assertEquals(2, evidence.listFullyConcealed)
+            assertEquals(listOf("-", "3)"), evidence.listMarkers)
             assertEquals(
                 evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters,
                 evidence.ownedHighlighters,
@@ -54,8 +59,6 @@ After
             val placeholders = editor.foldingModel.allFoldRegions
                 .filter { it.isValid && !it.isExpanded }
                 .map { it.placeholderText }
-            assertTrue("unordered list marker was not projected", placeholders.contains("•"))
-            assertTrue("ordered list marker was not projected", placeholders.contains("3."))
             assertTrue("thematic break was not projected", placeholders.contains("────────"))
 
             val link = requireNotNull(controller.currentPlan)
@@ -137,6 +140,11 @@ After
             assertEquals(0, evidence.headingInlays)
             assertEquals(0, evidence.headingFolds)
             assertEquals(0, evidence.headingFullyConcealed)
+            assertEquals(1, evidence.listModels)
+            assertEquals(1, evidence.listRows)
+            assertEquals(0, evidence.listInlays)
+            assertEquals(0, evidence.listFolds)
+            assertEquals(0, evidence.listFullyConcealed)
             assertEquals(1L, evidence.sourceFallbacks)
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)

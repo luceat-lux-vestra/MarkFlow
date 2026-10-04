@@ -206,8 +206,18 @@ internal object NativeMarkdownParityProbe {
                         val placeholders = fixture.editor.foldingModel.allFoldRegions
                             .filter { it.isValid && !it.isExpanded }
                             .map { it.placeholderText }
-                        check("•" in placeholders) { "unordered list marker was not projected" }
                         check("────────" in placeholders) { "thematic break was not projected" }
+                        check(
+                            evidence.listModels == 2 &&
+                                evidence.listRows == 2 &&
+                                evidence.listInlays == 2 &&
+                                evidence.listFullyConcealed == 2 &&
+                                evidence.listMarkers == listOf("-", "1.")
+                        ) {
+                            "simple lists did not install native list presentation: " +
+                                "models=${evidence.listModels} rows=${evidence.listRows} inlays=${evidence.listInlays} " +
+                                "concealed=${evidence.listFullyConcealed} markers=${evidence.listMarkers}"
+                        }
                         check(
                             evidence.blockQuoteModels == 1 &&
                                 evidence.blockQuoteInlays == 1 &&
@@ -236,7 +246,7 @@ internal object NativeMarkdownParityProbe {
                         }
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} markers=true quoteBlock=true linkConceal=true boundaryReveal=true sourceStable=true"
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
                         Disposer.dispose(controller)
                     }
@@ -259,6 +269,9 @@ internal object NativeMarkdownParityProbe {
                         check(evidence.planStatus == ProjectionPlanStatus.READY)
                         check(evidence.ownedFolds == 0)
                         check(evidence.ownedHighlighters == 0)
+                        check(evidence.listModels == 2)
+                        check(evidence.listInlays == 0)
+                        check(evidence.listFolds == 0)
                         check(evidence.sourceFallbacks == 1L)
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
