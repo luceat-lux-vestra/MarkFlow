@@ -190,18 +190,21 @@ val fenced = true
                             "ownedFolds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
                     }
                     check(
-                        evidence.listModels == 1 &&
-                            evidence.listRows == 3 &&
-                            evidence.listInlays == 1 &&
+                        evidence.listModels == 2 &&
+                            evidence.listRows == 5 &&
+                            evidence.listInlays == 2 &&
                             evidence.listFolds > 0 &&
-                            evidence.listFullyConcealed == 1 &&
+                            evidence.listFullyConcealed == 2 &&
                             evidence.listMaxDepth == 1 &&
-                            evidence.listDepths == listOf(0, 1, 0) &&
-                            evidence.listMarkers == listOf("-", "-", "-")
+                            evidence.listDepths == listOf(0, 1, 0, 0, 0) &&
+                            evidence.listMarkers == listOf("-", "-", "-", "-", "-") &&
+                            evidence.taskRows == 2 &&
+                            evidence.checkedTasks == 1
                     ) {
                         "inactive nested list did not install one fully concealed hierarchy: " +
                             "models=${evidence.listModels} rows=${evidence.listRows} inlays=${evidence.listInlays} " +
-                            "folds=${evidence.listFolds} depth=${evidence.listMaxDepth} markers=${evidence.listMarkers}"
+                            "folds=${evidence.listFolds} depth=${evidence.listMaxDepth} markers=${evidence.listMarkers} " +
+                            "taskRows=${evidence.taskRows} checkedTasks=${evidence.checkedTasks}"
                     }
                     val secondEvidence = secondController.evidenceSnapshot()
                     check(
@@ -212,9 +215,11 @@ val fenced = true
                         "split editor did not own an independent native blockquote presentation"
                     }
                     check(
-                        secondEvidence.listModels == 1 &&
-                            secondEvidence.listInlays == 1 &&
-                            secondEvidence.listFullyConcealed == 1
+                        secondEvidence.listModels == 2 &&
+                            secondEvidence.listInlays == 2 &&
+                            secondEvidence.listFullyConcealed == 2 &&
+                            secondEvidence.taskRows == 2 &&
+                            secondEvidence.checkedTasks == 1
                     ) {
                         "split editor did not own an independent native list presentation"
                     }
@@ -227,7 +232,8 @@ val fenced = true
                         "quoteInlays=${evidence.blockQuoteInlays} quoteFolds=${evidence.blockQuoteFolds} " +
                         "quoteConcealed=${evidence.blockQuoteFullyConcealed} " +
                         "listInlays=${evidence.listInlays} listRows=${evidence.listRows} listMaxDepth=${evidence.listMaxDepth} " +
-                        "listConcealed=${evidence.listFullyConcealed} splitQuote=true splitList=true sharedDocument=true"
+                        "listConcealed=${evidence.listFullyConcealed} taskRows=${evidence.taskRows} " +
+                        "checkedTasks=${evidence.checkedTasks} splitQuote=true splitList=true sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
@@ -287,17 +293,37 @@ val fenced = true
                         "inactive blockquote did not restore native rich presentation"
                     }
 
-                    val listRange = NativeListProjectionPlanner.sourceRanges(requireNotNull(firstController.currentPlan)).single()
-                    first.editor.caretModel.moveToOffset(listRange.startOffset + 2)
-                    check(firstController.evidenceSnapshot().listInlays == 0) {
-                        "active list retained MarkFlow rich presentation"
+                    val listRanges = NativeListProjectionPlanner.sourceRanges(requireNotNull(firstController.currentPlan))
+                    check(listRanges.size == 2)
+                    val ordinaryListRange = listRanges.first { range ->
+                        document.text.substring(range.startOffset, range.endOffset).contains("Parent item")
                     }
-                    check(exactSourceVisible(first.editor, listRange)) {
-                        "active list remained concealed by a collapsed fold"
+                    first.editor.caretModel.moveToOffset(ordinaryListRange.startOffset + 2)
+                    check(firstController.evidenceSnapshot().listInlays == 1) {
+                        "active ordinary list retained its rich presentation"
+                    }
+                    check(exactSourceVisible(first.editor, ordinaryListRange)) {
+                        "active ordinary list remained concealed by a collapsed fold"
                     }
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    check(firstController.evidenceSnapshot().listInlays == 2) {
+                        "inactive ordinary list did not restore native rich presentation"
+                    }
+
+                    val taskListRange = listRanges.first { range ->
+                        document.text.substring(range.startOffset, range.endOffset).contains("[ ]")
+                    }
+                    first.editor.caretModel.moveToOffset(taskListRange.startOffset + 4)
                     check(firstController.evidenceSnapshot().listInlays == 1) {
-                        "inactive list did not restore native rich presentation"
+                        "active task list retained its rich checkbox presentation"
+                    }
+                    check(exactSourceVisible(first.editor, taskListRange)) {
+                        "active task list remained concealed by a collapsed fold"
+                    }
+                    first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    val restoredLists = firstController.evidenceSnapshot()
+                    check(restoredLists.listInlays == 2 && restoredLists.taskRows == 2 && restoredLists.checkedTasks == 1) {
+                        "inactive task list did not restore native checkbox presentation"
                     }
 
                     check(document.text == sourceBefore)
@@ -524,6 +550,11 @@ val value = 1
 - Parent item
   - Nested item
 - Sibling item
+
+Task list follows.
+
+- [ ] Pending runtime task
+- [x] Completed runtime task
 
 Plain body line for inactive caret state.
 """
