@@ -37,8 +37,11 @@ After
             assertEquals(ProjectionPlanStatus.READY, evidence.planStatus)
             assertTrue("expected inline-owned ordinary highlighters", evidence.inlineOwnedHighlighters >= 3)
             assertTrue("expected inline-owned ordinary syntax folds", evidence.inlineOwnedFolds > 0)
-            assertTrue("expected block-owned ordinary highlighters", evidence.blockOwnedHighlighters >= 2)
-            assertTrue("expected block-owned ordinary syntax folds", evidence.blockOwnedFolds > 0)
+            assertTrue("expected remaining block-owned ordinary highlighters", evidence.blockOwnedHighlighters >= 1)
+            assertTrue("expected block-owned ordinary folds", evidence.blockOwnedFolds > 0)
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
             assertEquals(
                 evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters,
                 evidence.ownedHighlighters,
@@ -53,7 +56,6 @@ After
                 .map { it.placeholderText }
             assertTrue("unordered list marker was not projected", placeholders.contains("•"))
             assertTrue("ordered list marker was not projected", placeholders.contains("3."))
-            assertTrue("blockquote marker was not projected", placeholders.contains("│"))
             assertTrue("thematic break was not projected", placeholders.contains("────────"))
 
             val link = requireNotNull(controller.currentPlan)
@@ -183,8 +185,11 @@ After
             val evidence = controller.evidenceSnapshot()
             assertEquals(0, evidence.inlineOwnedHighlighters)
             assertEquals(0, evidence.inlineOwnedFolds)
-            assertTrue(evidence.blockOwnedHighlighters >= 2)
+            assertTrue(evidence.blockOwnedHighlighters >= 1)
             assertTrue(evidence.blockOwnedFolds > 0)
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
             assertEquals(evidence.blockOwnedHighlighters, evidence.ownedHighlighters)
             assertEquals(evidence.blockOwnedFolds, evidence.ownedFolds)
             assertEquals(source, editor.document.text)
