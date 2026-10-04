@@ -161,11 +161,11 @@ val fenced = true
                     check(evidence.inlineOwnedFolds >= 1) {
                         "expected inline parser-proven syntax folds, observed ${evidence.inlineOwnedFolds}"
                     }
-                    check(evidence.blockOwnedHighlighters >= 1) {
-                        "expected block code presentation markup, observed ${evidence.blockOwnedHighlighters}"
+                    check(evidence.blockOwnedHighlighters == 0) {
+                        "supported rich blocks must not retain generic block highlighting: ${evidence.blockOwnedHighlighters}"
                     }
-                    check(evidence.blockOwnedFolds >= 1) {
-                        "expected block parser-proven syntax folds, observed ${evidence.blockOwnedFolds}"
+                    check(evidence.blockOwnedFolds == 0) {
+                        "supported rich blocks must not retain generic syntax folds: ${evidence.blockOwnedFolds}"
                     }
                     check(evidence.ownedHighlighters == evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters)
                     check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
@@ -188,6 +188,18 @@ val fenced = true
                         "inactive blockquote did not install one fully concealed native quote block: " +
                             "models=${evidence.blockQuoteModels} inlays=${evidence.blockQuoteInlays} " +
                             "ownedFolds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
+                    }
+                    check(
+                        evidence.fencedCodeModels == 1 &&
+                            evidence.fencedCodeInlays == 1 &&
+                            evidence.fencedCodeFolds > 0 &&
+                            evidence.fencedCodeFullyConcealed == 1 &&
+                            evidence.fencedCodeInfos == listOf("kotlin")
+                    ) {
+                        "inactive fenced code did not install one fully concealed native code block: " +
+                            "models=${evidence.fencedCodeModels} inlays=${evidence.fencedCodeInlays} " +
+                            "folds=${evidence.fencedCodeFolds} concealed=${evidence.fencedCodeFullyConcealed} " +
+                            "infos=${evidence.fencedCodeInfos}"
                     }
                     check(
                         evidence.listModels == 2 &&
@@ -215,6 +227,13 @@ val fenced = true
                         "split editor did not own an independent native blockquote presentation"
                     }
                     check(
+                        secondEvidence.fencedCodeModels == 1 &&
+                            secondEvidence.fencedCodeInlays == 1 &&
+                            secondEvidence.fencedCodeFullyConcealed == 1
+                    ) {
+                        "split editor did not own an independent native fenced-code presentation"
+                    }
+                    check(
                         secondEvidence.listModels == 2 &&
                             secondEvidence.listInlays == 2 &&
                             secondEvidence.listFullyConcealed == 2 &&
@@ -231,6 +250,8 @@ val fenced = true
                         "headingConcealed=${evidence.headingFullyConcealed} " +
                         "quoteInlays=${evidence.blockQuoteInlays} quoteFolds=${evidence.blockQuoteFolds} " +
                         "quoteConcealed=${evidence.blockQuoteFullyConcealed} " +
+                        "fenceInlays=${evidence.fencedCodeInlays} fenceFolds=${evidence.fencedCodeFolds} " +
+                        "fenceConcealed=${evidence.fencedCodeFullyConcealed} " +
                         "listInlays=${evidence.listInlays} listRows=${evidence.listRows} listMaxDepth=${evidence.listMaxDepth} " +
                         "listConcealed=${evidence.listFullyConcealed} taskRows=${evidence.taskRows} " +
                         "checkedTasks=${evidence.checkedTasks} splitQuote=true splitList=true sharedDocument=true"
@@ -277,6 +298,21 @@ val fenced = true
                     secondary.removeSelection()
                     check(first.editor.caretModel.removeCaret(secondary))
                     check(headingRichPresentationVisible(firstController))
+
+                    val fenceRange = NativeFencedCodeProjectionPlanner
+                        .sourceRanges(requireNotNull(firstController.currentPlan))
+                        .single()
+                    first.editor.caretModel.moveToOffset(document.text.indexOf("val value = 1") + 4)
+                    check(firstController.evidenceSnapshot().fencedCodeInlays == 0) {
+                        "active fenced code retained its rich block presentation"
+                    }
+                    check(exactSourceVisible(first.editor, fenceRange)) {
+                        "active fenced code remained concealed by a collapsed fold"
+                    }
+                    first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    check(firstController.evidenceSnapshot().fencedCodeInlays == 1) {
+                        "inactive fenced code did not restore native rich presentation"
+                    }
 
                     val quote = requireNotNull(firstController.currentPlan)
                         .projections
@@ -328,7 +364,7 @@ val fenced = true
 
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
-                    "caretReveal=true selectionReveal=true multicaretSelectionReveal=true sourceStable=true"
+                    "caretReveal=true selectionReveal=true multicaretSelectionReveal=true fencedCodeReveal=true sourceStable=true"
                 }
 
                 case("stale-plan-rejected-before-apply") {
