@@ -115,6 +115,7 @@ internal object NativeListProjectionPlanner {
             }
             val taskRows = concrete.count { it.task != null }
             if (taskRows > 0 && taskRows != concrete.size) return@mapNotNull null
+            if (taskRows > 0 && list.kind != NativeProjectionKind.UNORDERED_LIST) return@mapNotNull null
             if (taskRows > 0 && concrete.any { it.depth != 0 }) return@mapNotNull null
 
             NativeListModel(list.sourceRange, concrete)
