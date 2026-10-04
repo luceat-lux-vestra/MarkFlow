@@ -126,6 +126,7 @@ class MarkFlowStarterTaskListTest {
                                 concealed = markFlow.listFullyConcealed(editor),
                                 checkedTasks = markFlow.checkedTasks(editor),
                                 toggles = markFlow.taskToggles(editor),
+                                caretOffset = markFlow.primaryCaretOffset(editor),
                             )
                         },
                         checker = { state ->
@@ -133,7 +134,8 @@ class MarkFlowStarterTaskListTest {
                                 state.inlays == 1 &&
                                 state.concealed == 1 &&
                                 state.checkedTasks == 2 &&
-                                state.toggles == togglesBefore + 1
+                                state.toggles == togglesBefore + 1 &&
+                                state.caretOffset == tailOffset
                         },
                     )
                     check(markFlow.isDirty(editor)) {
@@ -213,5 +215,6 @@ class MarkFlowStarterTaskListTest {
         val concealed: Int,
         val checkedTasks: Int,
         val toggles: Long,
+        val caretOffset: Int,
     )
 }

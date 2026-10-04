@@ -443,12 +443,28 @@ internal class NativeListPresentationController(
                     return@forEach
                 }
 
-                val overlappingForeignFold = editor.foldingModel.allFoldRegions.any { fold ->
-                    fold.isValid &&
-                        fold.startOffset < range.endOffset &&
-                        fold.endOffset > range.startOffset
+                val blockingForeignFold = editor.foldingModel.allFoldRegions.any { fold ->
+                    if (
+                        !fold.isValid ||
+                        fold.startOffset >= range.endOffset ||
+                        fold.endOffset <= range.startOffset
+                    ) {
+                        return@any false
+                    }
+
+                    val containsRange =
+                        fold.startOffset <= range.startOffset && fold.endOffset >= range.endOffset
+                    val exactRange =
+                        fold.startOffset == range.startOffset && fold.endOffset == range.endOffset
+
+                    // IntelliJ may recreate an expanded whole-list fold after a one-character task
+                    // edit. A strictly nested MarkFlow fold is safe: we never mutate the foreign
+                    // region, and removing our fold later leaves the expanded exact source visible.
+                    // Exact collisions, partial overlaps and collapsed non-marker owners remain
+                    // fail-closed because MarkFlow could not guarantee independent source reveal.
+                    !fold.isExpanded || !containsRange || exactRange
                 }
-                if (overlappingForeignFold) {
+                if (blockingForeignFold) {
                     foldsInstalled = false
                     return@forEach
                 }
@@ -505,6 +521,15 @@ internal class NativeListPresentationController(
         if (!range.isInside(source)) return null
 
         val boundaries = linkedSetOf(range.startOffset, range.endOffset)
+        // Keep our folds strictly nested when IntelliJ owns an expanded whole-list fold. Splitting
+        // at the final Unicode code point avoids an exact-range collision without bisecting a
+        // surrogate pair; additional foreign-fold boundaries below prevent partial overlap.
+        if (source.codePointCount(range.startOffset, range.endOffset) >= 2) {
+            val tailStart = Character.offsetByCodePoints(source, range.endOffset, -1)
+            if (tailStart > range.startOffset && tailStart < range.endOffset) {
+                boundaries += tailStart
+            }
+        }
         editor.foldingModel.allFoldRegions
             .asSequence()
             .filter(FoldRegion::isValid)

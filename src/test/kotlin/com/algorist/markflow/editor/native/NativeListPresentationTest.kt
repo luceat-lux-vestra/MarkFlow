@@ -299,6 +299,54 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testListPresentationNestsInsideExpandedForeignWholeListFold() {
+        val source = "- [ ] first task\n- [x] completed task\n\nTail\n"
+        myFixture.configureByText("task-expanded-foreign-list-fold.md", source)
+        val editor = myFixture.editor
+        val tail = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tail)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val listRange = NativeListProjectionPlanner.sourceRanges(plan).single()
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreign = editor.foldingModel.addFoldRegion(
+                listRange.startOffset,
+                listRange.endOffset,
+                "platform whole-list fold",
+            )
+            requireNotNull(foreign).isExpanded = true
+        }
+
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+        try {
+            val inactive = controller.evidenceSnapshot()
+            assertEquals(1, inactive.listInlays)
+            assertTrue(inactive.listFolds >= 2)
+            assertEquals(1, inactive.listFullyConcealed)
+            assertEquals(2, inactive.taskRows)
+            assertEquals(1, inactive.checkedTasks)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("first task") + 1)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(0, controller.evidenceSnapshot().listFolds)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+            assertTrue(requireNotNull(foreign).isValid)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(foreign).takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+    }
+
     fun testListPresentationCoexistsWithCollapsedForeignMarkerFold() {
         val source = "- first\n- second\n\nTail\n"
         myFixture.configureByText("list-foreign-fold.md", source)
