@@ -256,6 +256,56 @@ After
         }
     }
 
+    fun testNestedEmphasisAndStrongRetainBothSemanticOwnersWithoutChangingSource() {
+        val source = "Before ***both*** after\n\nTail\n"
+        myFixture.configureByText("inline-nested-semantics.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            val emphasis = plan.projections.filter { it.kind == NativeProjectionKind.EMPHASIS }
+            val strong = plan.projections.filter { it.kind == NativeProjectionKind.STRONG }
+            assertTrue("nested source produced no parser-proven emphasis projection", emphasis.isNotEmpty())
+            assertTrue("nested source produced no parser-proven strong projection", strong.isNotEmpty())
+
+            fun resolvedAttributes(projection: NativeProjection) =
+                editor.markupModel.allHighlighters
+                    .filter { highlighter ->
+                        highlighter.isValid &&
+                            highlighter.startOffset == projection.sourceRange.startOffset &&
+                            highlighter.endOffset == projection.sourceRange.endOffset
+                    }
+                    .mapNotNull { highlighter -> highlighter.getTextAttributes(editor.colorsScheme) }
+
+            assertTrue(
+                "nested emphasis lost native italic semantics",
+                emphasis.any { projection ->
+                    resolvedAttributes(projection).any { attributes ->
+                        attributes.fontType and Font.ITALIC != 0
+                    }
+                },
+            )
+            assertTrue(
+                "nested strong lost native bold semantics",
+                strong.any { projection ->
+                    resolvedAttributes(projection).any { attributes ->
+                        attributes.fontType and Font.BOLD != 0
+                    }
+                },
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testInactiveStrikethroughUsesNativeStrikeoutAndCaretRevealWithoutChangingSource() {
         val source = "Before ~~obsolete~~ after\n\nTail\n"
         myFixture.configureByText("strikethrough.md", source)
