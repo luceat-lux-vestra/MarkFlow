@@ -17,9 +17,20 @@ internal data class NativeOrdinaryPresentationEvidence(
     val inlineFolds: Int,
     val inlineCollapsedFolds: Int,
     val blockHighlighters: Int,
-    val blockFolds: Int,
-    val blockCollapsedFolds: Int,
+    val blockSyntaxFolds: Int,
+    val blockSyntaxCollapsedFolds: Int,
+    val headingModels: Int,
+    val headingInlays: Int,
+    val headingFolds: Int,
+    val headingFullyConcealed: Int,
+    val headingLevels: List<Int>,
 ) {
+    val blockFolds: Int
+        get() = blockSyntaxFolds + headingFolds
+
+    val blockCollapsedFolds: Int
+        get() = blockSyntaxCollapsedFolds + headingFolds
+
     val ownedHighlighters: Int
         get() = inlineHighlighters + blockHighlighters
 
@@ -42,6 +53,7 @@ internal class NativeOrdinaryPresentationController(
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
+    private val headings = NativeHeadingPresentationController(editor)
     private var disposed = false
 
     fun clearPresentation() {
@@ -49,16 +61,19 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
+        headings.clearPresentation()
         clearFolds()
     }
 
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        if (plan.status != ProjectionPlanStatus.READY || !richPresentationEnabled) return
-
-        installRangeHighlighters(plan)
-        reconcileSyntaxFolds(plan)
+        val exactSourceHeadingRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan)
+        if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
+            installRangeHighlighters(plan, exactSourceHeadingRanges)
+            reconcileSyntaxFolds(plan, exactSourceHeadingRanges)
+        }
+        headings.applyPlan(plan, richPresentationEnabled)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
@@ -66,32 +81,45 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
+        val exactSourceHeadingRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan)
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
-            installRangeHighlighters(plan)
-            reconcileSyntaxFolds(plan)
+            installRangeHighlighters(plan, exactSourceHeadingRanges)
+            reconcileSyntaxFolds(plan, exactSourceHeadingRanges)
         } else {
             clearFolds()
         }
+        headings.refreshActivity(plan, richPresentationEnabled)
     }
 
     fun evidenceSnapshot(): NativeOrdinaryPresentationEvidence {
         val inlineEvidence = inline.evidenceSnapshot()
         val blockEvidence = block.evidenceSnapshot()
+        val headingEvidence = headings.evidenceSnapshot()
         return NativeOrdinaryPresentationEvidence(
             inlineHighlighters = inlineEvidence.highlighters,
             inlineFolds = inlineEvidence.folds,
             inlineCollapsedFolds = inlineEvidence.collapsedFolds,
             blockHighlighters = blockEvidence.highlighters,
-            blockFolds = blockEvidence.folds,
-            blockCollapsedFolds = blockEvidence.collapsedFolds,
+            blockSyntaxFolds = blockEvidence.folds,
+            blockSyntaxCollapsedFolds = blockEvidence.collapsedFolds,
+            headingModels = headingEvidence.models,
+            headingInlays = headingEvidence.ownedInlays,
+            headingFolds = headingEvidence.ownedFolds,
+            headingFullyConcealed = headingEvidence.fullyConcealed,
+            headingLevels = headingEvidence.levels,
         )
     }
 
-    private fun installRangeHighlighters(plan: NativeProjectionPlan) {
-        plan.projections.forEach { projection ->
-            inline.installHighlighterIfSupported(projection)
-            block.installHighlighterIfSupported(projection)
-        }
+    private fun installRangeHighlighters(
+        plan: NativeProjectionPlan,
+        exactSourceHeadingRanges: List<ProjectionRange>,
+    ) {
+        plan.projections
+            .filterNot { projection -> projection.isInsideAny(exactSourceHeadingRanges) }
+            .forEach { projection ->
+                inline.installHighlighterIfSupported(projection)
+                block.installHighlighterIfSupported(projection)
+            }
     }
 
     /**
@@ -99,9 +127,13 @@ internal class NativeOrdinaryPresentationController(
      * maps separate. Exact-range duplicates across layers retain the previous last-entry-wins
      * desired-map semantics before platform fold coexistence is checked.
      */
-    private fun reconcileSyntaxFolds(plan: NativeProjectionPlan) {
+    private fun reconcileSyntaxFolds(
+        plan: NativeProjectionPlan,
+        exactSourceHeadingRanges: List<ProjectionRange>,
+    ) {
         val desired = plan.projections
             .asSequence()
+            .filterNot { projection -> projection.isInsideAny(exactSourceHeadingRanges) }
             .flatMap { projection ->
                 val owner = foldOwner(projection.kind) ?: return@flatMap emptySequence()
                 projection.syntaxRanges.asSequence().map { range ->
@@ -154,6 +186,7 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
+        headings.dispose()
         clearFolds()
         disposed = true
     }
@@ -237,7 +270,6 @@ private class NativeBlockPresentationController(
             NativeProjectionKind.THEMATIC_BREAK,
         ),
         foldableKinds = setOf(
-            NativeProjectionKind.HEADING,
             NativeProjectionKind.LIST_ITEM,
             NativeProjectionKind.BLOCK_QUOTE,
             NativeProjectionKind.CODE_FENCE,
@@ -380,6 +412,11 @@ private class NativeSyntaxPresentationOwner(
             }
         }
 }
+
+private fun NativeProjection.isInsideAny(ranges: List<ProjectionRange>): Boolean =
+    ranges.any { range ->
+        sourceRange.startOffset >= range.startOffset && sourceRange.endOffset <= range.endOffset
+    }
 
 private fun blockPlaceholderFor(
     projection: NativeProjection,

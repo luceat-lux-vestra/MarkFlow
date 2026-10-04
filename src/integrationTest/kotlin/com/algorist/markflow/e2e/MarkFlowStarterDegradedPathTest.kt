@@ -96,9 +96,19 @@ class MarkFlowStarterDegradedPathTest {
                     "opening unsupported/malformed source must not dirty the Document"
                 }
 
-                // Keep the heading inactive so the READY plan owns at least one syntax fold before
-                // the synthetic renderer failure is injected through the narrow E2E seam.
-                markFlow.clickText(editor, rendererTarget)
+                // Make the heading-inactive precondition deterministic in source coordinates.
+                // Driver clickOn(text) does not guarantee a caret move inside an editor; prior
+                // diagnostics showed the caret remaining in the heading while this test claimed it
+                // was inactive.
+                val rendererStart = expectedSource.indexOf(rendererTarget)
+                check(rendererStart >= 0)
+                markFlow.resetToSingleCaret(editor, rendererStart)
+                waitFor(
+                    message = "degraded-path caret leaves the heading before rich heading acceptance",
+                    timeout = 10.seconds,
+                    getter = { markFlow.primaryCaretOffset(editor) },
+                    checker = { offset -> offset == rendererStart },
+                )
                 val sourceBeforeDegrade = markFlow.source(editor)
                 val stampBeforeDegrade = markFlow.modificationStamp(editor)
                 markFlow.assertProductionProjectionAttached(editor)
@@ -109,13 +119,30 @@ class MarkFlowStarterDegradedPathTest {
                     check(markFlow.isNativeProjectionPlanReady(editor)) {
                         "degraded-path acceptance did not start from a READY projection plan"
                     }
-                    waitFor(
-                        message = "READY projection owns native syntax presentation before failure",
-                        timeout = 10.seconds,
-                        getter = { degradation.ownedFolds(editor) },
-                        checker = { folds -> folds >= 1 },
-                    )
-
+                    val headingWaitFailure = runCatching {
+                        waitFor(
+                            message = "READY production projection installs native heading presentation before failure",
+                            timeout = 10.seconds,
+                            getter = {
+                                listOf(
+                                    degradation.headingModels(editor),
+                                    degradation.headingOwnedInlays(editor),
+                                    degradation.headingOwnedFolds(editor),
+                                    degradation.headingFullyConcealed(editor),
+                                )
+                            },
+                            checker = { (models, inlays, folds, concealed) ->
+                                models == 1 && inlays == 1 && folds > 0 && concealed == 1
+                            },
+                        )
+                    }.exceptionOrNull()
+                    if (headingWaitFailure != null) {
+                        throw AssertionError(
+                            "production heading presentation did not converge: " +
+                                degradation.headingFoldTopology(editor),
+                            headingWaitFailure,
+                        )
+                    }
                     degradation.degradeToSource(editor)
                     check(degradation.isDegradedToSource(editor)) {
                         "typed renderer failure did not leave the controller in DEGRADED_TO_SOURCE"
@@ -125,6 +152,18 @@ class MarkFlowStarterDegradedPathTest {
                     }
                     check(degradation.ownedFolds(editor) == 0) {
                         "source fallback retained MarkFlow-owned folds"
+                    }
+                    check(degradation.headingModels(editor) == 0) {
+                        "source fallback retained a heading presentation model"
+                    }
+                    check(degradation.headingOwnedInlays(editor) == 0) {
+                        "source fallback retained a native heading inlay"
+                    }
+                    check(degradation.headingOwnedFolds(editor) == 0) {
+                        "source fallback retained native heading folds"
+                    }
+                    check(degradation.headingFullyConcealed(editor) == 0) {
+                        "source fallback retained semantic heading concealment"
                     }
                     check(markFlow.source(editor) == sourceBeforeDegrade) {
                         "entering source fallback changed authoritative Markdown source"
@@ -136,8 +175,6 @@ class MarkFlowStarterDegradedPathTest {
                         "entering source fallback dirtied the authoritative Document"
                     }
 
-                    val rendererStart = markFlow.source(editor).indexOf(rendererTarget)
-                    check(rendererStart >= 0)
                     markFlow.selectRangeWithKeyboard(editor, rendererStart, rendererTarget.length)
                     check(degradation.isDegradedToSource(editor)) {
                         "caret/selection activity escaped typed source fallback before user edit"

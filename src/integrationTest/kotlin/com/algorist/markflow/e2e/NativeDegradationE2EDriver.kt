@@ -40,6 +40,41 @@ class NativeDegradationE2EDriver(private val driver: Driver) {
             bridge.ownedFolds(editor.editor)
         }
     }
+
+    fun headingModels(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingModels(editor.editor)
+        }
+    }
+
+    fun headingOwnedInlays(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingOwnedInlays(editor.editor)
+        }
+    }
+
+    fun headingOwnedFolds(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingOwnedFolds(editor.editor)
+        }
+    }
+
+    fun headingFullyConcealed(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingFullyConcealed(editor.editor)
+        }
+    }
+    fun headingFoldTopology(editor: JEditorUiComponent): String {
+        val bridge = driver.utility(NativeDegradationE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) {
+            bridge.headingFoldTopology(editor.editor)
+        }
+    }
+
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
@@ -48,4 +83,9 @@ private interface NativeDegradationE2EBridgeRemote {
     fun planDegradedToSource(editor: Editor): Boolean
     fun ownedHighlighters(editor: Editor): Int
     fun ownedFolds(editor: Editor): Int
+    fun headingModels(editor: Editor): Int
+    fun headingOwnedInlays(editor: Editor): Int
+    fun headingOwnedFolds(editor: Editor): Int
+    fun headingFullyConcealed(editor: Editor): Int
+    fun headingFoldTopology(editor: Editor): String
 }
