@@ -210,7 +210,9 @@ jobs:
               'raw-html-hostile-degraded-runtime': ('blocked=', 'exactSourceFallback=true', 'sourceStable=true'),
               'ordinary-parser-table-boundary': ('allKinds=true', 'linkSyntax=true', 'halfOpenBoundary=true'),
               'ordinary-native-presentation-source-neutral': (
-                  'listBlocks=true', 'quoteBlock=true', 'strikethroughEffect=true', 'linkConceal=true', 'boundaryReveal=true', 'sourceStable=true'
+                  'listBlocks=true', 'quoteBlock=true', 'emphasisItalic=true', 'strongBold=true',
+                  'strikethroughEffect=true', 'linkHyperlink=true', 'linkConceal=true',
+                  'boundaryReveal=true', 'sourceStable=true'
               ),
               'ordinary-accessibility-source-fallback': (
                   'sourceFallback=true', 'folds=0', 'highlighters=0', 'sourceStable=true', 'stampStable=true'
