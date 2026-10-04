@@ -68,6 +68,7 @@ internal enum class NativeProjectionKind {
     HEADING,
     EMPHASIS,
     STRONG,
+    STRIKETHROUGH,
     LINK,
     UNORDERED_LIST,
     ORDERED_LIST,
@@ -195,6 +196,7 @@ internal object NativeMarkdownProjectionPlanner {
             in headingTypes -> NativeProjectionKind.HEADING
             MarkdownElementTypes.EMPH -> NativeProjectionKind.EMPHASIS
             MarkdownElementTypes.STRONG -> NativeProjectionKind.STRONG
+            GFMElementTypes.STRIKETHROUGH -> NativeProjectionKind.STRIKETHROUGH
             in linkTypes -> NativeProjectionKind.LINK
             MarkdownElementTypes.UNORDERED_LIST -> NativeProjectionKind.UNORDERED_LIST
             MarkdownElementTypes.ORDERED_LIST -> NativeProjectionKind.ORDERED_LIST
@@ -247,6 +249,7 @@ internal object NativeMarkdownProjectionPlanner {
             NativeProjectionKind.EMPHASIS,
             NativeProjectionKind.STRONG,
             -> setOf(MarkdownTokenTypes.EMPH)
+            NativeProjectionKind.STRIKETHROUGH -> setOf(GFMTokenTypes.TILDE)
             NativeProjectionKind.LIST_ITEM -> setOf(
                 MarkdownTokenTypes.LIST_BULLET,
                 MarkdownTokenTypes.LIST_NUMBER,
@@ -264,11 +267,34 @@ internal object NativeMarkdownProjectionPlanner {
         }
         if (syntaxTypes.isEmpty()) return emptyList()
         val parserRanges = directChildRanges(node, syntaxTypes, source, sourceRange)
-        return if (kind == NativeProjectionKind.LIST_ITEM || kind == NativeProjectionKind.BLOCK_QUOTE) {
-            parserRanges.mapNotNull { range -> trimMarkerSeparator(range, source) }
-        } else {
-            parserRanges
+        return when (kind) {
+            NativeProjectionKind.STRIKETHROUGH -> coalesceAdjacentRanges(parserRanges)
+            NativeProjectionKind.LIST_ITEM,
+            NativeProjectionKind.BLOCK_QUOTE,
+            -> parserRanges.mapNotNull { range -> trimMarkerSeparator(range, source) }
+            else -> parserRanges
         }
+    }
+
+    /**
+     * GFM strikethrough delimiters are parser-owned TILDE tokens. Coalesce only directly adjacent
+     * parser ranges within one parser-proven delimiter, so `~` and `~~` keep their exact source
+     * spelling without reconstructing or scanning Markdown syntax ourselves.
+     */
+    private fun coalesceAdjacentRanges(ranges: List<ProjectionRange>): List<ProjectionRange> {
+        if (ranges.isEmpty()) return emptyList()
+        val result = mutableListOf<ProjectionRange>()
+        var current = ranges.first()
+        ranges.drop(1).forEach { range ->
+            current = if (current.endOffset == range.startOffset) {
+                ProjectionRange(current.startOffset, range.endOffset)
+            } else {
+                result += current
+                range
+            }
+        }
+        result += current
+        return result
     }
 
     /**

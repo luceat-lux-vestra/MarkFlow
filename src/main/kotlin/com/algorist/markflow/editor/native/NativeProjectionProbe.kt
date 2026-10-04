@@ -111,7 +111,7 @@ internal object NativeProjectionProbe {
 
                     val representativeSource = """# Heading
 
-Paragraph with *emphasis*, **strong**, `code`, and [link](https://example.invalid/).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).
 
 > quoted paragraph
 

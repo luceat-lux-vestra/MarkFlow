@@ -38,6 +38,11 @@ class MarkFlowStarterSmokeTest {
         check(revealStart >= 0) { "deterministic reveal fixture is missing" }
         val revealEnd = revealStart + revealSource.length
         val openingDelimiterEnd = revealStart + 1
+        val strikeSource = "~~obsolete~~"
+        val strikeStart = expectedSource.indexOf(strikeSource)
+        check(strikeStart >= 0) { "deterministic strikethrough fixture is missing" }
+        val strikeEnd = strikeStart + strikeSource.length
+        val strikeOpeningDelimiterEnd = strikeStart + 2
         val formattingTarget = "formatme"
         val formattingStart = expectedSource.indexOf(formattingTarget)
         check(formattingStart >= 0) { "deterministic formatting fixture is missing" }
@@ -143,6 +148,39 @@ class MarkFlowStarterSmokeTest {
                     check(markFlow.hasProjection(editor, "EMPHASIS", revealStart, revealEnd)) {
                         "attached MarkFlow plan does not contain the deterministic emphasis projection"
                     }
+                    check(markFlow.hasProjection(editor, "STRIKETHROUGH", strikeStart, strikeEnd)) {
+                        "attached MarkFlow plan does not contain the deterministic strikethrough projection"
+                    }
+                    waitFor(
+                        message = "inactive strikethrough opening delimiter is concealed",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, strikeStart, strikeOpeningDelimiterEnd) },
+                        checker = { collapsed -> collapsed },
+                    )
+                    markFlow.clickText(editor, "obsolete")
+                    waitFor(
+                        message = "mouse caret entering strikethrough reveals exact opening delimiter",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, strikeStart, strikeOpeningDelimiterEnd) },
+                        checker = { collapsed -> !collapsed },
+                    )
+                    check(markFlow.source(editor) == revealSourceBefore) {
+                        "strikethrough reveal changed authoritative Markdown source"
+                    }
+                    check(markFlow.modificationStamp(editor) == revealStampBefore) {
+                        "strikethrough reveal changed the authoritative Document modification stamp"
+                    }
+                    check(!markFlow.isDirty(editor)) {
+                        "strikethrough reveal dirtied the authoritative Document"
+                    }
+                    markFlow.clickText(editor, "deterministic")
+                    waitFor(
+                        message = "moving caret away restores inactive strikethrough presentation",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, strikeStart, strikeOpeningDelimiterEnd) },
+                        checker = { collapsed -> collapsed },
+                    )
+
                     waitFor(
                         message = "inactive emphasis opening delimiter is concealed",
                         timeout = 10.seconds,

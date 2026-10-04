@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.FoldRegion
+import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -276,12 +277,14 @@ private class NativeInlinePresentationController(
         highlightKinds = setOf(
             NativeProjectionKind.EMPHASIS,
             NativeProjectionKind.STRONG,
+            NativeProjectionKind.STRIKETHROUGH,
             NativeProjectionKind.INLINE_CODE,
             NativeProjectionKind.LINK,
         ),
         foldableKinds = setOf(
             NativeProjectionKind.EMPHASIS,
             NativeProjectionKind.STRONG,
+            NativeProjectionKind.STRIKETHROUGH,
             NativeProjectionKind.LINK,
             NativeProjectionKind.INLINE_CODE,
         ),
@@ -493,6 +496,7 @@ private fun blockPlaceholderFor(
 private fun inlineKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
     NativeProjectionKind.EMPHASIS -> EMPHASIS_KEY
     NativeProjectionKind.STRONG -> STRONG_KEY
+    NativeProjectionKind.STRIKETHROUGH -> STRIKETHROUGH_KEY
     NativeProjectionKind.INLINE_CODE -> INLINE_CODE_KEY
     NativeProjectionKind.LINK -> LINK_KEY
     else -> error("no inline presentation key for $kind")
@@ -519,6 +523,10 @@ private val EMPHASIS_KEY = TextAttributesKey.createTextAttributesKey(
 private val STRONG_KEY = TextAttributesKey.createTextAttributesKey(
     "MARKFLOW.PROJECTION.STRONG",
     DefaultLanguageHighlighterColors.KEYWORD,
+)
+private val STRIKETHROUGH_KEY = TextAttributesKey.createTextAttributesKey(
+    "MARKFLOW.PROJECTION.STRIKETHROUGH",
+    CodeInsightColors.DEPRECATED_ATTRIBUTES,
 )
 private val INLINE_CODE_KEY = TextAttributesKey.createTextAttributesKey(
     "MARKFLOW.PROJECTION.INLINE_CODE",

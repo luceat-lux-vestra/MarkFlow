@@ -85,6 +85,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             "- [ ] parent\n  - [ ] nested\n\nTail\n",
             "- first line\n  continuation\n\nTail\n",
             "- item with *emphasis*\n\nTail\n",
+            "- item with ~~strikethrough~~\n\nTail\n",
         )
         sources.forEachIndexed { index, source ->
             myFixture.configureByText("list-fallback-$index.md", source)
