@@ -524,6 +524,7 @@ Tail
             "> quote with *emphasis*\n\nTail\n",
             "> first line\n> second line\n\nTail\n",
             "> outer\n>> nested\n\nTail\n",
+            "> # nested heading\n\nTail\n",
         )
 
         sources.forEachIndexed { index, source ->
@@ -542,6 +543,8 @@ Tail
                 assertEquals(0, evidence.blockQuoteInlays)
                 assertEquals(0, evidence.blockQuoteFolds)
                 assertEquals(0, evidence.blockQuoteFullyConcealed)
+                assertEquals(0, evidence.headingInlays)
+                assertEquals(0, evidence.headingFolds)
                 assertEquals(
                     "unsupported blockquote must not retain inline presentation inside exact-source fallback",
                     0,
