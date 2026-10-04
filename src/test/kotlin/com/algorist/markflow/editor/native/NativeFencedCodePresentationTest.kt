@@ -4,6 +4,7 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.event.MouseEvent
 
@@ -194,6 +195,8 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
         myFixture.configureByText("fenced-code-edit.md", before)
         val editor = myFixture.editor
         val document = editor.document
+        val fileEditor = TextEditorProvider.getInstance().getTextEditor(editor)
+        assertNotNull(fileEditor)
         val controller = NativePresentationController(editor, richPresentationEnabled = { true })
 
         try {
@@ -209,11 +212,11 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
             assertEquals(after, document.text)
 
             val undo = UndoManager.getInstance(project)
-            assertTrue(undo.isUndoAvailable(editor))
-            undo.undo(editor)
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
             assertEquals(before, document.text)
-            assertTrue(undo.isRedoAvailable(editor))
-            undo.redo(editor)
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
             assertEquals(after, document.text)
 
             controller.refreshNow()
