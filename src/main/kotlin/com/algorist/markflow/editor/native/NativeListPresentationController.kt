@@ -253,6 +253,10 @@ internal class NativeListPresentationController(
     private var disposed = false
 
     private val mouseListener = object : EditorMouseListener {
+        override fun mousePressed(event: EditorMouseEvent) {
+            handleTaskTogglePress(event)
+        }
+
         override fun mouseClicked(event: EditorMouseEvent) {
             handleMouseReveal(event)
         }
@@ -318,6 +322,26 @@ internal class NativeListPresentationController(
         )
     }
 
+    internal fun handleTaskTogglePress(event: EditorMouseEvent): Boolean {
+        if (disposed || editor.isDisposed) return false
+        if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
+        if (event.mouseEvent.button != MouseEvent.BUTTON1) return false
+        val renderer = event.inlay?.renderer as? NativeListInlayRenderer ?: return false
+        val key = ListKey(renderer.sourceRange.startOffset, renderer.sourceRange.endOffset)
+        val presentation = owned[key] ?: return false
+        if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
+        val bounds = presentation.inlay.bounds ?: return false
+        val taskRow = renderer.taskRowAt(event.mouseEvent.point, bounds) ?: return false
+        if (!applyTaskToggle(key, renderer.row(taskRow))) return false
+
+        // Intercept the press before the editor's normal caret-placement path claims the concealed
+        // task source. A checkbox is an interactive presentation control, not a request to reveal
+        // source. Consuming the press keeps the pre-click caret outside the inactive task block;
+        // the Document refresh can therefore restore the checkbox inlay after the one-char edit.
+        event.consume()
+        return true
+    }
+
     internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
         if (disposed || editor.isDisposed) return false
         if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
@@ -328,14 +352,6 @@ internal class NativeListPresentationController(
         if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
 
         val bounds = presentation.inlay.bounds
-        val taskRow = bounds?.let { renderer.taskRowAt(event.mouseEvent.point, it) }
-        if (taskRow != null) {
-            if (applyTaskToggle(key, renderer.row(taskRow))) {
-                event.consume()
-                return true
-            }
-            return revealSource(key, renderer, taskRow, event)
-        }
         val rowIndex = bounds?.let { renderer.rowAt(event.mouseEvent.point, it) } ?: 0
         return revealSource(key, renderer, rowIndex, event)
     }
