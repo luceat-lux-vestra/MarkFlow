@@ -66,6 +66,9 @@ internal object NativeDerivedProjectionPlanner {
             .filterNonOverlapping()
     }
 
+    internal fun isMermaidFence(source: String, range: ProjectionRange): Boolean =
+        mermaidProjection(source, range) != null
+
     private fun mermaidProjection(source: String, range: ProjectionRange): NativeDerivedProjection? {
         if (!range.isInside(source)) return null
         val block = source.substring(range.startOffset, range.endOffset)
