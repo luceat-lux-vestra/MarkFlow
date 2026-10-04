@@ -237,6 +237,46 @@ After
         }
     }
 
+    fun testStrikethroughSelectionRevealRestoresExactDelimitersWithoutChangingSource() {
+        val source = "Before ~~obsolete~~ after\n\nTail\n"
+        myFixture.configureByText("strikethrough-selection.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        val contentStart = source.indexOf("obsolete")
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val projection = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
+            projection.syntaxRanges.forEach { range ->
+                assertFalse(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+
+            editor.selectionModel.setSelection(contentStart, contentStart + "obsolete".length)
+            projection.syntaxRanges.forEach { range ->
+                assertTrue("selection intersecting strikethrough must reveal exact delimiters", requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.selectionModel.removeSelection()
+            editor.caretModel.moveToOffset(tailOffset)
+            projection.syntaxRanges.forEach { range ->
+                assertFalse(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testSingleTildeTextFailsClosedToExactSourceWithoutRichPresentation() {
         val source = "Before ~legacy~ after\n\nTail\n"
         myFixture.configureByText("strikethrough-single.md", source)
