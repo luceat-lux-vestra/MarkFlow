@@ -45,9 +45,13 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
 
     fun testEmptyAndBoundExceededFencesRemainExactSource() {
         val fence = "\u0060\u0060\u0060"
+        val longFence = "\u0060".repeat(257)
         val sources = listOf(
             fence + "text\n\n" + fence + "\n",
+            fence + "x".repeat(1025) + "\npayload\n" + fence + "\n",
+            longFence + "text\npayload\n" + longFence + "\n",
             fence + "text\n" + "x".repeat(64 * 1024 + 1) + "\n" + fence + "\n",
+            fence + "text\n" + "x".repeat(72 * 1024 + 1) + "\n" + fence + "\n",
             fence + "text\n" + "line\n".repeat(200) + fence + "\n",
         )
 
