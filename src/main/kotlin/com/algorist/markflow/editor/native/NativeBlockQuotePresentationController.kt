@@ -414,6 +414,9 @@ internal class NativeBlockQuoteInlayRenderer(
         val bar = Color(foreground.red, foreground.green, foreground.blue, BAR_ALPHA)
         val font = editor.contentComponent.font
         val metrics = g2.getFontMetrics(font)
+        val textX = targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING
+        val availableTextWidth = max(1, targetRegion.x + targetRegion.width - OUTER_HORIZONTAL_MARGIN - textX)
+        val rendered = clip(model.text, metrics, availableTextWidth)
 
         g2.color = background
         g2.fillRoundRect(
@@ -435,11 +438,16 @@ internal class NativeBlockQuoteInlayRenderer(
         g2.color = foreground
         val baseline = targetRegion.y +
             max(metrics.ascent + VERTICAL_PADDING, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
-        g2.drawString(
-            model.text,
-            targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING,
-            baseline,
-        )
+        g2.drawString(rendered, textX, baseline)
+    }
+
+    private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
+        if (metrics.stringWidth(text) <= maxWidth) return text
+        val ellipsis = "…"
+        val target = max(0, maxWidth - metrics.stringWidth(ellipsis))
+        var end = text.length
+        while (end > 0 && metrics.stringWidth(text.substring(0, end)) > target) end -= 1
+        return text.substring(0, end) + ellipsis
     }
 
     companion object {
