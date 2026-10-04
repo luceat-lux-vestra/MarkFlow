@@ -29,6 +29,11 @@ internal data class NativeOrdinaryPresentationEvidence(
     val blockQuoteInlays: Int,
     val blockQuoteFolds: Int,
     val blockQuoteFullyConcealed: Int,
+    val fencedCodeModels: Int,
+    val fencedCodeInlays: Int,
+    val fencedCodeFolds: Int,
+    val fencedCodeFullyConcealed: Int,
+    val fencedCodeInfos: List<String>,
     val listModels: Int,
     val listRows: Int,
     val listInlays: Int,
@@ -42,10 +47,10 @@ internal data class NativeOrdinaryPresentationEvidence(
     val taskToggles: Long,
 ) {
     val blockFolds: Int
-        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + listFolds
+        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + listFolds
 
     val blockCollapsedFolds: Int
-        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + listFolds
+        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + listFolds
 
     val ownedHighlighters: Int
         get() = inlineHighlighters + blockHighlighters
@@ -71,6 +76,7 @@ internal class NativeOrdinaryPresentationController(
     private val block = NativeBlockPresentationController(editor)
     private val headings = NativeHeadingPresentationController(editor)
     private val blockQuotes = NativeBlockQuotePresentationController(editor)
+    private val fencedCodes = NativeFencedCodePresentationController(editor)
     private val lists = NativeListPresentationController(editor)
     private var disposed = false
 
@@ -81,6 +87,7 @@ internal class NativeOrdinaryPresentationController(
         block.clearHighlighters()
         headings.clearPresentation()
         blockQuotes.clearPresentation()
+        fencedCodes.clearPresentation()
         lists.clearPresentation()
         clearFolds()
     }
@@ -91,9 +98,14 @@ internal class NativeOrdinaryPresentationController(
         val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
         val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
-        val headingPlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
+        val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
+        val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
+        val headingPlan = plan.withoutProjectionsInside(
+            listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges
+        )
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
             blockQuoteSourceRanges +
+            fencedCodeSourceRanges +
             listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
@@ -101,6 +113,7 @@ internal class NativeOrdinaryPresentationController(
         }
         headings.applyPlan(headingPlan, richPresentationEnabled)
         blockQuotes.applyPlan(blockQuotePlan, richPresentationEnabled)
+        fencedCodes.applyPlan(fencedCodePlan, richPresentationEnabled)
         lists.applyPlan(plan, richPresentationEnabled)
     }
 
@@ -112,9 +125,14 @@ internal class NativeOrdinaryPresentationController(
         val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
         val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
-        val headingPlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
+        val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
+        val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
+        val headingPlan = plan.withoutProjectionsInside(
+            listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges
+        )
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
             blockQuoteSourceRanges +
+            fencedCodeSourceRanges +
             listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
@@ -124,6 +142,7 @@ internal class NativeOrdinaryPresentationController(
         }
         headings.refreshActivity(headingPlan, richPresentationEnabled)
         blockQuotes.refreshActivity(blockQuotePlan, richPresentationEnabled)
+        fencedCodes.refreshActivity(fencedCodePlan, richPresentationEnabled)
         lists.refreshActivity(plan, richPresentationEnabled)
     }
 
@@ -132,6 +151,7 @@ internal class NativeOrdinaryPresentationController(
         val blockEvidence = block.evidenceSnapshot()
         val headingEvidence = headings.evidenceSnapshot()
         val blockQuoteEvidence = blockQuotes.evidenceSnapshot()
+        val fencedCodeEvidence = fencedCodes.evidenceSnapshot()
         val listEvidence = lists.evidenceSnapshot()
         return NativeOrdinaryPresentationEvidence(
             inlineHighlighters = inlineEvidence.highlighters,
@@ -149,6 +169,11 @@ internal class NativeOrdinaryPresentationController(
             blockQuoteInlays = blockQuoteEvidence.ownedInlays,
             blockQuoteFolds = blockQuoteEvidence.ownedFolds,
             blockQuoteFullyConcealed = blockQuoteEvidence.fullyConcealed,
+            fencedCodeModels = fencedCodeEvidence.models,
+            fencedCodeInlays = fencedCodeEvidence.ownedInlays,
+            fencedCodeFolds = fencedCodeEvidence.ownedFolds,
+            fencedCodeFullyConcealed = fencedCodeEvidence.fullyConcealed,
+            fencedCodeInfos = fencedCodeEvidence.infos,
             listModels = listEvidence.models,
             listRows = listEvidence.rows,
             listInlays = listEvidence.ownedInlays,
@@ -241,6 +266,7 @@ internal class NativeOrdinaryPresentationController(
         block.clearHighlighters()
         headings.dispose()
         blockQuotes.dispose()
+        fencedCodes.dispose()
         lists.dispose()
         clearFolds()
         disposed = true
