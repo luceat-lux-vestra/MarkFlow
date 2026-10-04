@@ -24,9 +24,13 @@ internal data class NativeOrdinaryPresentationEvidence(
     val headingFolds: Int,
     val headingFullyConcealed: Int,
     val headingLevels: List<Int>,
+    val blockQuoteModels: Int,
+    val blockQuoteInlays: Int,
+    val blockQuoteFolds: Int,
+    val blockQuoteFullyConcealed: Int,
 ) {
     val blockFolds: Int
-        get() = blockSyntaxFolds + headingFolds
+        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds
 
     val blockCollapsedFolds: Int
         get() = blockSyntaxCollapsedFolds + headingFolds
@@ -54,6 +58,7 @@ internal class NativeOrdinaryPresentationController(
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
     private val headings = NativeHeadingPresentationController(editor)
+    private val blockQuotes = NativeBlockQuotePresentationController(editor)
     private var disposed = false
 
     fun clearPresentation() {
@@ -62,18 +67,21 @@ internal class NativeOrdinaryPresentationController(
         inline.clearHighlighters()
         block.clearHighlighters()
         headings.clearPresentation()
+        blockQuotes.clearPresentation()
         clearFolds()
     }
 
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val exactSourceHeadingRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan)
+        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan) +
+            NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
-            installRangeHighlighters(plan, exactSourceHeadingRanges)
-            reconcileSyntaxFolds(plan, exactSourceHeadingRanges)
+            installRangeHighlighters(plan, exactSourceRanges)
+            reconcileSyntaxFolds(plan, exactSourceRanges)
         }
         headings.applyPlan(plan, richPresentationEnabled)
+        blockQuotes.applyPlan(plan, richPresentationEnabled)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
@@ -81,20 +89,23 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
-        val exactSourceHeadingRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan)
+        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan) +
+            NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
-            installRangeHighlighters(plan, exactSourceHeadingRanges)
-            reconcileSyntaxFolds(plan, exactSourceHeadingRanges)
+            installRangeHighlighters(plan, exactSourceRanges)
+            reconcileSyntaxFolds(plan, exactSourceRanges)
         } else {
             clearFolds()
         }
         headings.refreshActivity(plan, richPresentationEnabled)
+        blockQuotes.refreshActivity(plan, richPresentationEnabled)
     }
 
     fun evidenceSnapshot(): NativeOrdinaryPresentationEvidence {
         val inlineEvidence = inline.evidenceSnapshot()
         val blockEvidence = block.evidenceSnapshot()
         val headingEvidence = headings.evidenceSnapshot()
+        val blockQuoteEvidence = blockQuotes.evidenceSnapshot()
         return NativeOrdinaryPresentationEvidence(
             inlineHighlighters = inlineEvidence.highlighters,
             inlineFolds = inlineEvidence.folds,
@@ -107,6 +118,10 @@ internal class NativeOrdinaryPresentationController(
             headingFolds = headingEvidence.ownedFolds,
             headingFullyConcealed = headingEvidence.fullyConcealed,
             headingLevels = headingEvidence.levels,
+            blockQuoteModels = blockQuoteEvidence.models,
+            blockQuoteInlays = blockQuoteEvidence.ownedInlays,
+            blockQuoteFolds = blockQuoteEvidence.ownedFolds,
+            blockQuoteFullyConcealed = blockQuoteEvidence.fullyConcealed,
         )
     }
 
@@ -187,6 +202,7 @@ internal class NativeOrdinaryPresentationController(
         inline.clearHighlighters()
         block.clearHighlighters()
         headings.dispose()
+        blockQuotes.dispose()
         clearFolds()
         disposed = true
     }
