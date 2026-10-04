@@ -189,6 +189,20 @@ val fenced = true
                             "models=${evidence.blockQuoteModels} inlays=${evidence.blockQuoteInlays} " +
                             "ownedFolds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
                     }
+                    check(
+                        evidence.listModels == 1 &&
+                            evidence.listRows == 3 &&
+                            evidence.listInlays == 1 &&
+                            evidence.listFolds > 0 &&
+                            evidence.listFullyConcealed == 1 &&
+                            evidence.listMaxDepth == 1 &&
+                            evidence.listDepths == listOf(0, 1, 0) &&
+                            evidence.listMarkers == listOf("-", "-", "-")
+                    ) {
+                        "inactive nested list did not install one fully concealed hierarchy: " +
+                            "models=${evidence.listModels} rows=${evidence.listRows} inlays=${evidence.listInlays} " +
+                            "folds=${evidence.listFolds} depth=${evidence.listMaxDepth} markers=${evidence.listMarkers}"
+                    }
                     val secondEvidence = secondController.evidenceSnapshot()
                     check(
                         secondEvidence.blockQuoteModels == 1 &&
@@ -197,6 +211,13 @@ val fenced = true
                     ) {
                         "split editor did not own an independent native blockquote presentation"
                     }
+                    check(
+                        secondEvidence.listModels == 1 &&
+                            secondEvidence.listInlays == 1 &&
+                            secondEvidence.listFullyConcealed == 1
+                    ) {
+                        "split editor did not own an independent native list presentation"
+                    }
                     check(first.editor.document === second.editor.document)
                     "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
                         "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
@@ -204,7 +225,9 @@ val fenced = true
                         "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} " +
                         "headingConcealed=${evidence.headingFullyConcealed} " +
                         "quoteInlays=${evidence.blockQuoteInlays} quoteFolds=${evidence.blockQuoteFolds} " +
-                        "quoteConcealed=${evidence.blockQuoteFullyConcealed} splitQuote=true sharedDocument=true"
+                        "quoteConcealed=${evidence.blockQuoteFullyConcealed} " +
+                        "listInlays=${evidence.listInlays} listRows=${evidence.listRows} listMaxDepth=${evidence.listMaxDepth} " +
+                        "listConcealed=${evidence.listFullyConcealed} splitQuote=true splitList=true sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
@@ -262,6 +285,19 @@ val fenced = true
                     first.editor.caretModel.moveToOffset(fixture.bodyOffset)
                     check(blockQuoteRichPresentationVisible(firstController)) {
                         "inactive blockquote did not restore native rich presentation"
+                    }
+
+                    val listRange = NativeListProjectionPlanner.sourceRanges(requireNotNull(firstController.currentPlan)).single()
+                    first.editor.caretModel.moveToOffset(listRange.startOffset + 2)
+                    check(firstController.evidenceSnapshot().listInlays == 0) {
+                        "active list retained MarkFlow rich presentation"
+                    }
+                    check(exactSourceVisible(first.editor, listRange)) {
+                        "active list remained concealed by a collapsed fold"
+                    }
+                    first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    check(firstController.evidenceSnapshot().listInlays == 1) {
+                        "inactive list did not restore native rich presentation"
                     }
 
                     check(document.text == sourceBefore)
@@ -484,6 +520,10 @@ val value = 1
 ```
 
 > Runtime quote
+
+- Parent item
+  - Nested item
+- Sibling item
 
 Plain body line for inactive caret state.
 """
