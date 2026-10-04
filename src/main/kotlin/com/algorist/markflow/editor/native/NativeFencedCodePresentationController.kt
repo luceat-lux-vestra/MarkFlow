@@ -18,7 +18,6 @@ import java.awt.Rectangle
 import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
 import kotlin.math.max
-import kotlin.math.min
 
 internal data class NativeFencedCodeModel(
     val sourceRange: ProjectionRange,
