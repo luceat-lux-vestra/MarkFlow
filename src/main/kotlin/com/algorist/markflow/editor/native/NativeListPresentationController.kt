@@ -329,7 +329,7 @@ internal class NativeListPresentationController(
         val bounds = presentation.inlay.bounds
         val taskRow = bounds?.let { renderer.taskRowAt(event.mouseEvent.point, it) }
         if (taskRow != null) {
-            if (toggleTask(key, renderer.row(taskRow))) {
+            if (applyTaskToggle(key, renderer.row(taskRow))) {
                 event.consume()
                 return true
             }
@@ -339,7 +339,15 @@ internal class NativeListPresentationController(
         return revealSource(key, renderer, rowIndex, event)
     }
 
-    private fun toggleTask(key: ListKey, row: NativeListRow): Boolean {
+    internal fun toggleTask(sourceRange: ProjectionRange, rowIndex: Int): Boolean {
+        val key = ListKey(sourceRange.startOffset, sourceRange.endOffset)
+        val presentation = owned[key] ?: return false
+        val renderer = presentation.inlay.renderer as? NativeListInlayRenderer ?: return false
+        val row = renderer.row(rowIndex)
+        return applyTaskToggle(key, row)
+    }
+
+    private fun applyTaskToggle(key: ListKey, row: NativeListRow): Boolean {
         val task = row.task ?: return false
         val identity = currentPlanIdentity ?: return false
         if (!isCurrent(identity) || !editor.document.isWritable) return false
