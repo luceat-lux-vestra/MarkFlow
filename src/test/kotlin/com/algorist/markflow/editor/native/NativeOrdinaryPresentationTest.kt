@@ -641,4 +641,48 @@ Tail
         }
     }
 
+
+    fun testBlockQuotePresentationCoexistsWithCollapsedForeignMarkerFold() {
+        val source = "> quoted text\n\nTail\n"
+        myFixture.configureByText("blockquote-foreign-fold.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val quote = plan.projections.single { it.kind == NativeProjectionKind.BLOCK_QUOTE }
+        val markerRange = quote.syntaxRanges.single()
+        var foreignFold: com.intellij.openapi.editor.FoldRegion? = null
+
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreignFold = editor.foldingModel.addFoldRegion(
+                markerRange.startOffset,
+                markerRange.endOffset,
+                "platform blockquote marker",
+            )
+            requireNotNull(foreignFold).isExpanded = false
+        }
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(2, evidence.blockQuoteFolds)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
+            assertTrue(requireNotNull(foreignFold).isValid)
+            assertFalse(requireNotNull(foreignFold).isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+            assertTrue(requireNotNull(foreignFold).isValid)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(foreignFold).takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+    }
+
 }
