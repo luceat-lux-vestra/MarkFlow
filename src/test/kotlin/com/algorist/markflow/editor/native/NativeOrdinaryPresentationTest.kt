@@ -237,29 +237,24 @@ After
         }
     }
 
-    fun testSingleTildeStrikethroughUsesExactDelimiterFoldsWithoutChangingSource() {
+    fun testSingleTildeTextFailsClosedToExactSourceWithoutRichPresentation() {
         val source = "Before ~legacy~ after\n\nTail\n"
         myFixture.configureByText("strikethrough-single.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
         val stampBefore = editor.document.modificationStamp
+        val openingTilde = source.indexOf("~")
+        val closingTilde = source.lastIndexOf("~")
 
         val controller = NativePresentationController(
             editor = editor,
             richPresentationEnabled = { true },
         )
         try {
-            val projection = requireNotNull(controller.currentPlan)
-                .projections
-                .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
-            assertEquals(
-                listOf("~", "~"),
-                projection.syntaxRanges.map { range -> source.substring(range.startOffset, range.endOffset) },
-            )
-            projection.syntaxRanges.forEach { range ->
-                val fold = requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset))
-                assertFalse("inactive single-tilde delimiter must be concealed", fold.isExpanded)
-            }
+            val plan = requireNotNull(controller.currentPlan)
+            assertTrue(plan.projections.none { it.kind == NativeProjectionKind.STRIKETHROUGH })
+            assertNull(editor.foldingModel.getFoldRegion(openingTilde, openingTilde + 1))
+            assertNull(editor.foldingModel.getFoldRegion(closingTilde, closingTilde + 1))
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
