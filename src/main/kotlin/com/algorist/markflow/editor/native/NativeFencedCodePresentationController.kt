@@ -47,6 +47,9 @@ internal data class NativeFencedCodePresentationEvidence(
  * or excessively large fences stay exact source rather than being reconstructed heuristically.
  */
 internal object NativeFencedCodeProjectionPlanner {
+    private const val MAX_SOURCE_CHARS = 72 * 1024
+    private const val MAX_FENCE_CHARS = 256
+    private const val MAX_INFO_CHARS = 1024
     private const val MAX_CODE_CHARS = 64 * 1024
     private const val MAX_CODE_LINES = 200
 
@@ -69,6 +72,7 @@ internal object NativeFencedCodeProjectionPlanner {
     ): NativeFencedCodeModel? {
         val sourceRange = projection.sourceRange
         if (!sourceRange.isInside(source)) return null
+        if (sourceRange.endOffset - sourceRange.startOffset > MAX_SOURCE_CHARS) return null
         val syntax = projection.syntaxRanges.sortedBy(ProjectionRange::startOffset)
         if (syntax.size != 2) return null
         val opening = syntax[0]
@@ -77,9 +81,12 @@ internal object NativeFencedCodeProjectionPlanner {
         if (opening.startOffset != sourceRange.startOffset) return null
         if (opening.endOffset >= closing.startOffset) return null
 
+        val openingLength = opening.endOffset - opening.startOffset
+        val closingLength = closing.endOffset - closing.startOffset
+        if (openingLength !in 3..MAX_FENCE_CHARS) return null
+        if (closingLength !in openingLength..MAX_FENCE_CHARS) return null
         val openingMarker = source.substring(opening.startOffset, opening.endOffset)
         val closingMarker = source.substring(closing.startOffset, closing.endOffset)
-        if (openingMarker.length < 3 || closingMarker.length < openingMarker.length) return null
         val marker = openingMarker.first()
         if (marker != '\u0060' && marker != '~') return null
         if (openingMarker.any { it != marker } || closingMarker.any { it != marker }) return null
@@ -88,6 +95,7 @@ internal object NativeFencedCodeProjectionPlanner {
             .takeIf { it >= opening.endOffset && it < closing.startOffset }
             ?: return null
         val rawInfo = source.substring(opening.endOffset, openingLineEnd)
+        if (rawInfo.length > MAX_INFO_CHARS) return null
         val info = rawInfo.trim(' ', '\t', '\r')
         if (marker == '\u0060' && info.indexOf('\u0060') >= 0) return null
         if (info.equals("mermaid", ignoreCase = true)) return null
