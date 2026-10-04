@@ -21,6 +21,7 @@ import kotlin.math.max
 internal data class NativeBlockQuoteModel(
     val sourceRange: ProjectionRange,
     val contentRange: ProjectionRange,
+    val syntaxRanges: List<ProjectionRange>,
     val text: String,
 )
 
@@ -112,6 +113,7 @@ internal object NativeBlockQuoteProjectionPlanner {
                 NativeBlockQuoteModel(
                     sourceRange = quote.sourceRange,
                     contentRange = contentRange,
+                    syntaxRanges = quote.syntaxRanges,
                     text = text,
                 )
             }
@@ -244,21 +246,38 @@ internal class NativeBlockQuotePresentationController(
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
-        if (editor.foldingModel.allFoldRegions.any { fold ->
-                fold.isValid &&
-                    fold.startOffset < model.sourceRange.endOffset &&
-                    fold.endOffset > model.sourceRange.startOffset
-            }
-        ) {
-            return
-        }
-
         val foldRanges = blockQuoteFoldRanges(model, sourceBefore) ?: return
         val installedFolds = mutableListOf<FoldRegion>()
+        val coverageFolds = mutableListOf<FoldRegion>()
         var foldsInstalled = true
         editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
             foldRanges.forEach { range ->
                 if (!foldsInstalled) return@forEach
+
+                val coveredByForeignSyntaxFold = editor.foldingModel.allFoldRegions.firstOrNull { fold ->
+                    fold.isValid &&
+                        !fold.isExpanded &&
+                        fold.startOffset <= range.startOffset &&
+                        fold.endOffset >= range.endOffset &&
+                        model.syntaxRanges.any { syntax ->
+                            range.startOffset >= syntax.startOffset && range.endOffset <= syntax.endOffset
+                        }
+                }
+                if (coveredByForeignSyntaxFold != null) {
+                    coverageFolds += coveredByForeignSyntaxFold
+                    return@forEach
+                }
+
+                val overlappingForeignFold = editor.foldingModel.allFoldRegions.any { fold ->
+                    fold.isValid &&
+                        fold.startOffset < range.endOffset &&
+                        fold.endOffset > range.startOffset
+                }
+                if (overlappingForeignFold) {
+                    foldsInstalled = false
+                    return@forEach
+                }
+
                 val fold = editor.foldingModel.addFoldRegion(
                     range.startOffset,
                     range.endOffset,
@@ -269,6 +288,7 @@ internal class NativeBlockQuotePresentationController(
                     return@forEach
                 }
                 installedFolds += fold
+                coverageFolds += fold
                 fold.isExpanded = false
                 if (fold.isExpanded) foldsInstalled = false
             }
@@ -277,9 +297,10 @@ internal class NativeBlockQuotePresentationController(
                     if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
                 }
                 installedFolds.clear()
+                coverageFolds.clear()
             }
         }
-        if (!foldsInstalled || installedFolds.size != foldRanges.size) return
+        if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
 
         val renderer = NativeBlockQuoteInlayRenderer(editor, model)
         val inlay = editor.inlayModel.addBlockElement(
@@ -293,7 +314,11 @@ internal class NativeBlockQuotePresentationController(
             removeFolds(installedFolds)
             return
         }
-        owned[key] = OwnedBlockQuotePresentation(installedFolds.toList(), inlay)
+        owned[key] = OwnedBlockQuotePresentation(
+            folds = installedFolds.toList(),
+            coverageFolds = coverageFolds.toList(),
+            inlay = inlay,
+        )
 
         check(editor.document.modificationStamp == stampBefore) {
             "native blockquote presentation changed the authoritative Document modification stamp"
@@ -313,16 +338,41 @@ internal class NativeBlockQuotePresentationController(
         if (codePoints < 2) return null
         val tailStart = Character.offsetByCodePoints(source, range.endOffset, -1)
         if (tailStart <= range.startOffset || tailStart >= range.endOffset) return null
-        return listOf(
-            ProjectionRange(range.startOffset, tailStart),
-            ProjectionRange(tailStart, range.endOffset),
-        )
+
+        val boundaries = linkedSetOf(range.startOffset, tailStart, range.endOffset)
+        model.syntaxRanges.forEach { syntax ->
+            if (syntax.startOffset > range.startOffset && syntax.startOffset < range.endOffset) {
+                boundaries += syntax.startOffset
+            }
+            if (syntax.endOffset > range.startOffset && syntax.endOffset < range.endOffset) {
+                boundaries += syntax.endOffset
+            }
+        }
+        editor.foldingModel.allFoldRegions
+            .asSequence()
+            .filter(FoldRegion::isValid)
+            .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
+            .forEach { fold ->
+                if (fold.startOffset > range.startOffset && fold.startOffset < range.endOffset) {
+                    boundaries += fold.startOffset
+                }
+                if (fold.endOffset > range.startOffset && fold.endOffset < range.endOffset) {
+                    boundaries += fold.endOffset
+                }
+            }
+
+        return boundaries
+            .sorted()
+            .zipWithNext()
+            .mapNotNull { (startOffset, endOffset) ->
+                if (endOffset > startOffset) ProjectionRange(startOffset, endOffset) else null
+            }
     }
 
     private fun isFullyConcealed(presentation: OwnedBlockQuotePresentation): Boolean =
         presentation.inlay.isValid &&
-            presentation.folds.isNotEmpty() &&
-            presentation.folds.all { fold -> fold.isValid && !fold.isExpanded }
+            presentation.coverageFolds.isNotEmpty() &&
+            presentation.coverageFolds.all { fold -> fold.isValid && !fold.isExpanded }
 
     private fun isCurrent(identity: ProjectionSourceIdentity): Boolean =
         currentPlanIdentity == identity && matchesCurrentIdentity(identity)
@@ -388,6 +438,7 @@ internal class NativeBlockQuotePresentationController(
 
     private data class OwnedBlockQuotePresentation(
         val folds: List<FoldRegion>,
+        val coverageFolds: List<FoldRegion>,
         val inlay: Inlay<*>,
     )
 
