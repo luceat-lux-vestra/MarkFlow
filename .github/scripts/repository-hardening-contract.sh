@@ -133,6 +133,26 @@ grep -q -- '--root "$pass_dir"' "$starter_workflow" || die "Starter workflow doe
 grep -q -- '--output "$pass_dir/diagnostics.json"' "$starter_workflow" || die "Starter workflow does not persist structured diagnostics for each pass"
 grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow does not upload pass-scoped diagnostics evidence"
 
+
+grep -Fq "STARTER_PLATFORM_VERSION: '2026.2.3'" "$starter_workflow" || die "Starter full-product authority must stay pinned to IDEA 2026.2.3"
+if grep -Eq '263\.|2026\.3|eap2|EAP2' "$starter_workflow"; then
+  die "Starter full-product workflow must not make the 2026.3 EAP probe release-blocking again"
+fi
+[ "$(grep -Fc './gradlew buildPlugin ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must package the candidate plugin exactly once"
+[ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
+grep -Fq 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
+grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle' "$starter_workflow" || die "Starter package manifest does not freeze the maintained shard set"
+for shard in canonical core-editing ordinary-markdown derived-content lifecycle; do
+  grep -Fq "shard: $shard" "$starter_workflow" || die "Starter workflow is missing $shard shard"
+done
+grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_workflow" || die "Starter workflow is missing canonical full-product journey"
+grep -Fq 'release_candidate_repeat:' "$starter_workflow" || die "Starter workflow has no explicit release-candidate repeat control"
+grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "Starter workflow has no independent canonical repeat job"
+grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
+grep -Fq -- '--required-suite "$suite"' "$starter_workflow" || die "Starter shard diagnostics are not scoped to their declared suites"
+grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "Starter diagnostics do not recognize the canonical full-product journey"
+grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
+
 build_workflow=".github/workflows/build.yml"
 docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
