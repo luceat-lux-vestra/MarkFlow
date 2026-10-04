@@ -43,6 +43,27 @@ class NativeFencedCodePresentationTest : BasePlatformTestCase() {
         assertEquals(source, plan.identity.source)
     }
 
+    fun testEmptyAndBoundExceededFencesRemainExactSource() {
+        val fence = "\u0060\u0060\u0060"
+        val sources = listOf(
+            fence + "text\n\n" + fence + "\n",
+            fence + "text\n" + "x".repeat(64 * 1024 + 1) + "\n" + fence + "\n",
+            fence + "text\n" + "line\n".repeat(200) + fence + "\n",
+        )
+
+        sources.forEachIndexed { index, source ->
+            val plan = NativeMarkdownProjectionPlanner.plan(
+                ProjectionSnapshot(ProjectionSourceIdentity(index.toLong() + 10L, source, 0L))
+            )
+            assertEquals(ProjectionPlanStatus.READY, plan.status)
+            assertTrue(
+                "ordinary fenced-code presentation must fail closed for bounded fixture $index",
+                NativeFencedCodeProjectionPlanner.plan(plan).isEmpty(),
+            )
+            assertEquals(source, plan.identity.source)
+        }
+    }
+
     fun testMermaidAndUnclosedFencesRemainOutsideOrdinaryRichOwner() {
         val fence = "\u0060\u0060\u0060"
         val sources = listOf(
