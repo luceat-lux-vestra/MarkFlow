@@ -41,7 +41,7 @@ internal data class NativeOrdinaryPresentationEvidence(
         get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + listFolds
 
     val blockCollapsedFolds: Int
-        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds
+        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + listFolds
 
     val ownedHighlighters: Int
         get() = inlineHighlighters + blockHighlighters
