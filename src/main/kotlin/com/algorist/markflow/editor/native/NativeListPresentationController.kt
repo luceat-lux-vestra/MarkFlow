@@ -604,8 +604,6 @@ internal class NativeListInlayRenderer(
         get() = model.rows.first().contentRange.startOffset
     val taskRowCount: Int
         get() = model.rows.count { it.task != null }
-    val checkedTaskCount: Int
-        get() = model.rows.count { it.task?.checked == true }
 
     fun row(index: Int): NativeListRow = model.rows[index]
 
