@@ -16,6 +16,7 @@ REQUIRED_SUITES = {
     "com.algorist.markflow.e2e.MarkFlowStarterTableTest",
     "com.algorist.markflow.e2e.MarkFlowStarterTaskListTest",
     "com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest",
 }
 MARKFLOW_MARKER = "com.algorist.markflow."
 MARKFLOW_FRAME = re.compile(r"(?m)^\s*at\s+com\.algorist\.markflow\.")
@@ -60,7 +61,8 @@ def _log_records(lines: list[str]) -> list[tuple[int, list[str]]]:
     return records
 
 
-def analyze(root: Path) -> dict:
+def analyze(root: Path, required_suites: set[str] | None = None) -> dict:
+    required_suites = set(REQUIRED_SUITES if required_suites is None else required_suites)
     junit_files = sorted((root / "test-results").glob("TEST-*.xml"))
     discovered = set()
     tests = failures = errors = skipped = 0
@@ -78,7 +80,7 @@ def analyze(root: Path) -> dict:
         errors += int(suite.attrib.get("errors", "0"))
         skipped += int(suite.attrib.get("skipped", "0"))
 
-    missing_suites = sorted(REQUIRED_SUITES - discovered)
+    missing_suites = sorted(required_suites - discovered)
 
     error_dirs = sorted(root.glob("logs/**/errors/error-*"))
     captures = []
@@ -178,7 +180,7 @@ def analyze(root: Path) -> dict:
         "reasons": reasons,
         "junit": {
             "files": len(junit_files),
-            "requiredSuites": sorted(REQUIRED_SUITES),
+            "requiredSuites": sorted(required_suites),
             "discoveredSuites": sorted(discovered),
             "missingSuites": missing_suites,
             "tests": tests,
@@ -201,10 +203,16 @@ def analyze(root: Path) -> dict:
     }
 
 
-def _write_required_suites(root: Path, *, skipped_suite: str | None = None) -> None:
+def _write_required_suites(
+    root: Path,
+    *,
+    required_suites: set[str] | None = None,
+    skipped_suite: str | None = None,
+) -> None:
+    required_suites = set(REQUIRED_SUITES if required_suites is None else required_suites)
     result_dir = root / "test-results"
     result_dir.mkdir(parents=True, exist_ok=True)
-    for suite in REQUIRED_SUITES:
+    for suite in required_suites:
         skipped = "1" if suite == skipped_suite else "0"
         (result_dir / f"TEST-{suite}.xml").write_text(
             f'<testsuite name="{suite}" tests="1" failures="0" errors="0" skipped="{skipped}"></testsuite>',
@@ -284,14 +292,26 @@ def main() -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--output")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--required-suite",
+        action="append",
+        default=[],
+        help="Require only this fully-qualified JUnit suite; repeat for a shard. Defaults to the full maintained set.",
+    )
     args = parser.parse_args()
 
     if args.self_test:
         self_test()
         return 0
 
+    requested = set(args.required_suite)
+    unknown = sorted(requested - REQUIRED_SUITES)
+    if unknown:
+        parser.error("unknown required suite(s): " + ", ".join(unknown))
+    required_suites = requested or set(REQUIRED_SUITES)
+
     root = Path(args.root).resolve()
-    result = analyze(root)
+    result = analyze(root, required_suites=required_suites)
     payload = json.dumps(result, indent=2, sort_keys=True)
     if args.output:
         output = Path(args.output)
