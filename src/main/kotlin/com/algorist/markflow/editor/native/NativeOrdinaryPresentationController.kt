@@ -74,13 +74,15 @@ internal class NativeOrdinaryPresentationController(
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan) +
-            NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
+        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
+        val headingPlan = plan.withoutProjectionsInside(blockQuoteSourceRanges)
+        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
+            blockQuoteSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
             reconcileSyntaxFolds(plan, exactSourceRanges)
         }
-        headings.applyPlan(plan, richPresentationEnabled)
+        headings.applyPlan(headingPlan, richPresentationEnabled)
         blockQuotes.applyPlan(plan, richPresentationEnabled)
     }
 
@@ -89,15 +91,17 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
-        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(plan) +
-            NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
+        val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(plan)
+        val headingPlan = plan.withoutProjectionsInside(blockQuoteSourceRanges)
+        val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
+            blockQuoteSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
             reconcileSyntaxFolds(plan, exactSourceRanges)
         } else {
             clearFolds()
         }
-        headings.refreshActivity(plan, richPresentationEnabled)
+        headings.refreshActivity(headingPlan, richPresentationEnabled)
         blockQuotes.refreshActivity(plan, richPresentationEnabled)
     }
 
@@ -428,6 +432,9 @@ private class NativeSyntaxPresentationOwner(
             }
         }
 }
+
+private fun NativeProjectionPlan.withoutProjectionsInside(ranges: List<ProjectionRange>): NativeProjectionPlan =
+    if (ranges.isEmpty()) this else copy(projections = projections.filterNot { it.isInsideAny(ranges) })
 
 private fun NativeProjection.isInsideAny(ranges: List<ProjectionRange>): Boolean =
     ranges.any { range ->
