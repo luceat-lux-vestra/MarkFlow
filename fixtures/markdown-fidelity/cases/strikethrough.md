@@ -1,6 +1,6 @@
 Plain ~~removed~~ text.
 
-Single-tilde ~legacy~ keeps its exact delimiter choice.
+Single-tilde ~legacy~ remains exact-source fallback.
 
 Punctuation keeps ~~old value~~ source exact.
 
