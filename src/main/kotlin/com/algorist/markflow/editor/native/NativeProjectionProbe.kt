@@ -164,8 +164,8 @@ val fenced = true
                     check(evidence.blockOwnedHighlighters == 0) {
                         "supported rich blocks must not retain generic block highlighting: ${evidence.blockOwnedHighlighters}"
                     }
-                    check(evidence.blockOwnedFolds == 0) {
-                        "supported rich blocks must not retain generic syntax folds: ${evidence.blockOwnedFolds}"
+                    check(evidence.blockSyntaxOwnedFolds == 0) {
+                        "supported rich blocks must not retain generic syntax folds: ${evidence.blockSyntaxOwnedFolds}"
                     }
                     check(evidence.ownedHighlighters == evidence.inlineOwnedHighlighters + evidence.blockOwnedHighlighters)
                     check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
@@ -245,6 +245,7 @@ val fenced = true
                     check(first.editor.document === second.editor.document)
                     "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
                         "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
+                        "blockSyntaxFolds=${evidence.blockSyntaxOwnedFolds} " +
                         "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
                         "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} " +
                         "headingConcealed=${evidence.headingFullyConcealed} " +
