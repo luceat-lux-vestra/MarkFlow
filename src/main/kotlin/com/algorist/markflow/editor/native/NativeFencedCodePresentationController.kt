@@ -60,8 +60,8 @@ internal object NativeFencedCodeProjectionPlanner {
             .toList()
     }
 
-    fun sourceRanges(plan: NativeProjectionPlan): List<ProjectionRange> =
-        plan(plan).map(NativeFencedCodeModel::sourceRange)
+    fun sourceRanges(basePlan: NativeProjectionPlan): List<ProjectionRange> =
+        plan(basePlan).map(NativeFencedCodeModel::sourceRange)
 
     private fun modelFor(
         projection: NativeProjection,
