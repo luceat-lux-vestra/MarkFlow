@@ -36,7 +36,7 @@ class NativeMarkdownProjectionTest : BasePlatformTestCase() {
 Setext heading
 ==============
 
-Paragraph with *emphasis*, **strong**, `code`, and [a link](https://example.com).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).
 
 - unordered item
 - second item
@@ -107,6 +107,16 @@ val fenced = 1
             setextHeading.syntaxRanges.any { range ->
                 source.substring(range.startOffset, range.endOffset).all { it == '=' }
             }
+        )
+
+        val strikethrough = plan.projections.single { it.kind == NativeProjectionKind.STRIKETHROUGH }
+        assertEquals(
+            "~~struck~~",
+            source.substring(strikethrough.sourceRange.startOffset, strikethrough.sourceRange.endOffset),
+        )
+        assertEquals(
+            listOf("~~", "~~"),
+            strikethrough.syntaxRanges.map { range -> source.substring(range.startOffset, range.endOffset) },
         )
 
         val link = plan.projections.single {
@@ -260,6 +270,28 @@ Setext two
             val projectedSource = source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
             assertFalse(projectedSource.contains("<script>", ignoreCase = true))
         }
+    }
+
+    fun testSingleTildeRemainsExactSourceWithoutStrikethroughProjection() {
+        val source = "Before ~single~ after\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertTrue(plan.projections.none { it.kind == NativeProjectionKind.STRIKETHROUGH })
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testUnterminatedStrikethroughRemainsExactSourceWithoutProjection() {
+        val source = "Before ~~unterminated marker\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(2L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertTrue(plan.projections.none { it.kind == NativeProjectionKind.STRIKETHROUGH })
+        assertEquals(source, plan.identity.source)
     }
 
     fun testSourceGenerationIdentityIncludesStampExactSourceAndConfig() {

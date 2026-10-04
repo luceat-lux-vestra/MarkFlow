@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.event.MouseEvent
 
@@ -115,7 +116,7 @@ After
     }
 
     fun testAccessibilityDispositionLeavesOrdinaryMarkdownAsExactSource() {
-        val source = "# Heading\n\nA [link](https://example.com) and **strong** text.\n\n- item\n"
+        val source = "# Heading\n\nA [link](https://example.com), **strong**, and ~~struck~~ text.\n\n- item\n"
         myFixture.configureByText("accessible.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.length)
@@ -153,7 +154,7 @@ After
         }
     }
     fun testInlineOnlyFixtureUsesOnlyInlinePresentationOwner() {
-        val source = "A [link](https://example.com) with *emphasis*, **strong**, and `code`.\n\nTail\n"
+        val source = "A [link](https://example.com) with *emphasis*, **strong**, ~~struck~~, and `code`.\n\nTail\n"
         myFixture.configureByText("inline-only.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
@@ -165,12 +166,135 @@ After
         )
         try {
             val evidence = controller.evidenceSnapshot()
-            assertTrue(evidence.inlineOwnedHighlighters >= 4)
+            assertTrue(evidence.inlineOwnedHighlighters >= 5)
             assertTrue(evidence.inlineOwnedFolds > 0)
             assertEquals(0, evidence.blockOwnedHighlighters)
             assertEquals(0, evidence.blockOwnedFolds)
             assertEquals(evidence.inlineOwnedHighlighters, evidence.ownedHighlighters)
             assertEquals(evidence.inlineOwnedFolds, evidence.ownedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testInactiveStrikethroughUsesNativeStrikeoutAndCaretRevealWithoutChangingSource() {
+        val source = "Before ~~obsolete~~ after\n\nTail\n"
+        myFixture.configureByText("strikethrough.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val projection = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
+            assertEquals(
+                listOf("~~", "~~"),
+                projection.syntaxRanges.map { range -> source.substring(range.startOffset, range.endOffset) },
+            )
+
+            fun hasStrikeoutHighlighter(): Boolean =
+                editor.markupModel.allHighlighters.any { highlighter ->
+                    highlighter.isValid &&
+                        highlighter.startOffset == projection.sourceRange.startOffset &&
+                        highlighter.endOffset == projection.sourceRange.endOffset &&
+                        highlighter.getTextAttributes(editor.colorsScheme)?.effectType == EffectType.STRIKEOUT
+                }
+
+            assertTrue("inactive strikethrough must use a native strikeout text effect", hasStrikeoutHighlighter())
+            projection.syntaxRanges.forEach { range ->
+                val fold = requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset))
+                assertFalse("inactive strikethrough delimiter must be concealed", fold.isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("obsolete") + 2)
+            projection.syntaxRanges.forEach { range ->
+                val fold = requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset))
+                assertTrue("active strikethrough must reveal exact delimiters", fold.isExpanded)
+            }
+            assertFalse("active strikethrough must remove the inactive strikeout presentation", hasStrikeoutHighlighter())
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertTrue("moving away must restore native strikeout presentation", hasStrikeoutHighlighter())
+            projection.syntaxRanges.forEach { range ->
+                assertFalse(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testStrikethroughSelectionRevealRestoresExactDelimitersWithoutChangingSource() {
+        val source = "Before ~~obsolete~~ after\n\nTail\n"
+        myFixture.configureByText("strikethrough-selection.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        val contentStart = source.indexOf("obsolete")
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val projection = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
+            projection.syntaxRanges.forEach { range ->
+                assertFalse(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+
+            editor.selectionModel.setSelection(contentStart, contentStart + "obsolete".length)
+            projection.syntaxRanges.forEach { range ->
+                assertTrue("selection intersecting strikethrough must reveal exact delimiters", requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.selectionModel.removeSelection()
+            editor.caretModel.moveToOffset(tailOffset)
+            projection.syntaxRanges.forEach { range ->
+                assertFalse(requireNotNull(editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)).isExpanded)
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testSingleTildeTextFailsClosedToExactSourceWithoutRichPresentation() {
+        val source = "Before ~legacy~ after\n\nTail\n"
+        myFixture.configureByText("strikethrough-single.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val openingTilde = source.indexOf("~")
+        val closingTilde = source.lastIndexOf("~")
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            assertTrue(plan.projections.none { it.kind == NativeProjectionKind.STRIKETHROUGH })
+            assertNull(editor.foldingModel.getFoldRegion(openingTilde, openingTilde + 1))
+            assertNull(editor.foldingModel.getFoldRegion(closingTilde, closingTilde + 1))
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
@@ -308,6 +432,31 @@ Tail
             assertEquals(0, evidence.headingInlays)
             assertEquals(0, evidence.headingFolds)
             assertEquals(0, evidence.headingFullyConcealed)
+            assertEquals(0, evidence.inlineOwnedHighlighters)
+            assertEquals(0, evidence.inlineOwnedFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testStrikethroughRichHeadingFailsClosedToExactSource() {
+        val source = "# Heading with ~~obsolete~~\n\nTail\n"
+        myFixture.configureByText("heading-strikethrough.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.headingModels)
+            assertEquals(0, evidence.headingInlays)
+            assertEquals(0, evidence.headingFolds)
             assertEquals(0, evidence.inlineOwnedHighlighters)
             assertEquals(0, evidence.inlineOwnedFolds)
             assertEquals(source, editor.document.text)
@@ -535,6 +684,7 @@ Tail
     fun testInlineRichAndMultilineBlockQuotesFailClosedToExactSource() {
         val sources = listOf(
             "> quote with *emphasis*\n\nTail\n",
+            "> quote with ~~strikethrough~~\n\nTail\n",
             "> first line\n> second line\n\nTail\n",
             "> outer\n>> nested\n\nTail\n",
             "> # nested heading\n\nTail\n",

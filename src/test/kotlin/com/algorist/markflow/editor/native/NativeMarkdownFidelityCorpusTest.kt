@@ -137,6 +137,10 @@ class NativeMarkdownFidelityCorpusTest : BasePlatformTestCase() {
                 ),
             ),
             FixtureExpectation(
+                "strikethrough",
+                setOf(NativeProjectionKind.STRIKETHROUGH),
+            ),
+            FixtureExpectation(
                 "code-forms-and-fences",
                 setOf(NativeProjectionKind.CODE_FENCE, NativeProjectionKind.CODE_BLOCK),
             ),

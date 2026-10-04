@@ -45,6 +45,7 @@ internal object NativeBlockQuoteProjectionPlanner {
         NativeProjectionKind.HEADING,
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
+        NativeProjectionKind.STRIKETHROUGH,
         NativeProjectionKind.LINK,
         NativeProjectionKind.UNORDERED_LIST,
         NativeProjectionKind.ORDERED_LIST,

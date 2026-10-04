@@ -73,6 +73,7 @@ internal object NativeListProjectionPlanner {
         NativeProjectionKind.HEADING,
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
+        NativeProjectionKind.STRIKETHROUGH,
         NativeProjectionKind.LINK,
         NativeProjectionKind.BLOCK_QUOTE,
         NativeProjectionKind.INLINE_CODE,

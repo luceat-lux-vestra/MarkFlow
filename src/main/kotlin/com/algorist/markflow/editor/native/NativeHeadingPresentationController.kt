@@ -42,13 +42,14 @@ internal data class NativeHeadingPresentationEvidence(
  * Converts only parser-proven simple headings into native rich presentation.
  *
  * Headings containing nested inline Markdown remain exact source in this slice. That fail-closed
- * boundary avoids rendering raw emphasis/link/code delimiters as heading text before a retained
+ * boundary avoids rendering raw emphasis/strikethrough/link/code delimiters as heading text before a retained
  * inline-rich heading renderer exists.
  */
 internal object NativeHeadingProjectionPlanner {
     private val nestedInlineKinds = setOf(
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
+        NativeProjectionKind.STRIKETHROUGH,
         NativeProjectionKind.LINK,
         NativeProjectionKind.INLINE_CODE,
     )

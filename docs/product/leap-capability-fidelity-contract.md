@@ -98,7 +98,7 @@ unchanged. This includes, when outside that region:
 - whitespace and blank-line spacing;
 - unordered bullet markers and ordered-list delimiters;
 - heading style and closing ATX markers;
-- emphasis and strong delimiter choice;
+- emphasis, strong, and GFM strikethrough delimiter choice;
 - fence marker, fence length, and indented/fenced code form;
 - thematic-break style;
 - inline/reference link and reference-definition style;
@@ -119,7 +119,7 @@ product support claim.
 
 | Capability | Product contract | Fidelity / failure behavior |
 | --- | --- | --- |
-| Ordinary paragraphs, headings, emphasis/strong, links, images, lists, block quotes, code, fenced code, and thematic breaks | Supported within the maintained engine/evidence envelope | Preserve unrelated lexical source during local edits; no-edit paths are byte-stable. |
+| Ordinary paragraphs, headings, emphasis/strong/strikethrough, links, images, lists, block quotes, code, fenced code, and thematic breaks | Supported within the maintained engine/evidence envelope | Preserve unrelated lexical source during local edits; no-edit paths are byte-stable. |
 | Tables | Supported when the selected projection/editor implementation and maintained evidence cover them | Otherwise classify as degraded or unsupported; do not silently normalize. |
 | Mermaid fenced code | **Supported as derived preview** | Mermaid source remains authoritative Markdown fenced-code source. A rendering error preserves source and degrades to a diagnosable source/editor representation. Mermaid support survives editor/runtime migration. |
 | Inline and display math with KaTeX-compatible semantics | **Supported as derived preview** | Math source remains authoritative. A renderer error preserves source and degrades visibly/diagnosably. KaTeX-compatible support survives editor/runtime migration. |

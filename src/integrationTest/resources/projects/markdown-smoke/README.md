@@ -6,6 +6,7 @@ This document is opened by the Starter/Driver integration-test bootstrap.
 - the fixture is deterministic and repository-owned
 
 Caret reveal target: *emphasis*.
+Strikethrough reveal target: ~~obsolete~~.
 Formatting action target: formatme.
 Split editor target: split-sync.
 

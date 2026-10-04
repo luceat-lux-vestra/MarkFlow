@@ -7,6 +7,7 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
@@ -151,6 +152,7 @@ internal object NativeMarkdownParityProbe {
                         NativeProjectionKind.HEADING,
                         NativeProjectionKind.EMPHASIS,
                         NativeProjectionKind.STRONG,
+                        NativeProjectionKind.STRIKETHROUGH,
                         NativeProjectionKind.LINK,
                         NativeProjectionKind.UNORDERED_LIST,
                         NativeProjectionKind.ORDERED_LIST,
@@ -229,6 +231,20 @@ internal object NativeMarkdownParityProbe {
                                 "folds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
                         }
 
+                        val strikethrough = requireNotNull(controller.currentPlan)
+                            .projections
+                            .single { it.kind == NativeProjectionKind.STRIKETHROUGH }
+                        check(strikethrough.syntaxRanges.size == 2)
+                        check(strikethrough.syntaxRanges.all { range ->
+                            fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)?.isExpanded == false
+                        }) { "strikethrough delimiters were not concealed in the real IDE" }
+                        check(fixture.editor.markupModel.allHighlighters.any { highlighter ->
+                            highlighter.isValid &&
+                                highlighter.startOffset == strikethrough.sourceRange.startOffset &&
+                                highlighter.endOffset == strikethrough.sourceRange.endOffset &&
+                                highlighter.getTextAttributes(fixture.editor.colorsScheme)?.effectType == EffectType.STRIKEOUT
+                        }) { "strikethrough projection did not install a native strikeout effect" }
+
                         val link = requireNotNull(controller.currentPlan)
                             .projections
                             .single { it.kind == NativeProjectionKind.LINK }
@@ -246,7 +262,7 @@ internal object NativeMarkdownParityProbe {
                         }
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true linkConceal=true boundaryReveal=true sourceStable=true"
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true strikethroughEffect=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
                         Disposer.dispose(controller)
                     }
@@ -475,7 +491,7 @@ internal object NativeMarkdownParityProbe {
             val path = root.resolve("parity.md")
             val source = """# Heading
 
-Paragraph with *emphasis*, **strong**, `code`, and [link](https://example.invalid/).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).
 
 > quote
 
@@ -594,6 +610,7 @@ After table
     private val FIDELITY_FIXTURES = listOf(
         "mixed-list-markers",
         "headings-and-delimiters",
+        "strikethrough",
         "code-forms-and-fences",
         "thematic-break-variants",
         "links-and-references",
