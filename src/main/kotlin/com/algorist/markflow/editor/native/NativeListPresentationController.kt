@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
@@ -13,10 +14,18 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
 import kotlin.math.max
+
+internal data class NativeTaskMarker(
+    val markerRange: ProjectionRange,
+    val stateRange: ProjectionRange,
+    val checked: Boolean,
+    val sourceState: Char,
+)
 
 internal data class NativeListRow(
     val markerRange: ProjectionRange,
@@ -24,6 +33,7 @@ internal data class NativeListRow(
     val depth: Int,
     val marker: String,
     val text: String,
+    val task: NativeTaskMarker? = null,
 )
 
 internal data class NativeListModel(
@@ -40,15 +50,19 @@ internal data class NativeListPresentationEvidence(
     val maxDepth: Int,
     val depths: List<Int>,
     val markers: List<String>,
+    val taskRows: Int,
+    val checkedTasks: Int,
     val accessibilityFallbacks: Long,
     val mouseReveals: Long,
+    val taskToggles: Long,
 )
 
 /**
  * Conservative parser-bounded list model for corrective #318.
  *
- * Supported lists contain only single-line plain-text unordered/ordered items plus nested lists.
- * Task-list markers, multiline continuations and inline/block-rich item content remain exact source.
+ * Supported ordinary lists contain single-line plain-text unordered/ordered items plus nested lists.
+ * A dedicated conservative task-list slice accepts only flat, all-task, single-line plain-text rows.
+ * Mixed ordinary/task rows, nested tasks, multiline continuations and inline/block-rich content fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
@@ -69,8 +83,6 @@ internal object NativeListProjectionPlanner {
         NativeProjectionKind.TABLE_HEADER,
         NativeProjectionKind.TABLE_ROW,
     )
-    private val taskMarker = Regex("""^\[[ xX]](?:\s|$)""")
-
     fun plan(plan: NativeProjectionPlan): List<NativeListModel> {
         if (plan.status != ProjectionPlanStatus.READY) return emptyList()
         val source = plan.identity.source
@@ -101,6 +113,9 @@ internal object NativeListProjectionPlanner {
             if (concrete.zipWithNext().any { (left, right) -> right.depth > left.depth + 1 }) {
                 return@mapNotNull null
             }
+            val taskRows = concrete.count { it.task != null }
+            if (taskRows > 0 && taskRows != concrete.size) return@mapNotNull null
+            if (taskRows > 0 && concrete.any { it.depth != 0 }) return@mapNotNull null
 
             NativeListModel(list.sourceRange, concrete)
         }
@@ -139,8 +154,14 @@ internal object NativeListProjectionPlanner {
         while (end > start && (source[end - 1] == ' ' || source[end - 1] == '\t')) end -= 1
         if (end <= start) return null
 
+        val task = taskMarkerFor(source, start, end)
+        if (task != null) {
+            start = task.markerRange.endOffset
+            while (start < end && (source[start] == ' ' || source[start] == '\t')) start += 1
+            if (start >= end) return null
+        }
         val text = source.substring(start, end)
-        if (taskMarker.containsMatchIn(text) || text.any(::isPresentationSensitiveInlineChar)) return null
+        if (text.any(::isPresentationSensitiveInlineChar)) return null
 
         val nestedLists = lists.filter { nested ->
             nested.sourceRange.startOffset >= item.sourceRange.startOffset &&
@@ -162,6 +183,21 @@ internal object NativeListProjectionPlanner {
             depth = depth,
             marker = source.substring(marker.startOffset, marker.endOffset),
             text = text,
+            task = task,
+        )
+    }
+
+    private fun taskMarkerFor(source: String, start: Int, end: Int): NativeTaskMarker? {
+        if (end - start < 4) return null
+        if (source[start] != '[' || source[start + 2] != ']') return null
+        val state = source[start + 1]
+        if (state != ' ' && state != 'x' && state != 'X') return null
+        if (source[start + 3] != ' ' && source[start + 3] != '\t') return null
+        return NativeTaskMarker(
+            markerRange = ProjectionRange(start, start + 3),
+            stateRange = ProjectionRange(start + 1, start + 2),
+            checked = state == 'x' || state == 'X',
+            sourceState = state,
         )
     }
 
@@ -212,6 +248,7 @@ internal class NativeListPresentationController(
     private val owned = LinkedHashMap<ListKey, OwnedListPresentation>()
     private var accessibilityFallbacks = 0L
     private var mouseReveals = 0L
+    private var taskToggles = 0L
     private var disposed = false
 
     private val mouseListener = object : EditorMouseListener {
@@ -272,8 +309,11 @@ internal class NativeListPresentationController(
             maxDepth = rows.maxOfOrNull(NativeListRow::depth) ?: 0,
             depths = rows.map(NativeListRow::depth),
             markers = rows.map(NativeListRow::marker),
+            taskRows = rows.count { it.task != null },
+            checkedTasks = rows.count { it.task?.checked == true },
             accessibilityFallbacks = accessibilityFallbacks,
             mouseReveals = mouseReveals,
+            taskToggles = taskToggles,
         )
     }
 
@@ -286,9 +326,61 @@ internal class NativeListPresentationController(
         val presentation = owned[key] ?: return false
         if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
 
+        val bounds = presentation.inlay.bounds
+        val taskRow = bounds?.let { renderer.taskRowAt(event.mouseEvent.point, it) }
+        if (taskRow != null) {
+            if (toggleTask(key, renderer.row(taskRow))) {
+                event.consume()
+                return true
+            }
+            return revealSource(key, renderer, taskRow, event)
+        }
+        val rowIndex = bounds?.let { renderer.rowAt(event.mouseEvent.point, it) } ?: 0
+        return revealSource(key, renderer, rowIndex, event)
+    }
+
+    private fun toggleTask(key: ListKey, row: NativeListRow): Boolean {
+        val task = row.task ?: return false
+        val identity = currentPlanIdentity ?: return false
+        if (!isCurrent(identity) || !editor.document.isWritable) return false
+        val project = editor.project ?: return false
+        val stateRange = task.stateRange
+        val document = editor.document
+        if (!stateRange.isInside(document.immutableCharSequence.toString())) return false
+        if (document.getRangeGuard(stateRange.startOffset, stateRange.endOffset) != null) return false
+        val current = document.immutableCharSequence[stateRange.startOffset]
+        if (current != task.sourceState) return false
+
+        val sourceBefore = document.immutableCharSequence.toString()
+        val replacement = if (task.checked) " " else "x"
+        val expected = sourceBefore.replaceRange(stateRange.startOffset, stateRange.endOffset, replacement)
+
+        removeOwned(key)
+        WriteCommandAction.writeCommandAction(project)
+            .withName(TASK_TOGGLE_COMMAND)
+            .run<RuntimeException> {
+                check(currentPlanIdentity == identity) { "task-list presentation identity changed before toggle" }
+                check(document.immutableCharSequence.toString() == sourceBefore) {
+                    "authoritative Markdown changed before task toggle command"
+                }
+                document.replaceString(stateRange.startOffset, stateRange.endOffset, replacement)
+            }
+        check(document.immutableCharSequence.toString() == expected) {
+            "task toggle changed more than the parser/source-bounded state character"
+        }
+        taskToggles += 1
+        return true
+    }
+
+    private fun revealSource(
+        key: ListKey,
+        renderer: NativeListInlayRenderer,
+        rowIndex: Int,
+        event: EditorMouseEvent,
+    ): Boolean {
         removeOwned(key)
         editor.selectionModel.removeSelection()
-        editor.caretModel.primaryCaret.moveToOffset(renderer.firstContentOffset)
+        editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset(rowIndex))
         mouseReveals += 1
         event.consume()
         return true
@@ -472,6 +564,7 @@ internal class NativeListPresentationController(
 
     companion object {
         private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
+        private const val TASK_TOGGLE_COMMAND = "MarkFlow Toggle Task"
     }
 }
 
@@ -483,6 +576,35 @@ internal class NativeListInlayRenderer(
         get() = model.sourceRange
     val firstContentOffset: Int
         get() = model.rows.first().contentRange.startOffset
+    val taskRowCount: Int
+        get() = model.rows.count { it.task != null }
+    val checkedTaskCount: Int
+        get() = model.rows.count { it.task?.checked == true }
+
+    fun row(index: Int): NativeListRow = model.rows[index]
+
+    fun contentOffset(index: Int): Int =
+        model.rows.getOrNull(index)?.contentRange?.startOffset ?: firstContentOffset
+
+    fun rowAt(point: Point, bounds: Rectangle): Int? {
+        if (!bounds.contains(point)) return null
+        val relative = point.y - bounds.y - VERTICAL_PADDING
+        if (relative < 0) return null
+        return (relative / rowHeight()).takeIf { it in model.rows.indices }
+    }
+
+    fun taskRowAt(point: Point, bounds: Rectangle): Int? {
+        val index = rowAt(point, bounds) ?: return null
+        if (model.rows[index].task == null) return null
+        return index.takeIf { checkboxBounds(index, bounds).contains(point) }
+    }
+
+    fun firstTaskCheckboxCenter(bounds: Rectangle): Point? {
+        val index = model.rows.indexOfFirst { it.task != null }
+        if (index < 0) return null
+        val box = checkboxBounds(index, bounds)
+        return Point(box.x + box.width / 2, box.y + box.height / 2)
+    }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
@@ -508,12 +630,38 @@ internal class NativeListInlayRenderer(
             val baseline = y + max(metrics.ascent + 2, (rowHeight() + metrics.ascent - metrics.descent) / 2)
             val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
             val markerX = targetRegion.x + indent
-            g2.font = bold
-            g2.drawString(row.marker, markerX, baseline)
-            val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
-            g2.font = font
-            g2.drawString(row.text, markerX + markerWidth + MARKER_GAP, baseline)
+            val task = row.task
+            if (task != null) {
+                val checkbox = checkboxBounds(index, targetRegion)
+                g2.drawRect(checkbox.x, checkbox.y, checkbox.width, checkbox.height)
+                if (task.checked) {
+                    val left = checkbox.x + 3
+                    val middleX = checkbox.x + checkbox.width / 2 - 1
+                    val middleY = checkbox.y + checkbox.height - 4
+                    val right = checkbox.x + checkbox.width - 2
+                    val top = checkbox.y + 3
+                    g2.drawLine(left, checkbox.y + checkbox.height / 2, middleX, middleY)
+                    g2.drawLine(middleX, middleY, right, top)
+                }
+                g2.font = font
+                g2.drawString(row.text, checkbox.x + checkbox.width + MARKER_GAP, baseline)
+            } else {
+                g2.font = bold
+                g2.drawString(row.marker, markerX, baseline)
+                val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
+                g2.font = font
+                g2.drawString(row.text, markerX + markerWidth + MARKER_GAP, baseline)
+            }
         }
+    }
+
+    private fun checkboxBounds(index: Int, bounds: Rectangle): Rectangle {
+        val row = model.rows[index]
+        val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+        val size = CHECKBOX_SIZE
+        val rowTop = bounds.y + VERTICAL_PADDING + index * rowHeight()
+        val y = rowTop + max(0, (rowHeight() - size) / 2)
+        return Rectangle(bounds.x + indent, y, size, size)
     }
 
     private fun rowHeight(): Int {
@@ -528,6 +676,7 @@ internal class NativeListInlayRenderer(
         private const val ROW_VERTICAL_PADDING = 2
         private const val DEPTH_INDENT = 24
         private const val MARKER_GAP = 8
+        private const val CHECKBOX_SIZE = 13
     }
 }
 
