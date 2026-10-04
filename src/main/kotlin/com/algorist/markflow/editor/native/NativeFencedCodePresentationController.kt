@@ -234,20 +234,6 @@ internal class NativeFencedCodePresentationController(
             foldRanges.forEach { range ->
                 if (!foldsInstalled) return@forEach
 
-                val collapsedForeignSyntaxFold = editor.foldingModel.allFoldRegions.firstOrNull { fold ->
-                    fold.isValid &&
-                        !fold.isExpanded &&
-                        fold.startOffset <= range.startOffset &&
-                        fold.endOffset >= range.endOffset &&
-                        model.syntaxRanges.any { syntax ->
-                            range.startOffset >= syntax.startOffset && range.endOffset <= syntax.endOffset
-                        }
-                }
-                if (collapsedForeignSyntaxFold != null) {
-                    coverageFolds += collapsedForeignSyntaxFold
-                    return@forEach
-                }
-
                 val blockingForeignFold = editor.foldingModel.allFoldRegions.any { fold ->
                     if (!fold.isValid || fold.startOffset >= range.endOffset || fold.endOffset <= range.startOffset) {
                         return@any false
