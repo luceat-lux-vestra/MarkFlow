@@ -69,7 +69,7 @@ internal object NativeListProjectionPlanner {
         NativeProjectionKind.TABLE_HEADER,
         NativeProjectionKind.TABLE_ROW,
     )
-    private val taskMarker = Regex("""^\[[ xX]\](?:\s|$)""")
+    private val taskMarker = Regex("""^\[[ xX]](?:\s|$)""")
 
     fun plan(plan: NativeProjectionPlan): List<NativeListModel> {
         if (plan.status != ProjectionPlanStatus.READY) return emptyList()
@@ -483,10 +483,6 @@ internal class NativeListInlayRenderer(
         get() = model.sourceRange
     val firstContentOffset: Int
         get() = model.rows.first().contentRange.startOffset
-    val rowDepths: List<Int>
-        get() = model.rows.map(NativeListRow::depth)
-    val rowMarkers: List<String>
-        get() = model.rows.map(NativeListRow::marker)
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
