@@ -1,6 +1,6 @@
 # Native Markdown projection foundation
 
-Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity, corrective #312 inline/block ownership, and #314 native heading presentation under ADR 0001
+Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity, corrective #312 inline/block ownership, #314 native heading presentation, and #316 native blockquote presentation under ADR 0001
 
 ## Decision
 
@@ -77,7 +77,7 @@ Link projection similarly uses parser-proven link text/label children. If a stab
 
 The corrective #312 split is an ownership boundary, not a claim that block WYSIWYG fidelity is complete. Inline emphasis/strong/link/inline-code remain lightweight syntax presentation. Heading/list/blockquote/fenced-code/thematic block presentation now has a distinct owner so later #309/#152 work can add block layout/inlay/component behavior without coupling it to inline syntax handling.
 
-#314 moves supported simple headings beyond marker concealment. Parser-derived heading projections now carry H1-H6 level plus one visible content range. Inactive simple ATX/Setext headings are represented by a native block inlay with a bold, theme-aware typography hierarchy while owned source-neutral folds conceal the unchanged heading source. Caret/selection activity removes that rich presentation and reveals the exact original heading bytes. Headings containing nested emphasis/strong/link/inline-code remain exact source in this slice rather than rendering raw inline delimiters inside a heading approximation.
+#314 moves supported simple headings beyond marker concealment. Parser-derived heading projections now carry H1-H6 level plus one visible content range. Inactive simple ATX/Setext headings are represented by a native block inlay with a bold, theme-aware typography hierarchy while owned source-neutral folds conceal the unchanged heading source. Caret/selection activity removes that rich presentation and reveals the exact original heading bytes. Headings containing nested emphasis/strong/link/inline-code remain exact source in this slice rather than rendering raw inline delimiters inside a heading approximation.\n\n#316 similarly moves the conservative simple-blockquote slice beyond marker concealment. Only a parser-proven single-level, single-line plain-text quote is promoted to a native quote-block inlay with a theme-derived background, quote bar, indentation and padding. Its exact source remains authoritative and is source-neutrally concealed only while inactive. Caret/selection or a direct inlay click reveals the original Markdown. Multiline, nested or inline-rich quotes remain exact source in this slice.
 
 Inactive supported constructs may use public editor highlighters and folding to conceal parser-proven syntax while leaving the authoritative source unchanged. The behavior preserved through #312 includes:
 
@@ -137,7 +137,7 @@ These are lexical-fidelity constraints, not merely visual-equivalence claims.
 
 - the actual #78 ordinary fidelity corpus files mapped through the runtime parser/projection path with exact source identity;
 - #312 inline-only and block-only ownership isolation plus aggregate-evidence consistency, while preserving the existing marker/link/source-reveal behavior;
-- #314 H1-H6/Setext level projection, native inactive heading inlay/fold ownership, exact-source reveal, accessibility fallback and unsupported-complex-heading source fallback;
+- #314 H1-H6/Setext level projection, native inactive heading inlay/fold ownership, exact-source reveal, accessibility fallback and unsupported-complex-heading source fallback;\n- #316 simple blockquote native inlay/fold ownership, split-editor ownership, active exact-source reveal, accessibility fallback and nested/multiline/inline-rich source fallback;
 - the expanded ordinary projection kinds and parser ranges;
 - source-neutral list/quote/link/thematic ordinary presentation plus boundary reveal;
 - exact-source accessibility fallback;

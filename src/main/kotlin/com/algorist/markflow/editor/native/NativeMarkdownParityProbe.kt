@@ -207,8 +207,17 @@ internal object NativeMarkdownParityProbe {
                             .filter { it.isValid && !it.isExpanded }
                             .map { it.placeholderText }
                         check("•" in placeholders) { "unordered list marker was not projected" }
-                        check("│" in placeholders) { "blockquote marker was not projected" }
                         check("────────" in placeholders) { "thematic break was not projected" }
+                        check(
+                            evidence.blockQuoteModels == 1 &&
+                                evidence.blockQuoteInlays == 1 &&
+                                evidence.blockQuoteFolds == 2 &&
+                                evidence.blockQuoteFullyConcealed == 1
+                        ) {
+                            "simple blockquote did not install native quote-block presentation: " +
+                                "models=${evidence.blockQuoteModels} inlays=${evidence.blockQuoteInlays} " +
+                                "folds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
+                        }
 
                         val link = requireNotNull(controller.currentPlan)
                             .projections
@@ -227,7 +236,7 @@ internal object NativeMarkdownParityProbe {
                         }
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} markers=true linkConceal=true boundaryReveal=true sourceStable=true"
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} markers=true quoteBlock=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
                         Disposer.dispose(controller)
                     }

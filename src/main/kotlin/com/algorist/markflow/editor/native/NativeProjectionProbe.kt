@@ -179,12 +179,32 @@ val fenced = true
                             "models=${evidence.headingModels} inlays=${evidence.headingInlays} " +
                             "ownedFolds=${evidence.headingFolds} concealed=${evidence.headingFullyConcealed}"
                     }
+                    check(
+                        evidence.blockQuoteModels == 1 &&
+                            evidence.blockQuoteInlays == 1 &&
+                            evidence.blockQuoteFolds == 2 &&
+                            evidence.blockQuoteFullyConcealed == 1
+                    ) {
+                        "inactive blockquote did not install one fully concealed native quote block: " +
+                            "models=${evidence.blockQuoteModels} inlays=${evidence.blockQuoteInlays} " +
+                            "ownedFolds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
+                    }
+                    val secondEvidence = secondController.evidenceSnapshot()
+                    check(
+                        secondEvidence.blockQuoteModels == 1 &&
+                            secondEvidence.blockQuoteInlays == 1 &&
+                            secondEvidence.blockQuoteFullyConcealed == 1
+                    ) {
+                        "split editor did not own an independent native blockquote presentation"
+                    }
                     check(first.editor.document === second.editor.document)
                     "inlineHighlighters=${evidence.inlineOwnedHighlighters} inlineFolds=${evidence.inlineOwnedFolds} " +
                         "blockHighlighters=${evidence.blockOwnedHighlighters} blockFolds=${evidence.blockOwnedFolds} " +
                         "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
                         "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} " +
-                        "headingConcealed=${evidence.headingFullyConcealed} sharedDocument=true"
+                        "headingConcealed=${evidence.headingFullyConcealed} " +
+                        "quoteInlays=${evidence.blockQuoteInlays} quoteFolds=${evidence.blockQuoteFolds} " +
+                        "quoteConcealed=${evidence.blockQuoteFullyConcealed} splitQuote=true sharedDocument=true"
                 }
 
                 case("caret-and-selection-exact-source-reveal") {
@@ -228,6 +248,21 @@ val fenced = true
                     secondary.removeSelection()
                     check(first.editor.caretModel.removeCaret(secondary))
                     check(headingRichPresentationVisible(firstController))
+
+                    val quote = requireNotNull(firstController.currentPlan)
+                        .projections
+                        .single { projection -> projection.kind == NativeProjectionKind.BLOCK_QUOTE }
+                    first.editor.caretModel.moveToOffset(quote.sourceRange.startOffset + 2)
+                    check(!blockQuoteRichPresentationVisible(firstController)) {
+                        "active blockquote retained MarkFlow rich presentation"
+                    }
+                    check(exactSourceVisible(first.editor, quote.sourceRange)) {
+                        "active blockquote remained concealed by a collapsed fold"
+                    }
+                    first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    check(blockQuoteRichPresentationVisible(firstController)) {
+                        "inactive blockquote did not restore native rich presentation"
+                    }
 
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
@@ -448,6 +483,8 @@ Paragraph with *emphasis*, **strong**, and `code`.
 val value = 1
 ```
 
+> Runtime quote
+
 Plain body line for inactive caret state.
 """
                 Files.writeString(path, source, StandardCharsets.UTF_8)
@@ -539,6 +576,26 @@ Plain body line for inactive caret state.
                     fold.startOffset < range.endOffset &&
                     fold.endOffset > range.startOffset
             }
+        }
+
+        private fun blockQuoteRichPresentationVisible(
+            controller: NativePresentationController,
+        ): Boolean {
+            val evidence = controller.evidenceSnapshot()
+            return evidence.blockQuoteModels == 1 &&
+                evidence.blockQuoteInlays == 1 &&
+                evidence.blockQuoteFolds == 2 &&
+                evidence.blockQuoteFullyConcealed == 1
+        }
+
+        private fun exactSourceVisible(
+            editor: Editor,
+            range: ProjectionRange,
+        ): Boolean = editor.foldingModel.allFoldRegions.none { fold ->
+            fold.isValid &&
+                !fold.isExpanded &&
+                fold.startOffset < range.endOffset &&
+                fold.endOffset > range.startOffset
         }
 
         private fun validateProjectionRanges(source: String, projection: NativeProjection) {
