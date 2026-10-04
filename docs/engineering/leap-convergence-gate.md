@@ -6,16 +6,17 @@ This document was established as the repository-visible quality contract for #15
 
 MarkFlow's public compatibility floor remains build 262 / IntelliJ IDEA 2026.2+.
 
-The maintained runtime matrix established by #156 is pinned rather than floating:
+The authoritative **full-product real-user acceptance runtime is IntelliJ IDEA 2026.2.3**. The Starter/Driver release-blocking path does not require an unreleased EAP IDE. Compatibility with later platform builds remains a separate concern: Plugin Verifier may keep pinned forward targets, and a deliberately scoped EAP smoke probe may be added as informational evidence, but neither substitutes for or expands the full-product acceptance authority.
 
-| Role | IntelliJ target | Required runtime evidence |
-| --- | --- | --- |
-| stable baseline | 2026.2.3 | Starter/Driver acceptance, repeated twice in one job; native editing with JCEF plugin absent; retained isolated JCEF renderer |
-| forward compatibility | 2026.3 EAP2 build 263.4732.28 | Starter/Driver acceptance; native editing with JCEF plugin absent; retained isolated JCEF renderer |
+The Starter/Driver workflow packages the exact candidate plugin once from the exact source SHA, records its archive name and SHA-256, and then runs parallel 2026.2.3 scenario shards against that same immutable ZIP. Shards are forbidden from rebuilding the packaged candidate. The maintained shard set is:
 
-Plugin Verifier remains an additional binary/API compatibility layer. A verifier PASS does not replace launched-IDE evidence.
+- `canonical` — one coherent production whole-product journey;
+- `core-editing` — exact-source editing, reveal, paste, Undo/Redo, save/reopen;
+- `ordinary-markdown` — table and task-list interaction;
+- `derived-content` — host resources, Mermaid/KaTeX, and raw-HTML production wiring;
+- `lifecycle` — split-editor and degraded/source-fallback behavior.
 
-The EAP target is a forward-compatibility probe, not a promise that unreleased IDE behavior is stable. Updating either pinned runtime target is a reviewed maintenance change because it changes the evidence environment.
+Plugin Verifier remains an independent binary/API compatibility layer. A verifier PASS does not replace launched-IDE evidence, and an EAP verifier target does not make that EAP build a release-blocking full-product runtime.
 
 ## Layered product proof
 
@@ -31,7 +32,9 @@ Required user-path coverage remains:
 - split-editor behavior where the Driver path is stable;
 - renderer-unavailable degraded editing.
 
-The stable Starter/Driver matrix entry executes the complete suite twice in independent Gradle test executions. A second pass is not a retry: the first pass must succeed, and both runs are retained as evidence. This is the state-leak/repeatability proof.
+For ordinary product PRs, each required stable shard and the canonical journey execute once on fresh CI runners against the shared exact plugin ZIP. The canonical journey itself traverses production native opening/presentation, source reveal, source-local editing and Markdown-aware paste, Undo/Redo, table and task interaction, host resource/navigation discovery, Mermaid/KaTeX rendering, raw-HTML presentation, save, close, reopen, and exact persisted bytes.
+
+For the final #309 convergence/release-candidate gate, an explicit workflow-dispatch control runs the canonical journey a second time in a **separate fresh job/IDE process** against the same exact packaged artifact. That second run is repeatability evidence, never a flaky retry: the first canonical run must already be PASS, and a failed repeat remains deterministic FAIL until classified and fixed.
 
 ## Quantitative regression tripwires
 
@@ -80,8 +83,8 @@ Current renderer code splitting may be changed only when measurement shows a use
 The #156 closure proved this gate for the initial native convergence. Future changes or releases that touch this envelope must continue to require:
 
 1. exact-final-HEAD Build/Test/Qodana/Plugin Verifier and all native/renderer/Starter evidence workflows pass;
-2. both maintained runtime matrix entries pass without rerun-based reclassification;
-3. no-JCEF editing and retained-JCEF rendering pass on both entries;
+2. the IDEA 2026.2.3 package-once Starter gate passes every maintained shard plus the canonical whole-product journey on one recorded plugin digest;
+3. final #309/release-candidate evidence includes the independent fresh-process canonical repeat; no-JCEF editing and retained-JCEF rendering remain separately evidenced within their maintained scope;
 4. quantitative tripwires pass and their evidence artifacts/logs are reviewable;
 5. legacy Robot/editor/protocol residue searches are clean and the #141 inventory has zero unresolved `TEMPORARY` production rows;
 6. released settings migration tests remain green and removed keys are not serialized again;
