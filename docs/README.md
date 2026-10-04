@@ -21,6 +21,7 @@ The Architecture Leap (#52/#84/#156) and the repository/release hardening tracks
 ## Engineering
 
 - `engineering/development-process.md` — definition of ready/done, PR and review workflow
+- `engineering/agent-recovery.md` — crash-recoverable agent checkpoint and reconciliation protocol
 - `engineering/testing-strategy.md` — risk-based test/evidence expectations
 - `engineering/leap-convergence-gate.md` — the convergence evidence contract established for #156 and retained as a regression/release guard
 - `engineering/hardening-audit.md` — repository hardening/readback contract
