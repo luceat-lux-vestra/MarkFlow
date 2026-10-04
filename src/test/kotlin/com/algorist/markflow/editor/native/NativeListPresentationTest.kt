@@ -80,6 +80,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
     fun testUnsupportedMixedNestedMultilineAndInlineRichListsFailClosedToExactSource() {
         val sources = listOf(
             "- [ ] task\n- ordinary\n\nTail\n",
+            "1. [ ] ordered task\n\nTail\n",
             "- [ ] parent\n  - [ ] nested\n\nTail\n",
             "- first line\n  continuation\n\nTail\n",
             "- item with *emphasis*\n\nTail\n",
