@@ -113,6 +113,21 @@ internal object NativeProjectionE2EBridge {
         return first.document === second.document
     }
 
+    fun listOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listInlays
+    }
+
+    fun listOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listFolds
+    }
+
+    fun listFullyConcealed(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listFullyConcealed
+    }
+
     fun listTaskRows(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).evidenceSnapshot().taskRows
