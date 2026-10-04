@@ -454,4 +454,183 @@ Tail
         assertEquals(1.0f, scales.last())
     }
 
+
+    fun testInactiveSimpleBlockQuoteUsesNativeQuoteBlockWithoutChangingSource() {
+        val source = "> quoted text\n\nTail\n"
+        myFixture.configureByText("blockquote.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(2, evidence.blockQuoteFolds)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
+
+            val renderer = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { it.renderer as? NativeBlockQuoteInlayRenderer }
+                .single()
+            assertEquals("quoted text", renderer.displayText)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testActiveBlockQuoteRevealsExactSourceAndRestoresInactivePresentation() {
+        val source = "> quoted text\n\nTail\n"
+        myFixture.configureByText("blockquote-reveal.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+
+            editor.caretModel.moveToOffset(source.indexOf("quoted") + 2)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteFolds)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(2, controller.evidenceSnapshot().blockQuoteFolds)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testInlineRichAndMultilineBlockQuotesFailClosedToExactSource() {
+        val sources = listOf(
+            "> quote with *emphasis*\n\nTail\n",
+            "> first line\n> second line\n\nTail\n",
+            "> outer\n>> nested\n\nTail\n",
+        )
+
+        sources.forEachIndexed { index, source ->
+            myFixture.configureByText("blockquote-fallback-$index.md", source)
+            val editor = myFixture.editor
+            editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+            val stampBefore = editor.document.modificationStamp
+
+            val controller = NativePresentationController(
+                editor = editor,
+                richPresentationEnabled = { true },
+            )
+            try {
+                val evidence = controller.evidenceSnapshot()
+                assertEquals(0, evidence.blockQuoteModels)
+                assertEquals(0, evidence.blockQuoteInlays)
+                assertEquals(0, evidence.blockQuoteFolds)
+                assertEquals(0, evidence.blockQuoteFullyConcealed)
+                assertEquals(
+                    "unsupported blockquote must not retain inline presentation inside exact-source fallback",
+                    0,
+                    evidence.inlineOwnedHighlighters,
+                )
+                assertEquals(source, editor.document.text)
+                assertEquals(stampBefore, editor.document.modificationStamp)
+            } finally {
+                controller.dispose()
+            }
+        }
+    }
+
+    fun testBlockQuoteInlayLeftClickRevealsSourceAndMovesCaretToContent() {
+        val source = "> quoted text\n\nTail\n"
+        myFixture.configureByText("blockquote-click.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val quote = NativeBlockQuoteProjectionPlanner.plan(plan).single()
+        val controller = NativeBlockQuotePresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val inlay = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .single { it.renderer is NativeBlockQuoteInlayRenderer }
+            val click = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                0,
+                0,
+                1,
+                false,
+                MouseEvent.BUTTON1,
+            )
+            val inlayOffset = inlay.offset.coerceIn(0, editor.document.textLength)
+            val event = EditorMouseEvent(
+                editor,
+                click,
+                EditorMouseEventArea.EDITING_AREA,
+                inlayOffset,
+                editor.offsetToLogicalPosition(inlayOffset),
+                editor.offsetToVisualPosition(inlayOffset),
+                false,
+                null,
+                inlay,
+                null,
+            )
+
+            assertTrue(controller.handleMouseReveal(event))
+            val evidence = controller.evidenceSnapshot()
+            assertTrue(click.isConsumed)
+            assertEquals(1L, evidence.mouseReveals)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(quote.contentRange.startOffset, editor.caretModel.primaryCaret.offset)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testBlockQuoteAccessibilityDispositionKeepsExactSource() {
+        val source = "> quoted text\n\nTail\n"
+        myFixture.configureByText("blockquote-accessible.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { false },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(0, evidence.blockQuoteInlays)
+            assertEquals(0, evidence.blockQuoteFolds)
+            assertEquals(0, evidence.blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
 }
