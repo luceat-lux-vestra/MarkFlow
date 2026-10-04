@@ -272,22 +272,14 @@ Setext two
         }
     }
 
-    fun testSingleTildeGfmStrikethroughPreservesExactParserDelimiters() {
+    fun testSingleTildeRemainsExactSourceWithoutStrikethroughProjection() {
         val source = "Before ~single~ after\n"
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
         )
 
         assertEquals(ProjectionPlanStatus.READY, plan.status)
-        val strikethrough = plan.projections.single { it.kind == NativeProjectionKind.STRIKETHROUGH }
-        assertEquals(
-            "~single~",
-            source.substring(strikethrough.sourceRange.startOffset, strikethrough.sourceRange.endOffset),
-        )
-        assertEquals(
-            listOf("~", "~"),
-            strikethrough.syntaxRanges.map { range -> source.substring(range.startOffset, range.endOffset) },
-        )
+        assertTrue(plan.projections.none { it.kind == NativeProjectionKind.STRIKETHROUGH })
         assertEquals(source, plan.identity.source)
     }
 
