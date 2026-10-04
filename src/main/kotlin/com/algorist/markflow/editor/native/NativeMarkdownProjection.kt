@@ -278,8 +278,8 @@ internal object NativeMarkdownProjectionPlanner {
 
     /**
      * GFM strikethrough delimiters are parser-owned TILDE tokens. Coalesce only directly adjacent
-     * parser ranges within one parser-proven delimiter, so `~` and `~~` keep their exact source
-     * spelling without reconstructing or scanning Markdown syntax ourselves.
+     * parser ranges within one parser-proven delimiter so the exact parser-proven delimiter spelling
+     * is preserved without reconstructing or scanning Markdown syntax ourselves.
      */
     private fun coalesceAdjacentRanges(ranges: List<ProjectionRange>): List<ProjectionRange> {
         if (ranges.isEmpty()) return emptyList()
