@@ -128,6 +128,11 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).evidenceSnapshot().listFullyConcealed
     }
 
+    fun listMaxDepth(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).evidenceSnapshot().listMaxDepth
+    }
+
     fun listTaskRows(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).evidenceSnapshot().taskRows
