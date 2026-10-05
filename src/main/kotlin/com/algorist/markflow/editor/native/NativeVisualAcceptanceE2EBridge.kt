@@ -52,7 +52,10 @@ internal object NativeVisualAcceptanceE2EBridge {
         ) {
             "visual acceptance requires IntelliJ's bundled default editor scheme"
         }
-        colors.globalScheme = defaultScheme
+        // getGlobalScheme() is non-null while setGlobalScheme(...) accepts nullable, so Kotlin
+        // cannot expose this Java API as a mutable synthetic property despite the style inspection.
+        @Suppress("UsePropertyAccessSyntax")
+        colors.setGlobalScheme(defaultScheme)
 
         val project = requireNotNull(editor.project) {
             "visual acceptance editor must belong to a project"
