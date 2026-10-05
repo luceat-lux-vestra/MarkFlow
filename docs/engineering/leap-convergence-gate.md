@@ -36,7 +36,7 @@ For ordinary product PRs, each required stable shard and the canonical journey e
 
 ## Deterministic visual acceptance
 
-#339 adds a third product-proof layer without weakening the source/fidelity or semantic/runtime oracles. The visual job consumes the same exact packaged plugin artifact as Starter/Driver, launches **IntelliJ IDEA 2026.2.3 only**, and captures only the native editor content surface under a pinned `ubuntu-24.04` / Xvfb `1920x1080x24` / 96-DPI / 1x-scale envelope.
+#339 adds a third product-proof layer without weakening the source/fidelity or semantic/runtime oracles. The visual job consumes the same exact packaged plugin artifact as Starter/Driver, launches **IntelliJ IDEA 2026.2.3 only**, and captures a fixed `1200x760` crop from the native editor viewport inside a `1400x1000` IDE window under a pinned `ubuntu-24.04` / Xvfb `1920x1080x24` / 96-DPI / 1x-scale envelope.
 
 The representative visual corpus is split into bounded documents for typography, structural Markdown, code presentation, derived Mermaid/KaTeX content, and host-resource/raw-HTML presentation. MarkFlow-controlled appearance is fixed before capture. The observed IntelliJ LAF, editor scheme/font, screen/viewport geometry, and scale become an exact versioned environment identity; environment drift fails before a new baseline may be accepted.
 
