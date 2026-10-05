@@ -166,8 +166,8 @@ class MarkFlowStarterVisualAcceptanceTest {
                             height = visual.contentHeight(editor.editor),
                         )
                     }
-                    check(bounds.width >= CAPTURE_WIDTH && bounds.height >= CAPTURE_HEIGHT) {
-                        "visual editor viewport is smaller than the fixed $CAPTURE_WIDTH x $CAPTURE_HEIGHT crop: $bounds"
+                    check(bounds.width == CAPTURE_WIDTH && bounds.height == CAPTURE_HEIGHT) {
+                        "visual editor viewport drifted from the fixed $CAPTURE_WIDTH x $CAPTURE_HEIGHT capture: $bounds"
                     }
 
                     val image = Robot().createScreenCapture(
