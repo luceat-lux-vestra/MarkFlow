@@ -186,6 +186,11 @@ grep -Fq 'bounds.width == CAPTURE_WIDTH && bounds.height == CAPTURE_HEIGHT' "$vi
 grep -Fq 'setCurrentUIThemeLookAndFeel(lightTheme)' "$visual_bridge" || die "visual acceptance no longer pins the default Light UI theme"
 grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
 grep -Fq 'selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)' "$visual_bridge" || die "visual acceptance no longer forces editor-only Markdown layout"
+grep -Fq 'fun expireNotificationsForCapture(editor: Editor): Int' "$visual_bridge" || die "visual acceptance no longer normalizes IDE notification balloons before capture"
+grep -Fq 'getNotificationsOfType(Notification::class.java, project)' "$visual_bridge" || die "visual acceptance project notification normalization drifted"
+grep -Fq 'getNotificationsOfType(Notification::class.java, null)' "$visual_bridge" || die "visual acceptance application notification normalization drifted"
+grep -Fq 'visual.expireNotificationsForCapture(editor.editor)' "$visual_test" || die "visual capture no longer expires IDE notification balloons"
+grep -Fq 'robot.waitForIdle()' "$visual_test" || die "visual capture no longer waits for notification removal to repaint"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
   die "visual workflow must never auto-accept generated baselines"
 fi
