@@ -192,6 +192,10 @@ grep -Fq 'fun normalizeEditorChromeForCapture(editor: Editor): Int' "$visual_bri
 grep -Fq 'getNotificationsOfType(Notification::class.java, project)' "$visual_bridge" || die "visual acceptance project notification normalization drifted"
 grep -Fq 'getNotificationsOfType(Notification::class.java, null)' "$visual_bridge" || die "visual acceptance application notification normalization drifted"
 grep -Fq 'EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false' "$visual_bridge" || die "visual acceptance no longer disables the inspection widget"
+grep -Fq 'markupModel.setErrorStripeRenderer(null)' "$visual_bridge" || die "visual acceptance error-stripe renderer normalization drifted"
+grep -Fq 'markupModel.setErrorStripeVisible(false)' "$visual_bridge" || die "visual acceptance error-stripe visibility normalization drifted"
+grep -Fq '"error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe renderer state"
+grep -Fq '"error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe visibility"
 if grep -Fq 'setTrafficLightIconVisible' "$visual_bridge"; then
   die "visual acceptance must not depend on experimental traffic-light visibility APIs"
 fi
