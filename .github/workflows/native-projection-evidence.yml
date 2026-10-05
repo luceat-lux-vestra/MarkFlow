@@ -211,7 +211,8 @@ jobs:
               'ordinary-parser-table-boundary': ('allKinds=true', 'linkSyntax=true', 'halfOpenBoundary=true'),
               'ordinary-native-presentation-source-neutral': (
                   'listBlocks=true', 'quoteBlock=true', 'emphasisItalic=true', 'strongBold=true',
-                  'strikethroughEffect=true', 'linkHyperlink=true', 'linkConceal=true',
+                  'strikethroughEffect=true', 'inlineCodeSemantic=true', 'inlineCodeReveal=true',
+                  'indentedCodeBlock=true', 'linkHyperlink=true', 'linkConceal=true',
                   'boundaryReveal=true', 'sourceStable=true'
               ),
               'ordinary-accessibility-source-fallback': (
