@@ -1,6 +1,9 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.event.MouseEvent
 
 class NativeCodePresentationTest : BasePlatformTestCase() {
     fun testInlineCodeUsesDistinctNativeSemanticAndRevealsExactSource() {
@@ -137,6 +140,94 @@ class NativeCodePresentationTest : BasePlatformTestCase() {
                     },
                 )
             }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testCollapsedForeignIndentedCodeFoldFailsClosedWithoutChangingOwnership() {
+        val source = "    val value = 1\n\nTail\n"
+        myFixture.configureByText("indented-code-foreign-fold.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        var foreignFold: com.intellij.openapi.editor.FoldRegion? = null
+
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreignFold = editor.foldingModel.addFoldRegion(0, 4, "foreign")
+            requireNotNull(foreignFold).isExpanded = false
+        }
+        val foreign = requireNotNull(foreignFold)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val controller = NativeIndentedCodePresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertTrue(foreign.isValid)
+            assertFalse(foreign.isExpanded)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+
+        assertTrue(foreign.isValid)
+        assertFalse(foreign.isExpanded)
+    }
+
+    fun testIndentedCodeInlayClickRevealsExactSourceAndMovesCaretToContent() {
+        val source = "    val value = 1\n\nTail\n"
+        myFixture.configureByText("indented-code-click.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeIndentedCodeProjectionPlanner.plan(plan).single()
+        val controller = NativeIndentedCodePresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val inlay = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .single { it.renderer is NativeIndentedCodeInlayRenderer }
+            val click = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                0,
+                0,
+                1,
+                false,
+                MouseEvent.BUTTON1,
+            )
+            val inlayOffset = inlay.offset.coerceIn(0, editor.document.textLength)
+            val event = EditorMouseEvent(
+                editor,
+                click,
+                EditorMouseEventArea.EDITING_AREA,
+                inlayOffset,
+                editor.offsetToLogicalPosition(inlayOffset),
+                editor.offsetToVisualPosition(inlayOffset),
+                false,
+                null,
+                inlay,
+                null,
+            )
+
+            assertTrue(controller.handleMouseReveal(event))
+            val evidence = controller.evidenceSnapshot()
+            assertTrue(click.isConsumed)
+            assertEquals(1L, evidence.mouseReveals)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(model.contentOffset, editor.caretModel.primaryCaret.offset)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
