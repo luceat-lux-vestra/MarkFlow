@@ -25,7 +25,7 @@ import javax.swing.UIManager
  */
 @Suppress("unused")
 internal object NativeVisualAcceptanceE2EBridge {
-    private const val WINDOW_WIDTH = 1800
+    private const val WINDOW_WIDTH = 1900
     private const val WINDOW_HEIGHT = 1000
 
     fun prepare(editor: Editor): String {
