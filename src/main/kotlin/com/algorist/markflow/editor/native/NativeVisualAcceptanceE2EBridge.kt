@@ -33,6 +33,20 @@ internal object NativeVisualAcceptanceE2EBridge {
     private const val TARGET_VIEWPORT_WIDTH = 1200
     private const val TARGET_VIEWPORT_HEIGHT = 760
 
+    /**
+     * Pins editor-global chrome before a Markdown editor is created.
+     *
+     * EditorMarkupModel snapshots the inspection-widget setting during construction, so changing
+     * the setting only after opening the editor is too late to make the capture deterministic.
+     */
+    fun prepareEditorChromeBeforeOpen() {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
+        check(!EditorSettingsExternalizable.getInstance().isShowInspectionWidget) {
+            "visual acceptance failed to disable the inspection widget before editor creation"
+        }
+    }
+
     fun prepare(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
 
