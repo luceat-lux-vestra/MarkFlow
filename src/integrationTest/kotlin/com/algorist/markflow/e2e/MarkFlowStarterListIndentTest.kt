@@ -127,7 +127,12 @@ class MarkFlowStarterListIndentTest {
                     checker = { (source, depth) -> source == expectedIndentedSource && depth == 1 },
                 )
 
-                markFlow.clickText(editor, "Tail anchor")
+                // The actual product mutation above came from the real Tab action. Move the
+                // caret outside the list deterministically only to observe inactive presentation;
+                // Driver text hit-testing is not part of the list-indent contract and proved
+                // unstable across the maintained launched-IDE targets.
+                val tailOffset = markFlow.source(editor).indexOf("Tail anchor") + 2
+                markFlow.resetToSingleCaret(editor, tailOffset)
                 waitFor(
                     message = "indented source automatically refreshes to nested native list presentation",
                     timeout = 10.seconds,
