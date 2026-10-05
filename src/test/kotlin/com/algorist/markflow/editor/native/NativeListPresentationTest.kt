@@ -130,6 +130,10 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
 
             assertEquals(indented, editor.document.text)
+            // Recompute from the mutated authoritative source before asserting fallback. Both the
+            // pre-edit and post-edit fallback evidence are zero-valued, so stale evidence would
+            // otherwise let this regression pass without proving the indented rich list itself.
+            controller.refreshNow()
             assertEquals(0, controller.evidenceSnapshot().listModels)
             assertEquals(0, controller.evidenceSnapshot().listInlays)
             assertEquals(0, controller.evidenceSnapshot().listFolds)
