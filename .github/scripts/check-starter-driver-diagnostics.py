@@ -11,6 +11,7 @@ from pathlib import Path
 
 REQUIRED_SUITES = {
     "com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterListIndentTest",
     "com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest",
     "com.algorist.markflow.e2e.MarkFlowStarterSmokeTest",
     "com.algorist.markflow.e2e.MarkFlowStarterTableTest",
