@@ -129,9 +129,16 @@ starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
 python3 "$starter_diagnostics" --self-test >/dev/null || die "Starter/Driver diagnostics self-test failed"
 grep -Fq ".github/scripts/check-starter-driver-diagnostics.py" "$starter_workflow" || die "Starter workflow does not trigger on diagnostics-gate changes"
 grep -q 'check-starter-driver-diagnostics.py --self-test' "$starter_workflow" || die "Starter workflow does not execute diagnostics negative controls"
-grep -q -- '--root "$pass_dir"' "$starter_workflow" || die "Starter workflow does not validate each retained pass independently"
-grep -q -- '--output "$pass_dir/diagnostics.json"' "$starter_workflow" || die "Starter workflow does not persist structured diagnostics for each pass"
-grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow does not upload pass-scoped diagnostics evidence"
+if grep -q 'repeat_count:' "$starter_workflow"; then
+  die "Starter workflow must not repeat the full acceptance suite in ordinary CI"
+fi
+if grep -q -- '--rerun-tasks' "$starter_workflow"; then
+  die "Starter workflow must not force the full Gradle task graph to rerun"
+fi
+[ "$(grep -Fc './gradlew integrationTest ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must invoke integrationTest exactly once"
+grep -q -- '--root "$pass_dir"' "$starter_workflow" || die "Starter workflow does not validate retained E2E evidence"
+grep -q -- '--output "$pass_dir/diagnostics.json"' "$starter_workflow" || die "Starter workflow does not persist structured diagnostics"
+grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow does not upload diagnostics evidence"
 
 build_workflow=".github/workflows/build.yml"
 docs_scope=".github/scripts/docs-only-scope.py"
