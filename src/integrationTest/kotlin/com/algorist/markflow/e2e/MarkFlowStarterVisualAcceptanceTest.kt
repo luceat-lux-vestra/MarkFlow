@@ -166,12 +166,12 @@ class MarkFlowStarterVisualAcceptanceTest {
                             height = visual.contentHeight(editor.editor),
                         )
                     }
-                    check(bounds.width >= 900 && bounds.height >= 600) {
-                        "visual editor viewport is unexpectedly small: $bounds"
+                    check(bounds.width >= CAPTURE_WIDTH && bounds.height >= CAPTURE_HEIGHT) {
+                        "visual editor viewport is smaller than the fixed $CAPTURE_WIDTH x $CAPTURE_HEIGHT crop: $bounds"
                     }
 
                     val image = Robot().createScreenCapture(
-                        Rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+                        Rectangle(bounds.x, bounds.y, CAPTURE_WIDTH, CAPTURE_HEIGHT)
                     )
                     val actualPath = actualRoot.resolve("${spec.name}.png")
                     ImageIO.write(image, "png", actualPath.toFile())
@@ -308,6 +308,9 @@ class MarkFlowStarterVisualAcceptanceTest {
     )
 
     companion object {
+        private const val CAPTURE_WIDTH = 1200
+        private const val CAPTURE_HEIGHT = 760
+
         private val VISUAL_CASES = listOf(
             VisualCase("typography", "VISUAL-TYPOGRAPHY.md") { evidence ->
                 evidence.getValue("headingModels") >= 8 &&
