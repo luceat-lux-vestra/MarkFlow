@@ -109,20 +109,9 @@ class MarkFlowStarterListIndentTest {
                     "native list indent changed source outside the two-space child indentation"
                 }
 
-                markFlow.clickText(editor, "Tail anchor")
-                waitFor(
-                    message = "indented source automatically refreshes to nested native list presentation",
-                    timeout = 10.seconds,
-                    getter = {
-                        Triple(
-                            markFlow.listMaxDepth(editor),
-                            markFlow.listOwnedInlays(editor),
-                            markFlow.listFullyConcealed(editor),
-                        )
-                    },
-                    checker = { (depth, inlays, concealed) -> depth == 1 && inlays == 1 && concealed == 1 },
-                )
-
+                // Prove the platform list action's command/Undo contract before any
+                // presentation-only caret transition. This keeps source mutation semantics
+                // independent from the later inactive-rich-presentation assertion.
                 markFlow.undo(editor)
                 waitFor(
                     message = "Undo restores the exact flat list and hierarchy",
@@ -136,6 +125,20 @@ class MarkFlowStarterListIndentTest {
                     timeout = 10.seconds,
                     getter = { markFlow.source(editor) to markFlow.listMaxDepth(editor) },
                     checker = { (source, depth) -> source == expectedIndentedSource && depth == 1 },
+                )
+
+                markFlow.clickText(editor, "Tail anchor")
+                waitFor(
+                    message = "indented source automatically refreshes to nested native list presentation",
+                    timeout = 10.seconds,
+                    getter = {
+                        Triple(
+                            markFlow.listMaxDepth(editor),
+                            markFlow.listOwnedInlays(editor),
+                            markFlow.listFullyConcealed(editor),
+                        )
+                    },
+                    checker = { (depth, inlays, concealed) -> depth == 1 && inlays == 1 && concealed == 1 },
                 )
 
                 val indentedChildTextOffset = markFlow.source(editor).indexOf("move-me", childMarkerStart) + 2
