@@ -62,12 +62,18 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             undo.undo(fileEditor)
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(source, document.text)
+            // BasePlatformTestCase proves the source Undo contract here, but it does not own the
+            // real production event-loop timing. Recompute explicitly so this unit case stays
+            // scoped to MarkFlow's post-Undo parser/projection responsibility; Starter/Driver
+            // below proves automatic production-path reprojection after the actual user action.
+            controller.refreshNow()
             assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
 
             assertTrue(undo.isRedoAvailable(fileEditor))
             undo.redo(fileEditor)
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(indented, document.text)
+            controller.refreshNow()
             assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
 
             val indentedMarkerStart = document.text.indexOf("  - child")
@@ -87,12 +93,14 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             undo.undo(fileEditor)
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(indented, document.text)
+            controller.refreshNow()
             assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
 
             assertTrue(undo.isRedoAvailable(fileEditor))
             undo.redo(fileEditor)
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(source, document.text)
+            controller.refreshNow()
             assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
         } finally {
             controller.dispose()
