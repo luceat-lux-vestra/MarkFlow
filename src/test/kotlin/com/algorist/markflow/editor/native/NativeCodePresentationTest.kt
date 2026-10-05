@@ -66,7 +66,7 @@ class NativeCodePresentationTest : BasePlatformTestCase() {
             val codeProjection = plan.projections.single { it.kind == NativeProjectionKind.CODE_BLOCK }
             val models = NativeIndentedCodeProjectionPlanner.plan(plan)
             assertEquals(1, models.size)
-            assertEquals("val first = 1\nval second = 2\n", models.single().code)
+            assertEquals("val first = 1\nval second = 2", models.single().code.trimEnd())
 
             val evidence = controller.evidenceSnapshot()
             assertEquals(1, evidence.indentedCodeModels)
@@ -78,7 +78,7 @@ class NativeCodePresentationTest : BasePlatformTestCase() {
                 .getBlockElementsInRange(0, document.textLength)
                 .single { it.renderer is NativeIndentedCodeInlayRenderer }
             val renderer = inlay.renderer as NativeIndentedCodeInlayRenderer
-            assertEquals("val first = 1\nval second = 2\n", renderer.displayCode)
+            assertEquals("val first = 1\nval second = 2", renderer.displayCode.trimEnd())
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)
 
@@ -90,6 +90,55 @@ class NativeCodePresentationTest : BasePlatformTestCase() {
             assertEquals(0, revealed.indentedCodeFolds)
             assertEquals(source, document.text)
             assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testBoundedOutIndentedCodeStaysExactSourceWithoutGenericOwner() {
+        val source = buildString {
+            repeat(201) { index -> append("    line-").append(index).append('\n') }
+            append("\nTail\n")
+        }
+        myFixture.configureByText("indented-code-bounded.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            val sourceRanges = NativeIndentedCodeProjectionPlanner.sourceRanges(plan)
+            assertTrue("parser did not produce the bounded CODE_BLOCK fixture", sourceRanges.isNotEmpty())
+            assertTrue(
+                "oversized indented code must not be promoted to rich presentation",
+                NativeIndentedCodeProjectionPlanner.plan(plan).isEmpty(),
+            )
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.indentedCodeModels)
+            assertEquals(0, evidence.indentedCodeInlays)
+            assertEquals(0, evidence.indentedCodeFolds)
+            assertEquals(
+                "rejected parser-proven CODE_BLOCK must not fall through to generic block highlighting",
+                0,
+                evidence.blockOwnedHighlighters,
+            )
+            sourceRanges.forEach { range ->
+                assertTrue(
+                    "rejected CODE_BLOCK retained collapsed MarkFlow presentation",
+                    editor.foldingModel.allFoldRegions.none { fold ->
+                        fold.isValid &&
+                            !fold.isExpanded &&
+                            fold.startOffset < range.endOffset &&
+                            fold.endOffset > range.startOffset
+                    },
+                )
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
             controller.dispose()
         }
