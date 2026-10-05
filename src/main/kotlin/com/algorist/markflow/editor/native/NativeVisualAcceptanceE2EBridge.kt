@@ -1,5 +1,7 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationsManager
 import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
@@ -102,6 +104,32 @@ internal object NativeVisualAcceptanceE2EBridge {
         }
         NativeMarkFlowProductionLifecycle.refreshAll()
         return environmentIdentity(editor)
+    }
+
+    /**
+     * Removes IntelliJ notification balloons from the screen-capture surface.
+     *
+     * Notifications are IDE chrome, not part of the native Markdown editor visual contract.
+     * Expiring both project and application notifications prevents unrelated platform/plugin
+     * lifecycle messages from becoming golden pixels.
+     */
+    fun expireNotificationsForCapture(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+
+        val project = requireNotNull(editor.project) {
+            "visual acceptance editor must belong to a project"
+        }
+        val manager = NotificationsManager.getNotificationsManager()
+        val notifications = linkedSetOf<Notification>()
+        notifications.addAll(manager.getNotificationsOfType(Notification::class.java, project))
+        notifications.addAll(manager.getNotificationsOfType(Notification::class.java, null))
+        notifications.forEach { it.expire() }
+
+        val unexpired = notifications.count { !it.isExpired }
+        check(unexpired == 0) {
+            "visual acceptance failed to expire $unexpired IDE notifications before capture"
+        }
+        return notifications.size
     }
 
     fun environmentIdentity(editor: Editor): String {
