@@ -179,7 +179,7 @@ grep -Fq 'CAPTURE_HEIGHT = 760' "$visual_test" || die "visual acceptance fixed c
 grep -Fq 'comparatorRejectsMeaningfulPerturbation' "$visual_test" || die "visual comparator negative control is missing"
 grep -Fq 'candidate.svg' "$visual_test" || die "visual acceptance does not retain reviewable baseline candidates"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
-grep -Fq 'private const val WINDOW_WIDTH = 1800' "$visual_bridge" || die "visual acceptance IDE window width drifted"
+grep -Fq 'private const val WINDOW_WIDTH = 1900' "$visual_bridge" || die "visual acceptance IDE window width drifted"
 grep -Fq 'private const val WINDOW_HEIGHT = 1000' "$visual_bridge" || die "visual acceptance IDE window height drifted"
 grep -Fq 'setCurrentUIThemeLookAndFeel(lightTheme)' "$visual_bridge" || die "visual acceptance no longer pins the default Light UI theme"
 grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
