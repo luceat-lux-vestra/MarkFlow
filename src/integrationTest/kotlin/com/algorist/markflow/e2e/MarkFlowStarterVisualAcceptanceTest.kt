@@ -123,6 +123,9 @@ class MarkFlowStarterVisualAcceptanceTest {
                 val visual = driver.utility(NativeVisualAcceptanceE2EBridgeRemote::class)
 
                 fun capture(spec: VisualCase) {
+                    driver.withContext(OnDispatcher.EDT) {
+                        visual.prepareEditorChromeBeforeOpen()
+                    }
                     val editor = markFlow.openMarkdown(spec.fileName)
                     markFlow.assertProductionProjectionAttached(editor)
 
@@ -466,6 +469,7 @@ private object VisualGoldenComparator {
     plugin = "com.algorist.markflow",
 )
 private interface NativeVisualAcceptanceE2EBridgeRemote {
+    fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun contentScreenX(editor: Editor): Int
