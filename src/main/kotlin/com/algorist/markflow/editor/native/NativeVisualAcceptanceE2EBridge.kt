@@ -10,11 +10,13 @@ import com.algorist.markflow.settings.state.ThemeSource
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
+import com.intellij.ui.components.JBScrollPane
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -144,6 +146,13 @@ internal object NativeVisualAcceptanceE2EBridge {
             ?: error("visual acceptance requires EditorMarkupModel")
         markupModel.setErrorStripeRenderer(null)
         markupModel.setErrorStripeVisible(false)
+        val editorEx = editor as? EditorEx
+            ?: error("visual acceptance requires EditorEx")
+        val scrollPane = editorEx.scrollPane as? JBScrollPane
+            ?: error("visual acceptance requires JBScrollPane")
+        scrollPane.setStatusComponent(null)
+        scrollPane.revalidate()
+        scrollPane.repaint()
 
         val manager = NotificationsManager.getNotificationsManager()
         val notifications = linkedSetOf<Notification>()
@@ -163,6 +172,9 @@ internal object NativeVisualAcceptanceE2EBridge {
         }
         check(!markupModel.isErrorStripeVisible) {
             "visual acceptance error-stripe visibility normalization did not stick"
+        }
+        check(scrollPane.statusComponent == null) {
+            "visual acceptance status-component normalization did not stick"
         }
         return notifications.size
     }
@@ -200,6 +212,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "inspection_widget=${EditorSettingsExternalizable.getInstance().isShowInspectionWidget}",
             "error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}",
             "error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}",
+            "status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",
