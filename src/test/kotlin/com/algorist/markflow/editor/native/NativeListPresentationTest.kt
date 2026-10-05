@@ -1,8 +1,12 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.Rectangle
 import java.awt.event.MouseEvent
@@ -19,6 +23,92 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf(0, 1, 2, 0), model.rows.map(NativeListRow::depth))
         assertTrue(nativeListIndentPixels(2) > nativeListIndentPixels(1))
         assertTrue(nativeListIndentPixels(1) > nativeListIndentPixels(0))
+    }
+
+    fun testPlatformMarkdownIndentAndUnindentRefreshNativeHierarchyWithUndoRedo() {
+        val source = "- parent\n- child\n- sibling\n\nTail\n"
+        val indented = "- parent\n  - child\n- sibling\n\nTail\n"
+        myFixture.configureByText("list-indent-action.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val fileEditor = requireNotNull(TextEditorProvider.getInstance().getTextEditor(editor))
+        editor.caretModel.moveToOffset(source.indexOf("child") + 2)
+
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+        try {
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+            val stampBefore = document.modificationStamp
+
+            myFixture.performEditorAction(IdeActions.ACTION_EDITOR_INDENT_SELECTION)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(indented, document.text)
+            assertTrue(document.modificationStamp != stampBefore)
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(1, controller.evidenceSnapshot().listMaxDepth)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+
+            val undo = UndoManager.getInstance(project)
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(source, document.text)
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(indented, document.text)
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+
+            editor.caretModel.moveToOffset(document.text.indexOf("child") + 2)
+            myFixture.performEditorAction(IdeActions.ACTION_EDITOR_UNINDENT_SELECTION)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(source, document.text)
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(0, controller.evidenceSnapshot().listMaxDepth)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(indented, document.text)
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(source, document.text)
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testPlatformIndentKeepsUnsupportedRichListInExactSourceFallback() {
+        val source = "- parent\n- child with *emphasis*\n- sibling\n\nTail\n"
+        val indented = "- parent\n  - child with *emphasis*\n- sibling\n\nTail\n"
+        myFixture.configureByText("list-indent-rich-fallback.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("child") + 2)
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+
+        try {
+            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+
+            myFixture.performEditorAction(IdeActions.ACTION_EDITOR_INDENT_SELECTION)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(indented, editor.document.text)
+            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(0, controller.evidenceSnapshot().listFolds)
+        } finally {
+            controller.dispose()
+        }
     }
 
     fun testInactiveNestedListUsesNativeHierarchyWithoutChangingSource() {
