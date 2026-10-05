@@ -1,8 +1,11 @@
 package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.Rectangle
 import java.awt.event.MouseEvent
@@ -19,6 +22,124 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf(0, 1, 2, 0), model.rows.map(NativeListRow::depth))
         assertTrue(nativeListIndentPixels(2) > nativeListIndentPixels(1))
         assertTrue(nativeListIndentPixels(1) > nativeListIndentPixels(0))
+    }
+
+    fun testListIndentResultRefreshesNativeHierarchyWithUndoRedo() {
+        val source = "- parent\n- child\n- sibling\n\nTail\n"
+        val indented = "- parent\n  - child\n- sibling\n\nTail\n"
+        myFixture.configureByText("list-indent-action.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val fileEditor = requireNotNull(TextEditorProvider.getInstance().getTextEditor(editor))
+        editor.caretModel.moveToOffset(source.indexOf("child") + 2)
+
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+        try {
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+            val stampBefore = document.modificationStamp
+
+            // Unit fixtures do not install the bundled Markdown editorActionHandler chain. The
+            // production Starter/Driver test owns the actual EditorIndentSelection/UnindentSelection
+            // proof. Here we isolate MarkFlow's responsibility after that maintained handler result:
+            // one source-local indentation edit must rebuild hierarchy state without reconstruction.
+            val childMarkerStart = source.indexOf("- child")
+            WriteCommandAction.writeCommandAction(project)
+                .withName("IntelliJ Markdown list indent result")
+                .run<RuntimeException> {
+                    document.insertString(childMarkerStart, "  ")
+                }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(indented, document.text)
+            assertTrue(document.modificationStamp != stampBefore)
+            controller.refreshNow()
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(1, controller.evidenceSnapshot().listMaxDepth)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+
+            val undo = UndoManager.getInstance(project)
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(source, document.text)
+            // BasePlatformTestCase proves the source Undo contract here, but it does not own the
+            // real production event-loop timing. Recompute explicitly so this unit case stays
+            // scoped to MarkFlow's post-Undo parser/projection responsibility; Starter/Driver
+            // below proves automatic production-path reprojection after the actual user action.
+            controller.refreshNow()
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(indented, document.text)
+            controller.refreshNow()
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+
+            val indentedMarkerStart = document.text.indexOf("  - child")
+            WriteCommandAction.writeCommandAction(project)
+                .withName("IntelliJ Markdown list outdent result")
+                .run<RuntimeException> {
+                    document.deleteString(indentedMarkerStart, indentedMarkerStart + 2)
+                }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(source, document.text)
+            controller.refreshNow()
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+            assertEquals(0, controller.evidenceSnapshot().listMaxDepth)
+            assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
+
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(indented, document.text)
+            controller.refreshNow()
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
+
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(source, document.text)
+            controller.refreshNow()
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testIndentedUnsupportedRichListRemainsExactSourceFallback() {
+        val source = "- parent\n- child with *emphasis*\n- sibling\n\nTail\n"
+        val indented = "- parent\n  - child with *emphasis*\n- sibling\n\nTail\n"
+        myFixture.configureByText("list-indent-rich-fallback.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("child") + 2)
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+
+        try {
+            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+
+            val childMarkerStart = source.indexOf("- child")
+            WriteCommandAction.writeCommandAction(project)
+                .withName("IntelliJ Markdown rich-list indent result")
+                .run<RuntimeException> {
+                    editor.document.insertString(childMarkerStart, "  ")
+                }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            assertEquals(indented, editor.document.text)
+            // Recompute from the mutated authoritative source before asserting fallback. Both the
+            // pre-edit and post-edit fallback evidence are zero-valued, so stale evidence would
+            // otherwise let this regression pass without proving the indented rich list itself.
+            controller.refreshNow()
+            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(0, controller.evidenceSnapshot().listFolds)
+        } finally {
+            controller.dispose()
+        }
     }
 
     fun testInactiveNestedListUsesNativeHierarchyWithoutChangingSource() {
