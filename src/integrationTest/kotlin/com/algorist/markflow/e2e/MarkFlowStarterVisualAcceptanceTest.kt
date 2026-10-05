@@ -158,6 +158,12 @@ class MarkFlowStarterVisualAcceptanceTest {
                         checker = { evidence -> spec.ready(parseEvidence(evidence)) },
                     )
 
+                    driver.withContext(OnDispatcher.EDT) {
+                        visual.normalizeEditorChromeForCapture(editor.editor)
+                    }
+                    val robot = Robot()
+                    robot.waitForIdle()
+
                     val bounds = driver.withContext(OnDispatcher.EDT) {
                         CaptureBounds(
                             x = visual.contentScreenX(editor.editor),
@@ -170,11 +176,6 @@ class MarkFlowStarterVisualAcceptanceTest {
                         "visual editor viewport drifted from the fixed $CAPTURE_WIDTH x $CAPTURE_HEIGHT capture: $bounds"
                     }
 
-                    driver.withContext(OnDispatcher.EDT) {
-                        visual.expireNotificationsForCapture(editor.editor)
-                    }
-                    val robot = Robot()
-                    robot.waitForIdle()
                     val image = robot.createScreenCapture(
                         Rectangle(bounds.x, bounds.y, CAPTURE_WIDTH, CAPTURE_HEIGHT)
                     )
@@ -466,7 +467,7 @@ private object VisualGoldenComparator {
 )
 private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun prepare(editor: Editor): String
-    fun expireNotificationsForCapture(editor: Editor): Int
+    fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun contentScreenX(editor: Editor): Int
     fun contentScreenY(editor: Editor): Int
     fun contentWidth(editor: Editor): Int
