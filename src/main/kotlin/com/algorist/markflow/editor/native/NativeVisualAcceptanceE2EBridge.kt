@@ -67,7 +67,6 @@ internal object NativeVisualAcceptanceE2EBridge {
             "visual_contract=v1",
             "window=${window.width}x${window.height}",
             "screen=${screen.width}x${screen.height}",
-            "viewport=${editor.scrollingModel.visibleArea.width}x${editor.scrollingModel.visibleArea.height}",
             "scale_x=${format(transform.scaleX)}",
             "scale_y=${format(transform.scaleY)}",
             "laf_name=${lookAndFeel.name}",
