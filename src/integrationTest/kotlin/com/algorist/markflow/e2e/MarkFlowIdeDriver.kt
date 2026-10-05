@@ -171,6 +171,16 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         )
     }
 
+    fun indentMarkdownListItem(editor: JEditorUiComponent) {
+        editor.setFocus()
+        editor.invokeActionByShortcut("EditorIndentSelection")
+    }
+
+    fun unindentMarkdownListItem(editor: JEditorUiComponent) {
+        editor.setFocus()
+        editor.invokeActionByShortcut("EditorUnindentSelection")
+    }
+
     fun seedMarkdownClipboard(markdown: String, plain: String, singleSourceCaret: Boolean = false) {
         val bridge = driver.utility(NativeClipboardE2EBridgeRemote::class)
         driver.withContext(OnDispatcher.EDT) {
@@ -306,6 +316,11 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         return driver.withContext(OnDispatcher.EDT) { bridge.listFullyConcealed(editor.editor) }
     }
 
+    fun listMaxDepth(editor: JEditorUiComponent): Int {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.listMaxDepth(editor.editor) }
+    }
+
     fun taskRows(editor: JEditorUiComponent): Int {
         val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
         return driver.withContext(OnDispatcher.EDT) { bridge.listTaskRows(editor.editor) }
@@ -418,6 +433,7 @@ private interface NativeProjectionE2EBridgeRemote {
     fun listOwnedInlays(editor: Editor): Int
     fun listOwnedFolds(editor: Editor): Int
     fun listFullyConcealed(editor: Editor): Int
+    fun listMaxDepth(editor: Editor): Int
     fun listTaskRows(editor: Editor): Int
     fun listCheckedTasks(editor: Editor): Int
     fun listTaskToggles(editor: Editor): Long
