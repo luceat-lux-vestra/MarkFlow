@@ -85,13 +85,15 @@ internal object NativeVisualAcceptanceE2EBridge {
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
-    fun contentScreenX(editor: Editor): Int = editor.contentComponent.locationOnScreen.x
+    fun contentScreenX(editor: Editor): Int =
+        editor.contentComponent.locationOnScreen.x + editor.scrollingModel.visibleArea.x
 
-    fun contentScreenY(editor: Editor): Int = editor.contentComponent.locationOnScreen.y
+    fun contentScreenY(editor: Editor): Int =
+        editor.contentComponent.locationOnScreen.y + editor.scrollingModel.visibleArea.y
 
-    fun contentWidth(editor: Editor): Int = editor.contentComponent.width
+    fun contentWidth(editor: Editor): Int = editor.scrollingModel.visibleArea.width
 
-    fun contentHeight(editor: Editor): Int = editor.contentComponent.height
+    fun contentHeight(editor: Editor): Int = editor.scrollingModel.visibleArea.height
 
     fun visualEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
