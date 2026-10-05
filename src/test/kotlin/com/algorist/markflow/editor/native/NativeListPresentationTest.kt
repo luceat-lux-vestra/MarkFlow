@@ -53,6 +53,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
 
             assertEquals(indented, document.text)
             assertTrue(document.modificationStamp != stampBefore)
+            controller.refreshNow()
             assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
             assertEquals(1, controller.evidenceSnapshot().listMaxDepth)
             assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
@@ -85,6 +86,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
 
             assertEquals(source, document.text)
+            controller.refreshNow()
             assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
             assertEquals(0, controller.evidenceSnapshot().listMaxDepth)
             assertEquals(listOf("-", "-", "-"), controller.evidenceSnapshot().listMarkers)
