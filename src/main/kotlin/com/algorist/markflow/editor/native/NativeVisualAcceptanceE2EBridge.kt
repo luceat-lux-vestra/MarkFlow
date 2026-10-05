@@ -10,6 +10,8 @@ import com.algorist.markflow.settings.state.ThemeSource
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.ex.EditorMarkupModel
+import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
@@ -63,6 +65,9 @@ internal object NativeVisualAcceptanceE2EBridge {
             "visual acceptance requires a TextEditorWithPreview, got ${selectedFileEditor.javaClass.name}"
         }
         selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
+        EditorSettingsExternalizable.getInstance().setShowInspectionWidget(false)
+        (editor.markupModel as? EditorMarkupModel)?.setTrafficLightIconVisible(false)
+            ?: error("visual acceptance requires an EditorMarkupModel")
 
         val settings = MarkFlowSettingsService.getInstance()
         settings.updateFromUi(
@@ -107,18 +112,23 @@ internal object NativeVisualAcceptanceE2EBridge {
     }
 
     /**
-     * Removes IntelliJ notification balloons from the screen-capture surface.
+     * Removes IntelliJ-owned chrome from the screen-capture surface.
      *
-     * Notifications are IDE chrome, not part of the native Markdown editor visual contract.
-     * Expiring both project and application notifications prevents unrelated platform/plugin
-     * lifecycle messages from becoming golden pixels.
+     * Notification balloons and inspection/traffic-light status are IDE state, not part of the
+     * native Markdown presentation contract. Normalize them immediately before every capture so
+     * unrelated plugin lifecycle and code-analysis timing cannot become golden pixels.
      */
-    fun expireNotificationsForCapture(editor: Editor): Int {
+    fun normalizeEditorChromeForCapture(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
 
         val project = requireNotNull(editor.project) {
             "visual acceptance editor must belong to a project"
         }
+        EditorSettingsExternalizable.getInstance().setShowInspectionWidget(false)
+        val markupModel = editor.markupModel as? EditorMarkupModel
+            ?: error("visual acceptance requires an EditorMarkupModel")
+        markupModel.setTrafficLightIconVisible(false)
+
         val manager = NotificationsManager.getNotificationsManager()
         val notifications = linkedSetOf<Notification>()
         notifications.addAll(manager.getNotificationsOfType(Notification::class.java, project))
@@ -128,6 +138,9 @@ internal object NativeVisualAcceptanceE2EBridge {
         val unexpired = notifications.count { !it.isExpired }
         check(unexpired == 0) {
             "visual acceptance failed to expire $unexpired IDE notifications before capture"
+        }
+        check(!EditorSettingsExternalizable.getInstance().isShowInspectionWidget) {
+            "visual acceptance inspection widget normalization did not stick"
         }
         return notifications.size
     }
@@ -162,6 +175,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "editor_font_family=${component.font.family}",
             "editor_font_name=${component.font.name}",
             "editor_font_size=${component.font.size}",
+            "inspection_widget=${EditorSettingsExternalizable.getInstance().isShowInspectionWidget}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",
