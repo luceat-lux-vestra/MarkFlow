@@ -150,7 +150,7 @@ fi
 [ "$(grep -Fc './gradlew buildPlugin ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must package the candidate plugin exactly once"
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
 grep -Fq 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
-grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle' "$starter_workflow" || die "Starter package manifest does not freeze the maintained shard set"
+grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance' "$starter_workflow" || die "Starter package manifest does not freeze the maintained semantic and visual acceptance sets"
 for shard in canonical core-editing ordinary-markdown derived-content lifecycle; do
   grep -Fq "shard: $shard" "$starter_workflow" || die "Starter workflow is missing $shard shard"
 done
@@ -160,7 +160,26 @@ grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "
 grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
 grep -Fq -- '--required-suite "$suite"' "$starter_workflow" || die "Starter shard diagnostics are not scoped to their declared suites"
 grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "Starter diagnostics do not recognize the canonical full-product journey"
+
 grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
+
+visual_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterVisualAcceptanceTest.kt"
+visual_goldens="src/integrationTest/resources/visual-goldens"
+[ -f "$visual_test" ] || die "deterministic visual acceptance test is missing"
+[ -f "$visual_goldens/README.md" ] || die "visual golden policy documentation is missing"
+grep -Fq 'name: Deterministic Visual Acceptance' "$starter_workflow" || die "Starter workflow has no separate deterministic visual job"
+grep -Fq 'name: Deterministic Visual Acceptance Gate' "$starter_workflow" || die "Starter workflow has no separate visual acceptance gate"
+grep -Fq 'runs-on: ubuntu-24.04' "$starter_workflow" || die "visual acceptance OS envelope is not pinned to ubuntu-24.04"
+grep -Fq 'Xvfb :99 -screen 0 1920x1080x24 -dpi 96' "$starter_workflow" || die "visual acceptance Xvfb envelope is not pinned"
+grep -Fq 'MarkFlowStarterVisualAcceptanceTest' "$starter_workflow" || die "Starter workflow does not execute the visual acceptance suite"
+grep -Fq 'PER_CHANNEL_TOLERANCE = 8' "$visual_test" || die "visual comparator per-channel tolerance drifted"
+grep -Fq 'MAX_DIFFERING_PIXEL_RATIO = 0.0002' "$visual_test" || die "visual comparator changed-pixel tolerance drifted"
+grep -Fq 'comparatorRejectsMeaningfulPerturbation' "$visual_test" || die "visual comparator negative control is missing"
+grep -Fq 'candidate.svg' "$visual_test" || die "visual acceptance does not retain reviewable baseline candidates"
+if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
+  die "visual workflow must never auto-accept generated baselines"
+fi
+
 
 build_workflow=".github/workflows/build.yml"
 docs_scope=".github/scripts/docs-only-scope.py"
