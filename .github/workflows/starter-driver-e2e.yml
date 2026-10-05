@@ -467,6 +467,7 @@ jobs:
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require package and every stable shard
         shell: bash
