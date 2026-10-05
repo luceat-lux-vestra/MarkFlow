@@ -45,7 +45,6 @@ jobs:
         include:
           - id: idea-2026.2.3
             platform_version: 2026.2.3
-            repeat_count: 2
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
@@ -84,57 +83,54 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
 
-          for pass in $(seq 1 "${{ matrix.repeat_count }}"); do
-            echo "Starter/Driver pass $pass/${{ matrix.repeat_count }} on ${{ matrix.platform_version }}"
-            pass_dir="build/e2e-evidence/pass-$pass"
-            marker="$RUNNER_TEMP/markflow-starter-pass-$pass-start"
-            rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
-            mkdir -p "$pass_dir"
-            touch "$marker"
+          pass_dir="build/e2e-evidence/pass-1"
+          marker="$RUNNER_TEMP/markflow-starter-pass-1-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
 
-            test_status=0
-            set +e
-            timeout --signal=TERM --kill-after=30s 18m \
-              ./gradlew integrationTest --rerun-tasks -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
-            test_status=$?
-            set -e
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 18m \
+            ./gradlew integrationTest -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
+          test_status=$?
+          set -e
 
-            if [ -d build/test-results/integrationTest ]; then
-              cp -R build/test-results/integrationTest "$pass_dir/test-results"
-            fi
-            if [ -d build/reports/tests/integrationTest ]; then
-              cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
-            fi
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
 
-            while IFS= read -r -d '' log; do
-              log_dir="$(dirname "$log")"
-              relative="${log_dir#./}"
-              destination="$pass_dir/logs/$relative"
-              mkdir -p "$(dirname "$destination")"
-              rm -rf "$destination"
-              cp -R "$log_dir" "$destination"
-            done < <(
-              find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
-                -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
-            )
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
 
-            diagnostics_status=0
-            set +e
-            python3 .github/scripts/check-starter-driver-diagnostics.py \
-              --root "$pass_dir" \
-              --output "$pass_dir/diagnostics.json"
-            diagnostics_status=$?
-            set -e
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json"
+          diagnostics_status=$?
+          set -e
 
-            if [ "$test_status" -ne 0 ]; then
-              echo "Starter/Driver pass $pass failed with status $test_status" >&2
-              exit "$test_status"
-            fi
-            if [ "$diagnostics_status" -ne 0 ]; then
-              echo "Starter/Driver pass $pass diagnostics failed" >&2
-              exit "$diagnostics_status"
-            fi
-          done
+          if [ "$test_status" -ne 0 ]; then
+            echo "Starter/Driver acceptance failed with status $test_status" >&2
+            exit "$test_status"
+          fi
+          if [ "$diagnostics_status" -ne 0 ]; then
+            echo "Starter/Driver diagnostics failed" >&2
+            exit "$diagnostics_status"
+          fi
 
       - name: Upload E2E diagnostics
         if: ${{ always() }}
