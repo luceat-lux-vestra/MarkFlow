@@ -25,26 +25,30 @@ on:
       - 'src/integrationTest/**'
       - 'src/main/**'
   workflow_dispatch:
+    inputs:
+      release_candidate_repeat:
+        description: 'Run a second independent canonical full-product journey for release-candidate evidence'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: starter-driver-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: starter-driver-e2e-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
 jobs:
-  smoke:
+  package:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Real IDE Starter Driver (${{ matrix.id }})
+    name: Package exact Starter plugin
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: idea-2026.2.3
-            platform_version: 2026.2.3
+    timeout-minutes: 30
     steps:
       - name: Maximize Build Space
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
@@ -55,8 +59,18 @@ jobs:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ env.STARTER_SOURCE_SHA }}
           persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Starter package checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
+            exit 1
+          }
 
       - name: Setup Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
@@ -64,11 +78,152 @@ jobs:
           distribution: zulu
           java-version: 25
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Build exact plugin artifact once
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Starter plugin distribution, found ${#archives[@]}"
+            printf '%s\n' "${archives[@]}"
+            exit 1
+          fi
+
+          artifact="${archives[0]}"
+          archive_name="$(basename "$artifact")"
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+
+          mkdir -p build/e2e-package
+          cp "$artifact" build/e2e-package/plugin.zip
+          {
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "plugin_archive=$archive_name"
+            echo "plugin_sha256=$digest"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle"
+          } | tee build/e2e-package/manifest.txt
+
+      - name: Upload exact Starter plugin artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/e2e-package/plugin.zip
+            build/e2e-package/manifest.txt
+
+  shards:
+    needs: [ package ]
+    name: Real IDE Starter Driver (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: canonical
+            suites: com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest
+          - shard: core-editing
+            suites: com.algorist.markflow.e2e.MarkFlowStarterSmokeTest
+          - shard: ordinary-markdown
+            suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
+          - shard: derived-content
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest
+          - shard: lifecycle
+            suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Starter shard checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          [ -f "$manifest" ] || { echo "::error::Starter package manifest missing"; exit 1; }
+          [ -f build/e2e-package/plugin.zip ] || { echo "::error::Starter plugin artifact missing"; exit 1; }
+
+          manifest_value() {
+            local key="$1"
+            sed -n "s/^${key}=//p" "$manifest"
+          }
+
+          source_sha="$(manifest_value source_sha)"
+          archive_name="$(manifest_value plugin_archive)"
+          expected_digest="$(manifest_value plugin_sha256)"
+          platform_version="$(manifest_value platform_version)"
+          scenario_sets="$(manifest_value scenario_sets)"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Starter artifact source drifted: expected=$STARTER_SOURCE_SHA actual=$source_sha"
+            exit 1
+          }
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ] || {
+            echo "::error::Starter artifact platform drifted: expected=$STARTER_PLATFORM_VERSION actual=$platform_version"
+            exit 1
+          }
+          [[ "$scenario_sets" == *"${{ matrix.shard }}"* ]] || {
+            echo "::error::Starter artifact manifest does not declare shard ${{ matrix.shard }}"
+            exit 1
+          }
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Starter artifact digest is malformed"
+            exit 1
+          }
+          actual_digest="$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')"
+          [ "$actual_digest" = "$expected_digest" ] || {
+            echo "::error::Downloaded Starter artifact digest mismatch"
+            exit 1
+          }
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
 
       - name: Start virtual display
         shell: bash
@@ -77,22 +232,37 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
-      - name: Run Starter Driver E2E acceptance
+      - name: Run stable Starter Driver shard
         shell: bash
+        env:
+          STARTER_SHARD: ${{ matrix.shard }}
+          STARTER_SUITES: ${{ matrix.suites }}
         run: |
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
 
-          pass_dir="build/e2e-evidence/pass-1"
-          marker="$RUNNER_TEMP/markflow-starter-pass-1-start"
+          pass_dir="build/e2e-evidence/$STARTER_SHARD"
+          marker="$RUNNER_TEMP/markflow-starter-$STARTER_SHARD-start"
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
           touch "$marker"
 
+          IFS='|' read -r -a suites <<< "$STARTER_SUITES"
+          gradle_args=(
+            integrationTest
+            -x buildPlugin
+            -PplatformVersion="$STARTER_PLATFORM_VERSION"
+            --stacktrace
+          )
+          diagnostics_args=()
+          for suite in "${suites[@]}"; do
+            gradle_args+=(--tests "$suite")
+            diagnostics_args+=(--required-suite "$suite")
+          done
+
           test_status=0
           set +e
-          timeout --signal=TERM --kill-after=30s 18m \
-            ./gradlew integrationTest -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
+          timeout --signal=TERM --kill-after=30s 24m ./gradlew "${gradle_args[@]}"
           test_status=$?
           set -e
 
@@ -119,30 +289,198 @@ jobs:
           set +e
           python3 .github/scripts/check-starter-driver-diagnostics.py \
             --root "$pass_dir" \
-            --output "$pass_dir/diagnostics.json"
+            --output "$pass_dir/diagnostics.json" \
+            "${diagnostics_args[@]}"
           diagnostics_status=$?
           set -e
 
+          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Starter shard mutated the packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+          printf 'shard=%s\nsuites=%s\n' "$STARTER_SHARD" "$STARTER_SUITES" > "$pass_dir/shard.txt"
+
           if [ "$test_status" -ne 0 ]; then
-            echo "Starter/Driver acceptance failed with status $test_status" >&2
+            echo "Starter/Driver shard $STARTER_SHARD failed with status $test_status" >&2
             exit "$test_status"
           fi
           if [ "$diagnostics_status" -ne 0 ]; then
-            echo "Starter/Driver diagnostics failed" >&2
+            echo "Starter/Driver shard $STARTER_SHARD diagnostics failed" >&2
             exit "$diagnostics_status"
           fi
 
-      - name: Upload E2E diagnostics
+      - name: Upload shard diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: starter-driver-e2e-${{ matrix.id }}-${{ github.run_id }}
+          name: starter-driver-e2e-${{ matrix.shard }}-${{ github.run_id }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
             build/e2e-evidence/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
             out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-starter-driver-xvfb.log
+
+  release-candidate-repeat:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat
+    needs: [ package ]
+    name: Release candidate canonical repeat
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-repeat-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run independent canonical repeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
+          pass_dir="build/e2e-evidence/release-candidate-repeat"
+          marker="$RUNNER_TEMP/markflow-starter-repeat-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json" \
+            --required-suite "$suite"
+          diagnostics_status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Canonical repeat mutated the packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
+
+      - name: Upload repeat diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starter-driver-e2e-release-candidate-repeat-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/e2e-evidence/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
+
+  gate:
+    if: ${{ always() }}
+    needs: [ package, shards ]
+    name: Starter Driver E2E Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require package and every stable shard
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$SHARDS_RESULT" = "success" ] || {
+            echo "::error::Stable Starter shard result: $SHARDS_RESULT"
+            exit 1
+          }
