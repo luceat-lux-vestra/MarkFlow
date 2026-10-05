@@ -129,20 +129,8 @@ class MarkFlowStarterVisualAcceptanceTest {
                     val editor = markFlow.openMarkdown(spec.fileName)
                     markFlow.assertProductionProjectionAttached(editor)
 
-                    val environment = driver.withContext(OnDispatcher.EDT) {
+                    driver.withContext(OnDispatcher.EDT) {
                         visual.prepare(editor.editor)
-                    }
-                    if (observedEnvironment == null) {
-                        observedEnvironment = environment
-                        Files.writeString(
-                            actualRoot.resolve("environment.txt"),
-                            environment,
-                            StandardCharsets.UTF_8,
-                        )
-                    } else {
-                        check(observedEnvironment == environment) {
-                            "visual environment changed within one IDEA process"
-                        }
                     }
 
                     val source = markFlow.source(editor)
@@ -166,6 +154,22 @@ class MarkFlowStarterVisualAcceptanceTest {
                     }
                     val robot = Robot()
                     robot.waitForIdle()
+
+                    val environment = driver.withContext(OnDispatcher.EDT) {
+                        visual.environmentIdentity(editor.editor)
+                    }
+                    if (observedEnvironment == null) {
+                        observedEnvironment = environment
+                        Files.writeString(
+                            actualRoot.resolve("environment.txt"),
+                            environment,
+                            StandardCharsets.UTF_8,
+                        )
+                    } else {
+                        check(observedEnvironment == environment) {
+                            "visual environment changed within one IDEA process"
+                        }
+                    }
 
                     val bounds = driver.withContext(OnDispatcher.EDT) {
                         CaptureBounds(
@@ -472,6 +476,7 @@ private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
+    fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
     fun contentScreenY(editor: Editor): Int
     fun contentWidth(editor: Editor): Int
