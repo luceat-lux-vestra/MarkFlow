@@ -2,7 +2,7 @@ fixture_id	path	capability	fidelity	line_endings	trailing_newline	categories
 mixed-list-markers	fixtures/markdown-fidelity/cases/mixed-list-markers.md	supported	lexically-local	LF	true	unordered-list-markers,ordered-list-markers,nested-list
 headings-and-delimiters	fixtures/markdown-fidelity/cases/headings-and-delimiters.md	supported	lexically-local	LF	true	atx-heading,setext-heading,closing-atx,emphasis,strong
 strikethrough	fixtures/markdown-fidelity/cases/strikethrough.md	supported	lexically-local	LF	true	gfm-strikethrough,double-tilde,single-tilde-source-fallback,malformed-fallback
-code-forms-and-fences	fixtures/markdown-fidelity/cases/code-forms-and-fences.md	supported	lexically-local	LF	true	backtick-fence,tilde-fence,fence-length,indented-code
+code-forms-and-fences	fixtures/markdown-fidelity/cases/code-forms-and-fences.md	supported	lexically-local	LF	true	inline-code,backtick-fence,tilde-fence,fence-length,indented-code
 thematic-break-variants	fixtures/markdown-fidelity/cases/thematic-break-variants.md	supported	lexically-local	LF	true	thematic-break
 links-and-references	fixtures/markdown-fidelity/cases/links-and-references.md	supported	lexically-local	LF	true	inline-link,inline-image,reference-link,reference-definition
 table-lexical-variants	fixtures/markdown-fidelity/cases/table-lexical-variants.md	supported	lexically-local	LF	true	gfm-table,table-alignment,escaped-pipe,table-lexical-variants
