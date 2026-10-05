@@ -187,6 +187,7 @@ grep -Fq 'lafManager.currentUIThemeLookAndFeel = lightTheme' "$visual_bridge" ||
 grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
 grep -Fq '@Suppress("UsePropertyAccessSyntax")' "$visual_bridge" || die "visual acceptance lost the narrow synthetic-property suppression for EditorColorsManager"
 grep -Fq 'selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)' "$visual_bridge" || die "visual acceptance no longer forces editor-only Markdown layout"
+grep -Fq 'fun prepareEditorChromeBeforeOpen()' "$visual_bridge" || die "visual acceptance no longer pins inspection chrome before editor creation"
 grep -Fq 'fun normalizeEditorChromeForCapture(editor: Editor): Int' "$visual_bridge" || die "visual acceptance no longer normalizes IDE chrome before capture"
 grep -Fq 'getNotificationsOfType(Notification::class.java, project)' "$visual_bridge" || die "visual acceptance project notification normalization drifted"
 grep -Fq 'getNotificationsOfType(Notification::class.java, null)' "$visual_bridge" || die "visual acceptance application notification normalization drifted"
@@ -195,6 +196,7 @@ if grep -Fq 'setTrafficLightIconVisible' "$visual_bridge"; then
   die "visual acceptance must not depend on experimental traffic-light visibility APIs"
 fi
 grep -Fq '"inspection_widget=${EditorSettingsExternalizable.getInstance().isShowInspectionWidget}"' "$visual_bridge" || die "visual environment identity no longer records inspection-widget state"
+grep -Fq 'visual.prepareEditorChromeBeforeOpen()' "$visual_test" || die "visual acceptance no longer disables inspection chrome before opening each editor"
 grep -Fq 'visual.normalizeEditorChromeForCapture(editor.editor)' "$visual_test" || die "visual capture no longer normalizes IDE chrome"
 grep -Fq 'robot.waitForIdle()' "$visual_test" || die "visual capture no longer waits for notification removal to repaint"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
