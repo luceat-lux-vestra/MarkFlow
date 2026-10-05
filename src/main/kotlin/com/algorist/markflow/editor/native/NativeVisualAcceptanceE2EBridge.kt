@@ -5,9 +5,12 @@ import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
 import com.algorist.markflow.settings.state.ThemeSource
+import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -22,11 +25,40 @@ import javax.swing.UIManager
  */
 @Suppress("unused")
 internal object NativeVisualAcceptanceE2EBridge {
-    private const val WINDOW_WIDTH = 1400
+    private const val WINDOW_WIDTH = 1800
     private const val WINDOW_HEIGHT = 1000
 
     fun prepare(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
+
+        val lafManager = LafManager.getInstance()
+        lafManager.setAutodetect(false)
+        val lightTheme = requireNotNull(lafManager.getDefaultLightLaf()) {
+            "visual acceptance requires IntelliJ's bundled default light theme"
+        }
+        if (lafManager.getCurrentUIThemeLookAndFeel().id != lightTheme.id) {
+            lafManager.setCurrentUIThemeLookAndFeel(lightTheme)
+            lafManager.updateUI()
+        }
+
+        val colors = EditorColorsManager.getInstance()
+        val defaultScheme = requireNotNull(
+            colors.getScheme(EditorColorsManager.getDefaultSchemeName())
+        ) {
+            "visual acceptance requires IntelliJ's bundled default editor scheme"
+        }
+        colors.setGlobalScheme(defaultScheme)
+
+        val project = requireNotNull(editor.project) {
+            "visual acceptance editor must belong to a project"
+        }
+        val selectedFileEditor = requireNotNull(FileEditorManager.getInstance(project).selectedEditor) {
+            "visual acceptance requires the selected Markdown FileEditor"
+        }
+        check(selectedFileEditor is TextEditorWithPreview) {
+            "visual acceptance requires a TextEditorWithPreview, got ${selectedFileEditor.javaClass.name}"
+        }
+        selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
 
         val settings = MarkFlowSettingsService.getInstance()
         settings.updateFromUi(
@@ -59,6 +91,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         val transform = graphics.defaultTransform
         val screen = Toolkit.getDefaultToolkit().screenSize
         val lookAndFeel = requireNotNull(UIManager.getLookAndFeel())
+        val uiTheme = LafManager.getInstance().getCurrentUIThemeLookAndFeel()
         val scheme = EditorColorsManager.getInstance().globalScheme
         val runtime = MarkFlowSettingsService.getInstance().runtimeSettings()
         val window = requireNotNull(SwingUtilities.getWindowAncestor(component))
@@ -71,6 +104,9 @@ internal object NativeVisualAcceptanceE2EBridge {
             "scale_y=${format(transform.scaleY)}",
             "laf_name=${lookAndFeel.name}",
             "laf_class=${lookAndFeel.javaClass.name}",
+            "laf_theme_id=${uiTheme.id}",
+            "laf_theme_name=${uiTheme.name}",
+            "laf_theme_dark=${uiTheme.isDark}",
             "editor_scheme=${scheme.name}",
             "editor_font_family=${component.font.family}",
             "editor_font_name=${component.font.name}",
