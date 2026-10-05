@@ -107,7 +107,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact Starter plugin artifact
@@ -326,6 +326,146 @@ jobs:
             out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-starter-driver-xvfb.log
+
+
+  visual:
+    needs: [ package ]
+    name: Deterministic Visual Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: false
+          large-packages: false
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Visual checkout drifted from exact candidate"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+          scenario_sets="$(sed -n 's/^scenario_sets=//p' "$manifest")"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [[ "$scenario_sets" == *"visual-acceptance"* ]] || {
+            echo "::error::Exact package manifest does not declare visual acceptance"
+            exit 1
+          }
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start pinned visual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 -dpi 96 >"$RUNNER_TEMP/markflow-visual-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run deterministic representative visual acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite="com.algorist.markflow.e2e.MarkFlowStarterVisualAcceptanceTest"
+          rm -rf build/visual-acceptance build/test-results/integrationTest build/reports/tests/integrationTest
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Visual acceptance mutated the packaged plugin artifact"
+            exit 1
+          }
+          mkdir -p build/visual-acceptance
+          cp build/e2e-package/manifest.txt build/visual-acceptance/package-manifest.txt
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+
+      - name: Upload visual diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starter-driver-visual-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/visual-acceptance/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-visual-xvfb.log
+
+  visual-gate:
+    if: ${{ always() }}
+    needs: [ package, visual ]
+    name: Deterministic Visual Acceptance Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require exact package and visual oracle
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$VISUAL_RESULT" = "success" ] || {
+            echo "::error::Deterministic visual acceptance result: $VISUAL_RESULT"
+            exit 1
+          }
 
   release-candidate-repeat:
     if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat

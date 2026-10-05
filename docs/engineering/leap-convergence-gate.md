@@ -34,6 +34,16 @@ Required user-path coverage remains:
 
 For ordinary product PRs, each required stable shard and the canonical journey execute once on fresh CI runners against the shared exact plugin ZIP. The canonical journey itself traverses production native opening/presentation, source reveal, source-local editing and Markdown-aware paste, Undo/Redo, table and task interaction, host resource/navigation discovery, Mermaid/KaTeX rendering, raw-HTML presentation, save, close, reopen, and exact persisted bytes.
 
+## Deterministic visual acceptance
+
+#339 adds a third product-proof layer without weakening the source/fidelity or semantic/runtime oracles. The visual job consumes the same exact packaged plugin artifact as Starter/Driver, launches **IntelliJ IDEA 2026.2.3 only**, and normalizes the editor-only Markdown viewport itself to exactly `1200x760` before capturing that full viewport under a pinned `ubuntu-24.04` / Xvfb `1920x1080x24` / 96-DPI / 1x-scale envelope. The test-only harness compensates for deterministic IDE chrome/tool-window geometry rather than blessing a partial crop of a wider product viewport, and records both the resulting outer-window and editor-viewport dimensions in the environment identity. It also forces IntelliJ's bundled default Light UI theme and default editor color scheme before presentation capture.
+
+The representative visual corpus is split into bounded documents for typography, structural Markdown, code presentation, derived Mermaid/KaTeX content, and host-resource/raw-HTML presentation. MarkFlow-controlled appearance is fixed before capture. The observed IntelliJ LAF, editor scheme/font, screen/viewport geometry, and scale become an exact versioned environment identity; environment drift fails before a new baseline may be accepted.
+
+Goldens are repository-versioned SVG wrappers around the exact expected PNG so they remain directly reviewable while the comparator consumes the embedded raster. CI never writes accepted goldens. A baseline change requires a reviewed user-visible explanation and a new exact HEAD. The comparator permits only a per-channel delta of 8 and at most 0.02% changed pixels (with a 64-pixel floor for caret/raster noise); dimension changes fail unconditionally. A maintained negative control changes a meaningful image region and must fail the comparator. Failures retain actual, expected, diff, metrics, environment, package identity, and IDE logs.
+
+The visual oracle is deliberately separate from the semantic Starter aggregate gate. A visual PASS does not prove source bytes, edit locality, Undo/Redo, renderer state, or lifecycle; those remain owned by their maintained proof layers. The deleted Robot Server infrastructure stays deleted.
+
 For the final #309 convergence/release-candidate gate, an explicit workflow-dispatch control runs the canonical journey a second time in a **separate fresh job/IDE process** against the same exact packaged artifact. That second run is repeatability evidence, never a flaky retry: the first canonical run must already be PASS, and a failed repeat remains deterministic FAIL until classified and fixed.
 
 ## Quantitative regression tripwires
