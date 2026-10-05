@@ -25,8 +25,10 @@ import javax.swing.UIManager
  */
 @Suppress("unused")
 internal object NativeVisualAcceptanceE2EBridge {
-    private const val WINDOW_WIDTH = 1900
-    private const val WINDOW_HEIGHT = 1000
+    private const val INITIAL_WINDOW_WIDTH = 1900
+    private const val INITIAL_WINDOW_HEIGHT = 1000
+    private const val TARGET_VIEWPORT_WIDTH = 1200
+    private const val TARGET_VIEWPORT_HEIGHT = 760
 
     fun prepare(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -76,8 +78,28 @@ internal object NativeVisualAcceptanceE2EBridge {
         val window = requireNotNull(SwingUtilities.getWindowAncestor(editor.component)) {
             "visual acceptance requires a showing IntelliJ editor window"
         }
-        window.setBounds(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)
+        window.setBounds(0, 0, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT)
         window.validate()
+        val screen = Toolkit.getDefaultToolkit().screenSize
+        repeat(3) {
+            val viewport = editor.scrollingModel.visibleArea
+            if (viewport.width != TARGET_VIEWPORT_WIDTH || viewport.height != TARGET_VIEWPORT_HEIGHT) {
+                val adjustedWidth = window.width + (TARGET_VIEWPORT_WIDTH - viewport.width)
+                val adjustedHeight = window.height + (TARGET_VIEWPORT_HEIGHT - viewport.height)
+                check(adjustedWidth in 1..screen.width && adjustedHeight in 1..screen.height) {
+                    "visual acceptance cannot normalize the IDE window inside the pinned screen: " +
+                        "requested=${adjustedWidth}x${adjustedHeight}, screen=${screen.width}x${screen.height}"
+                }
+                window.setBounds(0, 0, adjustedWidth, adjustedHeight)
+                window.validate()
+            }
+        }
+        val viewport = editor.scrollingModel.visibleArea
+        check(viewport.width == TARGET_VIEWPORT_WIDTH && viewport.height == TARGET_VIEWPORT_HEIGHT) {
+            "visual acceptance viewport normalization failed: " +
+                "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
+                "actual=${viewport.width}x${viewport.height}"
+        }
         NativeMarkFlowProductionLifecycle.refreshAll()
         return environmentIdentity(editor)
     }
@@ -99,6 +121,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         return listOf(
             "visual_contract=v1",
             "window=${window.width}x${window.height}",
+            "viewport=${editor.scrollingModel.visibleArea.width}x${editor.scrollingModel.visibleArea.height}",
             "screen=${screen.width}x${screen.height}",
             "scale_x=${format(transform.scaleX)}",
             "scale_y=${format(transform.scaleY)}",
