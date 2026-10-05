@@ -194,14 +194,18 @@ grep -Fq 'getNotificationsOfType(Notification::class.java, null)' "$visual_bridg
 grep -Fq 'EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false' "$visual_bridge" || die "visual acceptance no longer disables the inspection widget"
 grep -Fq 'markupModel.setErrorStripeRenderer(null)' "$visual_bridge" || die "visual acceptance error-stripe renderer normalization drifted"
 grep -Fq 'markupModel.setErrorStripeVisible(false)' "$visual_bridge" || die "visual acceptance error-stripe visibility normalization drifted"
+grep -Fq 'scrollPane.setStatusComponent(null)' "$visual_bridge" || die "visual acceptance status-component normalization drifted"
+grep -Fq 'check(scrollPane.statusComponent == null)' "$visual_bridge" || die "visual acceptance no longer verifies status-component removal"
 grep -Fq '"error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe renderer state"
 grep -Fq '"error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe visibility"
+grep -Fq '"status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}"' "$visual_bridge" || die "visual environment identity no longer records status-component state"
 if grep -Fq 'setTrafficLightIconVisible' "$visual_bridge"; then
   die "visual acceptance must not depend on experimental traffic-light visibility APIs"
 fi
 grep -Fq '"inspection_widget=${EditorSettingsExternalizable.getInstance().isShowInspectionWidget}"' "$visual_bridge" || die "visual environment identity no longer records inspection-widget state"
 grep -Fq 'visual.prepareEditorChromeBeforeOpen()' "$visual_test" || die "visual acceptance no longer disables inspection chrome before opening each editor"
 grep -Fq 'visual.normalizeEditorChromeForCapture(editor.editor)' "$visual_test" || die "visual capture no longer normalizes IDE chrome"
+grep -Fq 'visual.environmentIdentity(editor.editor)' "$visual_test" || die "visual capture no longer records post-normalization environment identity"
 grep -Fq 'robot.waitForIdle()' "$visual_test" || die "visual capture no longer waits for notification removal to repaint"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
   die "visual workflow must never auto-accept generated baselines"
