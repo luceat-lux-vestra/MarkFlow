@@ -1,6 +1,6 @@
 # Native Markdown projection foundation
 
-Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity and corrective #312/#314/#316/#318/#320/#323 presentation slices under ADR 0001
+Status: #145 native projection foundation, expanded by #152 ordinary-Markdown/table parity and corrective #312/#314/#316/#318/#320/#323/#330/#331/#332 presentation/interaction slices under ADR 0001
 
 ## Decision
 
@@ -73,7 +73,7 @@ Link projection similarly uses parser-proven link text/label children. If a stab
 
 ## Source-neutral ordinary presentation
 
-`NativePresentationController` coordinates lifecycle/listeners and delegates ordinary Markdown to `NativeOrdinaryPresentationController`. The ordinary controller has separate inline and block syntax owners; each removes only the highlighters/folds it created and never calls a `Document` mutation API.
+`NativePresentationController` coordinates lifecycle/listeners and delegates ordinary Markdown to `NativeOrdinaryPresentationController`. The ordinary controller has separate inline and block syntax owners plus dedicated richer block owners; each removes only the highlighters/folds/inlays it created and never calls a `Document` mutation API.
 
 The corrective #312 split is an ownership boundary, not a claim that block WYSIWYG fidelity is complete. Inline emphasis/strong/strikethrough/link/inline-code remain source-neutral native syntax presentation. Heading/list/blockquote/fenced-code/thematic block presentation now has a distinct owner so later #309/#152 work can add block layout/inlay/component behavior without coupling it to inline syntax handling.
 
@@ -83,7 +83,7 @@ The corrective #312 split is an ownership boundary, not a claim that block WYSIW
 
 #320 extends that same parser-bounded list owner with a conservative GFM task-list interaction slice. Only flat, all-task, single-line plain-text unordered lists are promoted. The exact source state character inside parser/source-bounded `[ ]` / `[x]` / `[X]` markers is retained in the model. Inactive task rows render native checkbox state; clicking a checkbox executes one IntelliJ write command that changes only that one state character, so platform Undo/Redo restores the exact source. Mixed ordinary/task rows, ordered task syntax, nested tasks, multiline continuations and inline-rich task content fail closed to exact source.
 
-#323 adds explicit GFM strikethrough to the inline owner. `GFMElementTypes.STRIKETHROUGH` and parser-owned `GFMTokenTypes.TILDE` ranges are the only syntax authority; directly adjacent parser tilde tokens are coalesced only within each parser-proven delimiter. The maintained parser currently proves the double-tilde GFM form; single-tilde text is left as exact-source fallback rather than promoted through a regex or secondary parser. Inactive parser-proven content uses a theme-aware native strikeout text effect while those exact delimiters are source-neutrally concealed. Caret/selection activity reveals the exact original source, accessibility mode leaves source visible, and malformed/unproven forms remain source. Conservative heading/blockquote/list renderers treat nested parser-proven strikethrough as inline-rich and therefore fail closed rather than bypassing their existing boundary.
+#332 completes the explicit native code semantics left open by the corpus audit. Inactive parser-proven inline code keeps exact source authority and parser-owned delimiter conceal/reveal while adding a theme-derived native code background semantic rather than relying only on generic STRING coloring. Parser-proven indented `CODE_BLOCK` ranges are removed from the generic block owner; conservative four-space forms are rendered by a dedicated native block inlay while the unchanged indented source is source-neutrally concealed. Caret/selection activity exposes the exact source immediately, accessibility mode installs no rich presentation, and unsupported parser-proven indented forms stay exact source rather than being reparsed or normalized.\n\n#323 adds explicit GFM strikethrough to the inline owner. `GFMElementTypes.STRIKETHROUGH` and parser-owned `GFMTokenTypes.TILDE` ranges are the only syntax authority; directly adjacent parser tilde tokens are coalesced only within each parser-proven delimiter. The maintained parser currently proves the double-tilde GFM form; single-tilde text is left as exact-source fallback rather than promoted through a regex or secondary parser. Inactive parser-proven content uses a theme-aware native strikeout text effect while those exact delimiters are source-neutrally concealed. Caret/selection activity reveals the exact original source, accessibility mode leaves source visible, and malformed/unproven forms remain source. Conservative heading/blockquote/list renderers treat nested parser-proven strikethrough as inline-rich and therefore fail closed rather than bypassing their existing boundary.
 
 Inactive supported constructs may use public editor highlighters and folding to conceal parser-proven syntax while leaving the authoritative source unchanged. The current ordinary presentation behavior includes:
 
@@ -149,6 +149,7 @@ These are lexical-fidelity constraints, not merely visual-equivalence claims.
 - #323 parser-bounded GFM strikethrough projection, native strikeout effect, exact delimiter conceal/reveal, fidelity-corpus mapping, and production Starter/Driver reveal acceptance;
 - #330 explicit native inline semantics for emphasis (italic), strong (bold), and links (IDE hyperlink attributes), while retaining parser-owned delimiter conceal/reveal and exact source authority;
 - #331 list indent/outdent acceptance through IntelliJ Markdown's maintained native editor actions, with source-local mutation, automatic hierarchy reprojection, Undo/Redo, and save/reopen proof;
+- #332 explicit inline-code native semantic styling plus dedicated indented-code native block presentation, exact-source reveal/accessibility fallback, and production real-IDE parity evidence;
 - the expanded ordinary projection kinds and parser ranges;
 - source-neutral list/quote/link/thematic ordinary presentation plus boundary reveal;
 - exact-source accessibility fallback;
