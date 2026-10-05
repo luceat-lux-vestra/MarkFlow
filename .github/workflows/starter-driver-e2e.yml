@@ -250,7 +250,6 @@ jobs:
           IFS='|' read -r -a suites <<< "$STARTER_SUITES"
           gradle_args=(
             integrationTest
-            --rerun-tasks
             -x buildPlugin
             -PplatformVersion="$STARTER_PLATFORM_VERSION"
             --stacktrace
