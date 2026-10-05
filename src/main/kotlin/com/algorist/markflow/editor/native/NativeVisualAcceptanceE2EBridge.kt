@@ -10,6 +10,7 @@ import com.algorist.markflow.settings.state.ThemeSource
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -139,6 +140,10 @@ internal object NativeVisualAcceptanceE2EBridge {
             "visual acceptance editor must belong to a project"
         }
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
+        val markupModel = editor.markupModel as? EditorMarkupModel
+            ?: error("visual acceptance requires EditorMarkupModel")
+        markupModel.setErrorStripeRenderer(null)
+        markupModel.setErrorStripeVisible(false)
 
         val manager = NotificationsManager.getNotificationsManager()
         val notifications = linkedSetOf<Notification>()
@@ -152,6 +157,12 @@ internal object NativeVisualAcceptanceE2EBridge {
         }
         check(!EditorSettingsExternalizable.getInstance().isShowInspectionWidget) {
             "visual acceptance inspection widget normalization did not stick"
+        }
+        check(markupModel.errorStripeRenderer == null) {
+            "visual acceptance error-stripe renderer normalization did not stick"
+        }
+        check(!markupModel.isErrorStripeVisible) {
+            "visual acceptance error-stripe visibility normalization did not stick"
         }
         return notifications.size
     }
@@ -187,6 +198,8 @@ internal object NativeVisualAcceptanceE2EBridge {
             "editor_font_name=${component.font.name}",
             "editor_font_size=${component.font.size}",
             "inspection_widget=${EditorSettingsExternalizable.getInstance().isShowInspectionWidget}",
+            "error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}",
+            "error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",
