@@ -24,12 +24,13 @@ Before publication, record and verify:
 3. clean build/test/static-analysis results for that commit;
 4. plugin packaging and IntelliJ Plugin Verifier results for the supported compatibility envelope, including any maintained forward-compatibility probes;
 5. Starter/Driver acceptance on the authoritative IntelliJ IDEA 2026.2.3 full-product runtime: one exact candidate ZIP packaged once, one recorded SHA-256, all required parallel shards, and the canonical whole-product journey consuming that same artifact;
-6. for a final #309/release candidate, the explicit independent canonical-repeat job on a fresh runner/IDE process must also pass against the same exact packaged artifact; this repeat is evidence, not a retry path. Real no-JCEF native-editing and retained-JCEF renderer evidence remain required within their maintained scope;
-7. the quantitative projection/render/bundle regression tripwires in `docs/engineering/leap-convergence-gate.md` passing on the exact release candidate;
-8. manual smoke scenarios only for behavior that cannot be deterministically automated, with the unautomated boundary recorded rather than substituting manual observation for available CI evidence;
-9. security-sensitive changes and dependency updates reviewed;
-10. generated release artifact identity/checksum retained where practical;
-11. rollback/withdrawal plan understood.
+6. deterministic #339 visual acceptance on IDEA 2026.2.3 must pass against reviewed versioned goldens and the exact recorded visual-environment identity, using the same exact packaged plugin artifact; baseline changes are never auto-accepted by CI;
+7. for a final #309/release candidate, the explicit independent canonical-repeat job on a fresh runner/IDE process must also pass against the same exact packaged artifact; this repeat is evidence, not a retry path. Real no-JCEF native-editing and retained-JCEF renderer evidence remain required within their maintained scope;
+8. the quantitative projection/render/bundle regression tripwires in `docs/engineering/leap-convergence-gate.md` passing on the exact release candidate;
+9. manual smoke scenarios only for behavior that cannot be deterministically automated, with the unautomated boundary recorded rather than substituting manual observation for available CI evidence;
+10. security-sensitive changes and dependency updates reviewed;
+11. generated release artifact identity/checksum retained where practical;
+12. rollback/withdrawal plan understood.
 
 The release-blocking full-product Starter/Driver runtime is IntelliJ IDEA 2026.2.3. Forward compatibility remains independently covered by Plugin Verifier and any explicitly scoped informational probes; an unreleased EAP full-product run is not a prerequisite for Marketplace publication. A workflow rerun never converts a deterministic red Starter shard or canonical journey into acceptable evidence.
 
