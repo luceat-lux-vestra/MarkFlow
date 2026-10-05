@@ -232,6 +232,23 @@ internal object NativeMarkdownParityProbe {
                                 "models=${evidence.blockQuoteModels} inlays=${evidence.blockQuoteInlays} " +
                                 "folds=${evidence.blockQuoteFolds} concealed=${evidence.blockQuoteFullyConcealed}"
                         }
+                        check(
+                            evidence.indentedCodeModels == 1 &&
+                                evidence.indentedCodeInlays == 1 &&
+                                evidence.indentedCodeFolds > 0 &&
+                                evidence.indentedCodeFullyConcealed == 1
+                        ) {
+                            "indented code did not install native code-block presentation: " +
+                                "models=${evidence.indentedCodeModels} inlays=${evidence.indentedCodeInlays} " +
+                                "folds=${evidence.indentedCodeFolds} concealed=${evidence.indentedCodeFullyConcealed}"
+                        }
+                        val indentedRenderer = fixture.editor.inlayModel
+                            .getBlockElementsInRange(0, fixture.editor.document.textLength)
+                            .mapNotNull { inlay -> inlay.renderer as? NativeIndentedCodeInlayRenderer }
+                            .single()
+                        check(indentedRenderer.displayCode.trimEnd() == "val indented = 2") {
+                            "indented-code native block did not remove only presentation indentation"
+                        }
 
                         val currentPlan = requireNotNull(controller.currentPlan)
                         val strikethrough = currentPlan.projections
@@ -251,6 +268,8 @@ internal object NativeMarkdownParityProbe {
                             .single { it.kind == NativeProjectionKind.EMPHASIS }
                         val strong = currentPlan.projections
                             .single { it.kind == NativeProjectionKind.STRONG }
+                        val inlineCode = currentPlan.projections
+                            .single { it.kind == NativeProjectionKind.INLINE_CODE }
                         val link = currentPlan.projections
                             .single { it.kind == NativeProjectionKind.LINK }
 
@@ -270,6 +289,23 @@ internal object NativeMarkdownParityProbe {
                         check(semanticAttributes(strong).fontType and Font.BOLD != 0) {
                             "strong projection did not install native bold semantics"
                         }
+                        check(semanticAttributes(inlineCode).backgroundColor != null) {
+                            "inline-code projection did not install an explicit native code semantic"
+                        }
+                        check(inlineCode.syntaxRanges.isNotEmpty())
+                        inlineCode.syntaxRanges.forEach { range ->
+                            check(fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)?.isExpanded == false) {
+                                "inline-code delimiters were not concealed: $range"
+                            }
+                        }
+                        fixture.editor.caretModel.moveToOffset(inlineCode.sourceRange.endOffset)
+                        inlineCode.syntaxRanges.forEach { range ->
+                            check(fixture.editor.foldingModel.getFoldRegion(range.startOffset, range.endOffset)?.isExpanded == true) {
+                                "inline-code boundary caret did not reveal exact source: $range"
+                            }
+                        }
+                        fixture.editor.caretModel.moveToOffset(fixture.afterTableOffset)
+
                         val expectedLink = requireNotNull(
                             fixture.editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
                         ) { "IDE color scheme has no maintained hyperlink attributes" }
@@ -294,7 +330,7 @@ internal object NativeMarkdownParityProbe {
                         }
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)
-                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true emphasisItalic=true strongBold=true strikethroughEffect=true linkHyperlink=true linkConceal=true boundaryReveal=true sourceStable=true"
+                        "ownedFolds=${evidence.ownedFolds} ownedHighlighters=${evidence.ownedHighlighters} listBlocks=true quoteBlock=true emphasisItalic=true strongBold=true strikethroughEffect=true inlineCodeSemantic=true inlineCodeReveal=true indentedCodeBlock=true linkHyperlink=true linkConceal=true boundaryReveal=true sourceStable=true"
                     } finally {
                         Disposer.dispose(controller)
                     }
@@ -320,6 +356,9 @@ internal object NativeMarkdownParityProbe {
                         check(evidence.listModels == 2)
                         check(evidence.listInlays == 0)
                         check(evidence.listFolds == 0)
+                        check(evidence.indentedCodeModels == 1)
+                        check(evidence.indentedCodeInlays == 0)
+                        check(evidence.indentedCodeFolds == 0)
                         check(evidence.sourceFallbacks == 1L)
                         check(fixture.editor.document.text == sourceBefore)
                         check(fixture.editor.document.modificationStamp == stampBefore)

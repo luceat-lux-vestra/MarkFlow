@@ -1,5 +1,7 @@
 # Code forms
 
+Inline `code span` sample.
+
 ```text
 backtick fence with three markers
 ```

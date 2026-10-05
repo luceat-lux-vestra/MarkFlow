@@ -142,7 +142,7 @@ class NativeMarkdownFidelityCorpusTest : BasePlatformTestCase() {
             ),
             FixtureExpectation(
                 "code-forms-and-fences",
-                setOf(NativeProjectionKind.CODE_FENCE, NativeProjectionKind.CODE_BLOCK),
+                setOf(NativeProjectionKind.INLINE_CODE, NativeProjectionKind.CODE_FENCE, NativeProjectionKind.CODE_BLOCK),
             ),
             FixtureExpectation("thematic-break-variants", setOf(NativeProjectionKind.THEMATIC_BREAK)),
             FixtureExpectation("links-and-references", setOf(NativeProjectionKind.LINK)),
