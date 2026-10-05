@@ -10,7 +10,6 @@ import com.algorist.markflow.settings.state.ThemeSource
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -38,12 +37,12 @@ internal object NativeVisualAcceptanceE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
 
         val lafManager = LafManager.getInstance()
-        lafManager.setAutodetect(false)
-        val lightTheme = requireNotNull(lafManager.getDefaultLightLaf()) {
+        lafManager.autodetect = false
+        val lightTheme = requireNotNull(lafManager.defaultLightLaf) {
             "visual acceptance requires IntelliJ's bundled default light theme"
         }
-        if (lafManager.getCurrentUIThemeLookAndFeel().id != lightTheme.id) {
-            lafManager.setCurrentUIThemeLookAndFeel(lightTheme)
+        if (lafManager.currentUIThemeLookAndFeel.id != lightTheme.id) {
+            lafManager.currentUIThemeLookAndFeel = lightTheme
             lafManager.updateUI()
         }
 
@@ -53,7 +52,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         ) {
             "visual acceptance requires IntelliJ's bundled default editor scheme"
         }
-        colors.setGlobalScheme(defaultScheme)
+        colors.globalScheme = defaultScheme
 
         val project = requireNotNull(editor.project) {
             "visual acceptance editor must belong to a project"
@@ -65,9 +64,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "visual acceptance requires a TextEditorWithPreview, got ${selectedFileEditor.javaClass.name}"
         }
         selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        EditorSettingsExternalizable.getInstance().setShowInspectionWidget(false)
-        (editor.markupModel as? EditorMarkupModel)?.setTrafficLightIconVisible(false)
-            ?: error("visual acceptance requires an EditorMarkupModel")
+        EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
         val settings = MarkFlowSettingsService.getInstance()
         settings.updateFromUi(
@@ -124,10 +121,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         val project = requireNotNull(editor.project) {
             "visual acceptance editor must belong to a project"
         }
-        EditorSettingsExternalizable.getInstance().setShowInspectionWidget(false)
-        val markupModel = editor.markupModel as? EditorMarkupModel
-            ?: error("visual acceptance requires an EditorMarkupModel")
-        markupModel.setTrafficLightIconVisible(false)
+        EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
         val manager = NotificationsManager.getNotificationsManager()
         val notifications = linkedSetOf<Notification>()
@@ -154,7 +148,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         val transform = graphics.defaultTransform
         val screen = Toolkit.getDefaultToolkit().screenSize
         val lookAndFeel = requireNotNull(UIManager.getLookAndFeel())
-        val uiTheme = LafManager.getInstance().getCurrentUIThemeLookAndFeel()
+        val uiTheme = LafManager.getInstance().currentUIThemeLookAndFeel
         val scheme = EditorColorsManager.getInstance().globalScheme
         val runtime = MarkFlowSettingsService.getInstance().runtimeSettings()
         val window = requireNotNull(SwingUtilities.getWindowAncestor(component))
