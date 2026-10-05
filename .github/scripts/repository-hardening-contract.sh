@@ -174,6 +174,8 @@ grep -Fq 'Xvfb :99 -screen 0 1920x1080x24 -dpi 96' "$starter_workflow" || die "v
 grep -Fq 'MarkFlowStarterVisualAcceptanceTest' "$starter_workflow" || die "Starter workflow does not execute the visual acceptance suite"
 grep -Fq 'PER_CHANNEL_TOLERANCE = 8' "$visual_test" || die "visual comparator per-channel tolerance drifted"
 grep -Fq 'MAX_DIFFERING_PIXEL_RATIO = 0.0002' "$visual_test" || die "visual comparator changed-pixel tolerance drifted"
+grep -Fq 'CAPTURE_WIDTH = 1200' "$visual_test" || die "visual acceptance fixed capture width drifted"
+grep -Fq 'CAPTURE_HEIGHT = 760' "$visual_test" || die "visual acceptance fixed capture height drifted"
 grep -Fq 'comparatorRejectsMeaningfulPerturbation' "$visual_test" || die "visual comparator negative control is missing"
 grep -Fq 'candidate.svg' "$visual_test" || die "visual acceptance does not retain reviewable baseline candidates"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
