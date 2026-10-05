@@ -80,28 +80,28 @@ internal object NativeIndentedCodeProjectionPlanner {
 
         var cursor = range.startOffset
         var contentOffset: Int? = null
-        val display = buildString {
-            lines.forEachIndexed { index, rawLine ->
-                val line = rawLine.removeSuffix("\r")
-                when {
-                    line.isBlank() -> Unit
-                    line.startsWith(INDENT) -> {
-                        if (contentOffset == null) contentOffset = cursor + INDENT.length
-                        append(line.substring(INDENT.length))
-                    }
-                    else -> return null
+        val display = StringBuilder()
+        lines.forEachIndexed { index, rawLine ->
+            val line = rawLine.removeSuffix("\r")
+            when {
+                line.isBlank() -> Unit
+                line.startsWith(INDENT) -> {
+                    if (contentOffset == null) contentOffset = cursor + INDENT.length
+                    display.append(line.substring(INDENT.length))
                 }
-                if (index < lines.lastIndex) append('\n')
-                cursor += rawLine.length + 1
+                else -> return null
             }
+            if (index < lines.lastIndex) display.append('\n')
+            cursor += rawLine.length + 1
         }
 
-        if (display.isBlank()) return null
+        val code = display.toString()
+        if (code.isBlank()) return null
         val firstContentOffset = contentOffset ?: return null
         return NativeIndentedCodeModel(
             sourceRange = range,
             contentOffset = firstContentOffset,
-            code = display,
+            code = code,
         )
     }
 }
