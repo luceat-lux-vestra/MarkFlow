@@ -178,6 +178,12 @@ grep -Fq 'CAPTURE_WIDTH = 1200' "$visual_test" || die "visual acceptance fixed c
 grep -Fq 'CAPTURE_HEIGHT = 760' "$visual_test" || die "visual acceptance fixed capture height drifted"
 grep -Fq 'comparatorRejectsMeaningfulPerturbation' "$visual_test" || die "visual comparator negative control is missing"
 grep -Fq 'candidate.svg' "$visual_test" || die "visual acceptance does not retain reviewable baseline candidates"
+visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
+grep -Fq 'private const val WINDOW_WIDTH = 1800' "$visual_bridge" || die "visual acceptance IDE window width drifted"
+grep -Fq 'private const val WINDOW_HEIGHT = 1000' "$visual_bridge" || die "visual acceptance IDE window height drifted"
+grep -Fq 'setCurrentUIThemeLookAndFeel(lightTheme)' "$visual_bridge" || die "visual acceptance no longer pins the default Light UI theme"
+grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
+grep -Fq 'selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)' "$visual_bridge" || die "visual acceptance no longer forces editor-only Markdown layout"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
   die "visual workflow must never auto-accept generated baselines"
 fi
