@@ -14,6 +14,7 @@ import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Color
 import java.awt.Font
 import java.util.LinkedHashMap
 
@@ -38,6 +39,10 @@ internal data class NativeOrdinaryPresentationEvidence(
     val fencedCodeFolds: Int,
     val fencedCodeFullyConcealed: Int,
     val fencedCodeInfos: List<String>,
+    val indentedCodeModels: Int,
+    val indentedCodeInlays: Int,
+    val indentedCodeFolds: Int,
+    val indentedCodeFullyConcealed: Int,
     val listModels: Int,
     val listRows: Int,
     val listInlays: Int,
@@ -51,10 +56,10 @@ internal data class NativeOrdinaryPresentationEvidence(
     val taskToggles: Long,
 ) {
     val blockFolds: Int
-        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + listFolds
+        get() = blockSyntaxFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + indentedCodeFolds + listFolds
 
     val blockCollapsedFolds: Int
-        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + listFolds
+        get() = blockSyntaxCollapsedFolds + headingFolds + blockQuoteFolds + fencedCodeFolds + indentedCodeFolds + listFolds
 
     val ownedHighlighters: Int
         get() = inlineHighlighters + blockHighlighters
@@ -81,6 +86,7 @@ internal class NativeOrdinaryPresentationController(
     private val headings = NativeHeadingPresentationController(editor)
     private val blockQuotes = NativeBlockQuotePresentationController(editor)
     private val fencedCodes = NativeFencedCodePresentationController(editor)
+    private val indentedCodes = NativeIndentedCodePresentationController(editor)
     private val lists = NativeListPresentationController(editor)
     private var disposed = false
 
@@ -92,6 +98,7 @@ internal class NativeOrdinaryPresentationController(
         headings.clearPresentation()
         blockQuotes.clearPresentation()
         fencedCodes.clearPresentation()
+        indentedCodes.clearPresentation()
         lists.clearPresentation()
         clearFolds()
     }
@@ -104,12 +111,17 @@ internal class NativeOrdinaryPresentationController(
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
-        val headingPlan = plan.withoutProjectionsInside(
+        val indentedCodePlan = plan.withoutProjectionsInside(
             listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges
+        )
+        val indentedCodeSourceRanges = NativeIndentedCodeProjectionPlanner.sourceRanges(indentedCodePlan)
+        val headingPlan = plan.withoutProjectionsInside(
+            listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges + indentedCodeSourceRanges
         )
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
             blockQuoteSourceRanges +
             fencedCodeSourceRanges +
+            indentedCodeSourceRanges +
             listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
@@ -118,6 +130,7 @@ internal class NativeOrdinaryPresentationController(
         headings.applyPlan(headingPlan, richPresentationEnabled)
         blockQuotes.applyPlan(blockQuotePlan, richPresentationEnabled)
         fencedCodes.applyPlan(fencedCodePlan, richPresentationEnabled)
+        indentedCodes.applyPlan(indentedCodePlan, richPresentationEnabled)
         lists.applyPlan(plan, richPresentationEnabled)
     }
 
@@ -131,12 +144,17 @@ internal class NativeOrdinaryPresentationController(
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
-        val headingPlan = plan.withoutProjectionsInside(
+        val indentedCodePlan = plan.withoutProjectionsInside(
             listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges
+        )
+        val indentedCodeSourceRanges = NativeIndentedCodeProjectionPlanner.sourceRanges(indentedCodePlan)
+        val headingPlan = plan.withoutProjectionsInside(
+            listSourceRanges + blockQuoteSourceRanges + fencedCodeSourceRanges + indentedCodeSourceRanges
         )
         val exactSourceRanges = NativeHeadingProjectionPlanner.unsupportedSourceRanges(headingPlan) +
             blockQuoteSourceRanges +
             fencedCodeSourceRanges +
+            indentedCodeSourceRanges +
             listSourceRanges
         if (plan.status == ProjectionPlanStatus.READY && richPresentationEnabled) {
             installRangeHighlighters(plan, exactSourceRanges)
@@ -147,6 +165,7 @@ internal class NativeOrdinaryPresentationController(
         headings.refreshActivity(headingPlan, richPresentationEnabled)
         blockQuotes.refreshActivity(blockQuotePlan, richPresentationEnabled)
         fencedCodes.refreshActivity(fencedCodePlan, richPresentationEnabled)
+        indentedCodes.refreshActivity(indentedCodePlan, richPresentationEnabled)
         lists.refreshActivity(plan, richPresentationEnabled)
     }
 
@@ -156,6 +175,7 @@ internal class NativeOrdinaryPresentationController(
         val headingEvidence = headings.evidenceSnapshot()
         val blockQuoteEvidence = blockQuotes.evidenceSnapshot()
         val fencedCodeEvidence = fencedCodes.evidenceSnapshot()
+        val indentedCodeEvidence = indentedCodes.evidenceSnapshot()
         val listEvidence = lists.evidenceSnapshot()
         return NativeOrdinaryPresentationEvidence(
             inlineHighlighters = inlineEvidence.highlighters,
@@ -178,6 +198,10 @@ internal class NativeOrdinaryPresentationController(
             fencedCodeFolds = fencedCodeEvidence.ownedFolds,
             fencedCodeFullyConcealed = fencedCodeEvidence.fullyConcealed,
             fencedCodeInfos = fencedCodeEvidence.infos,
+            indentedCodeModels = indentedCodeEvidence.models,
+            indentedCodeInlays = indentedCodeEvidence.ownedInlays,
+            indentedCodeFolds = indentedCodeEvidence.ownedFolds,
+            indentedCodeFullyConcealed = indentedCodeEvidence.fullyConcealed,
             listModels = listEvidence.models,
             listRows = listEvidence.rows,
             listInlays = listEvidence.ownedInlays,
@@ -271,6 +295,7 @@ internal class NativeOrdinaryPresentationController(
         headings.dispose()
         blockQuotes.dispose()
         fencedCodes.dispose()
+        indentedCodes.dispose()
         lists.dispose()
         clearFolds()
         disposed = true
@@ -354,7 +379,6 @@ private class NativeBlockPresentationController(
         highlightKinds = setOf(
             NativeProjectionKind.BLOCK_QUOTE,
             NativeProjectionKind.CODE_FENCE,
-            NativeProjectionKind.CODE_BLOCK,
             NativeProjectionKind.THEMATIC_BREAK,
         ),
         foldableKinds = setOf(
@@ -543,6 +567,7 @@ private fun inlineSemanticAttributes(editor: Editor, kind: NativeProjectionKind)
     NativeProjectionKind.STRONG -> TextAttributes().apply {
         fontType = Font.BOLD
     }
+    NativeProjectionKind.INLINE_CODE -> inlineCodeSemanticAttributes(editor)
     NativeProjectionKind.LINK ->
         editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)?.clone()
             ?: TextAttributes().apply {
@@ -551,6 +576,13 @@ private fun inlineSemanticAttributes(editor: Editor, kind: NativeProjectionKind)
                 effectType = EffectType.LINE_UNDERSCORE
             }
     else -> null
+}
+
+private fun inlineCodeSemanticAttributes(editor: Editor): TextAttributes {
+    val attributes = editor.colorsScheme.getAttributes(INLINE_CODE_KEY)?.clone() ?: TextAttributes()
+    val foreground = editor.colorsScheme.defaultForeground
+    attributes.backgroundColor = Color(foreground.red, foreground.green, foreground.blue, INLINE_CODE_BACKGROUND_ALPHA)
+    return attributes
 }
 
 private fun inlineKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
@@ -564,9 +596,7 @@ private fun inlineKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (
 
 private fun blockKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (kind) {
     NativeProjectionKind.BLOCK_QUOTE -> BLOCK_QUOTE_KEY
-    NativeProjectionKind.CODE_FENCE,
-    NativeProjectionKind.CODE_BLOCK,
-    -> CODE_BLOCK_KEY
+    NativeProjectionKind.CODE_FENCE -> CODE_BLOCK_KEY
     NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_KEY
     else -> error("no block presentation key for $kind")
 }
@@ -575,6 +605,7 @@ private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
 private const val BULLET_PLACEHOLDER = "•"
 private const val QUOTE_PLACEHOLDER = "│"
 private const val THEMATIC_BREAK_PLACEHOLDER = "────────"
+private const val INLINE_CODE_BACKGROUND_ALPHA = 24
 
 private val EMPHASIS_KEY = TextAttributesKey.createTextAttributesKey(
     "MARKFLOW.PROJECTION.EMPHASIS",
