@@ -6,16 +6,15 @@ This document was established as the repository-visible quality contract for #15
 
 MarkFlow's public compatibility floor remains build 262 / IntelliJ IDEA 2026.2+.
 
-The maintained runtime matrix established by #156 is pinned rather than floating:
+The required launched-IDE runtime target established by #322 is pinned rather than floating:
 
 | Role | IntelliJ target | Required runtime evidence |
 | --- | --- | --- |
-| stable baseline | 2026.2.3 | Starter/Driver acceptance, repeated twice in one job; native editing with JCEF plugin absent; retained isolated JCEF renderer |
-| forward compatibility | 2026.3 EAP2 build 263.4732.28 | Starter/Driver acceptance; native editing with JCEF plugin absent; retained isolated JCEF renderer |
+| stable baseline | 2026.2.3 | Starter/Driver acceptance, repeated twice where the gate requires repeatability; native editing with JCEF plugin absent; retained isolated JCEF renderer |
 
-Plugin Verifier remains an additional binary/API compatibility layer. A verifier PASS does not replace launched-IDE evidence.
+Plugin Verifier remains the binary/API compatibility layer and may include forward-looking EAP builds. A verifier PASS does not replace launched-IDE evidence on the pinned stable baseline.
 
-The EAP target is a forward-compatibility probe, not a promise that unreleased IDE behavior is stable. Updating either pinned runtime target is a reviewed maintenance change because it changes the evidence environment.
+Unreleased EAP launched-IDE smoke is optional forward-compatibility signal only. If retained, it must be non-blocking or scheduled and is not part of the required PR/release runtime gate. Updating the pinned stable runtime target or the verifier compatibility envelope is a reviewed maintenance change because it changes the evidence environment.
 
 ## Layered product proof
 
