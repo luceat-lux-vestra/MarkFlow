@@ -7,9 +7,9 @@ import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
 import com.algorist.markflow.settings.state.ThemeSource
-import com.intellij.codeInsight.hints.InlayHintsSettings
-import com.intellij.codeInsight.hints.NoSettings
-import com.intellij.codeInsight.hints.SettingsKey
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.EditorFactoryEvent
+import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
@@ -20,7 +20,7 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.components.JBScrollPane
-import org.intellij.plugins.markdown.lang.MarkdownLanguage
+import org.intellij.plugins.markdown.editor.tables.ui.MarkdownTableInlayProvider
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -39,8 +39,7 @@ internal object NativeVisualAcceptanceE2EBridge {
     private const val INITIAL_WINDOW_HEIGHT = 1000
     private const val TARGET_VIEWPORT_WIDTH = 1200
     private const val TARGET_VIEWPORT_HEIGHT = 760
-    private val PLATFORM_MARKDOWN_TABLE_INLAY_KEY =
-        SettingsKey<NoSettings>("MarkdownTableInlayProviderSettingsKey")
+    private var platformMarkdownTableInlayListenerInstalled = false
 
     /**
      * Pins editor-global chrome before a Markdown editor is created.
@@ -54,14 +53,17 @@ internal object NativeVisualAcceptanceE2EBridge {
     fun prepareEditorChromeBeforeOpen() {
         ApplicationManager.getApplication().assertIsDispatchThread()
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
-        val inlaySettings = InlayHintsSettings.instance()
-        inlaySettings.changeHintTypeStatus(
-            PLATFORM_MARKDOWN_TABLE_INLAY_KEY,
-            MarkdownLanguage.INSTANCE,
-            false,
-        )
-        check(!inlaySettings.hintsEnabled(PLATFORM_MARKDOWN_TABLE_INLAY_KEY, MarkdownLanguage.INSTANCE)) {
-            "visual acceptance failed to disable bundled Markdown table action inlays"
+        if (!platformMarkdownTableInlayListenerInstalled) {
+            val application = ApplicationManager.getApplication()
+            EditorFactory.getInstance().addEditorFactoryListener(
+                object : EditorFactoryListener {
+                    override fun editorCreated(event: EditorFactoryEvent) {
+                        event.editor.putUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS, true)
+                    }
+                },
+                application,
+            )
+            platformMarkdownTableInlayListenerInstalled = true
         }
         check(!EditorSettingsExternalizable.getInstance().isShowInspectionWidget) {
             "visual acceptance failed to disable the inspection widget before editor creation"
@@ -70,6 +72,9 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun prepare(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
+        check(editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) == true) {
+            "visual acceptance failed to disable bundled Markdown table action inlays before editor creation"
+        }
 
         val lafManager = LafManager.getInstance()
         lafManager.autodetect = false
@@ -194,6 +199,9 @@ internal object NativeVisualAcceptanceE2EBridge {
         check(scrollPane.statusComponent == null) {
             "visual acceptance status-component normalization did not stick"
         }
+        check(editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) == true) {
+            "visual acceptance bundled Markdown table-inlay suppression did not stick"
+        }
         return notifications.size
     }
 
@@ -231,7 +239,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}",
             "error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}",
             "status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}",
-            "platform_markdown_table_inlays=${InlayHintsSettings.instance().hintsEnabled(PLATFORM_MARKDOWN_TABLE_INLAY_KEY, MarkdownLanguage.INSTANCE)}",
+            "platform_markdown_table_inlays=${editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) != true}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",

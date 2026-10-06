@@ -199,9 +199,10 @@ grep -Fq 'check(scrollPane.statusComponent == null)' "$visual_bridge" || die "vi
 grep -Fq '"error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe renderer state"
 grep -Fq '"error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe visibility"
 grep -Fq '"status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}"' "$visual_bridge" || die "visual environment identity no longer records status-component state"
-grep -Fq 'SettingsKey<NoSettings>("MarkdownTableInlayProviderSettingsKey")' "$visual_bridge" || die "visual acceptance bundled Markdown table-inlay setting key drifted"
-grep -Fq 'inlaySettings.changeHintTypeStatus(' "$visual_bridge" || die "visual acceptance no longer disables bundled Markdown table action inlays before editor creation"
-grep -Fq '"platform_markdown_table_inlays=${InlayHintsSettings.instance().hintsEnabled(PLATFORM_MARKDOWN_TABLE_INLAY_KEY, MarkdownLanguage.INSTANCE)}"' "$visual_bridge" || die "visual environment identity no longer records bundled Markdown table-inlay state"
+grep -Fq 'EditorFactory.getInstance().addEditorFactoryListener(' "$visual_bridge" || die "visual acceptance no longer installs pre-editor table-inlay normalization"
+grep -Fq 'event.editor.putUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS, true)' "$visual_bridge" || die "visual acceptance no longer disables bundled Markdown table inlays at editor creation"
+grep -Fq 'check(editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) == true)' "$visual_bridge" || die "visual acceptance no longer fails closed on bundled Markdown table-inlay suppression"
+grep -Fq '"platform_markdown_table_inlays=${editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) != true}"' "$visual_bridge" || die "visual environment identity no longer records bundled Markdown table-inlay state"
 if grep -Fq 'setTrafficLightIconVisible' "$visual_bridge"; then
   die "visual acceptance must not depend on experimental traffic-light visibility APIs"
 fi
