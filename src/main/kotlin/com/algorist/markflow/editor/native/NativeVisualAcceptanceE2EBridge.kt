@@ -19,8 +19,8 @@ import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
+import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBScrollPane
-import org.intellij.plugins.markdown.editor.tables.ui.MarkdownTableInlayProvider
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -39,7 +39,22 @@ internal object NativeVisualAcceptanceE2EBridge {
     private const val INITIAL_WINDOW_HEIGHT = 1000
     private const val TARGET_VIEWPORT_WIDTH = 1200
     private const val TARGET_VIEWPORT_HEIGHT = 760
+    private const val PLATFORM_MARKDOWN_TABLE_INLAY_PROVIDER_CLASS =
+        "org.intellij.plugins.markdown.editor.tables.ui.MarkdownTableInlayProvider"
+    private const val PLATFORM_MARKDOWN_TABLE_INLAY_KEY_NAME = "MarkdownDisableTableInlaysKey"
     private var platformMarkdownTableInlayListenerInstalled = false
+    private val platformMarkdownTableInlayKey: Key<Boolean> by lazy {
+        Class.forName(
+            PLATFORM_MARKDOWN_TABLE_INLAY_PROVIDER_CLASS,
+            true,
+            NativeVisualAcceptanceE2EBridge::class.java.classLoader,
+        )
+        @Suppress("DEPRECATION", "UNCHECKED_CAST")
+        val key = Key.findKeyByName(PLATFORM_MARKDOWN_TABLE_INLAY_KEY_NAME) as? Key<Boolean>
+        requireNotNull(key) {
+            "visual acceptance could not resolve bundled Markdown table-inlay suppression key"
+        }
+    }
 
     /**
      * Pins editor-global chrome before a Markdown editor is created.
@@ -58,7 +73,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             EditorFactory.getInstance().addEditorFactoryListener(
                 object : EditorFactoryListener {
                     override fun editorCreated(event: EditorFactoryEvent) {
-                        event.editor.putUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS, true)
+                        event.editor.putUserData(platformMarkdownTableInlayKey, true)
                     }
                 },
                 application,
@@ -72,7 +87,7 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun prepare(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        check(editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) == true) {
+        check(editor.getUserData(platformMarkdownTableInlayKey) == true) {
             "visual acceptance failed to disable bundled Markdown table action inlays before editor creation"
         }
 
@@ -199,7 +214,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         check(scrollPane.statusComponent == null) {
             "visual acceptance status-component normalization did not stick"
         }
-        check(editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) == true) {
+        check(editor.getUserData(platformMarkdownTableInlayKey) == true) {
             "visual acceptance bundled Markdown table-inlay suppression did not stick"
         }
         return notifications.size
@@ -239,7 +254,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}",
             "error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}",
             "status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}",
-            "platform_markdown_table_inlays=${editor.getUserData(MarkdownTableInlayProvider.DISABLE_TABLE_INLAYS) != true}",
+            "platform_markdown_table_inlays=${editor.getUserData(platformMarkdownTableInlayKey) != true}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",
