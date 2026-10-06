@@ -199,6 +199,13 @@ grep -Fq 'check(scrollPane.statusComponent == null)' "$visual_bridge" || die "vi
 grep -Fq '"error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe renderer state"
 grep -Fq '"error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}"' "$visual_bridge" || die "visual environment identity no longer records error-stripe visibility"
 grep -Fq '"status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}"' "$visual_bridge" || die "visual environment identity no longer records status-component state"
+grep -Fq 'EditorFactory.getInstance().addEditorFactoryListener(' "$visual_bridge" || die "visual acceptance no longer installs pre-editor table-inlay normalization"
+grep -Fq 'PLATFORM_MARKDOWN_TABLE_INLAY_PROVIDER_CLASS' "$visual_bridge" || die "visual acceptance bundled Markdown table-inlay provider identity drifted"
+grep -Fq 'PLATFORM_MARKDOWN_TABLE_INLAY_KEY_NAME = "MarkdownDisableTableInlaysKey"' "$visual_bridge" || die "visual acceptance bundled Markdown table-inlay key identity drifted"
+grep -Fq 'Key.findKeyByName(PLATFORM_MARKDOWN_TABLE_INLAY_KEY_NAME)' "$visual_bridge" || die "visual acceptance no longer resolves the platform-owned table-inlay key instance"
+grep -Fq 'event.editor.putUserData(platformMarkdownTableInlayKey, true)' "$visual_bridge" || die "visual acceptance no longer disables bundled Markdown table inlays at editor creation"
+grep -Fq 'check(editor.getUserData(platformMarkdownTableInlayKey) == true)' "$visual_bridge" || die "visual acceptance no longer fails closed on bundled Markdown table-inlay suppression"
+grep -Fq '"platform_markdown_table_inlays=${editor.getUserData(platformMarkdownTableInlayKey) != true}"' "$visual_bridge" || die "visual environment identity no longer records bundled Markdown table-inlay state"
 if grep -Fq 'setTrafficLightIconVisible' "$visual_bridge"; then
   die "visual acceptance must not depend on experimental traffic-light visibility APIs"
 fi

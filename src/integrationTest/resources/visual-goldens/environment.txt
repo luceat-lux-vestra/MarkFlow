@@ -17,6 +17,7 @@ inspection_widget=false
 error_stripe_renderer=false
 error_stripe_visible=false
 status_component=false
+platform_markdown_table_inlays=false
 markflow_theme=LIGHT
 markflow_font=<IDE_DEFAULT>
 markflow_base_font_size=16
