@@ -7,6 +7,9 @@ import com.algorist.markflow.settings.state.KatexDisplayDensity
 import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
 import com.algorist.markflow.settings.state.ThemeSource
+import com.intellij.codeInsight.hints.InlayHintsSettings
+import com.intellij.codeInsight.hints.NoSettings
+import com.intellij.codeInsight.hints.SettingsKey
 import com.intellij.ide.ui.LafManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
@@ -17,6 +20,7 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.components.JBScrollPane
+import org.intellij.plugins.markdown.lang.MarkdownLanguage
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -35,16 +39,30 @@ internal object NativeVisualAcceptanceE2EBridge {
     private const val INITIAL_WINDOW_HEIGHT = 1000
     private const val TARGET_VIEWPORT_WIDTH = 1200
     private const val TARGET_VIEWPORT_HEIGHT = 760
+    private val PLATFORM_MARKDOWN_TABLE_INLAY_KEY =
+        SettingsKey<NoSettings>("MarkdownTableInlayProviderSettingsKey")
 
     /**
      * Pins editor-global chrome before a Markdown editor is created.
      *
      * EditorMarkupModel snapshots the inspection-widget setting during construction, so changing
      * the setting only after opening the editor is too late to make the capture deterministic.
+     * The bundled Markdown table action bars are platform-owned editor chrome, not MarkFlow table
+     * presentation. Disable that provider in this isolated visual sandbox before editor creation so
+     * its asynchronous HorizontalBarPresentation cannot become nondeterministic golden pixels.
      */
     fun prepareEditorChromeBeforeOpen() {
         ApplicationManager.getApplication().assertIsDispatchThread()
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
+        val inlaySettings = InlayHintsSettings.instance()
+        inlaySettings.changeHintTypeStatus(
+            PLATFORM_MARKDOWN_TABLE_INLAY_KEY,
+            MarkdownLanguage.INSTANCE,
+            false,
+        )
+        check(!inlaySettings.hintsEnabled(PLATFORM_MARKDOWN_TABLE_INLAY_KEY, MarkdownLanguage.INSTANCE)) {
+            "visual acceptance failed to disable bundled Markdown table action inlays"
+        }
         check(!EditorSettingsExternalizable.getInstance().isShowInspectionWidget) {
             "visual acceptance failed to disable the inspection widget before editor creation"
         }
@@ -213,6 +231,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "error_stripe_renderer=${(editor.markupModel as? EditorMarkupModel)?.errorStripeRenderer != null}",
             "error_stripe_visible=${(editor.markupModel as? EditorMarkupModel)?.isErrorStripeVisible == true}",
             "status_component=${((editor as? EditorEx)?.scrollPane as? JBScrollPane)?.statusComponent != null}",
+            "platform_markdown_table_inlays=${InlayHintsSettings.instance().hintsEnabled(PLATFORM_MARKDOWN_TABLE_INLAY_KEY, MarkdownLanguage.INSTANCE)}",
             "markflow_theme=${runtime.themeSource}",
             "markflow_font=${runtime.fontFamily.ifBlank { "<IDE_DEFAULT>" }}",
             "markflow_base_font_size=${runtime.baseFontSizePx}",
