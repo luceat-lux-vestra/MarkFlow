@@ -114,7 +114,7 @@ expect_fail "$missing_result_check" policy_producers "does not inspect component
 
 mutable="$TMP/mutable"
 copy_root "$mutable"
-perl -0pi -e 's#jlumbroso/free-disk-space\@[0-9a-f]{40}#jlumbroso/free-disk-space\@v2.0.0#' "$mutable/.github/workflows/build.yml"
+perl -0pi -e 's#actions/checkout\\@[0-9a-f]{40}#actions/checkout\\@v7.0.1#' "$mutable/.github/workflows/build.yml"
 expect_fail "$mutable" action_pinning "mutable action ref"
 
 missing_permissions="$TMP/missing-permissions"

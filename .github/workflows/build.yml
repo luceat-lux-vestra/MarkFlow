@@ -221,12 +221,6 @@ jobs:
           echo "::error::Timed out waiting for canonical exact-SHA '$EXPECTED_JOB' evidence at $EXPECTED_SHA."
           exit 1
 
-      - name: Maximize Build Space
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
 
       - name: Validate dispatched target
         if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
@@ -524,12 +518,6 @@ jobs:
           echo "::error::Timed out waiting for canonical exact-SHA '$EXPECTED_JOB' evidence at $EXPECTED_SHA."
           exit 1
 
-      - name: Maximize Build Space
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
 
       - name: Fetch Sources
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
@@ -593,12 +581,6 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
         run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
 
-      - name: Maximize Build Space
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
 
       - name: Fetch Sources
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
@@ -657,12 +639,6 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' }}
         run: echo "PR metadata changed without a new head; product validation remains bound to the unchanged exact SHA."
 
-      - name: Maximize Build Space
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
 
       - name: Fetch Sources
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
