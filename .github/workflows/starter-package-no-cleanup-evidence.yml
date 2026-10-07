@@ -1,0 +1,91 @@
+name: Starter Package No-Cleanup Evidence
+
+on:
+  push:
+    branches:
+      - ci/starter-package-no-cleanup-evidence
+
+permissions:
+  contents: read
+
+env:
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  TARGET_SOURCE_SHA: '623f687d82e24af9793904e30d165fc4f3c757d1'
+
+jobs:
+  package:
+    name: Package exact Starter plugin without disk cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TARGET_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$TARGET_SOURCE_SHA" ] || {
+            echo "::error::Starter package checkout drifted: expected=$TARGET_SOURCE_SHA actual=$actual"
+            exit 1
+          }
+
+      - name: Record initial disk headroom
+        shell: bash
+        run: df -h /
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Build exact plugin artifact once
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Starter plugin distribution, found ${#archives[@]}"
+            printf '%s\n' "${archives[@]}"
+            exit 1
+          fi
+
+          artifact="${archives[0]}"
+          archive_name="$(basename "$artifact")"
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+
+          mkdir -p build/e2e-package
+          cp "$artifact" build/e2e-package/plugin.zip
+          {
+            echo "source_sha=$TARGET_SOURCE_SHA"
+            echo "plugin_archive=$archive_name"
+            echo "plugin_sha256=$digest"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+          } | tee build/e2e-package/manifest.txt
+
+      - name: Record final disk headroom
+        if: always()
+        shell: bash
+        run: df -h /
+
+      - name: Upload exact Starter plugin artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: starter-package-no-cleanup-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            build/e2e-package/plugin.zip
+            build/e2e-package/manifest.txt
