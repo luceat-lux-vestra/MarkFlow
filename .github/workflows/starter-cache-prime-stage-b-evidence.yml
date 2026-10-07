@@ -1,0 +1,59 @@
+name: Starter Cache Priming Stage B Evidence
+on:
+  push:
+    branches:
+      - ci/starter-cache-prime-stage-b-evidence
+permissions:
+  contents: read
+env:
+  SOURCE_SHA: 8d3d8862507c73b6fdab1da962d1926506964110
+jobs:
+  prime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Prime compilation outputs
+        run: ./gradlew integrationTestClasses -PplatformVersion=2026.2.3 --build-cache --info > prime.log 2>&1 || { tail -150 prime.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-prime-log
+          path: prime.log
+  consumer:
+    needs: prime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Measure consumer task outcomes
+        run: ./gradlew integrationTestClasses -PplatformVersion=2026.2.3 --build-cache --info > consumer.log 2>&1 || { tail -150 consumer.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-consumer-log
+          path: consumer.log
