@@ -25,6 +25,10 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set(["mermaid-cynefin", "mermaid-eventmodeling", "mermaid-flowchart-elk", "mermaid-info", "mermaid-ishikawa", "mermaid-railroad", "mermaid-railroad-abnf", "mermaid-railroad-ebnf", "mermaid-railroad-peg", "mermaid-treeview", "mermaid-usecase", "mermaid-wardley"]);
 
 const mermaidDetectorPrefix = new Map([
+  ["agentflow", /^agentflow-beta\b/],
+  ["radar", /^radar-beta\b/],
+  ["swimlanes", /^swimlane-beta\b/],
+  ["treemap", /^treemap-beta\b/],
   ["architecture", /^architecture-beta\b/],
   ["block", /^block-beta\b/],
   ["c4", /^C4(?:Context|Container|Component|Dynamic|Deployment)\b/],
