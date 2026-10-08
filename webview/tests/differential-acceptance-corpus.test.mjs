@@ -22,9 +22,11 @@ const expectedMermaidDetectors = new Set(["agentflow", "architecture", "block", 
 const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "autolink-email", "blank-lines-whitespace", "blockquote", "closing-atx-heading", "code-span-delimiter-edge", "combined-emphasis", "emphasis", "entity-character-reference", "escaped-punctuation", "fence-length-info", "fenced-code-backtick", "fenced-code-tilde", "footnote-extension", "gfm-autolink-literal", "hard-break", "image-syntax", "indented-code", "inline-code", "inline-image-title", "inline-link", "inline-link-title", "inline-raw-html", "katex-display", "katex-inline", "list-marker-variants", "local-image-resource", "mermaid-fenced-block", "nested-list", "ordered-list", "paragraph", "raw-html-hostile", "raw-html-safe", "reference-definition", "reference-image", "reference-link", "setext-headings", "soft-break", "strikethrough", "strong", "table-alignment", "table-basic", "table-escaped-pipe", "tabs-indentation", "task-list", "thematic-break", "tight-loose-lists", "unordered-list"]);
 
 // #354 work-in-progress inventory. This set must monotonically shrink to empty before merge.
-const knownGapIds = new Set(["mermaid-eventmodeling", "mermaid-flowchart-elk"]);
+const knownGapIds = new Set([]);
 
 const mermaidDetectorPrefix = new Map([
+  ["eventmodeling", /^eventmodeling\b/],
+  ["flowchart-elk", /^flowchart-elk\b/],
   ["railroad", /^railroad-beta\b/],
   ["railroad-abnf", /^railroad-abnf-beta\b/],
   ["railroad-ebnf", /^railroad-ebnf-beta\b/],

@@ -55,9 +55,9 @@ mermaid-c4	mermaid	c4	supported	covered	examples/mermaid-c4.md	yes	click	c4	merm
 mermaid-class	mermaid	class	supported	covered	examples/mermaid-class.md	yes	click	class	mermaid,class
 mermaid-cynefin	mermaid	cynefin	supported	covered	examples/mermaid-cynefin.md	yes	click	cynefin	mermaid,cynefin
 mermaid-er	mermaid	er	supported	covered	examples/mermaid-er.md	yes	click	er	mermaid,er
-mermaid-eventmodeling	mermaid	eventmodeling	supported	gap	-	yes	click	eventmodeling	mermaid,eventmodeling
+mermaid-eventmodeling	mermaid	eventmodeling	supported	covered	examples/mermaid-eventmodeling.md	yes	click	eventmodeling	mermaid,eventmodeling
 mermaid-flowchart	mermaid	flowchart	supported	covered	examples/mermaid-flowchart.md	yes	click	flowchart	mermaid,flowchart
-mermaid-flowchart-elk	mermaid	flowchart-elk	supported	gap	-	yes	click	flowchart-elk	mermaid,flowchart-elk
+mermaid-flowchart-elk	mermaid	flowchart-elk	supported	covered	examples/mermaid-flowchart-elk.md	yes	click	flowchart-elk	mermaid,flowchart-elk
 mermaid-gantt	mermaid	gantt	supported	covered	examples/mermaid-gantt.md	yes	click	gantt	mermaid,gantt
 mermaid-git	mermaid	git	supported	covered	examples/mermaid-gitgraph.md	yes	click	git	mermaid,git
 mermaid-info	mermaid	info	supported	covered	examples/mermaid-info.md	yes	click	info	mermaid,info
