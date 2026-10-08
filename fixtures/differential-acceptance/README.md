@@ -6,8 +6,9 @@ MarkFlow-vs-IntelliJ Markdown Preview differential harness.
 `corpus.tsv` is intentionally broader than `examples/`:
 
 - it maps Markdown visual/semantic feature families to existing or missing fixtures;
-- it snapshots the Mermaid 12.0.0 detector surface that MarkFlow currently exposes through
-  the retained production renderer;
+- it snapshots the Mermaid 12.1.0 detector surface that MarkFlow currently exposes through
+  the retained production renderer (the upstream diagram-orchestration.ts registry is byte-identical
+  between Mermaid 12.0.0 and 12.1.0; render validation must still be repeated for 12.1.0);
 - it records product classification (`supported`, `degraded`, `unsupported`);
 - it distinguishes a real fixture (`covered`) from an explicit audited hole (`gap`).
 
