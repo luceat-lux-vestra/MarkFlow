@@ -17,7 +17,7 @@ const allowedStates = new Set(["covered", "gap"]);
 const allowedBoolean = new Set(["yes", "no"]);
 const allowedInteractions = new Set(["none", "click", "navigate"]);
 
-const expectedMermaidVersion = "12.0.0";
+const expectedMermaidVersion = "12.1.0";
 const expectedMermaidDetectors = new Set(["agentflow", "architecture", "block", "c4", "class", "cynefin", "er", "eventmodeling", "flowchart", "flowchart-elk", "gantt", "git", "info", "ishikawa", "journey", "kanban", "mindmap", "packet", "pie", "quadrant", "radar", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "requirement", "sankey", "sequence", "state", "swimlanes", "timeline", "treeview", "treemap", "usecase", "venn", "wardley", "xychart"]);
 const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "autolink-email", "blank-lines-whitespace", "blockquote", "closing-atx-heading", "code-span-delimiter-edge", "combined-emphasis", "emphasis", "entity-character-reference", "escaped-punctuation", "fence-length-info", "fenced-code-backtick", "fenced-code-tilde", "footnote-extension", "gfm-autolink-literal", "hard-break", "image-syntax", "indented-code", "inline-code", "inline-image-title", "inline-link", "inline-link-title", "inline-raw-html", "katex-display", "katex-inline", "list-marker-variants", "local-image-resource", "mermaid-fenced-block", "nested-list", "ordered-list", "paragraph", "raw-html-hostile", "raw-html-safe", "reference-definition", "reference-image", "reference-link", "setext-headings", "soft-break", "strikethrough", "strong", "table-alignment", "table-basic", "table-escaped-pipe", "tabs-indentation", "task-list", "thematic-break", "tight-loose-lists", "unordered-list"]);
 
