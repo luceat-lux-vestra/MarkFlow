@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>MarkFlow Mermaid browser acceptance</title></head>
+<body>
+<output id="markflow-mermaid-test-output" data-status="pending">PENDING</output>
+<script type="module">
+  import mermaid from "mermaid";
+  const output = document.getElementById("markflow-mermaid-test-output");
+  try {
+    const response = await fetch("/__markflow_mermaid_cases", {cache: "no-store"});
+    if (!response.ok) throw new Error("Fixture endpoint failed: " + response.status);
+    const sources = await response.json();
+    mermaid.initialize({startOnLoad: false, securityLevel: "strict"});
+    const passed = [];
+    for (const [name, source] of Object.entries(sources)) {
+      const parsed = await mermaid.parse(source, {suppressErrors: false});
+      if (!parsed) throw new Error(name + ": parser returned no result");
+      const result = await mermaid.render("markflow-acceptance-" + name, source);
+      const documentSvg = new DOMParser().parseFromString(result.svg, "image/svg+xml");
+      const svg = documentSvg.documentElement;
+      if (svg.localName !== "svg" || documentSvg.querySelector("parsererror")) {
+        throw new Error(name + ": invalid SVG");
+      }
+      const bounds = (svg.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+      if (bounds.length !== 4 || !Number.isFinite(bounds[2]) || !Number.isFinite(bounds[3]) ||
+          bounds[2] <= 0 || bounds[3] <= 0) throw new Error(name + ": SVG has no positive viewBox");
+      passed.push(name);
+    }
+    output.textContent = "PASS:" + passed.join(",");
+    output.dataset.status = "passed";
+  } catch (error) {
+    output.textContent = "FAIL:" + (error?.stack ?? error);
+    output.dataset.status = "failed";
+  }
+</script>
+</body>
+</html>
