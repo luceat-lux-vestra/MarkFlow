@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,8 +22,12 @@ const expectedMermaidVersion = "12.1.0";
 const expectedMermaidDetectors = new Set(["agentflow", "architecture", "block", "c4", "class", "cynefin", "er", "eventmodeling", "flowchart", "flowchart-elk", "gantt", "git", "info", "ishikawa", "journey", "kanban", "mindmap", "packet", "pie", "quadrant", "radar", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "requirement", "sankey", "sequence", "state", "swimlanes", "timeline", "treeview", "treemap", "usecase", "venn", "wardley", "xychart"]);
 const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "autolink-email", "blank-lines-whitespace", "blockquote", "closing-atx-heading", "code-span-delimiter-edge", "combined-emphasis", "emphasis", "entity-character-reference", "escaped-punctuation", "fence-length-info", "fenced-code-backtick", "fenced-code-tilde", "footnote-extension", "gfm-autolink-literal", "hard-break", "image-syntax", "indented-code", "inline-code", "inline-image-title", "inline-link", "inline-link-title", "inline-raw-html", "katex-display", "katex-inline", "list-marker-variants", "local-image-resource", "mermaid-fenced-block", "nested-list", "ordered-list", "paragraph", "raw-html-hostile", "raw-html-safe", "reference-definition", "reference-image", "reference-link", "setext-headings", "soft-break", "strikethrough", "strong", "table-alignment", "table-basic", "table-escaped-pipe", "tabs-indentation", "task-list", "thematic-break", "tight-loose-lists", "unordered-list"]);
 
-// #354 work-in-progress inventory. This set must monotonically shrink to empty before merge.
+// Completeness is now closed: all declared Markdown/Mermaid features have fixtures.
 const knownGapIds = new Set([]);
+// Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
+// not merely detector/feature set membership. Deliberate changes require audited rebaseline.
+const reviewedManifestGitBlobSha = "0f93154d639a0a1901fe9bb94a3dd1e3ad196b1b";
+const reviewedManifestRows = 88;
 
 const mermaidDetectorPrefix = new Map([
   ["eventmodeling", /^eventmodeling\b/],
@@ -63,6 +68,46 @@ const mermaidDetectorPrefix = new Map([
   ["venn", /^venn-beta\b/],
   ["xychart", /^xychart-beta\b/],
 ]);
+
+function manifestGitBlobSha(source) {
+  const bytes = Buffer.from(source, "utf8");
+  return createHash("sha1").update("blob " + bytes.length + "\0").update(bytes).digest("hex");
+}
+
+function assertReviewedManifest(source) {
+  assert.equal(
+    manifestGitBlobSha(source),
+    reviewedManifestGitBlobSha,
+    "corpus.tsv changed: audit every affected case/classification/fixture and deliberately rebaseline the Git blob SHA"
+  );
+}
+
+test("88-case corpus snapshot rejects deletions, reclassification and fixture substitutions", () => {
+  const source = readFileSync(manifestPath, "utf8");
+  assert.equal(parseManifest().length, reviewedManifestRows, "reviewed 88-case coverage shrank or expanded");
+  assertReviewedManifest(source);
+
+  const lines = source.split("\n");
+  const removed = [lines[0], ...lines.slice(2)].join("\n");
+  const reclassified = source.replace("\tsupported\tcovered\t", "\tunsupported\tcovered\t");
+  const substituted = source.replace(
+    "fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md",
+    "fixtures/differential-acceptance/markdown/lists-tight-loose.md"
+  );
+
+  for (const [kind, mutated] of [
+    ["removed row", removed],
+    ["reclassified support", reclassified],
+    ["substituted fixture path", substituted],
+  ]) {
+    assert.notEqual(mutated, source, kind + ": mutation fixture had no effect");
+    assert.throws(
+      () => assertReviewedManifest(mutated),
+      /corpus\.tsv changed: audit every affected case/,
+      kind + " must require explicit manifest rebaseline"
+    );
+  }
+});
 
 function parseManifest() {
   const manifest = readFileSync(manifestPath, "utf8");
@@ -127,7 +172,7 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
   assert.deepEqual([...mermaidDetectors].sort(), [...expectedMermaidDetectors].sort(), "Mermaid detector inventory drifted");
 });
 
-test("Mermaid 12.0.0 accepted detector surface stays classified and example files stay declared", () => {
+test("Mermaid 12.1.0 accepted detector surface stays classified and example files stay declared", () => {
   const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
   assert.equal(packageJson.dependencies?.mermaid, expectedMermaidVersion, "Mermaid version changed; re-audit detector coverage before updating the corpus snapshot");
 
