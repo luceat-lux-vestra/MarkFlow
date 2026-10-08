@@ -234,6 +234,8 @@ head_evidence_job="$(awk '
 [ -n "$head_evidence_job" ] || die "Head validation evidence job could not be located"
 grep -q '^    name: Head validation evidence$' <<<"$head_evidence_job" || die "head validation evidence job name drifted"
 grep -q 'name: Head validation anchor' <<<"$head_evidence_job" || die "head validation evidence has no canonical-run anchor"
+anchor_guard="$(awk '/^      - name: Head validation anchor$/ { getline; print; exit }' <<<"$head_evidence_job")"
+[ "$anchor_guard" = "        if: \${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}" ] || die "canonical head evidence anchor must include draft PR runs and exclude metadata replays"
 grep -q 'name: Reuse exact-SHA head validation' <<<"$head_evidence_job" || die "metadata-only replay does not verify exact-SHA head evidence"
 grep -Fq 'github.event.action == '"'"'edited'"'"'' <<<"$head_evidence_job" || die "head validation reuse is not scoped to metadata edits"
 for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do

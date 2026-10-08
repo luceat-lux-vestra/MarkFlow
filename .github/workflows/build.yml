@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Head validation anchor
-        if: ${{ github.event_name != 'pull_request' || (github.event.action != 'edited' && github.event.pull_request.draft == false) }}
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
         run: echo "This run is authoritative validation for the exact head rather than a metadata-only replay."
 
       - name: Reuse exact-SHA head validation
