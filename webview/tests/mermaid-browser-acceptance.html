@@ -21,9 +21,21 @@
       if (svg.localName !== "svg" || documentSvg.querySelector("parsererror")) {
         throw new Error(name + ": invalid SVG");
       }
-      const bounds = (svg.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
-      if (bounds.length !== 4 || !Number.isFinite(bounds[2]) || !Number.isFinite(bounds[3]) ||
-          bounds[2] <= 0 || bounds[3] <= 0) throw new Error(name + ": SVG has no positive viewBox");
+      if (name === "info") {
+        // Mermaid 12.1.0 infoRenderer sets width=100%, max-width=400px
+        // and renders a version label, but does not emit a viewBox.
+        // Preserve the strict viewBox requirement for every other diagram.
+        const version = svg.querySelector("text.version")?.textContent?.trim() ?? "";
+        if (svg.getAttribute("width") !== "100%" ||
+            !/max-width:\s*400px(?:;|$)/.test(svg.getAttribute("style") ?? "") ||
+            !/^v12\.1\.0(?:-tiny)?$/.test(version)) {
+          throw new Error("info: SVG lacks expected version label or upstream sizing attributes");
+        }
+      } else {
+        const bounds = (svg.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+        if (bounds.length !== 4 || !Number.isFinite(bounds[2]) || !Number.isFinite(bounds[3]) ||
+            bounds[2] <= 0 || bounds[3] <= 0) throw new Error(name + ": SVG has no positive viewBox");
+      }
       passed.push(name);
     }
     output.textContent = "PASS:" + passed.join(",");
