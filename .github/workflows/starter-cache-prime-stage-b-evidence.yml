@@ -55,10 +55,24 @@ jobs:
           distribution: zulu
           java-version: 25
 
+      - name: Mark Gradle restore start
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/starter-gradle-restore-start"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: ${{ env.EVIDENCE_MODE != 'primed' }}
+
+      - name: Report Gradle restore wall time
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat "$RUNNER_TEMP/starter-gradle-restore-start")"
+          end="$(date +%s)"
+          printf 'Gradle restore step wall time: %ss (mode=%s, job=%s)\n' "$((end-start))" "$EVIDENCE_MODE" "$GITHUB_JOB"
+          printf '| %s | %s | %ss |\n' "$GITHUB_JOB" "$EVIDENCE_MODE" "$((end-start))" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Build exact plugin artifact once
         shell: bash
@@ -147,10 +161,24 @@ jobs:
           distribution: zulu
           java-version: 25
 
+      - name: Mark Gradle restore start
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/starter-gradle-restore-start"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+
+      - name: Report Gradle restore wall time
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat "$RUNNER_TEMP/starter-gradle-restore-start")"
+          end="$(date +%s)"
+          printf 'Gradle restore step wall time: %ss (mode=%s, job=%s)\n' "$((end-start))" "$EVIDENCE_MODE" "$GITHUB_JOB"
+          printf '| %s | %s | %ss |\n' "$GITHUB_JOB" "$EVIDENCE_MODE" "$((end-start))" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Download exact Starter plugin artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -334,10 +362,24 @@ jobs:
           distribution: zulu
           java-version: 25
 
+      - name: Mark Gradle restore start
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/starter-gradle-restore-start"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+
+      - name: Report Gradle restore wall time
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat "$RUNNER_TEMP/starter-gradle-restore-start")"
+          end="$(date +%s)"
+          printf 'Gradle restore step wall time: %ss (mode=%s, job=%s)\n' "$((end-start))" "$EVIDENCE_MODE" "$GITHUB_JOB"
+          printf '| %s | %s | %ss |\n' "$GITHUB_JOB" "$EVIDENCE_MODE" "$((end-start))" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Download exact Starter plugin artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -459,10 +501,24 @@ jobs:
           distribution: zulu
           java-version: 25
 
+      - name: Mark Gradle restore start
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/starter-gradle-restore-start"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+
+      - name: Report Gradle restore wall time
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat "$RUNNER_TEMP/starter-gradle-restore-start")"
+          end="$(date +%s)"
+          printf 'Gradle restore step wall time: %ss (mode=%s, job=%s)\n' "$((end-start))" "$EVIDENCE_MODE" "$GITHUB_JOB"
+          printf '| %s | %s | %ss |\n' "$GITHUB_JOB" "$EVIDENCE_MODE" "$((end-start))" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Download exact Starter plugin artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
