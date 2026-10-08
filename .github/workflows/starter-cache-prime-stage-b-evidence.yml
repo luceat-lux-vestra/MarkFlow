@@ -7,12 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Baseline (read-only) or primed (package writes Gradle cache)'
+        description: 'Baseline (read-only), primed, or no Gradle cache'
         required: true
         type: choice
         options:
           - baseline
           - primed
+          - no-cache
 
 permissions:
   contents: read
@@ -63,6 +64,7 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: ${{ env.EVIDENCE_MODE != 'primed' }}
+          cache-disabled: ${{ env.EVIDENCE_MODE == 'no-cache' }}
 
       - name: Report Gradle restore wall time
         shell: bash
@@ -169,6 +171,7 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+          cache-disabled: ${{ env.EVIDENCE_MODE == 'no-cache' }}
 
       - name: Report Gradle restore wall time
         shell: bash
@@ -370,6 +373,7 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+          cache-disabled: ${{ env.EVIDENCE_MODE == 'no-cache' }}
 
       - name: Report Gradle restore wall time
         shell: bash
@@ -509,6 +513,7 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
+          cache-disabled: ${{ env.EVIDENCE_MODE == 'no-cache' }}
 
       - name: Report Gradle restore wall time
         shell: bash
