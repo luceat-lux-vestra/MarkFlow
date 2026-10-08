@@ -13,7 +13,7 @@ const webviewRoot = resolve(repoRoot, "webview");
 const packageJson = JSON.parse(readFileSync(resolve(webviewRoot, "package.json"), "utf8"));
 assert.equal(packageJson.dependencies.mermaid, "12.1.0", "Mermaid upgrade requires a fresh #354 detector audit");
 
-const cases = ["agentflow", "swimlanes", "radar", "treemap", "cynefin", "treeview", "usecase"];
+const cases = ["agentflow", "swimlanes", "radar", "treemap", "cynefin", "treeview", "usecase", "info", "ishikawa", "wardley"];
 const sources = Object.fromEntries(cases.map((name) => {
   const markdown = readFileSync(resolve(repoRoot, "examples", "mermaid-" + name + ".md"), "utf8");
   const match = markdown.match(/```mermaid\s*\n([\s\S]*?)```/);
@@ -31,7 +31,7 @@ function chromeExecutable() {
   throw new Error("Chromium/Chrome is required for Mermaid acceptance; set CHROME_BIN or install Chrome. Do not skip this test.");
 }
 
-test("Mermaid 12.1.0 parses and renders seven reviewed fixtures in Chromium", {timeout: 90000}, async () => {
+test("Mermaid 12.1.0 parses and renders ten reviewed fixtures in Chromium", {timeout: 90000}, async () => {
   const chrome = chromeExecutable();
   const profile = mkdtempSync(join(tmpdir(), "markflow-mermaid-"));
   const server = await createServer({
