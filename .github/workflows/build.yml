@@ -559,9 +559,7 @@ jobs:
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         env:
           CHROME_BIN: /snap/bin/chromium
-        run: |
-          test -x "$CHROME_BIN"
-          ./gradlew testWebviewSource
+        run: ./gradlew testWebviewSource
 
       - name: Collect Tests Result
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
