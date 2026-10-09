@@ -130,7 +130,7 @@ jobs:
           - shard: ordinary-markdown
             suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
           - shard: derived-content
-            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest
           - shard: lifecycle
             suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
     steps:
