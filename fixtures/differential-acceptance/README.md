@@ -14,7 +14,7 @@ MarkFlow-vs-IntelliJ Markdown Preview differential harness.
 
 All 88 reviewed corpus rows currently have fixtures; `knownGapIds` is intentionally
 empty. `differential-acceptance-corpus.test.mjs` pins the full reviewed `corpus.tsv`
-Git blob hash (0f93154d639a0a1901fe9bb94a3dd1e3ad196b1b) and exact row count. This protects against
+Git blob hash (334cc91357825fa9f29f97656ec1e88b04f59c2c) and exact row count. This protects against
 silent deletion, support-level reclassification, fixture substitution, and changes to
 interaction/preview metadata, not just feature-name drift. Regression tests confirm
 that deleted rows, reclassification and fixture substitution invalidate the snapshot.
@@ -26,6 +26,25 @@ from editing both the manifest and the test in the same change.
 
 The runtime differential test in #353 will consume this manifest after #354 completes.
 This integrity layer does not claim rendering correctness by itself.
+
+## Per-case fidelity and visual-reference expectations
+
+Every reviewed manifest row explicitly records:
+- `source_fidelity_expectation=exact-source`: the #353 harness must load the
+  exact fixture bytes in both MarkFlow and IntelliJ Preview; this inventory
+  does not itself prove runtime editor round-trip/source preservation.
+- `visual_reference_expectation=source-anchored-geometry`: supported Markdown
+  requires source-line/block anchored preview geometry comparison.
+- `visual_reference_expectation=diagram-semantic-perceptual`: supported Mermaid
+  requires structure/layout diagnostics and bounded perceptual comparison.
+- `visual_reference_expectation=diagnostic-only`: degraded cases capture
+  diagnostics without claiming visual parity.
+- `visual_reference_expectation=no-parity-expected`: unsupported cases retain
+  exact source while avoiding a false parity assertion even when the platform
+  preview is capable of rendering them.
+
+The integrity test validates each field and their classification/domain
+contract; runtime paired-capture and preservation proof belong to #353.
 
 ## Mermaid 12.1.0 runtime sizing/configuration audit (#354 → #352)
 

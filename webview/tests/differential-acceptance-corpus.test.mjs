@@ -11,7 +11,7 @@ const corpusRoot = resolve(repositoryRoot, "fixtures/differential-acceptance");
 const manifestPath = resolve(corpusRoot, "corpus.tsv");
 const packagePath = resolve(repositoryRoot, "webview/package.json");
 
-const manifestColumns = ["case_id", "domain", "feature", "classification", "fixture_state", "fixture_path", "intellij_preview", "interaction", "mermaid_detector", "categories"];
+const manifestColumns = ["case_id", "domain", "feature", "classification", "fixture_state", "fixture_path", "source_fidelity_expectation", "visual_reference_expectation", "intellij_preview", "interaction", "mermaid_detector", "categories"];
 const allowedDomains = new Set(["markdown", "mermaid"]);
 const allowedClassifications = new Set(["supported", "degraded", "unsupported"]);
 const allowedStates = new Set(["covered", "gap"]);
@@ -26,7 +26,7 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set([]);
 // Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
-const reviewedManifestGitBlobSha = "0f93154d639a0a1901fe9bb94a3dd1e3ad196b1b";
+const reviewedManifestGitBlobSha = "334cc91357825fa9f29f97656ec1e88b04f59c2c";
 const reviewedManifestRows = 88;
 
 const mermaidDetectorPrefix = new Map([
@@ -149,6 +149,16 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
     assert.equal(allowedStates.has(entry.fixture_state), true, `${entry.case_id} has invalid fixture_state`);
     assert.equal(allowedBoolean.has(entry.intellij_preview), true, `${entry.case_id} has invalid intellij_preview`);
     assert.equal(allowedInteractions.has(entry.interaction), true, `${entry.case_id} has invalid interaction`);
+    assert.equal(entry.source_fidelity_expectation, "exact-source",
+      `${entry.case_id} must retain exact source bytes for the #353 differential harness`);
+    const visualExpected = entry.classification === "supported"
+      ? (entry.domain === "mermaid" ? "diagram-semantic-perceptual" : "source-anchored-geometry")
+      : (entry.classification === "degraded" ? "diagnostic-only" : "no-parity-expected");
+    assert.equal(entry.visual_reference_expectation, visualExpected,
+      `${entry.case_id} visual-reference expectation disagrees with explicit product classification`);
+    if (visualExpected === "source-anchored-geometry" || visualExpected === "diagram-semantic-perceptual") {
+      assert.equal(entry.intellij_preview, "yes", `${entry.case_id} needs platform preview for parity comparison`);
+    }
     assert.ok(entry.categories.split(",").every((category) => /^[a-z0-9-]+$/.test(category)), `${entry.case_id} has invalid categories`);
 
     if (entry.fixture_state === "gap") {
