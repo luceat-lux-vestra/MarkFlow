@@ -163,6 +163,38 @@ grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "
 
 grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
 
+# #353 genuine platform Markdown Preview uses JCEF. The original ARM64
+# Starter run 37984591105 displayed its suspended-browser/AppArmor stub.
+# Limit the x64 reference exception to derived-content; keep other shards ARM64.
+grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
+  die "Starter shards no longer use audited per-shard runner mapping"
+grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for canonical (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: core-editing' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for core-editing (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04' ||
+  die "Starter runner drift for derived-content (ubuntu-24.04)"
+grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
+  die "Starter workflow silently dropped bundled Markdown Preview capture"
+grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
+  die "Starter diagnostics silently dropped bundled Markdown Preview suite"
+differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+[ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
+  die "bundled Markdown Preview real-E2E consumer or bridge missing"
+grep -Fq "preview.showReferenceAtSourceLine(sourceEditor, sourceLine)" "$differential_test" ||
+  die "Bundled Preview lost source-anchor navigation through retained Editor"
+grep -Fq "Embedded Browser is suspended" "$differential_bridge" ||
+  die "Bundled Preview lost fail-closed suspended-browser guard"
 visual_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterVisualAcceptanceTest.kt"
 visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_test" ] || die "deterministic visual acceptance test is missing"

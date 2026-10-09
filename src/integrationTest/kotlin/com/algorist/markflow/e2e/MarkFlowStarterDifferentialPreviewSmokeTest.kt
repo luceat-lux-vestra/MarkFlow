@@ -78,6 +78,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 }
                 val editor = markFlow.openMarkdown("VISUAL-DERIVED.md")
                 markFlow.assertProductionProjectionAttached(editor)
+                val sourceEditor = editor.editor // cached before SHOW_PREVIEW hides EditorComponentImpl
                 check(markFlow.source(editor) == expectedSource)
                 val initialStamp = markFlow.modificationStamp(editor)
                 driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }
@@ -123,20 +124,20 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                     output.resolve("markflow.png").toFile()))
 
                 val referenceIdentity = driver.withContext(OnDispatcher.EDT) {
-                    preview.showReferenceAtSourceLine(editor.editor, sourceLine)
+                    preview.showReferenceAtSourceLine(sourceEditor, sourceLine)
                 }
                 waitFor(
                     message = "real bundled Markdown Preview is visible",
                     timeout = 30.seconds,
                     getter = {
                         driver.withContext(OnDispatcher.EDT) {
-                            preview.referenceShowing(editor.editor)
+                            preview.referenceShowing(sourceEditor)
                         }
                     },
                     checker = { shown -> shown }
                 )
                 val reference = driver.withContext(OnDispatcher.EDT) {
-                    val parts = preview.referenceBounds(editor.editor).split(',').map(String::toInt)
+                    val parts = preview.referenceBounds(sourceEditor).split(',').map(String::toInt)
                     check(parts.size == 4)
                     Rectangle(parts[0], parts[1], parts[2], parts[3])
                 }
@@ -144,13 +145,17 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 check(ImageIO.write(robot.createScreenCapture(reference), "png",
                     output.resolve("intellij-preview.png").toFile()))
 
-                check(markFlow.source(editor) == expectedSource)
-                check(markFlow.modificationStamp(editor) == initialStamp) {
-                    "Platform preview navigation mutated the source Document"
+                // EditorComponentImpl is intentionally absent during SHOW_PREVIEW;
+                // verify exact source through the cached remote Editor before restore.
+                check(driver.withContext(OnDispatcher.EDT) { preview.sourceText(sourceEditor) } == expectedSource)
+                check(driver.withContext(OnDispatcher.EDT) { preview.sourceStamp(sourceEditor) } == initialStamp) {
+                    "Bundled preview mutated Document modification stamp"
                 }
-                check(!markFlow.isDirty(editor)) { "Preview dirtied the source" }
+                check(!driver.withContext(OnDispatcher.EDT) { preview.sourceUnsaved(sourceEditor) }) {
+                    "Bundled preview dirtied the source Document"
+                }
                 driver.withContext(OnDispatcher.EDT) {
-                    preview.restoreNative(editor.editor)
+                    preview.restoreNative(sourceEditor)
                 }
                 check(markFlow.source(editor) == expectedSource)
                 check(Files.readAllBytes(file).contentEquals(expectedBytes))
@@ -207,5 +212,8 @@ private interface DifferentialPreviewBridgeRemote {
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
+    fun sourceText(editor: Editor): String
+    fun sourceStamp(editor: Editor): Long
+    fun sourceUnsaved(editor: Editor): Boolean
     fun restoreNative(editor: Editor)
 }

@@ -4,6 +4,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import java.awt.Component
+import java.awt.Container
+import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import java.awt.Rectangle
 
@@ -54,15 +58,39 @@ internal object NativeDifferentialPreviewE2EBridge {
 
     fun referenceShowing(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val (selected, preview) = editors(editor)
+        val (_, preview) = editors(editor)
         val component = preview.component
         return component.isShowing && component.width > 100 && component.height > 100
     }
+
+    // SHOW_PREVIEW hides the Swing editor; callers must cache the remote Editor
+    // before that transition and inspect authoritative Document state through it.
+    fun sourceText(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return editor.document.text
+    }
+    fun sourceStamp(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return editor.document.modificationStamp
+    }
+    fun sourceUnsaved(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return FileDocumentManager.getInstance().isDocumentUnsaved(editor.document)
+    }
+    private fun hasSuspendedBrowserStub(component: Component): Boolean =
+        when (component) {
+            is JLabel -> component.text?.contains("Embedded Browser is suspended", ignoreCase = true) == true
+            is Container -> component.components.any(::hasSuspendedBrowserStub)
+            else -> false
+        }
 
     fun referenceBounds(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         check(referenceShowing(editor)) { "Actual platform Markdown Preview is not showing" }
         val component = editors(editor).second.component
+        check(!hasSuspendedBrowserStub(component)) {
+            "Bundled Markdown Preview JCEF is suspended; sandbox stub is not a valid visual oracle"
+        }
         val point = component.locationOnScreen
         val rect = Rectangle(point.x, point.y, component.width, component.height)
         check(rect.width > 100 && rect.height > 100)

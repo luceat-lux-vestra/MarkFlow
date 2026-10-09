@@ -117,21 +117,26 @@ jobs:
   shards:
     needs: [ package ]
     name: Real IDE Starter Driver (${{ matrix.shard }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - shard: canonical
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest
           - shard: core-editing
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterSmokeTest
           - shard: ordinary-markdown
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
           - shard: derived-content
+            runner: ubuntu-24.04
             suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest
           - shard: lifecycle
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
     steps:
       - name: Fetch Sources
