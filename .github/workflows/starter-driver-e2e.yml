@@ -427,7 +427,7 @@ jobs:
             ${{ runner.temp }}/markflow-visual-xvfb.log
 
   visual-gate:
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     needs: [ package, visual ]
     name: Deterministic Visual Acceptance Gate
     runs-on: ubuntu-24.04-arm
@@ -579,7 +579,7 @@ jobs:
             ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
 
   gate:
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
     runs-on: ubuntu-24.04-arm

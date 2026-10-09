@@ -169,6 +169,12 @@ visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_goldens/README.md" ] || die "visual golden policy documentation is missing"
 grep -Fq 'name: Deterministic Visual Acceptance' "$starter_workflow" || die "Starter workflow has no separate deterministic visual job"
 grep -Fq 'name: Deterministic Visual Acceptance Gate' "$starter_workflow" || die "Starter workflow has no separate visual acceptance gate"
+for gated_job in visual-gate gate; do
+  actual_guard="$(awk -v wanted="$gated_job" '
+    $0 == "  " wanted ":" { getline; print; exit }
+  ' "$starter_workflow")"
+  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
+done
 for visual_job in visual visual-gate; do
   awk -v wanted="$visual_job" '
     $0 == "  " wanted ":" { in_visual=1; next }
