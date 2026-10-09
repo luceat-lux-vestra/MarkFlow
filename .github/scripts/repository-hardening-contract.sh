@@ -175,13 +175,25 @@ for gated_job in visual-gate gate; do
   ' "$starter_workflow")"
   [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
 done
-for visual_job in visual visual-gate; do
-  awk -v wanted="$visual_job" '
+# The ARM64 visual sweep was measured against reviewed Ubuntu 24.04 x64
+# golden images. Derived KaTeX/Mermaid exceeded the fail-closed pixel budget;
+# keep that exact x64 visual oracle, while its aggregate gate remains ARM64.
+for spec in "visual:ubuntu-24.04" "visual-gate:ubuntu-24.04-arm"; do
+  visual_job="${spec%%:*}"
+  visual_runner="${spec#*:}"
+  awk -v wanted="$visual_job" -v label="$visual_runner" '
     $0 == "  " wanted ":" { in_visual=1; next }
     in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
-    in_visual && /^    runs-on: ubuntu-24[.]04-arm$/ { found=1 }
+    in_visual && $0 == "    runs-on: " label { found=1 }
     END { exit !found }
-  ' "$starter_workflow" || die "$visual_job does not use pinned ARM64 Ubuntu 24.04 visual baseline"
+  ' "$starter_workflow" || die "$visual_job does not use pinned $visual_runner runner"
+done
+# Fail closed if ARM-native browser and EGL requirements are silently removed.
+grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
+grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium path"
+for native_workflow in "$starter_workflow" ".github/workflows/native-image-import-evidence.yml"; do
+  grep -Fq 'sudo apt-get install -y --no-install-recommends libegl1' "$native_workflow" || die "$native_workflow lacks required ARM64 Skiko EGL runtime"
+  grep -Fq 'ldconfig -p | grep -F libEGL.so.1' "$native_workflow" || die "$native_workflow does not prove EGL availability"
 done
 grep -Fq 'Xvfb :99 -screen 0 1920x1080x24 -dpi 96' "$starter_workflow" || die "visual acceptance Xvfb envelope is not pinned"
 grep -Fq 'MarkFlowStarterVisualAcceptanceTest' "$starter_workflow" || die "Starter workflow does not execute the visual acceptance suite"

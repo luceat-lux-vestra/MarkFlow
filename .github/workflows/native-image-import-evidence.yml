@@ -72,6 +72,15 @@ jobs:
         with:
           cache-read-only: true
 
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
       - name: Assert image import remains host-owned and browser-free
         shell: bash
         run: |
