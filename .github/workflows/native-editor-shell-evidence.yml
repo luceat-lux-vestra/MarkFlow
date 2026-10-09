@@ -41,7 +41,7 @@ jobs:
   probe:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Real IntelliJ native editor shell probe
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
       - name: Maximize Build Space

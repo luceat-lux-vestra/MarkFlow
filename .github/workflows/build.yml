@@ -26,7 +26,7 @@ concurrency:
 jobs:
   headEvidence:
     name: Head validation evidence
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     # Metadata-only replays may begin while the canonical exact-head validation is still running.
     # The full canonical graph routinely exceeds 15 minutes, so the waiter must outlive that
     # observed duration without increasing GitHub API polling frequency.
@@ -85,7 +85,7 @@ jobs:
   build:
     name: Build
     needs: [ headEvidence ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     outputs:
       docs_only: ${{ steps.change-scope.outputs.docs_only }}
@@ -431,7 +431,7 @@ jobs:
   test:
     name: Test
     needs: [ build ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - name: Docs-only fast path
@@ -544,8 +544,21 @@ jobs:
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         run: ./gradlew check
 
+      # Native ARM64 hosted images lack Chromium; all 40 real browser cases remain mandatory.
+      - name: Install native ARM64 Chromium for webview acceptance
+        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+          /snap/bin/chromium --version
+
       - name: Run webview source tests
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        env:
+          CHROME_BIN: /snap/bin/chromium
         run: ./gradlew testWebviewSource
 
       - name: Collect Tests Result
@@ -566,7 +579,7 @@ jobs:
   inspectCode:
     name: Inspect code
     needs: [ build ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -628,7 +641,7 @@ jobs:
   verify:
     name: Verify plugin
     needs: [ build ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - name: Docs-only fast path
@@ -674,7 +687,7 @@ jobs:
 
   metadataSafety:
     name: PR Metadata Safety
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - name: Non-PR recovery fast path
@@ -698,7 +711,7 @@ jobs:
   dependencyReview:
     name: Dependency Review
     needs: [ headEvidence ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Non-dependency event fast path
@@ -715,7 +728,7 @@ jobs:
     name: Merge Gate
     needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - name: Require every authoritative component
