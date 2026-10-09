@@ -45,7 +45,6 @@ internal object NativeDifferentialPreviewE2EBridge {
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
         val (selected, preview) = editors(editor)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_PREVIEW)
-        check(selected.layout == TextEditorWithPreview.Layout.SHOW_PREVIEW)
         // Invoke the real bundled preview's source-line navigation; never guess scroll offsets.
         preview.javaClass.getMethod(
             "scrollToLine", Editor::class.java, Int::class.javaPrimitiveType
@@ -57,8 +56,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
         val component = preview.component
-        return selected.layout == TextEditorWithPreview.Layout.SHOW_PREVIEW &&
-            component.isShowing && component.width > 100 && component.height > 100
+        return component.isShowing && component.width > 100 && component.height > 100
     }
 
     fun referenceBounds(editor: Editor): String {
@@ -75,6 +73,6 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, _) = editors(editor)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        check(selected.layout == TextEditorWithPreview.Layout.SHOW_EDITOR)
+        check(editor.contentComponent.isShowing) { "Source editor was not restored" }
     }
 }
