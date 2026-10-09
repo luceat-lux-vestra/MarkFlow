@@ -175,10 +175,10 @@ for gated_job in visual-gate gate; do
   ' "$starter_workflow")"
   [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
 done
-# The ARM64 visual sweep was measured against reviewed Ubuntu 24.04 x64
-# golden images. Derived KaTeX/Mermaid exceeded the fail-closed pixel budget;
-# keep that exact x64 visual oracle, while its aggregate gate remains ARM64.
-for spec in "visual:ubuntu-24.04" "visual-gate:ubuntu-24.04-arm"; do
+# #362: Re-test the strict visual oracle on native ARM64 with Skiko's libEGL
+# present. Keep unchanged goldens, source identity, geometry, and comparator.
+# First-attempt failure is evidence, never a reason to disable visual gating.
+for spec in "visual:ubuntu-24.04-arm" "visual-gate:ubuntu-24.04-arm"; do
   visual_job="${spec%%:*}"
   visual_runner="${spec#*:}"
   awk -v wanted="$visual_job" -v label="$visual_runner" '
@@ -188,6 +188,16 @@ for spec in "visual:ubuntu-24.04" "visual-gate:ubuntu-24.04-arm"; do
     END { exit !found }
   ' "$starter_workflow" || die "$visual_job does not use pinned $visual_runner runner"
 done
+# The actual visual job (not just a sibling Starter shard) must have its
+# own native graphics dependency and proven fontconfig diagnostics.
+awk '
+  /^  visual:$/ { in_visual=1; next }
+  in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_visual && /sudo apt-get install -y --no-install-recommends libegl1/ { egl=1 }
+  in_visual && /ldconfig -p \| grep -F libEGL.so.1/ { egl_proof=1 }
+  in_visual && /fc-match -f/ { font_probe=1 }
+  END { exit !(egl && egl_proof && font_probe) }
+' "$starter_workflow" || die "ARM64 visual job lacks EGL loader proof and font provenance diagnostics"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
 grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium path"
