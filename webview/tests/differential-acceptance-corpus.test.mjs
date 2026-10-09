@@ -202,3 +202,69 @@ test("Mermaid 12.1.0 accepted detector surface stays classified and example file
     "every maintained examples/mermaid-*.md file must be declared in the differential corpus"
   );
 });
+
+
+test("Mermaid 12.1.0 runtime sizing matrix covers all detectors and checked-in config keys", () => {
+  const source = readFileSync(resolve(corpusRoot, "mermaid-runtime-config-matrix.tsv"), "utf8");
+  assert.equal(source.includes("\r"), false, "Mermaid config matrix must use LF line endings");
+  assert.equal(source.endsWith("\n"), true, "Mermaid config matrix must end with newline");
+  const [header, ...lines] = source.trimEnd().split("\n");
+  assert.deepEqual(header.split("\t"), [
+    "detector", "classification", "fixture_path", "preview_config_keys", "config_status"
+  ]);
+  const matrix = lines.map((line) => {
+    const cells = line.split("\t");
+    assert.equal(cells.length, 5, "Mermaid config matrix row must have 5 columns");
+    return cells;
+  });
+  const manifest = parseManifest();
+  const declarations = new Set(manifest
+    .filter((entry) => entry.domain === "mermaid")
+    .map((entry) => entry.mermaid_detector));
+  assert.equal(new Set(matrix.map((row) => row[0])).size, matrix.length, "duplicate Mermaid detector in sizing matrix");
+  assert.deepEqual(matrix.map((row) => row[0]).sort(), [...declarations].sort(),
+    "each Mermaid detector needs a reviewed per-diagram configuration mapping");
+
+  const runtimeSource = readFileSync(resolve(repositoryRoot, "webview/src/app/runtime-settings.ts"), "utf8");
+  const factory = runtimeSource.split("export const createMermaidPreviewConfig =")[1];
+  assert.ok(factory, "Mermaid runtime config factory changed; re-audit the sizing matrix");
+  // Restrict the source-level contract to explicit object literals with a useMaxWidth field.
+  // This detects source changes but does not claim the Mermaid engine honors every option.
+  const actual = new Map([...factory.matchAll(/^\s{8}([A-Za-z][A-Za-z0-9]*):\s*\{([^\n}]*)\},?\s*$/gm)]
+    .filter((match) => /\buseMaxWidth\b/.test(match[2]))
+    .map((match) => [match[1], match[2]]));
+  assert.ok(actual.size > 0, "no per-diagram config keys found; inspect the factory");
+  const accountedFor = new Set();
+
+  for (const [detector, classification, fixturePath, configKeys, status] of matrix) {
+    const canonical = manifest.find((entry) => entry.case_id === "mermaid-" + detector);
+    assert.ok(canonical, detector + ": canonical manifest fixture missing");
+    assert.equal(classification, canonical.classification, detector + ": classification changed");
+    assert.equal(fixturePath, canonical.fixture_path, detector + ": canonical fixture path changed");
+    const allowed = ["no-per-type-key", "shared-unverified", "explicit-mode", "fixed-true"];
+    assert.ok(allowed.includes(status), detector + ": unreviewed runtime config status");
+    if (status === "no-per-type-key") {
+      assert.equal(configKeys, "-", detector + ": no-per-type-key must not assert a key");
+      continue;
+    }
+    const keys = configKeys.split(",");
+    assert.ok(keys.every(Boolean) && new Set(keys).size === keys.length,
+      detector + ": invalid duplicate/empty config key");
+    if (status === "shared-unverified") {
+      assert.equal(detector, "flowchart-elk", "only the reviewed ELK shared-config caveat is allowed");
+      assert.deepEqual(keys, ["flowchart"], "ELK config mapping needs renewed audit");
+    }
+    if (status === "fixed-true") {
+      assert.equal(detector, "xychart", "only xychart has reviewed fixed sizing overrides");
+    }
+    for (const key of keys) {
+      const definition = actual.get(key);
+      assert.ok(definition, detector + ": key " + key + " is absent from runtime-settings.ts");
+      assert.equal(/\buseMaxWidth\s*:\s*true\b/.test(definition), status === "fixed-true",
+        detector + ": " + key + " sizing override changed");
+      accountedFor.add(key);
+    }
+  }
+  assert.deepEqual([...accountedFor].sort(), [...actual.keys()].sort(),
+    "new or removed explicit Mermaid per-diagram config key requires audited matrix update");
+});
