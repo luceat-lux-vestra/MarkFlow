@@ -169,7 +169,14 @@ visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_goldens/README.md" ] || die "visual golden policy documentation is missing"
 grep -Fq 'name: Deterministic Visual Acceptance' "$starter_workflow" || die "Starter workflow has no separate deterministic visual job"
 grep -Fq 'name: Deterministic Visual Acceptance Gate' "$starter_workflow" || die "Starter workflow has no separate visual acceptance gate"
-grep -Fq 'runs-on: ubuntu-24.04' "$starter_workflow" || die "visual acceptance OS envelope is not pinned to ubuntu-24.04"
+for visual_job in visual visual-gate; do
+  awk -v wanted="$visual_job" '
+    $0 == "  " wanted ":" { in_visual=1; next }
+    in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
+    in_visual && /^    runs-on: ubuntu-24[.]04-arm$/ { found=1 }
+    END { exit !found }
+  ' "$starter_workflow" || die "$visual_job does not use pinned ARM64 Ubuntu 24.04 visual baseline"
+done
 grep -Fq 'Xvfb :99 -screen 0 1920x1080x24 -dpi 96' "$starter_workflow" || die "visual acceptance Xvfb envelope is not pinned"
 grep -Fq 'MarkFlowStarterVisualAcceptanceTest' "$starter_workflow" || die "Starter workflow does not execute the visual acceptance suite"
 grep -Fq 'PER_CHANNEL_TOLERANCE = 8' "$visual_test" || die "visual comparator per-channel tolerance drifted"

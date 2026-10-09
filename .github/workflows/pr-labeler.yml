@@ -20,7 +20,7 @@ concurrency:
 jobs:
   label:
     name: label
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     permissions:
       contents: read

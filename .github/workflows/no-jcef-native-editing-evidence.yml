@@ -43,7 +43,7 @@ jobs:
   probe:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: No-JCEF native editing (${{ matrix.id }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false

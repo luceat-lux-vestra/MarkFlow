@@ -47,7 +47,7 @@ jobs:
   package:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Package exact Starter plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - name: Fetch Sources
@@ -117,7 +117,7 @@ jobs:
   shards:
     needs: [ package ]
     name: Real IDE Starter Driver (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -319,7 +319,7 @@ jobs:
   visual:
     needs: [ package ]
     name: Deterministic Visual Acceptance
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     steps:
       - name: Fetch Sources
@@ -430,7 +430,7 @@ jobs:
     if: ${{ always() }}
     needs: [ package, visual ]
     name: Deterministic Visual Acceptance Gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - name: Require exact package and visual oracle
@@ -453,7 +453,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat
     needs: [ package ]
     name: Release candidate canonical repeat
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     steps:
       - name: Fetch Sources
@@ -582,7 +582,7 @@ jobs:
     if: ${{ always() }}
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - name: Require package and every stable shard

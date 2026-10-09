@@ -29,7 +29,7 @@ jobs:
   audit:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Hardening audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Validate dispatched target
@@ -140,7 +140,7 @@ jobs:
   live-readback:
     name: Live hardening readback
     if: ${{ vars.HARDENING_LIVE_READBACK_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || (github.ref_name == github.event.repository.default_branch && inputs.target_sha == '')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
       contents: read
