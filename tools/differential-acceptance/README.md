@@ -175,3 +175,25 @@ This does **not** prove inaccessible clipping, intrinsic Gantt text overlap
 with a semantic parser, acceptable CSS/rendering differences, or corpus-wide
 visual acceptance. `full_differential_acceptance=false` remains mandatory
 until the full 89-case coverage and all #353 obligations are proven.
+
+### Stage E4 — bounded native Mermaid PNG enlargement (partial #352 remediation)
+
+The production `NativeDerivedPresentationController` now limits the **total**
+default Mermaid `FIT_TO_VIEWPORT` upscaling (after zoom) to **2× its decoded
+PNG's intrinsic width and height**. This is deliberately bounded at UI scale
+1 to prevent low-resolution PNG pixels from being magnified arbitrarily when
+the editor is much wider than the rendered diagram. The 284×196 Gantt case
+that previously reached 1176×812 now computes **568×392** in the host. Wide
+diagrams still shrink to available width; `ACTUAL_SIZE_SCROLL` and
+`SHRINK_TO_FIT` keep their existing contracts. The sizing unit test retains
+the original FIT=400×200 example, exercises the actual Gantt dimensions,
+wide diagrams, other modes, and explicit zoom.
+
+The **candidate** #352 scale gate is unchanged at **2×**; it must be
+evaluated in the genuine IDE capture, not assumed to pass from the unit test.
+This is a **host pixel-density protection**, not a proof that the **source
+Gantt PNG itself** has enough date-tick resolution or no collisions. Richer
+render-artifact resolution, semantic label-overlap metrics, full diagram
+review, and the independent #350 heading geometry fix remain required.
+Even after #352's candidate scaling gate passes, the real #350 drift repro
+is **expected to leave Starter red**. Do not mark #353 fully accepted.
