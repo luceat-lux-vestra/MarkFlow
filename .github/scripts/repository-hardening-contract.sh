@@ -218,6 +218,15 @@ grep -Fq 'fun jcefRuntimeEvidence()' "$differential_preview_bridge" ||
   die "JCEF preview runtime evidence reporter was removed"
 grep -Fq 'jcef-runtime-evidence.txt' "$differential_preview_test" ||
   die "JCEF first-failure evidence no longer retained"
+for diagnostic_file in 'side-by-side.png' 'diff.png' 'metrics.json'; do
+  grep -Fq "output.resolve(\"$diagnostic_file\")" "$differential_preview_test" ||
+    die "Real bundled-preview diagnostic artifact $diagnostic_file was removed"
+done
+grep -Fq '"differential_pass":false' "$differential_preview_test" ||
+  die "Unregistered real-preview raw pixels must not be promoted to parity PASS"
+grep -Fq 'raw_pixel_registration' "$differential_preview_test" ||
+  die "Preview differential diagnostics lost explicit raw-pixel limitation"
+
 
 if grep -Eq '(sysctl.*apparmor_restrict|ide\.browser\.jcef\.sandbox\.enable.*false|--no-sandbox)' "$jcef_profile_script"; then
   die "JCEF installer contains global sandbox bypass"
