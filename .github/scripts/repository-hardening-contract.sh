@@ -30,18 +30,42 @@ assert_recovery_target_validation() {
   grep -q 'Recovery target is not the current default branch or one of its ancestors' "$workflow" || die "$label does not fail closed on non-main recovery targets"
 }
 
+assert_pr_only_source_trigger() {
+  local workflow="$1" label="$2"
+  grep -Eq '^  pull_request:([[:space:]]|$)' "$workflow" || die "$label must retain pull_request validation"
+  grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$workflow" || die "$label must retain manual recovery"
+  if grep -Eq '^  push:([[:space:]]|$)' "$workflow"; then
+    die "$label must not rerun pre-merge source validation on push"
+  fi
+}
+
+# Negative controls use rewindable temporary regular files because each
+# guard performs multiple grep passes (a process substitution pipe is consumed).
+trigger_fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$trigger_fixture_dir"' EXIT
+printf 'on:\n  pull_request:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/valid.yml"
+printf 'on:\n  pull_request:\n  push: # regression\n  workflow_dispatch:\n' > "$trigger_fixture_dir/push.yml"
+printf 'on:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/missing-pr.yml"
+assert_pr_only_source_trigger "$trigger_fixture_dir/valid.yml" "PR-only fixture"
+if ( assert_pr_only_source_trigger "$trigger_fixture_dir/push.yml" "forbidden push fixture" ) 2>/dev/null; then
+  die "PR-only trigger guard accepted a reintroduced push event"
+fi
+if ( assert_pr_only_source_trigger "$trigger_fixture_dir/missing-pr.yml" "missing PR fixture" ) 2>/dev/null; then
+  die "PR-only trigger guard accepted a missing PR event"
+fi
+
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
-  [ "$count" = "2" ] || die "$label must watch gradle/** for both push and pull_request"
+  [ "$count" = "1" ] || die "$label must watch gradle/** exactly once on pull_request"
 }
 
 assert_webview_dependency_trigger() {
   local workflow="$1" label="$2" package_count lock_count
   package_count="$(grep -Fc -- "- 'webview/package.json'" "$workflow" || true)"
   lock_count="$(grep -Fc -- "- 'webview/package-lock.json'" "$workflow" || true)"
-  [ "$package_count" = "2" ] || die "$label must watch webview/package.json for both push and pull_request"
-  [ "$lock_count" = "2" ] || die "$label must watch webview/package-lock.json for both push and pull_request"
+  [ "$package_count" = "1" ] || die "$label must watch webview/package.json exactly once on pull_request"
+  [ "$lock_count" = "1" ] || die "$label must watch webview/package-lock.json exactly once on pull_request"
 }
 
 assert_gradle_managed_node() {
@@ -107,12 +131,11 @@ for workflow in \
   ".github/workflows/no-jcef-native-editing-evidence.yml" \
   ".github/workflows/native-image-import-evidence.yml" \
   ".github/workflows/native-derived-presentation-evidence.yml"; do
+  assert_pr_only_source_trigger "$workflow" "$(basename "$workflow")"
   assert_webview_dependency_trigger "$workflow" "$(basename "$workflow")"
 done
 
 renderer_workflow=".github/workflows/derived-renderer-evidence.yml"
-grep -q '^  push:$' "$renderer_workflow" || die "Derived renderer evidence has no push trigger"
-grep -q '^    branches: \[ main \]$' "$renderer_workflow" || die "Derived renderer evidence push trigger is not scoped to main"
 grep -q '^  workflow_dispatch:$' "$renderer_workflow" || die "Derived renderer evidence has no manual exact-SHA recovery trigger"
 grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evidence recovery trigger has no target_sha input"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"

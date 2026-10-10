@@ -1,24 +1,6 @@
 name: Native Projection Evidence
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/native-projection-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'fixtures/markdown-fidelity/**'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
-      - 'docs/architecture/native-markdown-projection-foundation.md'
-      - 'docs/architecture/native-editor-shell-selection.md'
-      - 'docs/architecture/0001-native-authority-projection-architecture.md'
-      - 'docs/architecture/README.md'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:

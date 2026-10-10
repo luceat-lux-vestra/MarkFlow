@@ -1,21 +1,6 @@
 name: No-JCEF Native Editing Evidence
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/no-jcef-native-editing-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/resources/META-INF/markflow-jcef.xml'
-      - 'src/main/kotlin/com/algorist/markflow/settings/**'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:

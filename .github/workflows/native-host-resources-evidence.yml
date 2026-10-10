@@ -1,22 +1,6 @@
 name: Native Host Resources Evidence
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/native-host-resources-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/main/kotlin/com/algorist/markflow/trust/**'
-      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/test/kotlin/com/algorist/markflow/trust/**'
-      - 'docs/architecture/native-host-resources.md'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
