@@ -118,6 +118,7 @@ internal object NativeDifferentialPreviewE2EBridge {
 
     private fun rasterAspectPreserved(iw: Int, ih: Int, dw: Int, dh: Int): Boolean {
         if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) return false
+        if ((iw >= 16 && dw < 2) || (ih >= 16 && dh < 2)) return false
         // Integer-pixel rounding at each axis can contribute at most ~1 pixel.
         return kotlin.math.abs(dw.toLong() * ih - dh.toLong() * iw) <= iw.toLong() + ih
     }
