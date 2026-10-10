@@ -145,36 +145,29 @@ parity, cumulative #350 heading drift, complete 89-case coverage and
 inspection and a reviewer-approved threshold with adversarial regression
 controls.
 
-### Stage E3 — known-defect candidate guards (expected FAIL pending remediation)
+### Stage E3 — historical first known-defect repro (superseded #350 gate)
 
-After **all three** source-identical pairs have been saved, the manifest suite
-now emits `candidate-structural-failures.tsv`, records
-`candidate_structural_failure_count` and sets `geometry_gate` to
-`FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS` when it detects either:
+The CI at exact HEAD `bbf4f4c30e87f4b5dba6087cab8ccd1a7deb8d91`
+preserved three source-identical pairs and reported two failures:
 
-- **#350:** H1–H6 worst source-matched, H1-relative drift exceeds two
-  actual native line heights. The observed first reference DOM probe measured
-  **167.031 CSS/native px** against an actual **22px** native line height,
-  so the initial candidate bound is **44px** at pinned UI scale/DPR 1.
-- **#352:** intrinsic Gantt raster upscaling exceeds **2×** along either
-  axis. The first actual IDE capture observed **284×196** intrinsic pixels,
-  projected to **1176×812** (about **4.14×**), with overlapping date ticks
-  visible in the source-identical comparison screenshot.
+- **#350 historical candidate:** 167.031px H1-to-H6 delta between the
+  **native source-line position** and the **Preview DOM heading box top**,
+  against an unreviewed 44px (two native line heights) bound.
+- **#352:** Gantt 284×196 decoded raster displayed at 1176×812,
+  exceeding the 2× display-scale bound and visibly magnifying source pixels.
 
-These bounds are **candidate regression controls**, not maintainer-approved
-rendering standards. They intentionally reproduce known failures and must not
-be widened simply to obtain a green run. Negative controls cover
-at-limit/just-over-limit Gantt dimensions and the heading source identity
-contract. The suite captures all selected pairs before reporting the
-deterministic failure so the source, DOM, raster and image evidence remains
-available for remediation. CI is **expected to fail** at this known-defect
-gate until the product behavior is corrected or a reviewed contract supersedes
-the candidate checks.
+The first comparison was **not a like-for-like measurement**. A source
+line's logical Y coordinate is not the native heading's rendered rectangle.
+The failing HEAD is retained as immutable evidence of a flawed acceptance
+criterion, but **its #350 numeric gate was withdrawn in Stage E5** rather
+than treated as an authorized product-defect threshold. The original
+`source-heading-relative-drift.tsv` is retained as a labeled diagnostic.
+The Gantt intrinsic/display scaling gate remains active.
 
-This does **not** prove inaccessible clipping, intrinsic Gantt text overlap
-with a semantic parser, acceptable CSS/rendering differences, or corpus-wide
-visual acceptance. `full_differential_acceptance=false` remains mandatory
-until the full 89-case coverage and all #353 obligations are proven.
+This distinction matters: the Preview is our primary **visual reference**,
+not an absolute oracle; semantic content, editable source identity,
+structural accessibility and geometric accuracy require their own
+independent acceptance contracts.
 
 ### Stage E4 — bounded native Mermaid PNG enlargement (partial #352 remediation)
 
@@ -197,3 +190,44 @@ render-artifact resolution, semantic label-overlap metrics, full diagram
 review, and the independent #350 heading geometry fix remain required.
 Even after #352's candidate scaling gate passes, the real #350 drift repro
 is **expected to leave Starter red**. Do not mark #353 fully accepted.
+
+### Stage E5 — distinguish native source lines, rendered inlays, and DOM boxes
+
+The `md-atx-headings-h1-h6` real-IDE case now retains both series:
+
+- `source-heading-relative-drift.tsv`: **legacy diagnostic** using source
+  logical-line Y against the Preview DOM heading element top, **not a
+  valid like-for-like layout regression gate**.
+- `source-heading-rendered-box-drift.tsv`: measured **installed native
+  heading inlay rectangle top/height** versus measured **actual bundled
+  Preview JCEF heading DOM element rectangle top/height**. Both top series
+  are relative to H1 and tied to source line identity. They are better
+  counterparts than source lines but still do not share a certified text
+  baseline, margin collapse or font metrics contract.
+
+The independently inspected pre-E5 real-IDE artifact
+`11676606958` supplies these native inlay top positions (pixels):
+**0, 136, 265, 389, 509, 625**, versus JCEF DOM heading top offsets
+**0, 117.375, 213.172, 293, 363.984, 434.969 CSS px** at DPR 1.
+Thus the H6 relative **block-box top delta is 190.031px**. This is
+diagnostic evidence, **not a proven 190px text-baseline regression**.
+The analogous source-line/DOM number was 167.031px, demonstrating
+why anchor choice matters. E5 records the box-delta directly rather
+than inferring it from source-line advance.
+
+Until the correct shared rendered-text baseline and box semantics are
+reviewed, the #350 case explicitly records
+`HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` and remains **FAIL-CLOSED**,
+rather than applying an arbitrary 44px numerical acceptance threshold
+to incomparable objects. Adversarial fixtures reject wrong source lines,
+unavailable/mismatched inlay bounds, collapsed DOM boxes and fake Preview
+documents. Candidate failure reports remain machine-readable and all three
+selected image pairs remain in CI artifacts. Only after the reference
+anchor is proven should a reviewed numerical drift bound be set and
+used for product spacing changes.
+
+#352 still has its independent 2× raster upscaling guard; future evidence
+must show the installed Gantt raster reaches 568×392 under the pinned
+UI scale and that labels remain readable. Full 89-expanded-case coverage,
+visual acceptance, clipping/scroll reachability and #350 baseline parity
+are **not certified**; PR #364 remains unmergeable.
