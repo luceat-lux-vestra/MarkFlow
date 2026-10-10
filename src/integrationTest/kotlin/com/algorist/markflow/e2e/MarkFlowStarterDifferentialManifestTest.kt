@@ -41,6 +41,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(inventory.map { it.parent }.toSet().size == 88)
         check(inventory.map { it.id }.toSet().size == inventory.size)
         check(headingSourceIdentityNegativeControls()) { "Stage E2 heading-geometry negative controls failed" }
+        check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
@@ -62,6 +63,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val output = root.resolve("build/e2e-evidence/derived-content/differential-manifest")
         Files.createDirectories(output)
         val states = inventory.associate { it.id to "NOT_EXECUTED" }.toMutableMap()
+        val structuralFailures = mutableListOf<String>()
         val sandbox = Files.createTempDirectory("markflow-353-manifest-")
         val project = sandbox.resolve("project")
         var failure: Throwable? = null
@@ -195,6 +197,30 @@ class MarkFlowStarterDifferentialManifestTest {
                             dest.resolve("native-raster-geometry.txt"),
                             nativeRasterGeometry, StandardCharsets.UTF_8
                         )
+                        if (entry.id == "mermaid-gantt") {
+                            check(rasterCount == 1) { "Gantt must own exactly one measured native raster" }
+                            val row = nativeRasterGeometry.lineSequence().single {
+                                it.startsWith("index=")
+                            }
+                            val fields = row.split('\t').associate { field ->
+                                val parts = field.split('=', limit = 2)
+                                check(parts.size == 2) { "Malformed Gantt raster dimension" }
+                                parts[0] to parts[1]
+                            }
+                            fun size(name: String): Int =
+                                requireNotNull(fields[name]?.toIntOrNull()) { "Missing Gantt " + name }
+                            val iw = size("intrinsic_width")
+                            val ih = size("intrinsic_height")
+                            val dw = size("displayed_width")
+                            val dh = size("displayed_height")
+                            if (ganttRasterExceededCandidateScale(iw, ih, dw, dh)) {
+                                structuralFailures += listOf(
+                                    entry.id, "CANDIDATE_GANTT_MAX_UPSCALE_X2",
+                                    dw.toString() + "x" + dh,
+                                    (iw * 2L).toString() + "x" + (ih * 2L)
+                                ).joinToString("\t")
+                            }
+                        }
                         val native = driver.withContext(OnDispatcher.EDT) {
                             Rectangle(
                                 visual.contentScreenX(remoteEditor), visual.contentScreenY(remoteEditor),
@@ -252,6 +278,23 @@ class MarkFlowStarterDifferentialManifestTest {
                                 dest.resolve("source-heading-relative-drift.tsv"),
                                 result, StandardCharsets.UTF_8
                             )
+                            val baseLineHeight = nativeHeadingGeometry.lineSequence()
+                                .firstOrNull { it.startsWith("base_line_height_px=") }
+                                ?.substringAfter('=')?.toIntOrNull()
+                                ?: error("Native line-height identity unavailable")
+                            val deltas = result.lineSequence().filter {
+                                it.matches(Regex("^[1-6]\\t.*"))
+                            }.map { it.substringAfterLast('\t').toDouble() }.toList()
+                            check(deltas.size == 6 && deltas.all(Double::isFinite))
+                            val worst = deltas.maxOf { kotlin.math.abs(it) }
+                            val candidateBound = baseLineHeight * 2.0
+                            if (worst > candidateBound) {
+                                structuralFailures += listOf(
+                                    entry.id, "CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES",
+                                    "%.3f".format(java.util.Locale.ROOT, worst),
+                                    "%.3f".format(java.util.Locale.ROOT, candidateBound)
+                                ).joinToString("\t")
+                            }
                         }
                         check(driver.withContext(OnDispatcher.EDT) {
                             preview.sourceText(remoteEditor)
@@ -297,6 +340,11 @@ class MarkFlowStarterDifferentialManifestTest {
             }
             val captured = states.values.count { it == "CAPTURED_UNVERIFIED" }
             val failed = states.values.count { it == "CAPTURE_FAILED" }
+            Files.writeString(
+                output.resolve("candidate-structural-failures.tsv"),
+                "case_id\tcandidate_gate\tobserved\tlimit\n" +
+                    structuralFailures.joinToString("\n", postfix = "\n")
+            )
             Files.writeString(output.resolve("summary.json"),
                 "{\n\"schema\":\"markflow-stage-d-capture/v1\",\n" +
                     "\"source_head\":\"" + sourceHead + "\",\n" +
@@ -306,13 +354,21 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\"captured_unverified\":" + captured + ",\n" +
                     "\"capture_failed\":" + failed + ",\n" +
                     "\"not_executed\":" + (inventory.size - captured - failed) + ",\n" +
-                    "\"geometry_gate\":\"NOT_IMPLEMENTED\",\n" +
+                    "\"geometry_gate\":\"" +
+                        (if (structuralFailures.isEmpty()) "PENDING_REVIEW_AND_FULL_CORPUS"
+                         else "FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS") + "\",\n" +
+                    "\"candidate_structural_failure_count\":" + structuralFailures.size + ",\n" +
                     "\"full_differential_acceptance\":false,\n" +
                     "\"cases\":[\n" + records + "\n]}\n")
             sandbox.toFile().deleteRecursively()
         }
         if (failure != null) throw failure
         check(selected.all { states[it.id] == "CAPTURED_UNVERIFIED" })
+        check(structuralFailures.isEmpty()) {
+            "Stage E3 deterministic known-defect repros exceeded candidate bounds: " +
+                structuralFailures.joinToString("; ") +
+                "; artifacts retained, thresholds require maintainer review before merge"
+        }
     }
 
     private fun inventory(root: Path, manifest: String): List<Case> {
@@ -499,6 +555,26 @@ class MarkFlowStarterDifferentialManifestTest {
             runCatching { compareHeadingSourceCheckpoints(native, collapsed) }.isFailure &&
             runCatching { compareHeadingSourceCheckpoints(native, "NOT_READY") }.isFailure
     }
+
+    /**
+     * Conservative CI repro guard for the known #352 Gantt pixelation defect.
+     * x2 is a CANDIDATE engineering ceiling at UI scale 1, NOT a reviewed
+     * renderer parity or a substitute for semantic text-overlap checks.
+     */
+    private fun ganttRasterExceededCandidateScale(
+        intrinsicWidth: Int, intrinsicHeight: Int, displayedWidth: Int, displayedHeight: Int
+    ): Boolean {
+        require(intrinsicWidth > 0 && intrinsicHeight > 0)
+        require(displayedWidth > 0 && displayedHeight > 0)
+        return displayedWidth.toLong() > intrinsicWidth.toLong() * 2L ||
+            displayedHeight.toLong() > intrinsicHeight.toLong() * 2L
+    }
+
+    private fun candidateRasterScaleNegativeControls(): Boolean =
+        !ganttRasterExceededCandidateScale(320, 180, 640, 360) &&
+            ganttRasterExceededCandidateScale(320, 180, 641, 360) &&
+            ganttRasterExceededCandidateScale(320, 180, 640, 361) &&
+            !ganttRasterExceededCandidateScale(320, 180, 320, 180)
 
     private fun sha(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
