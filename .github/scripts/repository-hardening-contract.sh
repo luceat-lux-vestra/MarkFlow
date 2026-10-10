@@ -236,6 +236,17 @@ grep -Fq 'testDefaultMermaidFitDoesNotMagnifySmallRasterBeyondTwoTimes' "src/tes
 # #353 E3 known-defect repros must fail AFTER saving the three source-identical pairs.
 grep -Fq 'candidateRasterScaleNegativeControls()' "$manifest_test" ||
   die "Stage E3 lost Gantt x2 boundary adversarial control"
+# Stage E6: same-source visible paragraphs are explicit DOM text ranges, not
+# outer CSS boxes or guessed scroll offsets, and remain diagnostic-only.
+grep -Fq 'source-following-text-line-drift.tsv' "$manifest_test" ||
+  die "Stage E6 lost genuine following-content text range comparison"
+grep -Fq 'intellij-following-paragraph-dom-geometry.txt' "$manifest_test" ||
+  die "Stage E6 dropped genuine bundled Preview paragraph DOM evidence"
+grep -Fq 'followingTextAnchorNegativeControls()' "$manifest_test" ||
+  die "Stage E6 lost wrong-source/collapsed-range/non-Preview controls"
+grep -Fq 'DIAGNOSTIC_NATIVE_LOGICAL_LINE_VS_JCEF_TEXT_RANGE' "$manifest_test" ||
+  die "Stage E6 cannot assert unreviewed font-baseline parity"
+
 # Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
 # Source positions remain diagnostic, while native inlay boxes and Preview DOM
 # boxes have their own independently measured, source-joined ledger.
