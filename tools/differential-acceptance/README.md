@@ -331,7 +331,8 @@ Before rewriting the production heading controller, we added an isolated
 The probe asserts that the following text moves by **custom fold height
 minus editor line height** (instead of custom fold height in addition to
 the line). It checks document bytes, modification stamp, caret position,
-source expansion/re-collapse, and cleanup geometry. The experimental
+source restoration by removing the always-collapsed custom region, reinstalling it,
+and final cleanup geometry. The experimental
 renderer draws no rich content, so passing this test is **not** sufficient
 to switch production yet: existing platform parser folds, source clicks,
 active-caret revelation, rich heading paint, undo/save/reopen and
