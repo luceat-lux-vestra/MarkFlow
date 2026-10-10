@@ -200,6 +200,12 @@ grep -Fq '"NOT_EXECUTED"' "$manifest_test" ||
   die "Stage D must retain unexecuted cases in its inventory"
 grep -Fq '"CAPTURED_UNVERIFIED"' "$manifest_test" ||
   die "Stage D captures must not be treated as geometry acceptance"
+grep -Fq 'rasterGeometryNegativeControls()' "$manifest_test" ||
+  die "Stage D no longer executes native raster negative controls"
+grep -Fq 'native-raster-geometry.txt' "$manifest_test" ||
+  die "Stage D dropped intrinsic/display raster geometry artifact"
+grep -Fq 'fun nativeRasterGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage D lost real inlay raster geometry bridge"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
