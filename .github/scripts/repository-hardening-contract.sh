@@ -206,6 +206,15 @@ grep -Fq 'native-raster-geometry.txt' "$manifest_test" ||
   die "Stage D dropped intrinsic/display raster geometry artifact"
 grep -Fq 'fun nativeRasterGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "Stage D lost real inlay raster geometry bridge"
+# #353 Stage E1: preserve source-anchored heading instrumentation (not preview parity).
+grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
+  die "Stage E1 lost deterministic heading source-span negative controls"
+grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
+  die "Stage E1 dropped source-anchored heading geometry evidence"
+grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
+  die "Stage E1 no longer requires all H1-H6 installed heading inlays"
+grep -Fq 'fun nativeHeadingSourceGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage E1 lost production-inlay source-geometry bridge"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
