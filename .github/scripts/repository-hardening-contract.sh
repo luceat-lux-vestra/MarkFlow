@@ -228,6 +228,11 @@ grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
   die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
+# #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
+grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
+  die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
+grep -Fq 'Gantt uses a bounded drawing width independent of hidden JCEF parent size' "webview/tests/runtime-settings.test.mjs" ||
+  die "Stage E7 Gantt config missing size-mode regression controls"
 # #352 production fix must retain the default Mermaid FIT raster-density ceiling.
 grep -Fq 'MAX_MERMAID_FIT_RASTER_UPSCALE = 2.0' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationController.kt" ||
   die "Stage E4 lost bounded PNG fit scaling"
