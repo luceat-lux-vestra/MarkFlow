@@ -14,8 +14,11 @@ import com.intellij.ide.starter.runner.Starter
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
+import java.awt.Color
+import java.awt.Font
 import java.awt.Robot
 import java.awt.image.BufferedImage
+import java.util.Locale
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -214,11 +217,9 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                         nativeEnvironment,
                     StandardCharsets.UTF_8
                 )
-                Files.writeString(
-                    output.resolve("metrics.json"),
-                    """{"schema":"markflow-raw-pair/v1","capture":"raw-pair","preview_convergence":"unverified","anchor_alignment":"unverified","geometry":"unverified","visual_parity":"unverified","differential_pass":false}""" + "\n",
-                    StandardCharsets.UTF_8
-                )
+                // Raw pairs are now proven to originate from exact same source.
+                // Produce diagnostic images/metrics without declaring visual parity.
+                writeDiagnosticPair(output, sha256(expectedBytes), sourceLine)
                 markFlow.close(editor)
             }
         } finally {
@@ -262,6 +263,68 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
         return occupied >= 150 && maxX - minX >= 160 && maxY - minY >= 60
     }
 
+    /**
+     * Diagnostic only: raw viewport pixels are NOT registered by source anchor,
+     * typography or Mermaid engine. Their RGB delta must never be release-gating.
+     * This deliberately records the limitation in both the metrics and PNGs.
+     */
+    private fun writeDiagnosticPair(output: Path, sourceHash: String, anchorLine: Int) {
+        val native = requireNotNull(ImageIO.read(output.resolve("markflow.png").toFile())) {
+            "Captured native PNG is unreadable"
+        }
+        val reference = requireNotNull(ImageIO.read(output.resolve("intellij-preview.png").toFile())) {
+            "Captured real IntelliJ Markdown Preview PNG is unreadable"
+        }
+        check(native.width == 1200 && native.height == 760)
+        check(referenceHasVisibleContent(reference)) { "Blank Preview cannot produce accepted diagnostics" }
+        val header = 36
+        val gap = 12
+        val side = BufferedImage(native.width + gap + reference.width,
+            header + maxOf(native.height, reference.height), BufferedImage.TYPE_INT_RGB)
+        val g = side.createGraphics()
+        try {
+            g.color = Color.WHITE
+            g.fillRect(0, 0, side.width, side.height)
+            g.color = Color.BLACK
+            g.font = Font("Dialog", Font.PLAIN, 14)
+            g.drawString("MarkFlow native (source-backed)", 12, 22)
+            g.drawString("IntelliJ 2026.2.3 bundled Markdown Preview", native.width + gap + 12, 22)
+            g.drawImage(native, 0, header, null)
+            g.drawImage(reference, native.width + gap, header, null)
+        } finally {
+            g.dispose()
+        }
+        check(ImageIO.write(side, "png", output.resolve("side-by-side.png").toFile()))
+
+        // Rescale only for a qualitative, explicitly UNREGISTERED raw-pixel diff.
+        // Different font and viewport geometries are not semantically aligned.
+        val scaled = BufferedImage(native.width, native.height, BufferedImage.TYPE_INT_RGB)
+        val sg = scaled.createGraphics()
+        try {
+            sg.drawImage(reference, 0, 0, native.width, native.height, null)
+        } finally {
+            sg.dispose()
+        }
+        val diff = BufferedImage(native.width, native.height, BufferedImage.TYPE_INT_RGB)
+        var absoluteDelta = 0L
+        for (y in 0 until native.height) {
+            for (x in 0 until native.width) {
+                val a = native.getRGB(x, y)
+                val b = scaled.getRGB(x, y)
+                val dr = kotlin.math.abs(((a ushr 16) and 255) - ((b ushr 16) and 255))
+                val dg = kotlin.math.abs(((a ushr 8) and 255) - ((b ushr 8) and 255))
+                val db = kotlin.math.abs((a and 255) - (b and 255))
+                absoluteDelta += (dr + dg + db).toLong()
+                diff.setRGB(x, y, (dr shl 16) or (dg shl 8) or db)
+            }
+        }
+        check(ImageIO.write(diff, "png", output.resolve("diff.png").toFile()))
+        val mae = absoluteDelta.toDouble() / (native.width.toLong() * native.height * 3)
+        val maeJson = String.format(Locale.ROOT, "%.4f", mae)
+        // Never promote this diagnostic MAE into an image acceptance threshold.
+        val metrics = """{"schema":"markflow-raw-pair/v2","source_sha256":"$sourceHash","source_anchor_line_zero_based":$anchorLine,"native_viewport":"${native.width}x${native.height}","preview_viewport":"${reference.width}x${reference.height}","preview_convergence":"nonblank-smoke-only","anchor_alignment":"unverified","geometry":"unverified","raw_pixel_registration":"none","unregistered_normalized_rgb_mae_diagnostic_only":$maeJson,"hard_structural_gate":"not-implemented","visual_parity":"unverified","differential_pass":false}"""
+        Files.writeString(output.resolve("metrics.json"), metrics + "\n", StandardCharsets.UTF_8)
+    }
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
             "%02x".format(it.toInt() and 0xff)
