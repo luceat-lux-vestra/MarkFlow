@@ -503,6 +503,136 @@ class MarkFlowStarterDifferentialManifestTest {
     """.trimIndent()
 
     /**
+     * E6: inspect real source-identical <p> text Range rectangles. The range
+     * top is a browser inline-layout observation, NOT guaranteed font ink top.
+     */
+    private val followingParagraphDomProbe = """
+        (() => {
+          const paragraphs = Array.from(document.querySelectorAll('p'))
+            .filter(p => /^Paragraph after H[1-6]\.$/.test(p.textContent.trim()));
+          if (paragraphs.length !== 6)
+            return 'FAIL: paragraph count ' + paragraphs.length;
+          const lines = [
+            'schema=markflow-reference-paragraph-text-range/v1',
+            'geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE',
+            'paragraph_count=6',
+            'device_pixel_ratio=' + window.devicePixelRatio,
+          ];
+          let originY = null;
+          let previousY = null;
+          for (let i = 0; i < 6; i++) {
+            const p = paragraphs[i];
+            if (p.textContent.trim() !== 'Paragraph after H' + (i + 1) + '.')
+              return 'FAIL: paragraph text/source mismatch ' + (i + 1);
+            const range = document.createRange();
+            range.selectNodeContents(p);
+            const rect = range.getBoundingClientRect();
+            const box = p.getBoundingClientRect();
+            if (!(rect.height > 0 && rect.width > 0 &&
+                  box.height > 0 && box.width > 0))
+              return 'FAIL: collapsed paragraph range ' + (i + 1);
+            if (originY === null) originY = rect.top;
+            if (previousY !== null && !(rect.top > previousY))
+              return 'FAIL: unordered paragraph text ranges';
+            previousY = rect.top;
+            lines.push('paragraph_index=' + (i + 1) +
+              '\tsource_line_zero_based=' + (4 * i + 2) +
+              '\tpreview_text_range_top_relative_css_px=' + (rect.top - originY).toFixed(3) +
+              '\tpreview_text_range_height_css_px=' + rect.height.toFixed(3) +
+              '\tpreview_p_box_top_relative_css_px=' + (box.top - originY).toFixed(3));
+          }
+          return lines.join('\n');
+        })()
+    """.trimIndent()
+
+    /**
+     * Same-source paragraph position deltas, NOT DOM-vs-native baseline parity.
+     * Native logical line top and DOM text Range top can differ by font metrics.
+     */
+    private fun compareFollowingTextAnchors(native: String, preview: String): String {
+        check(native.lineSequence().any { it == "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY" })
+        check(preview.lineSequence().any { it == "geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE" })
+        fun rows(ledger: String, prefix: String): List<Map<String, String>> =
+            ledger.lineSequence().filter { it.startsWith(prefix) }.map { line ->
+                line.split('\t').associate { field ->
+                    val pair = field.split('=', limit = 2)
+                    require(pair.size == 2) { "Malformed paragraph geometry" }
+                    pair[0] to pair[1]
+                }
+            }.toList()
+        val nativeRows = rows(native, "level=")
+        val previewRows = rows(preview, "paragraph_index=")
+        check(nativeRows.size == 6 && previewRows.size == 6) {
+            "Stage E6 needs all six source-identical following text lines"
+        }
+        val nativeOrigin = nativeRows.first().getValue("following_y_document_px").toInt()
+        var previousNative = -1
+        var previousPreview = -1.0
+        val lines = mutableListOf(
+            "schema=markflow-following-text-line-drift/v1",
+            "comparison_scope=DIAGNOSTIC_NATIVE_LOGICAL_LINE_VS_JCEF_TEXT_RANGE",
+            "level\tsource_line_zero_based\tnative_text_line_relative_px\tpreview_text_range_relative_css_px\trelative_delta_px"
+        )
+        nativeRows.zip(previewRows).forEachIndexed { i, (n, p) ->
+            val level = i + 1
+            val sourceLine = 4 * i + 2
+            check(n.getValue("level") == level.toString() &&
+                p.getValue("paragraph_index") == level.toString() &&
+                n.getValue("following_line_zero_based") == sourceLine.toString() &&
+                p.getValue("source_line_zero_based") == sourceLine.toString()) {
+                "Stage E6 unmatched paragraph source identity"
+            }
+            val nativeY = n.getValue("following_y_document_px").toInt() - nativeOrigin
+            val previewY = p.getValue("preview_text_range_top_relative_css_px").toDouble()
+            val previewHeight = p.getValue("preview_text_range_height_css_px").toDouble()
+            check(previewY.isFinite() && previewHeight.isFinite() && previewHeight > 0)
+            check(if (i == 0) nativeY == 0 && previewY == 0.0
+                else nativeY > previousNative && previewY > previousPreview) {
+                "Stage E6 collapsed/unsorted paragraph text"
+            }
+            lines += listOf(
+                level.toString(), sourceLine.toString(), nativeY.toString(),
+                "%.3f".format(java.util.Locale.ROOT, previewY),
+                "%.3f".format(java.util.Locale.ROOT, nativeY - previewY),
+            ).joinToString("\t")
+            previousNative = nativeY
+            previousPreview = previewY
+        }
+        return lines.joinToString("\n", postfix = "\n")
+    }
+
+    private fun followingTextAnchorNegativeControls(): Boolean {
+        fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=" + (i + 1) + "\tfollowing_line_zero_based=" + (4 * i + 2) +
+                    "\tfollowing_y_document_px=" + (i * 120 + 50)
+            }
+        fun preview() = "geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE\n" +
+            (0..5).joinToString("\n") { i ->
+                "paragraph_index=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i + 2) +
+                    "\tpreview_text_range_top_relative_css_px=" + (i * 90) + ".0" +
+                    "\tpreview_text_range_height_css_px=16.0"
+            }
+        val valid = compareFollowingTextAnchors(native(), preview())
+        check(valid.lineSequence().any { it == "6\t22\t600\t450.000\t150.000" })
+        val wrongSource = preview().replace(
+            "paragraph_index=3\tsource_line_zero_based=10",
+            "paragraph_index=3\tsource_line_zero_based=11"
+        )
+        val collapsed = preview().replace(
+            "paragraph_index=3\tsource_line_zero_based=10\tpreview_text_range_top_relative_css_px=180.0",
+            "paragraph_index=3\tsource_line_zero_based=10\tpreview_text_range_top_relative_css_px=90.0"
+        )
+        val zeroHeight = preview().replace(
+            "preview_text_range_height_css_px=16.0", "preview_text_range_height_css_px=0.0"
+        )
+        return runCatching { compareFollowingTextAnchors(native(), wrongSource) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), collapsed) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), zeroHeight) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), "NOT_A_PREVIEW") }.isFailure
+    }
+
+    /**
      * Compare source-identical heading anchors in their OWN coordinate systems:
      * relative to H1, so absolute scroll positioning is irrelevant.
      * Deliberately diagnostic-only until a reviewed cross-layout threshold
