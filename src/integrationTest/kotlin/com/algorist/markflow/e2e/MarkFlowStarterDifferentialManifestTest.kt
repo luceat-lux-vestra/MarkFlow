@@ -39,6 +39,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val inventory = inventory(root, String(manifest, StandardCharsets.UTF_8))
         check(inventory.map { it.parent }.toSet().size == 88)
         check(inventory.map { it.id }.toSet().size == inventory.size)
+        check(headingSourceIdentityNegativeControls()) { "Stage E2 heading-geometry negative controls failed" }
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
@@ -466,6 +467,36 @@ class MarkFlowStarterDifferentialManifestTest {
             previousReference = referenceY
         }
         return result.joinToString("\n", postfix = "\n")
+    }
+
+    /**
+     * Real comparator adversarial fixtures: a changed source-line identity, a
+     * collapsed preview anchor, or an unrelated page must never look aligned.
+     * No threshold or golden update is inferred from the positive fixture.
+     */
+    private fun headingSourceIdentityNegativeControls(): Boolean {
+        val native = (0..5).joinToString("\n") { i ->
+            "level=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i) +
+                "\theading_y_document_px=" + (40 + 100 * i)
+        }
+        val reference = (0..5).joinToString("\n") { i ->
+            "level=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i) +
+                "\treference_y_relative_css_px=" + (90.0 * i)
+        }
+        val valid = compareHeadingSourceCheckpoints(native, reference)
+        val terminal = valid.lineSequence().firstOrNull { it.startsWith("6\t20\t") }
+        if (terminal != "6\t20\t500\t450.000\t50.000") return false
+        val wrongSource = reference.replace(
+            "level=3\tsource_line_zero_based=8",
+            "level=3\tsource_line_zero_based=7"
+        )
+        val collapsed = reference.replace(
+            "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=180.0",
+            "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=90.0"
+        )
+        return runCatching { compareHeadingSourceCheckpoints(native, wrongSource) }.isFailure &&
+            runCatching { compareHeadingSourceCheckpoints(native, collapsed) }.isFailure &&
+            runCatching { compareHeadingSourceCheckpoints(native, "NOT_READY") }.isFailure
     }
 
     private fun sha(bytes: ByteArray): String =
