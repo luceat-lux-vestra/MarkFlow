@@ -292,3 +292,51 @@ Do not claim #352 resolved without inspecting that real capture; the
 full #353 corpus and independent #350 heading text-drift obligation
 remain release blocking.
 
+### Stage E8 — measured Gantt restoration and custom-fold heading geometry pilot
+
+The **actual** IntelliJ 2026.2.3 Starter run of E7 at
+`df1b06e7367b71097e13607ec18c8518d14f9a5a` finished with Build,
+CodeQL, Hardening, all other Starter shards, and deterministic visual
+acceptance **SUCCESS**. The derived-content shard remained **FAIL** only
+for the intentionally unreviewed #350 heading anchor contract, after all
+three source-identical cases were captured. Artifact
+`11679309097` contains the actual Gantt raster:
+
+- intrinsic **960 × 196** pixels (previously 284 × 196);
+- native installed **1176 × 240** pixels (about **1.225×** wide);
+- no candidate 2× over-enlargement violation; Gantt source unmodified;
+- directly reviewed pair shows the earlier severe overlapping timeline and
+  task labels relieved. This is **a bounded visual improvement**, not a
+  semantic collision-free claim for the entire diagram corpus.
+
+The real selected Gantt case now additionally records a *candidate*
+`CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800` failure if the four-day fixture
+at the pinned 1200px editor viewport regresses below **800px intrinsic**
+width. Adversarial examples 799 (FAIL), 800 (PASS), 960 (PASS) protect
+the boundary. This is NOT a universal Gantt width for other sources,
+viewports, or layouts. We retain the independent ≤2× display-scale gate.
+
+For #350, six identical-style following paragraphs show **206.031px**
+H1-to-H6-relative native-minus-reference accumulated drift. Exactly
+**162px** of native extra allocation equals the measured five H2–H6
+**block inlay heights** (41+36+32+28+25), while the source-line/Preview
+spacing accounts for approximately **44px** more. This exposes the
+source-line-plus-block-inlay double-geometry mechanism, not a vetted
+replacement height or proof that every preview spacing difference
+is incorrect.
+
+Before rewriting the production heading controller, we added an isolated
+`NativeOrdinaryPresentationTest` probe using the JetBrains
+`CustomFoldRegionRenderer` and `addCustomLinesFolding(0,0,...)`.
+The probe asserts that the following text moves by **custom fold height
+minus editor line height** (instead of custom fold height in addition to
+the line). It checks document bytes, modification stamp, caret position,
+source expansion/re-collapse, and cleanup geometry. The experimental
+renderer draws no rich content, so passing this test is **not** sufficient
+to switch production yet: existing platform parser folds, source clicks,
+active-caret revelation, rich heading paint, undo/save/reopen and
+Starter screenshot semantics require further verified integration.
+
+PR #364 remains fail-closed and unmergeable until the #350 replacement,
+full 89 expanded case coverage, reviewed semantic/perceptual acceptance
+and exact-final-HEAD evidence are complete.
