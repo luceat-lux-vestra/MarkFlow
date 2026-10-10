@@ -228,6 +228,17 @@ grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
   die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
+# #353 E3 known-defect repros must fail AFTER saving the three source-identical pairs.
+grep -Fq 'candidateRasterScaleNegativeControls()' "$manifest_test" ||
+  die "Stage E3 lost Gantt x2 boundary adversarial control"
+grep -Fq 'CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES' "$manifest_test" ||
+  die "Stage E3 lost deterministic observed heading drift gate"
+grep -Fq 'CANDIDATE_GANTT_MAX_UPSCALE_X2' "$manifest_test" ||
+  die "Stage E3 lost deterministic Gantt upscaling gate"
+grep -Fq 'candidate-structural-failures.tsv' "$manifest_test" ||
+  die "Stage E3 lost retained failure ledger"
+grep -Fq 'check(structuralFailures.isEmpty())' "$manifest_test" ||
+  die "Stage E3 known defects cannot silently return successful test status"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
