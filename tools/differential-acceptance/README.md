@@ -260,3 +260,35 @@ browser's actual rendered text line with a reviewed font/layout contract,
 then measure cumulative paragraph drift and adjust heading block allocation
 only if that measurement justifies it. Do not resurrect the superseded
 44px source-line/heading-box numeric threshold merely to unblock CI.
+
+### Stage E7 — Mermaid Gantt drawing width independent of hidden JCEF DOM
+
+At exact HEAD `e2bacac0c3b38f65729d070e95733194ea0fd39b`,
+all three selected cases captured. The real Starter artifact
+`11677482656` confirmed that #352's **native host** now correctly
+shows the 284×196 PNG at 568×392 (2×). The derived-content shard
+still fails solely because #350's common text-baseline contract is
+unreviewed. More importantly, independent review of its
+`mermaid-gantt/side-by-side.png` showed date ticks and task labels
+**still visibly overlapping** in MarkFlow. Host scale correction does
+not solve poor intrinsic layout.
+
+Mermaid 12 Gantt's drawing code reads `elem.parentElement.offsetWidth`
+to choose its timeline range and SVG `viewBox` width, unless
+`gantt.useWidth` is explicitly set. Our retained hidden JCEF renderer
+had produced only a **284px** wide chart. To remove this unintentional
+layout dependency without changing Mermaid source bytes, the derived
+renderer now supplies `gantt.useWidth=960`, a finite diagram layout
+width; other Mermaid kinds retain automatic layout. Existing size/zoom
+settings remain in force in the native host and the maximum 2× PNG
+host-scale guard remains intact. Runtime unit tests preserve this setting
+across all size modes and reject accidental overrides for flowchart/class.
+
+**The 960px setting is a candidate correction**, not a proof of Gantt
+legibility. The next authoritative Starter run must show an enlarged
+*intrinsic* Gantt PNG, unchanged exact source bytes, acceptable actual
+task-label and date-tick spacing, and no clipping or reachability loss.
+Do not claim #352 resolved without inspecting that real capture; the
+full #353 corpus and independent #350 heading text-drift obligation
+remain release blocking.
+
