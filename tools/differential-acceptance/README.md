@@ -120,3 +120,27 @@ license to reject intentional heading spacing. `geometry_gate` remains
 slice must measure the same source anchors in the real reference DOM, resolve
 the #350 cumulative drift on representative long documents, and implement
 reviewed thresholds capable of failing the actual regression.
+
+### Stage E2 — platform reference heading DOM (diagnostic, not parity PASS)
+
+The bounded `md-atx-headings-h1-h6` Starter case now attempts to query
+the **actual IDEA 2026.2.3 bundled Markdown Preview's JCEF DOM** using
+the maintained JetBrains Driver JCEF UI surface. It identifies exactly six
+ordered `h1`–`h6` elements by **exact source text**, probes each rendered
+bounding rectangle and computed CSS margins, and records
+`intellij-heading-dom-geometry.txt`. A second file,
+`source-heading-relative-drift.tsv`, joins those anchors to the live
+MarkFlow native heading inlay ledger by actual source line (0, 4, 8, 12,
+16, 20). Both geometry series are normalized to the first heading; the
+measured deltas are **diagnostic only**. These probes must fail rather than
+fall back to a synthetic HTML preview when the genuine JCEF DOM is absent,
+out of order, or source-incompatible.
+
+The two sides use native editor pixels and preview CSS pixels, respectively;
+the captured JCEF device pixel ratio and pinned UI scale must be reviewed
+before any absolute error bound is adopted. No unreviewed acceptance
+threshold is introduced here. The merge gate still treats source-anchor
+parity, cumulative #350 heading drift, complete 89-case coverage and
+#352 Gantt legibility as **unverified**. The next step is real-IDE evidence
+inspection and a reviewer-approved threshold with adversarial regression
+controls.
