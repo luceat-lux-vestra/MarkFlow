@@ -83,11 +83,21 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 val initialStamp = markFlow.modificationStamp(editor)
                 // Persist the actual IDE process identity BEFORE any JCEF failure.
                 // IDEA may use a different Java binary from the archived JBR.
+                val actualRuntime = driver.withContext(OnDispatcher.EDT) {
+                    preview.jcefRuntimeEvidence()
+                }
                 Files.writeString(
                     output.resolve("jcef-runtime-evidence.txt"),
-                    driver.withContext(OnDispatcher.EDT) { preview.jcefRuntimeEvidence() },
+                    actualRuntime,
                     StandardCharsets.UTF_8
                 )
+                val expectedIdeaExecutable = "/idea-IU-262.10968.63/bin/idea"
+                check(actualRuntime.lineSequence().any {
+                    it.startsWith("idea_apparmor_current=") && it.contains(expectedIdeaExecutable)
+                }) {
+                    "Actual IDEA process is not attached to the pinned AppArmor userns profile; " +
+                        "see retained jcef-runtime-evidence.txt"
+                }
                 driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }
                 markFlow.resetToSingleCaret(editor, expectedSource.indexOf("Visual acceptance anchor.") + 3)
 

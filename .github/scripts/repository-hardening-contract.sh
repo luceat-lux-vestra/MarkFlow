@@ -206,6 +206,8 @@ grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workf
   die "Starter no longer installs its pinned JBR profile"
 grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
   die "JCEF profile installer must be restricted to derived-content"
+grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
+  die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
 grep -Fq 'userns,' "$jcef_profile_script" ||
   die "JCEF AppArmor profile lost userns permission"
 grep -Fq '/sys/kernel/security/apparmor/profiles' "$jcef_profile_script" ||
