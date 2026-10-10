@@ -81,6 +81,13 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 val sourceEditor = editor.editor // cached before SHOW_PREVIEW hides EditorComponentImpl
                 check(markFlow.source(editor) == expectedSource)
                 val initialStamp = markFlow.modificationStamp(editor)
+                // Persist the actual IDE process identity BEFORE any JCEF failure.
+                // IDEA may use a different Java binary from the archived JBR.
+                Files.writeString(
+                    output.resolve("jcef-runtime-evidence.txt"),
+                    driver.withContext(OnDispatcher.EDT) { preview.jcefRuntimeEvidence() },
+                    StandardCharsets.UTF_8
+                )
                 driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }
                 markFlow.resetToSingleCaret(editor, expectedSource.indexOf("Visual acceptance anchor.") + 3)
 
@@ -212,6 +219,7 @@ private interface DifferentialPreviewBridgeRemote {
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
+    fun jcefRuntimeEvidence(): String
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long
     fun sourceUnsaved(editor: Editor): Boolean
