@@ -5,6 +5,7 @@ import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
+import com.intellij.driver.sdk.ui.components.common.jcef
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
 import com.intellij.ide.starter.models.IdeInfo
 import com.intellij.ide.starter.models.TestCase
@@ -89,6 +90,7 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
@@ -228,6 +230,27 @@ class MarkFlowStarterDifferentialManifestTest {
                             },
                             checker = { it }
                         )
+                        // Stage E2: real bundled JCEF DOM headings, identified by exact
+                        // source text and ordered source lines, not screenshot offsets.
+                        // Driver JCEF JS queries run against the loaded platform preview.
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            val dom = driver.ui.jcef()
+                            val referenceHeadingLedger = dom.callJs(headingReferenceDomProbe)
+                            check(referenceHeadingLedger.startsWith(
+                                "schema=markflow-reference-heading-dom-geometry/v1\\n"
+                            )) { "Platform JCEF DOM heading probe not authoritative" }
+                            val result = compareHeadingSourceCheckpoints(
+                                nativeHeadingGeometry, referenceHeadingLedger
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-heading-dom-geometry.txt"),
+                                referenceHeadingLedger + "\n", StandardCharsets.UTF_8
+                            )
+                            Files.writeString(
+                                dest.resolve("source-heading-relative-drift.tsv"),
+                                result, StandardCharsets.UTF_8
+                            )
+                        }
                         check(driver.withContext(OnDispatcher.EDT) {
                             preview.sourceText(remoteEditor)
                         } == source)
@@ -351,6 +374,98 @@ class MarkFlowStarterDifferentialManifestTest {
             }
         }
         return items
+    }
+
+    /**
+     * From the actual bundled Markdown preview DOM. Each heading must match the
+     * review-owned H1-H6 source fixture exactly; a blank or unrelated JCEF page
+     * is not an oracle. Relative bounding coordinates are invariant under a
+     * shared browser scroll displacement (unlike viewport screenshot offsets).
+     */
+    private val headingReferenceDomProbe = """
+        (() => {
+          const rows = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+            .filter(h => /^Heading level [1-6]$/.test(h.textContent.trim()));
+          if (rows.length !== 6) return 'FAIL: DOM heading count=' + rows.length;
+          const firstY = rows[0].getBoundingClientRect().top;
+          const lines = [
+            'schema=markflow-reference-heading-dom-geometry/v1',
+            'geometry_scope=PLATFORM_PREVIEW_JCEF_DOM',
+            'heading_count=6',
+            'device_pixel_ratio=' + window.devicePixelRatio,
+          ];
+          for (let index = 0; index < 6; index++) {
+            const el = rows[index];
+            const level = index + 1;
+            if (el.tagName.toLowerCase() !== 'h' + level ||
+                el.textContent.trim() !== 'Heading level ' + level)
+              return 'FAIL: DOM/source heading mismatch at ' + level;
+            const rect = el.getBoundingClientRect();
+            if (!(rect.height > 0) || !(rect.width > 0))
+              return 'FAIL: DOM collapsed heading ' + level;
+            lines.push('level=' + level +
+              '\\tsource_line_zero_based=' + (index * 4) +
+              '\\treference_y_relative_css_px=' + (rect.top - firstY).toFixed(3) +
+              '\\treference_height_css_px=' + rect.height.toFixed(3) +
+              '\\tcomputed_margin_top_css_px=' + parseFloat(getComputedStyle(el).marginTop).toFixed(3) +
+              '\\tcomputed_margin_bottom_css_px=' + parseFloat(getComputedStyle(el).marginBottom).toFixed(3));
+          }
+          return lines.join('\\n');
+        })()
+    """.trimIndent()
+
+    /**
+     * Compare source-identical heading anchors in their OWN coordinate systems:
+     * relative to H1, so absolute scroll positioning is irrelevant.
+     * Deliberately diagnostic-only until a reviewed cross-layout threshold
+     * exists. No arbitrary tolerance can silently turn this into PASS.
+     */
+    private fun compareHeadingSourceCheckpoints(native: String, reference: String): String {
+        fun rows(value: String): List<Map<String, String>> =
+            value.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\\t').associate { token ->
+                    val parts = token.split('=', limit = 2)
+                    require(parts.size == 2) { "Malformed geometry row" }
+                    parts[0] to parts[1]
+                }
+            }.toList()
+        val nativeRows = rows(native)
+        val referenceRows = rows(reference)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Six genuine source-aligned heading checkpoints required"
+        }
+        val nativeOrigin = nativeRows.first().getValue("heading_y_document_px").toInt()
+        val result = mutableListOf(
+            "schema=markflow-heading-relative-drift/v1",
+            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
+            "level\\tsource_line_zero_based\\tnative_relative_px\\treference_relative_css_px\\tdelta_px"
+        )
+        var previousNative = -1
+        var previousReference = -1.0
+        nativeRows.zip(referenceRows).forEachIndexed { index, (nativeRow, referenceRow) ->
+            val level = index + 1
+            val line = (index * 4).toString()
+            check(nativeRow.getValue("level") == level.toString() &&
+                referenceRow.getValue("level") == level.toString() &&
+                nativeRow.getValue("source_line_zero_based") == line &&
+                referenceRow.getValue("source_line_zero_based") == line) {
+                "Native/reference source heading identity mismatch"
+            }
+            val nativeY = nativeRow.getValue("heading_y_document_px").toInt() - nativeOrigin
+            val referenceY = referenceRow.getValue("reference_y_relative_css_px").toDouble()
+            check(nativeY >= 0 && nativeY > previousNative &&
+                referenceY >= 0 && referenceY > previousReference || index == 0 &&
+                    nativeY == 0 && referenceY == 0.0) {
+                "Native/reference heading anchors are collapsed, unordered, or unaligned"
+            }
+            result += listOf(level, index * 4, nativeY,
+                "%.3f".format(java.util.Locale.ROOT, referenceY),
+                "%.3f".format(java.util.Locale.ROOT, nativeY - referenceY)
+            ).joinToString("\\t")
+            previousNative = nativeY
+            previousReference = referenceY
+        }
+        return result.joinToString("\\n", postfix = "\\n")
     }
 
     private fun sha(bytes: ByteArray): String =
