@@ -39,13 +39,18 @@ assert_pr_only_source_trigger() {
   fi
 }
 
-# Negative controls prove both an accidental push trigger and a missing PR
-# trigger fail closed, rather than trusting a positive-only string search.
-assert_pr_only_source_trigger <(printf 'on:\n  pull_request:\n  workflow_dispatch:\n') "PR-only fixture"
-if ( assert_pr_only_source_trigger <(printf 'on:\n  pull_request:\n  push: # regression\n  workflow_dispatch:\n') "forbidden push fixture" ) 2>/dev/null; then
+# Negative controls use rewindable temporary regular files because each
+# guard performs multiple grep passes (a process substitution pipe is consumed).
+trigger_fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$trigger_fixture_dir"' EXIT
+printf 'on:\n  pull_request:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/valid.yml"
+printf 'on:\n  pull_request:\n  push: # regression\n  workflow_dispatch:\n' > "$trigger_fixture_dir/push.yml"
+printf 'on:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/missing-pr.yml"
+assert_pr_only_source_trigger "$trigger_fixture_dir/valid.yml" "PR-only fixture"
+if ( assert_pr_only_source_trigger "$trigger_fixture_dir/push.yml" "forbidden push fixture" ) 2>/dev/null; then
   die "PR-only trigger guard accepted a reintroduced push event"
 fi
-if ( assert_pr_only_source_trigger <(printf 'on:\n  workflow_dispatch:\n') "missing PR fixture" ) 2>/dev/null; then
+if ( assert_pr_only_source_trigger "$trigger_fixture_dir/missing-pr.yml" "missing PR fixture" ) 2>/dev/null; then
   die "PR-only trigger guard accepted a missing PR event"
 fi
 
