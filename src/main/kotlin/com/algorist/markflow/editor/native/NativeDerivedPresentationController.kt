@@ -505,6 +505,12 @@ internal class NativeDerivedPresentationController(
     }
 }
 
+// Inert derived PNGs have finite intrinsic resolution. FIT_TO_VIEWPORT remains
+// width-responsive for wide charts, but small Mermaid rasters must not be
+// enlarged without bound merely because an editor viewport is wide.
+// UI zoom is accounted for before applying this upper limit.
+private const val MAX_MERMAID_FIT_RASTER_UPSCALE = 2.0
+
 internal fun calculateNativeRasterDimensions(
     kind: NativeDerivedProjectionKind,
     imageWidth: Int,
@@ -525,7 +531,12 @@ internal fun calculateNativeRasterDimensions(
                 "SHRINK_TO_FIT" -> min(1.0, boundedViewportWidth.toDouble() / imageWidth.toDouble())
                 else -> boundedViewportWidth.toDouble() / imageWidth.toDouble()
             }
-            widthScale * zoom
+            val requestedScale = widthScale * zoom
+            if (mermaidSizeMode == "FIT_TO_VIEWPORT") {
+                min(MAX_MERMAID_FIT_RASTER_UPSCALE, requestedScale)
+            } else {
+                requestedScale
+            }
         }
 
         NativeDerivedProjectionKind.KATEX_INLINE ->
