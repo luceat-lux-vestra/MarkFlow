@@ -234,7 +234,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
      * need a meaningful occupied span; an isolated border/caret does not pass.
      * Thresholds are fixed, never adapted from a failing candidate.
      */
-    private fun referenceHasVisibleContent(image: BufferedImage): Boolean {
+    internal fun referenceHasVisibleContent(image: BufferedImage): Boolean {
         if (image.width < 400 || image.height < 300) return false
         val background = image.getRGB(image.width - 25, image.height - 25)
         val br = (background ushr 16) and 0xff
@@ -268,7 +268,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
      * typography or Mermaid engine. Their RGB delta must never be release-gating.
      * This deliberately records the limitation in both the metrics and PNGs.
      */
-    private fun writeDiagnosticPair(output: Path, sourceHash: String, anchorLine: Int) {
+    internal fun writeDiagnosticPair(output: Path, sourceHash: String, anchorLine: Int) {
         val native = requireNotNull(ImageIO.read(output.resolve("markflow.png").toFile())) {
             "Captured native PNG is unreadable"
         }
