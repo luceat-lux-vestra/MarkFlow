@@ -46,6 +46,21 @@ internal object NativeDifferentialPreviewE2EBridge {
         return selected to preview
     }
 
+    /**
+     * Request source-line navigation on the native editor without moving the caret
+     * into a folded Mermaid block. Navigation is not a geometry-parity assertion.
+     */
+    fun showNativeAtSourceLine(editor: Editor, line: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(line in 0 until editor.document.lineCount) { "Invalid native source anchor" }
+        val offset = editor.document.getLineStartOffset(line)
+        editor.scrollingModel.scrollTo(
+            editor.offsetToLogicalPosition(offset),
+            com.intellij.openapi.editor.ScrollType.CENTER,
+        )
+        return "line=" + line + ";offset=" + offset
+    }
+
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
