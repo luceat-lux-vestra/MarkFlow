@@ -227,6 +227,16 @@ jobs:
           echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
 
+      - name: Install pinned sandboxed JCEF AppArmor profile (derived-content only)
+        if: matrix.shard == 'derived-content'
+        shell: bash
+        env:
+          STARTER_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
       - name: Start virtual display
         shell: bash
         run: |

@@ -195,6 +195,23 @@ grep -Fq "preview.showReferenceAtSourceLine(sourceEditor, sourceLine)" "$differe
   die "Bundled Preview lost source-anchor navigation through retained Editor"
 grep -Fq "Embedded Browser is suspended" "$differential_bridge" ||
   die "Bundled Preview lost fail-closed suspended-browser guard"
+# #353: fail-closed sandboxed-JCEF AppArmor installation and negative controls.
+jcef_profile_script=".github/scripts/install-starter-jcef-apparmor.sh"
+[ -f "$jcef_profile_script" ] || die "pinned JCEF userns profile installer missing"
+bash "$jcef_profile_script" --self-test >/dev/null ||
+  die "JCEF AppArmor profile unsafe-path self-test failed"
+grep -Fq 'Install pinned sandboxed JCEF AppArmor profile (derived-content only)' "$starter_workflow" ||
+  die "Starter has no scoped JCEF AppArmor setup"
+grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workflow" ||
+  die "Starter no longer installs its pinned JBR profile"
+grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
+  die "JCEF profile installer must be restricted to derived-content"
+grep -Fq 'userns,' "$jcef_profile_script" ||
+  die "JCEF AppArmor profile lost userns permission"
+if grep -Eq '(sysctl.*apparmor_restrict|ide\.browser\.jcef\.sandbox\.enable.*false|--no-sandbox)' "$jcef_profile_script"; then
+  die "JCEF installer contains global sandbox bypass"
+fi
+
 visual_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterVisualAcceptanceTest.kt"
 visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_test" ] || die "deterministic visual acceptance test is missing"
