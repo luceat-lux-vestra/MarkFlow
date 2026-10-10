@@ -228,6 +228,11 @@ grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
   die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
+# #352 production fix must retain the default Mermaid FIT raster-density ceiling.
+grep -Fq 'MAX_MERMAID_FIT_RASTER_UPSCALE = 2.0' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationController.kt" ||
+  die "Stage E4 lost bounded PNG fit scaling"
+grep -Fq 'testDefaultMermaidFitDoesNotMagnifySmallRasterBeyondTwoTimes' "src/test/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationControllerTest.kt" ||
+  die "Stage E4 lost Gantt intrinsic-raster and size-mode regression"
 # #353 E3 known-defect repros must fail AFTER saving the three source-identical pairs.
 grep -Fq 'candidateRasterScaleNegativeControls()' "$manifest_test" ||
   die "Stage E3 lost Gantt x2 boundary adversarial control"
