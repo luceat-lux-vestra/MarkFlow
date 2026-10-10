@@ -237,7 +237,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             val dom = driver.ui.jcef()
                             val referenceHeadingLedger = dom.callJs(headingReferenceDomProbe)
                             check(referenceHeadingLedger.startsWith(
-                                "schema=markflow-reference-heading-dom-geometry/v1\\n"
+                                "schema=markflow-reference-heading-dom-geometry/v1\n"
                             )) { "Platform JCEF DOM heading probe not authoritative" }
                             val result = compareHeadingSourceCheckpoints(
                                 nativeHeadingGeometry, referenceHeadingLedger
@@ -404,13 +404,13 @@ class MarkFlowStarterDifferentialManifestTest {
             if (!(rect.height > 0) || !(rect.width > 0))
               return 'FAIL: DOM collapsed heading ' + level;
             lines.push('level=' + level +
-              '\\tsource_line_zero_based=' + (index * 4) +
-              '\\treference_y_relative_css_px=' + (rect.top - firstY).toFixed(3) +
-              '\\treference_height_css_px=' + rect.height.toFixed(3) +
-              '\\tcomputed_margin_top_css_px=' + parseFloat(getComputedStyle(el).marginTop).toFixed(3) +
-              '\\tcomputed_margin_bottom_css_px=' + parseFloat(getComputedStyle(el).marginBottom).toFixed(3));
+              '\tsource_line_zero_based=' + (index * 4) +
+              '\treference_y_relative_css_px=' + (rect.top - firstY).toFixed(3) +
+              '\treference_height_css_px=' + rect.height.toFixed(3) +
+              '\tcomputed_margin_top_css_px=' + parseFloat(getComputedStyle(el).marginTop).toFixed(3) +
+              '\tcomputed_margin_bottom_css_px=' + parseFloat(getComputedStyle(el).marginBottom).toFixed(3));
           }
-          return lines.join('\\n');
+          return lines.join('\n');
         })()
     """.trimIndent()
 
@@ -423,7 +423,7 @@ class MarkFlowStarterDifferentialManifestTest {
     private fun compareHeadingSourceCheckpoints(native: String, reference: String): String {
         fun rows(value: String): List<Map<String, String>> =
             value.lineSequence().filter { it.startsWith("level=") }.map { line ->
-                line.split('\\t').associate { token ->
+                line.split('\t').associate { token ->
                     val parts = token.split('=', limit = 2)
                     require(parts.size == 2) { "Malformed geometry row" }
                     parts[0] to parts[1]
@@ -438,7 +438,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val result = mutableListOf(
             "schema=markflow-heading-relative-drift/v1",
             "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
-            "level\\tsource_line_zero_based\\tnative_relative_px\\treference_relative_css_px\\tdelta_px"
+            "level\tsource_line_zero_based\tnative_relative_px\treference_relative_css_px\tdelta_px"
         )
         var previousNative = -1
         var previousReference = -1.0
@@ -461,11 +461,11 @@ class MarkFlowStarterDifferentialManifestTest {
             result += listOf(level, index * 4, nativeY,
                 "%.3f".format(java.util.Locale.ROOT, referenceY),
                 "%.3f".format(java.util.Locale.ROOT, nativeY - referenceY)
-            ).joinToString("\\t")
+            ).joinToString("\t")
             previousNative = nativeY
             previousReference = referenceY
         }
-        return result.joinToString("\\n", postfix = "\\n")
+        return result.joinToString("\n", postfix = "\n")
     }
 
     private fun sha(bytes: ByteArray): String =
