@@ -1,6 +1,11 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.editor.CustomFoldRegion
+import com.intellij.openapi.editor.CustomFoldRegionRenderer
 import com.intellij.openapi.editor.colors.EditorColors
+import com.intellij.openapi.editor.markup.TextAttributes
+import java.awt.Graphics2D
+import java.awt.geom.Rectangle2D
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.markup.EffectType
@@ -9,6 +14,75 @@ import java.awt.Font
 import java.awt.event.MouseEvent
 
 class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
+    /**
+     * #350 research: a platform custom line fold takes the place of the
+     * source visual line, unlike the current heading block-inlay approach.
+     * No product switch until caret, mouse reveal and platform parser-fold
+     * coexistence have their own actual IDE evidence.
+     */
+    fun testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight() {
+        val source = "# Heading\n\nParagraph after heading.\n"
+        myFixture.configureByText("single-line-fold-geometry.txt", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val nextTextOffset = source.indexOf("Paragraph")
+        editor.caretModel.moveToOffset(nextTextOffset + 1)
+        val caretBefore = editor.caretModel.offset
+        val stampBefore = document.modificationStamp
+        val baselineY = editor.offsetToXY(nextTextOffset).y
+        val blockHeight = editor.lineHeight + 18
+        var region: CustomFoldRegion? = null
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 360
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = blockHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Geometry probe only: do not mutate editor state.
+            }
+        }
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            region = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
+        }
+        val installed = requireNotNull(region) { "Platform custom line fold unavailable" }
+        try {
+            assertTrue(installed.isValid)
+            assertFalse(installed.isExpanded)
+            assertEquals(
+                "Single-line custom fold must replace, not add to, source line",
+                blockHeight - editor.lineHeight,
+                editor.offsetToXY(nextTextOffset).y - baselineY,
+            )
+            assertEquals(caretBefore, editor.caretModel.offset)
+            assertEquals(stampBefore, document.modificationStamp)
+            assertEquals(source, document.text)
+
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                installed.isExpanded = true
+            }
+            assertEquals("Revealing source must restore plain vertical rhythm",
+                baselineY, editor.offsetToXY(nextTextOffset).y)
+            assertEquals(source, document.text)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                installed.isExpanded = false
+            }
+            assertEquals(blockHeight - editor.lineHeight,
+                editor.offsetToXY(nextTextOffset).y - baselineY)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (installed.isValid) editor.foldingModel.removeFoldRegion(installed)
+            }
+        }
+        assertEquals("Disposal must restore source-line advance",
+            baselineY, editor.offsetToXY(nextTextOffset).y)
+        assertEquals(caretBefore, editor.caretModel.offset)
+        assertEquals(stampBefore, document.modificationStamp)
+        assertEquals(source, document.text)
+    }
+
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
         val source = """# Heading
 
