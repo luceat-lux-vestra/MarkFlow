@@ -231,3 +231,32 @@ must show the installed Gantt raster reaches 568×392 under the pinned
 UI scale and that labels remain readable. Full 89-expanded-case coverage,
 visual acceptance, clipping/scroll reachability and #350 baseline parity
 are **not certified**; PR #364 remains unmergeable.
+
+### Stage E6 — same-source following paragraph text checkpoints
+
+The H1–H6 case additionally compares **the six exact follow-up paragraphs**
+from `fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md`.
+Each source line (2, 6, 10, 14, 18, 22) must equal
+`Paragraph after Hn.` and be matched to an identically named, ordered
+`<p>` in the **real bundled Markdown Preview**. Using JCEF
+`document.createRange().selectNodeContents(p).getBoundingClientRect()`,
+the test records a **text range top and height**, rather than treating the
+paragraph's outer CSS margin box as text. Its two artifacts are
+`intellij-following-paragraph-dom-geometry.txt` and
+`source-following-text-line-drift.tsv`. Native position comes from the
+installed editor's same source-line checkpoint, *not* from guessed
+viewport scroll offsets; both sides are normalized to the first paragraph.
+
+This is materially closer to comparable **visible text** geometry than
+native Markdown heading syntax lines versus DOM heading boxes. However
+native logical line top and browser inline Range top do not necessarily
+share baseline/font ascent. Consequently it is labeled **diagnostic only**,
+and the known `HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` blocker
+persists. Negative controls reject wrong paragraph source lines,
+out-of-order/collapsed text ranges and a non-preview document.
+
+The next acceptance step is to calibrate the native text baseline and the
+browser's actual rendered text line with a reviewed font/layout contract,
+then measure cumulative paragraph drift and adjust heading block allocation
+only if that measurement justifies it. Do not resurrect the superseded
+44px source-line/heading-box numeric threshold merely to unblock CI.
