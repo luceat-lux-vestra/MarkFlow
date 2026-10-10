@@ -1,20 +1,6 @@
 name: Native Editor Shell Evidence
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/native-editor-shell-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'docs/architecture/native-editor-shell-selection.md'
-      - 'docs/architecture/0001-native-authority-projection-architecture.md'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
