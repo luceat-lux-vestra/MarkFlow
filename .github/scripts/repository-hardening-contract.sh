@@ -236,8 +236,18 @@ grep -Fq 'testDefaultMermaidFitDoesNotMagnifySmallRasterBeyondTwoTimes' "src/tes
 # #353 E3 known-defect repros must fail AFTER saving the three source-identical pairs.
 grep -Fq 'candidateRasterScaleNegativeControls()' "$manifest_test" ||
   die "Stage E3 lost Gantt x2 boundary adversarial control"
-grep -Fq 'CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES' "$manifest_test" ||
-  die "Stage E3 lost deterministic observed heading drift gate"
+# Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
+# Source positions remain diagnostic, while native inlay boxes and Preview DOM
+# boxes have their own independently measured, source-joined ledger.
+grep -Fq 'HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED' "$manifest_test" ||
+  die "Stage E5 must fail closed on an unreviewed shared heading anchor contract"
+grep -Fq 'source-heading-rendered-box-drift.tsv' "$manifest_test" ||
+  die "Stage E5 dropped installed native-inlay vs bundled DOM box evidence"
+grep -Fq 'renderedHeadingBoxNegativeControls()' "$manifest_test" ||
+  die "Stage E5 dropped source identity, collapsed-box or wrong-DOM controls"
+if grep -Fq 'CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES' "$manifest_test"; then
+  die "Stage E5 must not present source-line-vs-DOM-top deltas as accepted heading parity"
+fi
 grep -Fq 'CANDIDATE_GANTT_MAX_UPSCALE_X2' "$manifest_test" ||
   die "Stage E3 lost deterministic Gantt upscaling gate"
 grep -Fq 'candidate-structural-failures.tsv' "$manifest_test" ||
