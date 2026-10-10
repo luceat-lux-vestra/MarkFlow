@@ -61,6 +61,74 @@ internal object NativeDifferentialPreviewE2EBridge {
         return "line=" + line + ";offset=" + offset
     }
 
+
+    /**
+     * Stage D: read-only native raster dimensions from the actual installed inlays.
+     * Private renderer image access is limited to this test-only bridge and fails
+     * closed if its runtime contract changes. The viewport does not imply a clipped
+     * artifact: a tall inlay may remain reachable by scrolling.
+     */
+    fun nativeRasterGeometry(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val region = editor.scrollingModel.visibleArea
+        val rasterInlays = editor.inlayModel
+            .getBlockElementsInRange(0, editor.document.textLength)
+            .filter { it.renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer") }
+        val records = rasterInlays.mapIndexed { index, inlay ->
+            val renderer = inlay.renderer
+            val field = renderer.javaClass.getDeclaredField("image")
+            check(field.trySetAccessible()) { "Stage D native raster image field changed" }
+            val image = field.get(renderer) as? java.awt.image.BufferedImage
+                ?: error("Stage D inlay does not contain a decoded BufferedImage")
+            val displayedWidth = inlay.widthInPixels
+            val displayedHeight = inlay.heightInPixels
+            val intrinsicWidth = image.width
+            val intrinsicHeight = image.height
+            check(rasterAspectPreserved(intrinsicWidth, intrinsicHeight, displayedWidth, displayedHeight)) {
+                "Stage D detected nonuniform native raster scaling or collapsed dimensions"
+            }
+            val bounds = requireNotNull(inlay.bounds) {
+                "Stage D decoded raster lacks a real inlay bounds rectangle"
+            }
+            val line = editor.document.getLineNumber(inlay.offset.coerceAtMost(editor.document.textLength))
+            listOf(
+                "index=" + index,
+                "source_line_zero_based=" + line,
+                "source_offset=" + inlay.offset,
+                "intrinsic_width=" + intrinsicWidth,
+                "intrinsic_height=" + intrinsicHeight,
+                "displayed_width=" + displayedWidth,
+                "displayed_height=" + displayedHeight,
+                "bounds_x=" + bounds.x,
+                "bounds_y=" + bounds.y,
+                "bounds_width=" + bounds.width,
+                "bounds_height=" + bounds.height,
+            ).joinToString(separator = "\t")
+        }
+        val header = listOf(
+            "schema=markflow-native-raster-geometry/v1",
+            "visible_x=" + region.x,
+            "visible_y=" + region.y,
+            "visible_width=" + region.width,
+            "visible_height=" + region.height,
+            "raster_count=" + records.size,
+        ).joinToString(separator = "\n")
+        return header + "\n" + records.joinToString(separator = "\n", postfix = "\n")
+    }
+
+    private fun rasterAspectPreserved(iw: Int, ih: Int, dw: Int, dh: Int): Boolean {
+        if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) return false
+        // Integer-pixel rounding at each axis can contribute at most ~1 pixel.
+        return kotlin.math.abs(dw.toLong() * ih - dh.toLong() * iw) <= iw.toLong() + ih
+    }
+
+    fun rasterGeometryNegativeControls(): Boolean =
+        rasterAspectPreserved(320, 180, 640, 360) &&
+            rasterAspectPreserved(333, 201, 666, 403) &&
+            !rasterAspectPreserved(320, 180, 640, 240) &&
+            !rasterAspectPreserved(320, 180, 0, 360) &&
+            !rasterAspectPreserved(320, 180, 1, 1)
+
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
