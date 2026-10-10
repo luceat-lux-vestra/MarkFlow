@@ -42,6 +42,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(inventory.map { it.id }.toSet().size == inventory.size)
         check(headingSourceIdentityNegativeControls()) { "Stage E2 heading-geometry negative controls failed" }
         check(renderedHeadingBoxNegativeControls()) { "Stage E5 native/DOM box identity negative controls failed" }
+        check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
@@ -289,6 +290,30 @@ class MarkFlowStarterDifferentialManifestTest {
                             Files.writeString(
                                 dest.resolve("source-heading-rendered-box-drift.tsv"),
                                 boxLedger, StandardCharsets.UTF_8
+                            )
+                            // E6: match actual following source paragraphs to the real
+                            // Preview DOM Range text rectangles, not outer CSS boxes.
+                            val sourceLines = source.split('\n')
+                            for (index in 0 until 6) {
+                                val sourceLine = 4 * index + 2
+                                check(sourceLines[sourceLine] == "Paragraph after H" + (index + 1) + ".") {
+                                    "Stage E6 fixture source identity changed"
+                                }
+                            }
+                            val paragraphDom = dom.callJs(followingParagraphDomProbe)
+                            check(paragraphDom.startsWith(
+                                "schema=markflow-reference-paragraph-text-range/v1\n"
+                            )) { "Genuine platform paragraph text ranges unavailable" }
+                            val paragraphDelta = compareFollowingTextAnchors(
+                                nativeHeadingGeometry, paragraphDom
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-following-paragraph-dom-geometry.txt"),
+                                paragraphDom + "\n", StandardCharsets.UTF_8
+                            )
+                            Files.writeString(
+                                dest.resolve("source-following-text-line-drift.tsv"),
+                                paragraphDelta, StandardCharsets.UTF_8
                             )
                             // Neither native inlay block nor HTML heading DOM box
                             // defines an agreed shared text/baseline anchor yet.
