@@ -5,6 +5,7 @@ import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
+import com.intellij.driver.sdk.ui.ui
 import com.intellij.driver.sdk.ui.components.common.jcef
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
 import com.intellij.ide.starter.models.IdeInfo
