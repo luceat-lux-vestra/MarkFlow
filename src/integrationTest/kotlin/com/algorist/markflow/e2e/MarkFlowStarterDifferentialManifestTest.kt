@@ -104,6 +104,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 check(driver.withContext(OnDispatcher.EDT) {
                     preview.rasterGeometryNegativeControls()
                 }) { "Stage D raster geometry negative controls failed" }
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.nativeHeadingGeometryNegativeControls()
+                }) { "Stage E1 source-span geometry negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
                 for (entry in selected) {
                     val dest = output.resolve(entry.id)
@@ -156,6 +159,25 @@ class MarkFlowStarterDifferentialManifestTest {
                         val nativeRasterGeometry = driver.withContext(OnDispatcher.EDT) {
                             preview.nativeRasterGeometry(remoteEditor)
                         }
+                        // Source-line coordinates and real heading inlay dimensions are
+                        // observed only from the installed native production projection.
+                        // These are NOT matched to platform DOM coordinates yet.
+                        val nativeHeadingGeometry = driver.withContext(OnDispatcher.EDT) {
+                            preview.nativeHeadingSourceGeometry(remoteEditor)
+                        }
+                        val measuredHeadings = nativeHeadingGeometry.lineSequence()
+                            .firstOrNull { it.startsWith("measured_atx_heading_count=") }
+                            ?.substringAfter('=')?.toIntOrNull()
+                            ?: error("Stage E1 heading ledger is not parseable")
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            check(measuredHeadings == 6) {
+                                "Stage E1 requires all six installed H1-H6 heading inlays"
+                            }
+                        }
+                        Files.writeString(
+                            dest.resolve("native-heading-source-geometry.txt"),
+                            nativeHeadingGeometry, StandardCharsets.UTF_8
+                        )
                         val rasterCount = nativeRasterGeometry.lineSequence()
                             .firstOrNull { it.startsWith("raster_count=") }
                             ?.substringAfter('=')?.toIntOrNull()
@@ -361,6 +383,8 @@ private interface DifferentialManifestPreviewRemote {
     fun jcefRuntimeEvidence(): String
     fun nativeRasterGeometry(editor: Editor): String
     fun rasterGeometryNegativeControls(): Boolean
+    fun nativeHeadingSourceGeometry(editor: Editor): String
+    fun nativeHeadingGeometryNegativeControls(): Boolean
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long
     fun sourceUnsaved(editor: Editor): Boolean
