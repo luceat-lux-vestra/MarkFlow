@@ -60,20 +60,23 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(stampBefore, document.modificationStamp)
             assertEquals(source, document.text)
 
+            // Platform API: custom line folds are always collapsed and
+            // cannot be expanded. Reveal means REMOVE, then reinstall.
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                installed.isExpanded = true
+                editor.foldingModel.removeFoldRegion(installed)
             }
-            assertEquals("Revealing source must restore plain vertical rhythm",
+            assertEquals("Removing custom fold must restore plain vertical rhythm",
                 baselineY, editor.offsetToXY(nextTextOffset).y)
             assertEquals(source, document.text)
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                installed.isExpanded = false
+                region = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
             }
+            assertTrue(requireNotNull(region).isValid)
             assertEquals(blockHeight - editor.lineHeight,
                 editor.offsetToXY(nextTextOffset).y - baselineY)
         } finally {
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                if (installed.isValid) editor.foldingModel.removeFoldRegion(installed)
+                region?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
             }
         }
         assertEquals("Disposal must restore source-line advance",
