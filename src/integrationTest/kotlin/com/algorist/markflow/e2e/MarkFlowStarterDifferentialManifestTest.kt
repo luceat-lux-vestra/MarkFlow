@@ -101,6 +101,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 val preview = driver.utility(DifferentialManifestPreviewRemote::class)
                 val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
                 val robot = Robot()
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.rasterGeometryNegativeControls()
+                }) { "Stage D raster geometry negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
                 for (entry in selected) {
                     val dest = output.resolve(entry.id)
@@ -150,6 +153,22 @@ class MarkFlowStarterDifferentialManifestTest {
                         val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(remoteEditor)
                         }
+                        val nativeRasterGeometry = driver.withContext(OnDispatcher.EDT) {
+                            preview.nativeRasterGeometry(remoteEditor)
+                        }
+                        val rasterCount = nativeRasterGeometry.lineSequence()
+                            .firstOrNull { it.startsWith("raster_count=") }
+                            ?.substringAfter('=')?.toIntOrNull()
+                            ?: error("Stage D native raster geometry is not parseable")
+                        if (entry.domain == "mermaid") {
+                            check(rasterCount >= 1) {
+                                "Stage D Mermaid case has no measured native raster inlays"
+                            }
+                        }
+                        Files.writeString(
+                            dest.resolve("native-raster-geometry.txt"),
+                            nativeRasterGeometry, StandardCharsets.UTF_8
+                        )
                         val native = driver.withContext(OnDispatcher.EDT) {
                             Rectangle(
                                 visual.contentScreenX(remoteEditor), visual.contentScreenY(remoteEditor),
@@ -340,6 +359,8 @@ private interface DifferentialManifestPreviewRemote {
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
     fun jcefRuntimeEvidence(): String
+    fun nativeRasterGeometry(editor: Editor): String
+    fun rasterGeometryNegativeControls(): Boolean
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long
     fun sourceUnsaved(editor: Editor): Boolean
