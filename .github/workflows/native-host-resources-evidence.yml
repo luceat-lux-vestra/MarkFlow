@@ -1,4 +1,5 @@
 name: Native Host Resources Evidence
+# Temporary A/B control marker for #365; remove on next commit.
 
 on:
   push:
