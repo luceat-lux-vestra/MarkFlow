@@ -106,8 +106,9 @@ The bounded real-IDE manifest capture additionally writes
 `native-heading-source-geometry.txt` from actual installed
 `NativeHeadingInlayRenderer` instances, with ATX heading source line/offset,
 next nonblank source checkpoint, logical-to-editor pixel Y coordinates,
-plain-line baseline, measured vertical span, excess pixel allocation,
-inlay height and available inlay bounds. H1–H6 case requires six measured
+plain-line baseline, measured vertical span, per-heading and cumulative
+source-normalized extra pixels, worst absolute cumulative excess, inlay height
+and available inlay bounds. H1–H6 case requires six measured
 heading inlays. Deterministic negative controls distinguish ordinary line
 advance, materially inflated advance and collapsed advance.
 
