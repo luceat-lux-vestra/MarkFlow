@@ -106,7 +106,12 @@ export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSet
         mindmap: {useMaxWidth},
         sequence: {useMaxWidth},
         sequenceDiagram: {useMaxWidth},
-        gantt: {useMaxWidth},
+        // Mermaid Gantt's SVG width is read from its parent.offsetWidth.
+        // The retained hidden JCEF renderer can have a narrow parent (~284px),
+        // which permanently compresses time ticks and task labels before PNG
+        // capture. Give only Gantt a deterministic finite drawing canvas;
+        // the native host continues to enforce viewport/zoom bounds.
+        gantt: {useMaxWidth, useWidth: 960},
         pie: {useMaxWidth},
         journey: {useMaxWidth},
         requirement: {useMaxWidth},

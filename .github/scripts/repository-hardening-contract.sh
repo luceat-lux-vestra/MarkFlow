@@ -163,6 +163,167 @@ grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "
 
 grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
 
+# #353 genuine platform Markdown Preview uses JCEF. The original ARM64
+# Starter run 37984591105 displayed its suspended-browser/AppArmor stub.
+# Limit the x64 reference exception to derived-content; keep other shards ARM64.
+grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
+  die "Starter shards no longer use audited per-shard runner mapping"
+grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for canonical (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: core-editing' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for core-editing (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
+grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04' ||
+  die "Starter runner drift for derived-content (ubuntu-24.04)"
+grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
+  die "Starter workflow silently dropped bundled Markdown Preview capture"
+grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
+  die "Starter diagnostics silently dropped bundled Markdown Preview suite"
+# #353 Stage D remains a bounded capture probe, not full acceptance.
+manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+[ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
+  die "Starter workflow silently dropped Stage D manifest capture"
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_diagnostics" ||
+  die "Starter diagnostics silently dropped Stage D manifest suite"
+grep -Fq 'full_differential_acceptance' "$manifest_test" ||
+  die "Stage D partial coverage must never be promoted to full acceptance"
+grep -Fq '"NOT_EXECUTED"' "$manifest_test" ||
+  die "Stage D must retain unexecuted cases in its inventory"
+grep -Fq '"CAPTURED_UNVERIFIED"' "$manifest_test" ||
+  die "Stage D captures must not be treated as geometry acceptance"
+grep -Fq 'rasterGeometryNegativeControls()' "$manifest_test" ||
+  die "Stage D no longer executes native raster negative controls"
+grep -Fq 'native-raster-geometry.txt' "$manifest_test" ||
+  die "Stage D dropped intrinsic/display raster geometry artifact"
+grep -Fq 'fun nativeRasterGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage D lost real inlay raster geometry bridge"
+# #353 Stage E1: preserve source-anchored heading instrumentation (not preview parity).
+grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
+  die "Stage E1 lost deterministic heading source-span negative controls"
+grep -Fq 'md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt' "$manifest_test" ||
+  die "Stage E2 no longer captures the #352 Gantt diagnostic in bounded CI"
+grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
+  die "Stage E1 dropped source-anchored heading geometry evidence"
+grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
+  die "Stage E1 no longer requires all H1-H6 installed heading inlays"
+grep -Fq 'fun nativeHeadingSourceGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage E1 lost production-inlay source-geometry bridge"
+# #353 Stage E2: browser DOM measurements must be source-identical and retained.
+grep -Fq 'val dom = driver.ui.jcef()' "$manifest_test" ||
+  die "Stage E2 dropped actual JCEF DOM platform-reference acquisition"
+grep -Fq 'intellij-heading-dom-geometry.txt' "$manifest_test" ||
+  die "Stage E2 dropped real reference heading geometry artifact"
+grep -Fq 'source-heading-relative-drift.tsv' "$manifest_test" ||
+  die "Stage E2 dropped native/reference source-anchor delta ledger"
+grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
+  die "Stage E2 lost adversarial heading comparator checks"
+grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
+  die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
+# #350 Stage E8 pilot: pin custom line-fold non-duplication geometry, without
+# replacing the product heading renderer before editor/reveal validation.
+grep -Fq 'testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E8 lost single-line heading replacement pilot"
+grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
+  die "Stage E7 lost intrinsic Gantt timeline width regression"
+grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
+  die "Stage E7 lost Gantt minimum-width negative controls"
+
+# #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
+grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
+  die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
+grep -Fq 'Gantt uses a bounded drawing width independent of hidden JCEF parent size' "webview/tests/runtime-settings.test.mjs" ||
+  die "Stage E7 Gantt config missing size-mode regression controls"
+# #352 production fix must retain the default Mermaid FIT raster-density ceiling.
+grep -Fq 'MAX_MERMAID_FIT_RASTER_UPSCALE = 2.0' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationController.kt" ||
+  die "Stage E4 lost bounded PNG fit scaling"
+grep -Fq 'testDefaultMermaidFitDoesNotMagnifySmallRasterBeyondTwoTimes' "src/test/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationControllerTest.kt" ||
+  die "Stage E4 lost Gantt intrinsic-raster and size-mode regression"
+# #353 E3 known-defect repros must fail AFTER saving the three source-identical pairs.
+grep -Fq 'candidateRasterScaleNegativeControls()' "$manifest_test" ||
+  die "Stage E3 lost Gantt x2 boundary adversarial control"
+# Stage E6: same-source visible paragraphs are explicit DOM text ranges, not
+# outer CSS boxes or guessed scroll offsets, and remain diagnostic-only.
+grep -Fq 'source-following-text-line-drift.tsv' "$manifest_test" ||
+  die "Stage E6 lost genuine following-content text range comparison"
+grep -Fq 'intellij-following-paragraph-dom-geometry.txt' "$manifest_test" ||
+  die "Stage E6 dropped genuine bundled Preview paragraph DOM evidence"
+grep -Fq 'followingTextAnchorNegativeControls()' "$manifest_test" ||
+  die "Stage E6 lost wrong-source/collapsed-range/non-Preview controls"
+grep -Fq 'DIAGNOSTIC_NATIVE_LOGICAL_LINE_VS_JCEF_TEXT_RANGE' "$manifest_test" ||
+  die "Stage E6 cannot assert unreviewed font-baseline parity"
+
+# Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
+# Source positions remain diagnostic, while native inlay boxes and Preview DOM
+# boxes have their own independently measured, source-joined ledger.
+grep -Fq 'HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED' "$manifest_test" ||
+  die "Stage E5 must fail closed on an unreviewed shared heading anchor contract"
+grep -Fq 'source-heading-rendered-box-drift.tsv' "$manifest_test" ||
+  die "Stage E5 dropped installed native-inlay vs bundled DOM box evidence"
+grep -Fq 'renderedHeadingBoxNegativeControls()' "$manifest_test" ||
+  die "Stage E5 dropped source identity, collapsed-box or wrong-DOM controls"
+if grep -Fq 'CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES' "$manifest_test"; then
+  die "Stage E5 must not present source-line-vs-DOM-top deltas as accepted heading parity"
+fi
+grep -Fq 'CANDIDATE_GANTT_MAX_UPSCALE_X2' "$manifest_test" ||
+  die "Stage E3 lost deterministic Gantt upscaling gate"
+grep -Fq 'candidate-structural-failures.tsv' "$manifest_test" ||
+  die "Stage E3 lost retained failure ledger"
+grep -Fq 'check(structuralFailures.isEmpty())' "$manifest_test" ||
+  die "Stage E3 known defects cannot silently return successful test status"
+differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+[ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
+  die "bundled Markdown Preview real-E2E consumer or bridge missing"
+grep -Fq "preview.showReferenceAtSourceLine(sourceEditor, sourceLine)" "$differential_test" ||
+  die "Bundled Preview lost source-anchor navigation through retained Editor"
+grep -Fq "Embedded Browser is suspended" "$differential_bridge" ||
+  die "Bundled Preview lost fail-closed suspended-browser guard"
+# #353: fail-closed sandboxed-JCEF AppArmor installation and negative controls.
+jcef_profile_script=".github/scripts/install-starter-jcef-apparmor.sh"
+[ -f "$jcef_profile_script" ] || die "pinned JCEF userns profile installer missing"
+bash "$jcef_profile_script" --self-test >/dev/null ||
+  die "JCEF AppArmor profile unsafe-path self-test failed"
+grep -Fq 'Install pinned sandboxed JCEF AppArmor profile (derived-content only)' "$starter_workflow" ||
+  die "Starter has no scoped JCEF AppArmor setup"
+grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workflow" ||
+  die "Starter no longer installs its pinned JBR profile"
+grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
+  die "JCEF profile installer must be restricted to derived-content"
+grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
+  die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
+grep -Fq 'userns,' "$jcef_profile_script" ||
+  die "JCEF AppArmor profile lost userns permission"
+grep -Fq '/sys/kernel/security/apparmor/profiles' "$jcef_profile_script" ||
+  die "JCEF AppArmor installer no longer verifies loaded kernel policy"
+differential_preview_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+differential_preview_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
+grep -Fq 'fun jcefRuntimeEvidence()' "$differential_preview_bridge" ||
+  die "JCEF preview runtime evidence reporter was removed"
+grep -Fq 'jcef-runtime-evidence.txt' "$differential_preview_test" ||
+  die "JCEF first-failure evidence no longer retained"
+for diagnostic_file in 'side-by-side.png' 'diff.png' 'metrics.json'; do
+  grep -Fq "output.resolve(\"$diagnostic_file\")" "$differential_preview_test" ||
+    die "Real bundled-preview diagnostic artifact $diagnostic_file was removed"
+done
+grep -Fq '"differential_pass":false' "$differential_preview_test" ||
+  die "Unregistered real-preview raw pixels must not be promoted to parity PASS"
+grep -Fq 'raw_pixel_registration' "$differential_preview_test" ||
+  die "Preview differential diagnostics lost explicit raw-pixel limitation"
+
+
+if grep -Eq '(sysctl.*apparmor_restrict|ide\.browser\.jcef\.sandbox\.enable.*false|--no-sandbox)' "$jcef_profile_script"; then
+  die "JCEF installer contains global sandbox bypass"
+fi
+
 visual_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterVisualAcceptanceTest.kt"
 visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_test" ] || die "deterministic visual acceptance test is missing"

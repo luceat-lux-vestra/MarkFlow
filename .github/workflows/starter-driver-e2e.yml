@@ -117,21 +117,26 @@ jobs:
   shards:
     needs: [ package ]
     name: Real IDE Starter Driver (${{ matrix.shard }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - shard: canonical
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest
           - shard: core-editing
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterSmokeTest
           - shard: ordinary-markdown
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
           - shard: derived-content
-            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
           - shard: lifecycle
+            runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
     steps:
       - name: Fetch Sources
@@ -221,6 +226,16 @@ jobs:
           cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
           echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned sandboxed JCEF AppArmor profile (derived-content only)
+        if: matrix.shard == 'derived-content'
+        shell: bash
+        env:
+          STARTER_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
 
       - name: Start virtual display
         shell: bash
