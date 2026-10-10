@@ -169,7 +169,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             val logicalSpan = nextContentLine - sourceLine
             val expectedPlainPx = logicalSpan.toLong() * baseHeight
             val measuredPx = (nextY - startY).toLong()
-            val excessPx = measuredPx - expectedPlainPx
+            val excessPx = sourceSpanExcess(logicalSpan, nextY - startY, baseHeight)
             val bounds = inlay.bounds
             listOf(
                 "level=" + match.groupValues[1].length,
@@ -191,15 +191,14 @@ internal object NativeDifferentialPreviewE2EBridge {
         }
         val atxSourceCount = (0 until document.lineCount)
             .count { heading.find(lineText(it))?.range?.first == 0 }
-        check(rows.size == atxSourceCount) {
-            "Installed ATX heading inlays missing: source=" + atxSourceCount +
-                " measured=" + rows.size
-        }
+        // Raw prefix count is diagnostic only: ATX-looking lines inside fenced
+        // code are not real Markdown headings. The selected H1–H6 fixture
+        // applies an exact expected installed-inlay count in the Starter test.
         return listOf(
             "schema=markflow-native-heading-source-geometry/v1",
             "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
             "base_line_height_px=" + baseHeight,
-            "source_atx_heading_count=" + atxSourceCount,
+            "raw_atx_prefixed_line_count=" + atxSourceCount,
             "measured_atx_heading_count=" + rows.size,
         ).joinToString(separator = "\n", postfix = "\n") +
             rows.joinToString(separator = "\n", postfix = "\n")
