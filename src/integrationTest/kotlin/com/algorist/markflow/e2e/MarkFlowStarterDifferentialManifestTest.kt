@@ -41,6 +41,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(inventory.map { it.parent }.toSet().size == 88)
         check(inventory.map { it.id }.toSet().size == inventory.size)
         check(headingSourceIdentityNegativeControls()) { "Stage E2 heading-geometry negative controls failed" }
+        check(renderedHeadingBoxNegativeControls()) { "Stage E5 native/DOM box identity negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
@@ -278,23 +279,27 @@ class MarkFlowStarterDifferentialManifestTest {
                                 dest.resolve("source-heading-relative-drift.tsv"),
                                 result, StandardCharsets.UTF_8
                             )
-                            val baseLineHeight = nativeHeadingGeometry.lineSequence()
-                                .firstOrNull { it.startsWith("base_line_height_px=") }
-                                ?.substringAfter('=')?.toIntOrNull()
-                                ?: error("Native line-height identity unavailable")
-                            val deltas = result.lineSequence().filter {
-                                it.matches(Regex("^[1-6]\\t.*"))
-                            }.map { it.substringAfterLast('\t').toDouble() }.toList()
-                            check(deltas.size == 6 && deltas.all(Double::isFinite))
-                            val worst = deltas.maxOf { kotlin.math.abs(it) }
-                            val candidateBound = baseLineHeight * 2.0
-                            if (worst > candidateBound) {
-                                structuralFailures += listOf(
-                                    entry.id, "CANDIDATE_H1_H6_MAX_DRIFT_TWO_LINES",
-                                    "%.3f".format(java.util.Locale.ROOT, worst),
-                                    "%.3f".format(java.util.Locale.ROOT, candidateBound)
-                                ).joinToString("\t")
-                            }
+                            // Stage E5: never gate a source-line Y against a DOM
+                            // element top. They describe different layout objects.
+                            // Preserve the legacy diagnostic series, but compare the
+                            // actual installed native inlay rectangles separately.
+                            val boxLedger = compareRenderedHeadingBoxes(
+                                nativeHeadingGeometry, referenceHeadingLedger
+                            )
+                            Files.writeString(
+                                dest.resolve("source-heading-rendered-box-drift.tsv"),
+                                boxLedger, StandardCharsets.UTF_8
+                            )
+                            // Neither native inlay block nor HTML heading DOM box
+                            // defines an agreed shared text/baseline anchor yet.
+                            // Thus no arbitrary box delta is certified as parity.
+                            // Keep the work intentionally fail-closed, not falsely
+                            // FAIL_KNOWN_DEFECT on a dimensionally invalid comparison.
+                            structuralFailures += listOf(
+                                entry.id, "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED",
+                                "NATIVE_INLAY_BOX_VS_PREVIEW_DOM_HEADING_BOX",
+                                "REVIEW_SHARED_TEXT_BASELINE_AND_BOX_MODEL"
+                            ).joinToString("\t")
                         }
                         check(driver.withContext(OnDispatcher.EDT) {
                             preview.sourceText(remoteEditor)
@@ -524,6 +529,112 @@ class MarkFlowStarterDifferentialManifestTest {
             previousReference = referenceY
         }
         return result.joinToString("\n", postfix = "\n")
+    }
+
+    /**
+     * Stage E5: measured installed native *block inlay rectangle* versus
+     * measured bundled Preview *heading element rectangle*. This is a
+     * substantially closer pair of geometric objects than source-line Y
+     * versus DOM top, but these still have DIFFERENT box models, font metrics
+     * and CSS margins. Do not interpret their difference as text-baseline
+     * parity or as an approved acceptance tolerance.
+     */
+    private fun compareRenderedHeadingBoxes(native: String, reference: String): String {
+        check(native.lineSequence().any {
+            it == "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY"
+        })
+        check(reference.lineSequence().any {
+            it == "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM"
+        })
+        fun parseRows(content: String): List<Map<String, String>> =
+            content.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    require(pair.size == 2) { "Malformed installed heading geometry" }
+                    pair[0] to pair[1]
+                }
+            }.toList()
+        val nativeRows = parseRows(native)
+        val referenceRows = parseRows(reference)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Stage E5 needs all six source-identical heading block boxes"
+        }
+        val firstNativeTop = nativeRows.first().getValue("inlay_bounds_y").toInt()
+        val result = mutableListOf(
+            "schema=markflow-heading-rendered-box-drift/v1",
+            "comparison_scope=DIAGNOSTIC_BOX_VS_BOX_NOT_APPROVED_BASELINE",
+            "level\tsource_line_zero_based\tnative_inlay_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_inlay_height_px\tpreview_heading_height_css_px",
+        )
+        var previousNativeTop = -1
+        var previousReferenceTop = -1.0
+        nativeRows.zip(referenceRows).forEachIndexed { index, (n, ref) ->
+            val level = index + 1
+            val line = index * 4
+            check(n.getValue("level") == "$level" &&
+                ref.getValue("level") == "$level" &&
+                n.getValue("source_line_zero_based") == "$line" &&
+                ref.getValue("source_line_zero_based") == "$line") {
+                "Stage E5 box/source identity mismatch"
+            }
+            val absoluteNativeTop = n.getValue("inlay_bounds_y").toInt()
+            val nativeHeight = n.getValue("inlay_bounds_height").toInt()
+            val reportedHeight = n.getValue("inlay_height_px").toInt()
+            val referenceTop = ref.getValue("reference_y_relative_css_px").toDouble()
+            val referenceHeight = ref.getValue("reference_height_css_px").toDouble()
+            val nativeTop = absoluteNativeTop - firstNativeTop
+            check(nativeHeight == reportedHeight && nativeHeight > 0 &&
+                referenceHeight > 0 && referenceTop.isFinite())
+            check(if (index == 0) nativeTop == 0 && referenceTop == 0.0
+                else nativeTop > previousNativeTop && referenceTop > previousReferenceTop) {
+                "Stage E5 collapsed or unordered visible heading rectangles"
+            }
+            result += listOf(
+                level.toString(), line.toString(), nativeTop.toString(),
+                "%.3f".format(java.util.Locale.ROOT, referenceTop),
+                "%.3f".format(java.util.Locale.ROOT, nativeTop - referenceTop),
+                nativeHeight.toString(),
+                "%.3f".format(java.util.Locale.ROOT, referenceHeight),
+            ).joinToString("\t")
+            previousNativeTop = nativeTop
+            previousReferenceTop = referenceTop
+        }
+        return result.joinToString("\n", postfix = "\n")
+    }
+
+    private fun renderedHeadingBoxNegativeControls(): Boolean {
+        fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
+                    "inlay_bounds_y=${i * 110}\tinlay_bounds_height=30\tinlay_height_px=30"
+            }
+        fun reference() = "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
+                    "reference_y_relative_css_px=${i * 100}.0\treference_height_css_px=22.0"
+            }
+        val result = compareRenderedHeadingBoxes(native(), reference())
+        check(result.lineSequence().any {
+            it == "6\t20\t550\t500.000\t50.000\t30\t22.000"
+        })
+        return runCatching {
+            compareRenderedHeadingBoxes(
+                native().replace("inlay_bounds_height=30", "inlay_bounds_height=31"), reference()
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(
+                native().replace("level=4\tsource_line_zero_based=12",
+                    "level=4\tsource_line_zero_based=13"), reference()
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(
+                native(), reference().replace(
+                    "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=200.0",
+                    "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=100.0"
+                )
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(native(), "NOT_A_REAL_PREVIEW")
+        }.isFailure
     }
 
     /**
