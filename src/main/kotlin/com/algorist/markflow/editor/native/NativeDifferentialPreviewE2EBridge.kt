@@ -10,6 +10,8 @@ import java.awt.Container
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import java.awt.Rectangle
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * #353 Starter-only seam to the genuine bundled IntelliJ Markdown Preview.
@@ -84,12 +86,43 @@ internal object NativeDifferentialPreviewE2EBridge {
             else -> false
         }
 
+    /**
+     * Executed inside the actual Starter IDEA process, not Gradle's test JVM.
+     * Distinguish a loaded-but-unused AppArmor profile from a genuine JCEF failure.
+     * Read-only observations; never alter the kernel, JCEF settings or source.
+     */
+    fun jcefRuntimeEvidence(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        fun read(path: String): String = runCatching {
+            Files.readString(Path.of(path)).trim()
+        }.getOrElse { error ->
+            "UNAVAILABLE:" + error.javaClass.simpleName
+        }
+        val command = ProcessHandle.current().info().command().orElse("UNKNOWN")
+        val executable = runCatching {
+            Files.readSymbolicLink(Path.of("/proc/self/exe")).toString()
+        }.getOrElse { error ->
+            "UNAVAILABLE:" + error.javaClass.simpleName
+        }
+        return listOf(
+            "idea_process_command=" + command,
+            "idea_proc_self_exe=" + executable,
+            "idea_java_home=" + System.getProperty("java.home", "UNKNOWN"),
+            "idea_apparmor_current=" + read("/proc/self/attr/current"),
+            "kernel_apparmor_restrict_unprivileged_userns=" +
+                read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
+            "kernel_apparmor_restrict_unprivileged_unconfined=" +
+                read("/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined"),
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
     fun referenceBounds(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         check(referenceShowing(editor)) { "Actual platform Markdown Preview is not showing" }
         val component = editors(editor).second.component
         check(!hasSuspendedBrowserStub(component)) {
-            "Bundled Markdown Preview JCEF is suspended; sandbox stub is not a valid visual oracle"
+            "Bundled Markdown Preview JCEF is suspended; sandbox stub is not a valid visual oracle.\n" +
+                jcefRuntimeEvidence()
         }
         val point = component.locationOnScreen
         val rect = Rectangle(point.x, point.y, component.width, component.height)

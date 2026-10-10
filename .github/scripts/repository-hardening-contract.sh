@@ -208,6 +208,15 @@ grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
   die "JCEF profile installer must be restricted to derived-content"
 grep -Fq 'userns,' "$jcef_profile_script" ||
   die "JCEF AppArmor profile lost userns permission"
+grep -Fq '/sys/kernel/security/apparmor/profiles' "$jcef_profile_script" ||
+  die "JCEF AppArmor installer no longer verifies loaded kernel policy"
+differential_preview_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+differential_preview_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
+grep -Fq 'fun jcefRuntimeEvidence()' "$differential_preview_bridge" ||
+  die "JCEF preview runtime evidence reporter was removed"
+grep -Fq 'jcef-runtime-evidence.txt' "$differential_preview_test" ||
+  die "JCEF first-failure evidence no longer retained"
+
 if grep -Eq '(sysctl.*apparmor_restrict|ide\.browser\.jcef\.sandbox\.enable.*false|--no-sandbox)' "$jcef_profile_script"; then
   die "JCEF installer contains global sandbox bypass"
 fi

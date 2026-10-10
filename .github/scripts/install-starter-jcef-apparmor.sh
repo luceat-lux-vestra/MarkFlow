@@ -45,4 +45,13 @@ sudo -n install -m 0644 "$tmp" "$target"
 sudo -n /usr/sbin/apparmor_parser -r "$target"
 sudo -n /usr/sbin/apparmor_parser -N "$target" |
   grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/jbr/bin/java'
-echo 'Installed JBR-only userns AppArmor profile (JCEF sandbox still enabled)'
+# Parsing does NOT prove the loaded profile actually exists in the kernel.
+profiles=/sys/kernel/security/apparmor/profiles
+[[ -r "$profiles" ]] || {
+  echo 'Cannot read loaded AppArmor profile inventory; fail closed' >&2; exit 1
+}
+sudo -n cat "$profiles" |
+  grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/jbr/bin/java' || {
+    echo 'Pinned JBR AppArmor profile not confirmed in kernel inventory' >&2; exit 1
+  }
+echo 'Confirmed JBR-only userns AppArmor profile is loaded (JCEF sandbox still enabled)'
