@@ -130,6 +130,94 @@ internal object NativeDifferentialPreviewE2EBridge {
             !rasterAspectPreserved(320, 180, 0, 360) &&
             !rasterAspectPreserved(320, 180, 1, 1)
 
+    /**
+     * #350/#353 source-line geometry ledger, measured from installed production
+     * NativeHeadingInlayRenderer instances (never from estimated CSS or screenshots).
+     * These native-only measurements are NOT platform-preview parity evidence.
+     * No source mutation, renderer substitution, or tolerance-based acceptance.
+     */
+    fun nativeHeadingSourceGeometry(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val document = editor.document
+        val heading = Regex("^ {0,3}(#{1,6})(?:[ \\t]+|$)")
+        fun lineText(line: Int): String = document.getText(
+            com.intellij.openapi.util.TextRange(
+                document.getLineStartOffset(line), document.getLineEndOffset(line),
+            )
+        )
+        fun lineY(line: Int): Int {
+            val offset = document.getLineStartOffset(line)
+            return editor.logicalPositionToXY(editor.offsetToLogicalPosition(offset)).y
+        }
+        val baseHeight = editor.lineHeight
+        check(baseHeight > 0) { "Native editor line height is unavailable" }
+        val inlays = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+            .filter { it.renderer is NativeHeadingInlayRenderer }
+            .sortedBy { (it.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset }
+        val rows = inlays.mapNotNull { inlay ->
+            val renderer = inlay.renderer as NativeHeadingInlayRenderer
+            val sourceLine = document.getLineNumber(renderer.sourceRange.startOffset)
+            val match = heading.find(lineText(sourceLine))?.takeIf { it.range.first == 0 }
+                ?: return@mapNotNull null // Setext is handled in a later corpus slice.
+            val endLine = document.getLineNumber(renderer.sourceRange.endOffset)
+            val nextContentLine = (endLine + 1 until document.lineCount)
+                .firstOrNull { lineText(it).isNotBlank() }
+                ?: error("No following content checkpoint for ATX source line " + sourceLine)
+            val startY = lineY(sourceLine)
+            val nextY = lineY(nextContentLine)
+            check(nextY > startY) { "Non-monotone installed native heading source anchors" }
+            val logicalSpan = nextContentLine - sourceLine
+            val expectedPlainPx = logicalSpan.toLong() * baseHeight
+            val measuredPx = (nextY - startY).toLong()
+            val excessPx = measuredPx - expectedPlainPx
+            val bounds = inlay.bounds
+            listOf(
+                "level=" + match.groupValues[1].length,
+                "source_line_zero_based=" + sourceLine,
+                "source_offset=" + renderer.sourceRange.startOffset,
+                "following_line_zero_based=" + nextContentLine,
+                "following_offset=" + document.getLineStartOffset(nextContentLine),
+                "heading_y_document_px=" + startY,
+                "following_y_document_px=" + nextY,
+                "source_span_lines=" + logicalSpan,
+                "plain_line_height_px=" + baseHeight,
+                "plain_span_px=" + expectedPlainPx,
+                "measured_span_px=" + measuredPx,
+                "native_extra_px=" + excessPx,
+                "inlay_height_px=" + inlay.heightInPixels,
+                "inlay_bounds_y=" + (bounds?.y?.toString() ?: "UNAVAILABLE"),
+                "inlay_bounds_height=" + (bounds?.height?.toString() ?: "UNAVAILABLE"),
+            ).joinToString(separator = "\t")
+        }
+        val atxSourceCount = (0 until document.lineCount)
+            .count { heading.find(lineText(it))?.range?.first == 0 }
+        check(rows.size == atxSourceCount) {
+            "Installed ATX heading inlays missing: source=" + atxSourceCount +
+                " measured=" + rows.size
+        }
+        return listOf(
+            "schema=markflow-native-heading-source-geometry/v1",
+            "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
+            "base_line_height_px=" + baseHeight,
+            "source_atx_heading_count=" + atxSourceCount,
+            "measured_atx_heading_count=" + rows.size,
+        ).joinToString(separator = "\n", postfix = "\n") +
+            rows.joinToString(separator = "\n", postfix = "\n")
+    }
+
+    // Negative controls for the source-span to actual-pixel excess calculation.
+    // The large-drift fixture must not be confused with a plain-line baseline.
+    private fun sourceSpanExcess(lineDistance: Int, pixelDistance: Int, baseHeight: Int): Long {
+        require(lineDistance > 0 && pixelDistance >= 0 && baseHeight > 0)
+        return pixelDistance.toLong() - lineDistance.toLong() * baseHeight
+    }
+
+    fun nativeHeadingGeometryNegativeControls(): Boolean =
+        sourceSpanExcess(2, 40, 20) == 0L &&
+            sourceSpanExcess(2, 88, 20) == 48L &&
+            sourceSpanExcess(2, 20, 20) == -20L &&
+            sourceSpanExcess(8, 260, 20) == 100L
+
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
