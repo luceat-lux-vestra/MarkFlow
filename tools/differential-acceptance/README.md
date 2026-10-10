@@ -99,3 +99,23 @@ acceptance. Registered platform DOM source-anchor locations, cumulative
 heading/scroll drift, per-class Gantt legibility, and full corpus execution
 remain unverified and release blocking. The optional Gradle case selector
 does not alter the default bounded CI selection.
+
+### Stage E1 — native heading source geometry (NOT reference parity)
+
+The bounded real-IDE manifest capture additionally writes
+`native-heading-source-geometry.txt` from actual installed
+`NativeHeadingInlayRenderer` instances, with ATX heading source line/offset,
+next nonblank source checkpoint, logical-to-editor pixel Y coordinates,
+plain-line baseline, measured vertical span, excess pixel allocation,
+inlay height and available inlay bounds. H1–H6 case requires six measured
+heading inlays. Deterministic negative controls distinguish ordinary line
+advance, materially inflated advance and collapsed advance.
+
+This is **native-only diagnostic geometry**, not yet a reviewed drift
+threshold or source-anchored IntelliJ Preview DOM comparison. In particular,
+a plain-line baseline is **not** a surrogate for preview layout or a
+license to reject intentional heading spacing. `geometry_gate` remains
+`NOT_IMPLEMENTED` and `full_differential_acceptance=false`. The next
+slice must measure the same source anchors in the real reference DOM, resolve
+the #350 cumulative drift on representative long documents, and implement
+reviewed thresholds capable of failing the actual regression.
