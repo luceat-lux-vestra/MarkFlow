@@ -397,6 +397,9 @@ intellijPlatformTesting {
             // same explicit export expected by the IntelliJ platform runtime/tooling.
             jvmArgs("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
             systemProperty("markflow.test.platformVersion", providers.gradleProperty("platformVersion").get())
+            providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
+                systemProperty("markflow.differential.caseIds", ids)
+            }
         }
     }
 

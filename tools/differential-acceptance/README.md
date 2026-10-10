@@ -48,3 +48,37 @@ This single fixture does **not** satisfy #353 acceptance. Future slices must
 execute every manifest entry and Mermaid block, prove source-anchored scroll
 alignment and dimensional invariants, and apply reviewed per-class visual
 thresholds; no auto-approval from a raw-pixel diff.
+
+## Stage D — bounded manifest-to-real-IDE capture (NOT differential acceptance)
+
+`MarkFlowStarterDifferentialManifestTest` uses the 88-row corpus manifest, expands
+every Mermaid fenced block as a distinct capture identity, and opens the *same*
+source bytes in MarkFlow's native editor and IDEA **2026.2.3** bundled Markdown
+Preview. It retains per-case `source.md`, `identity.txt`, `markflow.png`,
+`intellij-preview.png`, `side-by-side.png`, `diff.png`, `metrics.json` and
+JCEF runtime evidence. `differential-manifest/summary.json` keeps **all**
+expanded cases, including those not run. The first CI slice captures two
+representative sources: `md-atx-headings-h1-h6` and
+`mermaid-flowchart-minimal`.
+
+To select additional *supported and platform-comparable* cases in a separately
+authorized Starter run:
+
+```sh
+./gradlew integrationTest -x buildPlugin -PplatformVersion=2026.2.3 \
+  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal \
+  --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+```
+
+The regular CI intentionally remains bounded to two cases. Its statuses are
+`CAPTURED_UNVERIFIED`, `CAPTURE_FAILED` and `NOT_EXECUTED`, with
+`full_differential_acceptance=false` **even when the capture suite passes**.
+The original manifest's `supported`/`degraded`/`unsupported` classifications
+are retained rather than silently dropping missing cases. The raw-pixel MAE
+in `metrics.json` is an **unregistered diagnostic**, not a quality score.
+
+This slice does not yet prove cumulative heading/source-anchor geometry,
+clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
+complete 88-row/89-expanded-case real coverage. Some corpus sources reference
+relative resources; preserve those paths before extending execution to them.
+All missing or unvalidated #353 criteria are **FAIL** for the release/merge gate.
