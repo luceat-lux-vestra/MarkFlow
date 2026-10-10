@@ -380,3 +380,38 @@ must retain exact source with a fail-closed fallback.
 All numeric #350 Preview comparisons remain diagnostic until a
 reviewed same-text anchor/font contract exists. Full #353
 89-expanded-case acceptance is also outstanding.
+
+
+### Stage E10 — custom heading click ownership and safe source reveal proof
+
+At E9 candidate head `c5b3899dea24fa279c90135c9f0a9fff44ca718c`,
+all Build jobs (including unit tests, Plugin Verifier, Qodana, Merge Gate),
+CodeQL and Hardening passed. The real Starter derived-content job
+failed only for the **known, unreviewed #350 anchor contract**, while
+the ordinary Markdown, canonical, lifecycle, core, and deterministic
+visual suites passed. Artifact `11685712264` was independently
+inspected: 3/3 selected sources captured, 86 not executed, sole
+`HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` failure, Mermaid Gantt
+intrinsic 960×196 and native 1176×240 preserved.
+
+The next `NativeOrdinaryPresentationTest` pilot exercises a
+**two-source-line** custom fold (heading + verified blank line) while
+retaining an independent JetBrains heading syntax fold. It constructs
+`EditorMouseEvent` instances with custom/foreign collapsed-fold
+identity and verifies the future handler's ownership behavior:
+left-click on the **currently owned** custom heading region removes
+only that region, restores editable source and moves the caret to the
+heading's parser content offset. A foreign fold, a right-click,
+wrong-area event or stale previously removed region cannot trigger
+reveal; document source and modification stamp are unchanged.
+
+This is an **isolated, synthetic EditorMouseEvent ownership test**.
+It proves neither real mouse hit testing nor production wiring. JetBrains
+`EditorImpl.createEditorMouseEvent` supplies actual custom fold identity
+through `getCollapsedFoldRegion()` within the visible placeholder.
+Before switching the product controller, implement the production
+ownership/lifetime mapping and separately prove real UI click/reveal,
+rendered rich heading font geometry, platform-fold conflicts,
+caret interactions, and true Starter screenshot changes. A disabled or
+unsupported custom fold must leave exact source visible, not fabricate
+successful rich projection.
