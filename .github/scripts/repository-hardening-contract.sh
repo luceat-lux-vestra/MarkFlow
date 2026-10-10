@@ -255,6 +255,10 @@ grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
 # replacing the product heading renderer before editor/reveal validation.
 grep -Fq 'testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
   die "Stage E8 lost single-line heading replacement pilot"
+grep -Fq 'testCustomHeadingFoldCoexistsWithPlatformSyntaxFoldAndSourceReveal' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E9 lost custom heading/foreign syntax-fold coexistence proof"
+grep -Fq 'testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E9 lost verified heading+blank two-line geometry proof"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
