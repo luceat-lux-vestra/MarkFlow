@@ -225,6 +225,145 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(stampBefore, document.modificationStamp)
     }
 
+    /**
+     * #350 bridge research: EditorImpl reports a visible CustomFoldRegion in
+     * EditorMouseEvent.collapsedFoldRegion. Its owner must gate removal; an
+     * arbitrary foreign fold, wrong button or non-editing area must not reveal.
+     *
+     * Events here are constructed to exercise the ownership callback, not
+     * physical hit testing. A real Starter mouse path remains mandatory before
+     * changing production heading presentation.
+     */
+    fun testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-click-ownership.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val caretInTail = source.indexOf("Tail") + 1
+        val headingContentOffset = source.indexOf("Heading")
+        editor.caretModel.moveToOffset(caretInTail)
+        val plainY = editor.offsetToXY(caretInTail).y
+        val stampBefore = document.modificationStamp
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        var owned: CustomFoldRegion? = null
+        val displayHeight = editor.lineHeight + 16
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 320
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = displayHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Event and lifetime contract only; product paint is untouched.
+            }
+        }
+        var revealCount = 0
+        val clickListener = object : com.intellij.openapi.editor.event.EditorMouseListener {
+            override fun mouseClicked(event: EditorMouseEvent) {
+                if (event.editor !== editor ||
+                    event.area != EditorMouseEventArea.EDITING_AREA ||
+                    event.mouseEvent.button != MouseEvent.BUTTON1) return
+                val target = event.collapsedFoldRegion as? CustomFoldRegion ?: return
+                if (target !== owned || !target.isValid) return
+
+                editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                    editor.foldingModel.removeFoldRegion(target)
+                }
+                owned = null
+                editor.selectionModel.removeSelection()
+                editor.caretModel.primaryCaret.moveToOffset(headingContentOffset)
+                revealCount++
+                event.consume()
+            }
+        }
+        fun click(
+            region: com.intellij.openapi.editor.FoldRegion?,
+            button: Int = MouseEvent.BUTTON1,
+            area: EditorMouseEventArea = EditorMouseEventArea.EDITING_AREA,
+        ): EditorMouseEvent {
+            val mouseEvent = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0, 0, 0, 1, false, button,
+            )
+            return EditorMouseEvent(
+                editor, mouseEvent, area, 0,
+                editor.offsetToLogicalPosition(0),
+                editor.offsetToVisualPosition(0),
+                false, region, null, null,
+            )
+        }
+        editor.addEditorMouseListener(clickListener)
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(0, 2, "platform marker")
+                requireNotNull(foreign).isExpanded = false
+                owned = editor.foldingModel.addCustomLinesFolding(0, 1, renderer)
+            }
+            val target = requireNotNull(owned) {
+                "Two-line custom heading fold must coexist with platform marker"
+            }
+            assertTrue(target.isValid)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+            assertEquals(displayHeight - editor.lineHeight * 2,
+                editor.offsetToXY(caretInTail).y - plainY)
+
+            val foreignClick = click(foreign)
+            clickListener.mouseClicked(foreignClick)
+            assertFalse(foreignClick.isConsumed)
+            val rightClick = click(target, MouseEvent.BUTTON3)
+            clickListener.mouseClicked(rightClick)
+            assertFalse(rightClick.isConsumed)
+            val wrongArea = click(target, area = EditorMouseEventArea.LINE_NUMBERS_AREA)
+            clickListener.mouseClicked(wrongArea)
+            assertFalse(wrongArea.isConsumed)
+            assertEquals(0, revealCount)
+            assertTrue(requireNotNull(owned).isValid)
+            assertEquals(caretInTail, editor.caretModel.offset)
+
+            val ownedClick = click(target)
+            clickListener.mouseClicked(ownedClick)
+            assertTrue(ownedClick.isConsumed)
+            assertEquals(1, revealCount)
+            assertNull(owned)
+            assertFalse(target.isValid)
+            assertEquals(headingContentOffset, editor.caretModel.offset)
+            assertEquals(plainY, editor.offsetToXY(caretInTail).y)
+            assertTrue("Foreign Markdown syntax region must not be removed",
+                requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            // An inactive heading can be projected again only after caret
+            // leaves the source range. No stale click may remove its replacement.
+            editor.caretModel.moveToOffset(caretInTail)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                owned = editor.foldingModel.addCustomLinesFolding(0, 1, renderer)
+            }
+            assertTrue(requireNotNull(owned).isValid)
+            val staleClick = click(target)
+            clickListener.mouseClicked(staleClick)
+            assertFalse(staleClick.isConsumed)
+            assertEquals(1, revealCount)
+            assertTrue(requireNotNull(owned).isValid)
+        } finally {
+            editor.removeEditorMouseListener(clickListener)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                owned?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(plainY, editor.offsetToXY(caretInTail).y)
+        assertEquals(caretInTail, editor.caretModel.offset)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
         val source = """# Heading
 
