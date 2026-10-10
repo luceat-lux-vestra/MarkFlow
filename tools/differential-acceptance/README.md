@@ -341,3 +341,42 @@ Starter screenshot semantics require further verified integration.
 PR #364 remains fail-closed and unmergeable until the #350 replacement,
 full 89 expanded case coverage, reviewed semantic/perceptual acceptance
 and exact-final-HEAD evidence are complete.
+
+
+### Stage E9 — platform heading syntax fold coexistence and two-line geometry pilot
+
+The E8 single-line custom-fold proof at exact HEAD
+`c3f0f441bea3cfa0e8c4750698a3b24946d70552` passed the
+IDE platform unit-test suite. Build (including Qodana, Plugin Verifier,
+Merge Gate), CodeQL, and Hardening all succeeded. The real Starter
+derived-content shard stayed red solely due to the explicit
+`HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` blocker; all other stable
+Starter shards succeeded.
+
+Two additional **isolated test-only** platform probes now validate:
+
+- **Foreign parser syntax fold:** a collapsed, platform-owned fold on
+  the ATX marker (`# `) must remain valid, owned by the platform and
+  collapsed when the custom heading line fold is installed and removed;
+  exact source and document stamp must not change, and caret navigation
+  back into the heading after removal must be possible
+- **Heading + verified blank line:** a custom fold spanning a heading
+  line and its immediately following blank line must move the next
+  paragraph by `custom_height - 2 × editor_line_height`, rather than
+  allocating both original lines and an extra block inlay; source,
+  caret, undo-sensitive modification stamp and cleanup geometry
+  must remain intact
+
+These are actual IntelliJ platform API checks, not simulated layout
+math. They are **not** proof that switching the production heading
+controller is safe: rich text painting, source-click reveal via the
+custom region, caret activity, existing source syntax folding, and
+real-IDE screenshot parity must still be implemented and proven.
+Two-line folding is valid only when the second source line is actually
+empty; it must never swallow a nonempty paragraph. On unsupported
+overlap or an unavailable custom region, the production controller
+must retain exact source with a fail-closed fallback.
+
+All numeric #350 Preview comparisons remain diagnostic until a
+reviewed same-text anchor/font contract exists. Full #353
+89-expanded-case acceptance is also outstanding.
