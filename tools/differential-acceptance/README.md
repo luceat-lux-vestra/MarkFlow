@@ -144,3 +144,34 @@ parity, cumulative #350 heading drift, complete 89-case coverage and
 #352 Gantt legibility as **unverified**. The next step is real-IDE evidence
 inspection and a reviewer-approved threshold with adversarial regression
 controls.
+
+### Stage E3 — known-defect candidate guards (expected FAIL pending remediation)
+
+After **all three** source-identical pairs have been saved, the manifest suite
+now emits `candidate-structural-failures.tsv`, records
+`candidate_structural_failure_count` and sets `geometry_gate` to
+`FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS` when it detects either:
+
+- **#350:** H1–H6 worst source-matched, H1-relative drift exceeds two
+  actual native line heights. The observed first reference DOM probe measured
+  **167.031 CSS/native px** against an actual **22px** native line height,
+  so the initial candidate bound is **44px** at pinned UI scale/DPR 1.
+- **#352:** intrinsic Gantt raster upscaling exceeds **2×** along either
+  axis. The first actual IDE capture observed **284×196** intrinsic pixels,
+  projected to **1176×812** (about **4.14×**), with overlapping date ticks
+  visible in the source-identical comparison screenshot.
+
+These bounds are **candidate regression controls**, not maintainer-approved
+rendering standards. They intentionally reproduce known failures and must not
+be widened simply to obtain a green run. Negative controls cover
+at-limit/just-over-limit Gantt dimensions and the heading source identity
+contract. The suite captures all selected pairs before reporting the
+deterministic failure so the source, DOM, raster and image evidence remains
+available for remediation. CI is **expected to fail** at this known-defect
+gate until the product behavior is corrected or a reviewed contract supersedes
+the candidate checks.
+
+This does **not** prove inaccessible clipping, intrinsic Gantt text overlap
+with a semantic parser, acceptable CSS/rendering differences, or corpus-wide
+visual acceptance. `full_differential_acceptance=false` remains mandatory
+until the full 89-case coverage and all #353 obligations are proven.
