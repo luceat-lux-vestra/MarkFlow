@@ -209,6 +209,8 @@ grep -Fq 'fun nativeRasterGeometry(editor: Editor)' "src/main/kotlin/com/algoris
 # #353 Stage E1: preserve source-anchored heading instrumentation (not preview parity).
 grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
   die "Stage E1 lost deterministic heading source-span negative controls"
+grep -Fq 'md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt' "$manifest_test" ||
+  die "Stage E2 no longer captures the #352 Gantt diagnostic in bounded CI"
 grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
   die "Stage E1 dropped source-anchored heading geometry evidence"
 grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
