@@ -1,5 +1,4 @@
 name: Derived Renderer Evidence
-# Temporary A/B control marker for #365; remove on next commit.
 
 on:
   push:
@@ -65,12 +64,6 @@ jobs:
           - id: idea-2026.2.3
             platform_version: 2026.2.3
     steps:
-      - name: Maximize Build Space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Validate dispatched target
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:

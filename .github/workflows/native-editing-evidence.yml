@@ -1,5 +1,4 @@
 name: Native Editing Evidence
-# Temporary A/B control marker for #365; remove on next commit.
 
 on:
   push:
@@ -51,12 +50,6 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
-      - name: Maximize Build Space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
-        with:
-          tool-cache: false
-          large-packages: false
-
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
