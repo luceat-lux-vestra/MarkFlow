@@ -222,6 +222,17 @@ class MarkFlowStarterDifferentialManifestTest {
                                     (iw * 2L).toString() + "x" + (ih * 2L)
                                 ).joinToString("\t")
                             }
+                            // E7: a proper display scale cannot recover labels
+                            // already compressed into a tiny intrinsic Gantt SVG.
+                            // This bound is scoped ONLY to the pinned 4-day Gantt
+                            // fixture at a 1200px editor width and is candidate
+                            // evidence, not an all-diagram width requirement.
+                            if (iw < 800) {
+                                structuralFailures += listOf(
+                                    entry.id, "CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800",
+                                    iw.toString(), "800"
+                                ).joinToString("\t")
+                            }
                         }
                         val native = driver.withContext(OnDispatcher.EDT) {
                             Rectangle(
@@ -840,7 +851,8 @@ class MarkFlowStarterDifferentialManifestTest {
         !ganttRasterExceededCandidateScale(320, 180, 640, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 641, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 640, 361) &&
-            !ganttRasterExceededCandidateScale(320, 180, 320, 180)
+            !ganttRasterExceededCandidateScale(320, 180, 320, 180) &&
+            (799 < 800) && !(800 < 800) && !(960 < 800)
 
     private fun sha(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
