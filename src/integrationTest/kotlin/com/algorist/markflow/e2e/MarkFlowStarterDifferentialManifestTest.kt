@@ -227,7 +227,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             // This bound is scoped ONLY to the pinned 4-day Gantt
                             // fixture at a 1200px editor width and is candidate
                             // evidence, not an all-diagram width requirement.
-                            if (iw < 800) {
+                            if (ganttIntrinsicRasterWidthTooNarrow(iw)) {
                                 structuralFailures += listOf(
                                     entry.id, "CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800",
                                     iw.toString(), "800"
@@ -847,12 +847,20 @@ class MarkFlowStarterDifferentialManifestTest {
             displayedHeight.toLong() > intrinsicHeight.toLong() * 2L
     }
 
+    // Scoped Gantt-only fixture safeguard against a hidden 284px JCEF canvas.
+    private fun ganttIntrinsicRasterWidthTooNarrow(width: Int): Boolean {
+        require(width > 0)
+        return width < 800
+    }
+
     private fun candidateRasterScaleNegativeControls(): Boolean =
         !ganttRasterExceededCandidateScale(320, 180, 640, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 641, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 640, 361) &&
             !ganttRasterExceededCandidateScale(320, 180, 320, 180) &&
-            (799 < 800) && !(800 < 800) && !(960 < 800)
+            ganttIntrinsicRasterWidthTooNarrow(799) &&
+            !ganttIntrinsicRasterWidthTooNarrow(800) &&
+            !ganttIntrinsicRasterWidthTooNarrow(960)
 
     private fun sha(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
