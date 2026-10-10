@@ -228,6 +228,15 @@ grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
   die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
+# #350 Stage E8 pilot: pin custom line-fold non-duplication geometry, without
+# replacing the product heading renderer before editor/reveal validation.
+grep -Fq 'testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E8 lost single-line heading replacement pilot"
+grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
+  die "Stage E7 lost intrinsic Gantt timeline width regression"
+grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
+  die "Stage E7 lost Gantt minimum-width negative controls"
+
 # #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
 grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
   die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
