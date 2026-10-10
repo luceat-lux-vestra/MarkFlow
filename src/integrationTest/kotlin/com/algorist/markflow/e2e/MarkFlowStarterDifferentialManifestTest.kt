@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Stage D: capture proof only. Missing captures and visual acceptance never become PASS. */
 class MarkFlowStarterDifferentialManifestTest {
-    private data class Case(
+    private class Case(
         val id: String, val parent: String, val domain: String, val classification: String,
         val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
         val comparable: Boolean
@@ -282,7 +282,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 val lines = source.split('\n')
                 val blocks = mutableListOf<Pair<Int, String>>()
                 var pos = 0
-                val opener = Regex("^ {0,3}((?:\u0060{3,}|~{3,}))mermaid[ \\t]*$")
+                val opener = Regex("^ {0,3}(\u0060{3,}|~{3,})mermaid[ \\t]*$")
                 while (pos < lines.size) {
                     val opening = opener.matchEntire(lines[pos])
                     if (opening == null) { pos++; continue }
