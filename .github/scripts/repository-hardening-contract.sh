@@ -224,6 +224,8 @@ grep -Fq 'intellij-heading-dom-geometry.txt' "$manifest_test" ||
   die "Stage E2 dropped real reference heading geometry artifact"
 grep -Fq 'source-heading-relative-drift.tsv' "$manifest_test" ||
   die "Stage E2 dropped native/reference source-anchor delta ledger"
+grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
+  die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
