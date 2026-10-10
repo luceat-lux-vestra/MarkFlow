@@ -15,9 +15,11 @@ import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
 import java.awt.Robot
+import java.awt.image.BufferedImage
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import javax.imageio.ImageIO
 import kotlin.time.Duration.Companion.minutes
@@ -158,9 +160,26 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                     check(parts.size == 4)
                     Rectangle(parts[0], parts[1], parts[2], parts[3])
                 }
-                robot.waitForIdle()
-                check(ImageIO.write(robot.createScreenCapture(reference), "png",
-                    output.resolve("intellij-preview.png").toFile()))
+                // A visible Swing/JCEF panel can still be an empty background while
+                // Chromium is loading. This exact fixture must have substantial text
+                // AND derived content; blank or partial paint is fail-closed.
+                waitFor(
+                    message = "real platform Markdown Preview paints nonblank source-anchored content",
+                    timeout = 60.seconds,
+                    getter = {
+                        robot.waitForIdle()
+                        val image = robot.createScreenCapture(reference)
+                        check(ImageIO.write(image, "png",
+                            output.resolve("intellij-preview-probe.png").toFile()))
+                        referenceHasVisibleContent(image)
+                    },
+                    checker = { ready -> ready }
+                )
+                Files.copy(
+                    output.resolve("intellij-preview-probe.png"),
+                    output.resolve("intellij-preview.png"),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
 
                 // EditorComponentImpl is intentionally absent during SHOW_PREVIEW;
                 // verify exact source through the cached remote Editor before restore.
@@ -174,6 +193,14 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 driver.withContext(OnDispatcher.EDT) {
                     preview.restoreNative(sourceEditor)
                 }
+                waitFor(
+                    message = "source editor returns to visible native layout after preview",
+                    timeout = 20.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) { preview.nativeShowing(sourceEditor) }
+                    },
+                    checker = { showing -> showing }
+                )
                 check(markFlow.source(editor) == expectedSource)
                 check(Files.readAllBytes(file).contentEquals(expectedBytes))
                 Files.write(output.resolve("source.md"), expectedBytes)
@@ -197,6 +224,42 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
         } finally {
             sandbox.toFile().deleteRecursively()
         }
+    }
+
+    /**
+     * Hard nonblank smoke invariant for VISUAL-DERIVED.md, not a parity score.
+     * Samples away from UI edges and compares against the actual bottom-right
+     * viewport background, so a uniform JCEF surface cannot pass. Both axes
+     * need a meaningful occupied span; an isolated border/caret does not pass.
+     * Thresholds are fixed, never adapted from a failing candidate.
+     */
+    private fun referenceHasVisibleContent(image: BufferedImage): Boolean {
+        if (image.width < 400 || image.height < 300) return false
+        val background = image.getRGB(image.width - 25, image.height - 25)
+        val br = (background ushr 16) and 0xff
+        val bg = (background ushr 8) and 0xff
+        val bb = background and 0xff
+        var occupied = 0
+        var minX = image.width
+        var maxX = 0
+        var minY = image.height
+        var maxY = 0
+        for (y in 18 until image.height - 18 step 3) {
+            for (x in 18 until image.width - 18 step 3) {
+                val rgb = image.getRGB(x, y)
+                val dr = kotlin.math.abs(((rgb ushr 16) and 0xff) - br)
+                val dg = kotlin.math.abs(((rgb ushr 8) and 0xff) - bg)
+                val db = kotlin.math.abs((rgb and 0xff) - bb)
+                if (dr + dg + db > 150) {
+                    occupied++
+                    minX = minOf(minX, x)
+                    maxX = maxOf(maxX, x)
+                    minY = minOf(minY, y)
+                    maxY = maxOf(maxY, y)
+                }
+            }
+        }
+        return occupied >= 150 && maxX - minX >= 160 && maxY - minY >= 60
     }
 
     private fun sha256(bytes: ByteArray): String =
@@ -234,4 +297,5 @@ private interface DifferentialPreviewBridgeRemote {
     fun sourceStamp(editor: Editor): Long
     fun sourceUnsaved(editor: Editor): Boolean
     fun restoreNative(editor: Editor)
+    fun nativeShowing(editor: Editor): Boolean
 }
