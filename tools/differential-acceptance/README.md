@@ -82,3 +82,20 @@ clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
 complete 88-row/89-expanded-case real coverage. Some corpus sources reference
 relative resources; preserve those paths before extending execution to them.
 All missing or unvalidated #353 criteria are **FAIL** for the release/merge gate.
+
+### Stage D geometry instrumentation — bounded
+
+The real-IDE manifest capture now retains `native-raster-geometry.txt` for each
+selected case. It records decoded PNG intrinsic width/height, actual IntelliJ
+block-inlay rendered width/height and bounds, inlay source line/offset and the
+native visible-area rectangle. A deterministic negative-control probe checks
+that material aspect-ratio distortion and collapsed dimensions are rejected
+before any live capture. A tall raster which extends beyond a **single**
+viewport may still be reachable by scrolling; the first screenshots alone do
+not establish intrinsic clipping.
+
+This is a **native-raster aspect invariant only**, not final #353 geometry
+acceptance. Registered platform DOM source-anchor locations, cumulative
+heading/scroll drift, per-class Gantt legibility, and full corpus execution
+remain unverified and release blocking. The optional Gradle case selector
+does not alter the default bounded CI selection.
