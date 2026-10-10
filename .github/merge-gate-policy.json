@@ -45,11 +45,11 @@
     },
     {
       "context": "CodeQL (javascript-typescript)",
-      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
+      "reason": "Advisory PR and weekly default-branch security analysis, not a required Merge Gate input; Qodana remains the required code-inspection authority. PR CodeQL does not immediately update default-branch alerts; scheduled scans normally refresh them weekly, but missed or failed runs can extend staleness. Promotion to required needs an explicit policy decision and suitable trigger coverage."
     },
     {
       "context": "CodeQL (actions)",
-      "reason": "Security analysis surface. Qodana remains the authoritative required code-inspection gate; CodeQL is not promoted to required until stable PR/main evidence and an explicit merge-policy decision exist."
+      "reason": "Advisory PR and weekly default-branch security analysis, not a required Merge Gate input; Qodana remains the required code-inspection authority. PR CodeQL does not immediately update default-branch alerts; scheduled scans normally refresh them weekly, but missed or failed runs can extend staleness. Promotion to required needs an explicit policy decision and suitable trigger coverage."
     }
   ],
   "release_only": [
