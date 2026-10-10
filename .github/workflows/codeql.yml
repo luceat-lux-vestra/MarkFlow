@@ -3,8 +3,7 @@ name: CodeQL
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
+  # Default-branch alerts are refreshed by the weekly scan, not per merge.
   schedule:
     - cron: '41 3 * * 3'
 
