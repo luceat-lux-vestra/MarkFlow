@@ -57,20 +57,20 @@ source bytes in MarkFlow's native editor and IDEA **2026.2.3** bundled Markdown
 Preview. It retains per-case `source.md`, `identity.txt`, `markflow.png`,
 `intellij-preview.png`, `side-by-side.png`, `diff.png`, `metrics.json` and
 JCEF runtime evidence. `differential-manifest/summary.json` keeps **all**
-expanded cases, including those not run. The first CI slice captures two
-representative sources: `md-atx-headings-h1-h6` and
-`mermaid-flowchart-minimal`.
+expanded cases, including those not run. The current bounded CI slice attempts three real source-identical pairs:
+`md-atx-headings-h1-h6`, `mermaid-flowchart-minimal`, and `mermaid-gantt`.
+The Gantt case is diagnostic until inspected and a reviewed legibility gate is added.
 
 To select additional *supported and platform-comparable* cases in a separately
 authorized Starter run:
 
 ```sh
 ./gradlew integrationTest -x buildPlugin -PplatformVersion=2026.2.3 \
-  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal \
+  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt \
   --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
 ```
 
-The regular CI intentionally remains bounded to two cases. Its statuses are
+The regular CI intentionally remains bounded to three cases (not 89). Its statuses are
 `CAPTURED_UNVERIFIED`, `CAPTURE_FAILED` and `NOT_EXECUTED`, with
 `full_differential_acceptance=false` **even when the capture suite passes**.
 The original manifest's `supported`/`degraded`/`unsupported` classifications
