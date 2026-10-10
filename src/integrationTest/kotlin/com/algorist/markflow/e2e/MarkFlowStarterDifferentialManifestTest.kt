@@ -39,7 +39,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(inventory.map { it.parent }.toSet().size == 88)
         check(inventory.map { it.id }.toSet().size == inventory.size)
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
-            ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal").split(',').map { it.trim() }
+            ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
         val indexed = inventory.associateBy { it.id }
         val selected = selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
