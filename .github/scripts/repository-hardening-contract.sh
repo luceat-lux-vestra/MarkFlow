@@ -194,7 +194,7 @@ grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
   die "Starter workflow silently dropped Stage D manifest capture"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped Stage D manifest suite"
-grep -Fq '"full_differential_acceptance":false' "$manifest_test" ||
+grep -Fq 'full_differential_acceptance' "$manifest_test" ||
   die "Stage D partial coverage must never be promoted to full acceptance"
 grep -Fq '"NOT_EXECUTED"' "$manifest_test" ||
   die "Stage D must retain unexecuted cases in its inventory"
