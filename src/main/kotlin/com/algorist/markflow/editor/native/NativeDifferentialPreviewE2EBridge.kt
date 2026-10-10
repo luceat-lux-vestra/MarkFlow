@@ -154,8 +154,16 @@ internal object NativeDifferentialPreviewE2EBridge {
         val inlays = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
             .filter { it.renderer is NativeHeadingInlayRenderer }
             .sortedBy { (it.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset }
-        var firstHeadingLine: Int? = null
-        var firstHeadingY: Int? = null
+        // Stable first installed ATX inlay is the cumulative reference point.
+        // Avoid mutable origin state inside mapNotNull: Qodana correctly rejects
+        // constant-condition checks that appear to initialize on each iteration.
+        val firstHeadingLine = inlays.asSequence().mapNotNull { inlay ->
+            val sourceLine = document.getLineNumber(
+                (inlay.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset
+            )
+            sourceLine.takeIf { heading.containsMatchIn(lineText(it)) }
+        }.firstOrNull()
+        val firstHeadingY = firstHeadingLine?.let(::lineY)
         val cumulativeNativeExcess = mutableListOf<Long>()
         val rows = inlays.mapNotNull { inlay ->
             val renderer = inlay.renderer as NativeHeadingInlayRenderer
@@ -173,10 +181,6 @@ internal object NativeDifferentialPreviewE2EBridge {
             val expectedPlainPx = logicalSpan.toLong() * baseHeight
             val measuredPx = (nextY - startY).toLong()
             val excessPx = sourceSpanExcess(logicalSpan, nextY - startY, baseHeight)
-            if (firstHeadingLine == null) {
-                firstHeadingLine = sourceLine
-                firstHeadingY = startY
-            }
             val cumulativePx = sourceSpanExcess(
                 nextContentLine - requireNotNull(firstHeadingLine),
                 nextY - requireNotNull(firstHeadingY), baseHeight,
