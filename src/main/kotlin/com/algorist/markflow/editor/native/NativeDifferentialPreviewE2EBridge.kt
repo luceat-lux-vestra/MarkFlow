@@ -154,6 +154,9 @@ internal object NativeDifferentialPreviewE2EBridge {
         val inlays = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
             .filter { it.renderer is NativeHeadingInlayRenderer }
             .sortedBy { (it.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset }
+        var firstHeadingLine: Int? = null
+        var firstHeadingY: Int? = null
+        val cumulativeNativeExcess = mutableListOf<Long>()
         val rows = inlays.mapNotNull { inlay ->
             val renderer = inlay.renderer as NativeHeadingInlayRenderer
             val sourceLine = document.getLineNumber(renderer.sourceRange.startOffset)
@@ -170,6 +173,15 @@ internal object NativeDifferentialPreviewE2EBridge {
             val expectedPlainPx = logicalSpan.toLong() * baseHeight
             val measuredPx = (nextY - startY).toLong()
             val excessPx = sourceSpanExcess(logicalSpan, nextY - startY, baseHeight)
+            if (firstHeadingLine == null) {
+                firstHeadingLine = sourceLine
+                firstHeadingY = startY
+            }
+            val cumulativePx = sourceSpanExcess(
+                nextContentLine - requireNotNull(firstHeadingLine),
+                nextY - requireNotNull(firstHeadingY), baseHeight,
+            )
+            cumulativeNativeExcess += cumulativePx
             val bounds = inlay.bounds
             listOf(
                 "level=" + match.groupValues[1].length,
@@ -184,6 +196,7 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "plain_span_px=" + expectedPlainPx,
                 "measured_span_px=" + measuredPx,
                 "native_extra_px=" + excessPx,
+                "cumulative_native_extra_px=" + cumulativePx,
                 "inlay_height_px=" + inlay.heightInPixels,
                 "inlay_bounds_y=" + (bounds?.y?.toString() ?: "UNAVAILABLE"),
                 "inlay_bounds_height=" + (bounds?.height?.toString() ?: "UNAVAILABLE"),
@@ -200,6 +213,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "base_line_height_px=" + baseHeight,
             "raw_atx_prefixed_line_count=" + atxSourceCount,
             "measured_atx_heading_count=" + rows.size,
+            "worst_abs_cumulative_native_extra_px=" +
+                (cumulativeNativeExcess.maxOfOrNull { kotlin.math.abs(it) } ?: 0L),
         ).joinToString(separator = "\n", postfix = "\n") +
             rows.joinToString(separator = "\n", postfix = "\n")
     }
