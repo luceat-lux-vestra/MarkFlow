@@ -134,6 +134,12 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, _) = editors(editor)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        check(editor.contentComponent.isShowing) { "Source editor was not restored" }
+        // Swing layout is asynchronous: caller must wait for actual restored visibility.
+    }
+
+    fun nativeShowing(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (selected, _) = editors(editor)
+        return selected.textEditor.editor === editor && editor.contentComponent.isShowing
     }
 }
