@@ -1,25 +1,6 @@
 name: Native Derived Presentation Evidence
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/native-derived-presentation-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/resources/META-INF/markflow-jcef.xml'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/main/kotlin/com/algorist/markflow/renderer/**'
-      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'webview/derived-renderer.html'
-      - 'webview/vite.derived-renderer.config.ts'
-      - 'webview/src/renderer/**'
-      - 'webview/src/app/derived-renderer-service.ts'
-      - 'webview/src/app/browser-derived-renderer-backends.ts'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
