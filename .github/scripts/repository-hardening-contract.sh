@@ -187,6 +187,19 @@ grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
   die "Starter workflow silently dropped bundled Markdown Preview capture"
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
+# #353 Stage D remains a bounded capture probe, not full acceptance.
+manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+[ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
+  die "Starter workflow silently dropped Stage D manifest capture"
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_diagnostics" ||
+  die "Starter diagnostics silently dropped Stage D manifest suite"
+grep -Fq '"full_differential_acceptance":false' "$manifest_test" ||
+  die "Stage D partial coverage must never be promoted to full acceptance"
+grep -Fq '"NOT_EXECUTED"' "$manifest_test" ||
+  die "Stage D must retain unexecuted cases in its inventory"
+grep -Fq '"CAPTURED_UNVERIFIED"' "$manifest_test" ||
+  die "Stage D captures must not be treated as geometry acceptance"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
