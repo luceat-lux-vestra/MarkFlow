@@ -97,7 +97,7 @@ internal class NativePageGeometryPilot private constructor(
             val stamp = editor.document.modificationStamp
             val originalCaret = editor.caretModel.offset
             val originalScheme = editor.colorsScheme
-            val originalBorder = editor.contentComponent.border
+            val originalBorder = editor.scrollPane.border
             val foreignFolds = editor.foldingModel.allFoldRegions.toList()
             val foreignStates = foreignFolds.map { Triple(it.startOffset, it.endOffset, it.isExpanded) }
             val paragraphSpacing = mutableListOf<Inlay<*>>()
