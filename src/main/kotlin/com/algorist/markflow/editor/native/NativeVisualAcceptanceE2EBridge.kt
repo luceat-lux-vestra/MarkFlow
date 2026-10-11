@@ -138,6 +138,12 @@ internal object NativeVisualAcceptanceE2EBridge {
             )
         )
 
+        // EditorFactory attaches the opt-in research owner before the platform's
+        // global scheme and split-editor layout are finalized. Apply it again
+        // after test environment normalization, but before viewport sizing.
+        val pagePilot = NativeMarkFlowProductionLifecycle.researchPagePilot(editor)
+        pagePilot?.reapplyAfterEditorConfiguration()
+
         val window = requireNotNull(SwingUtilities.getWindowAncestor(editor.component)) {
             "visual acceptance requires a showing IntelliJ editor window"
         }
@@ -164,6 +170,15 @@ internal object NativeVisualAcceptanceE2EBridge {
                 "actual=${viewport.width}x${viewport.height}"
         }
         NativeMarkFlowProductionLifecycle.refreshAll()
+        // Reject a silent no-op: the previous real-IDE B capture reported
+        // pagePilot=true with Inter and zero insets after setGlobalScheme().
+        pagePilot?.measurements()?.let { measurements ->
+            check(measurements.fontSizePx == 13 &&
+                measurements.leftInsetPx == 26 &&
+                measurements.topInsetPx == 26) {
+                "Research page geometry missing after IDE prepare: $measurements"
+            }
+        }
         return environmentIdentity(editor)
     }
 
