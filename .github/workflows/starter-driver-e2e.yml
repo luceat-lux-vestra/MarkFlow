@@ -252,6 +252,7 @@ jobs:
             integrationTest
             -x buildPlugin
             -PplatformVersion="$STARTER_PLATFORM_VERSION"
+            -PstarterPackagedPlugin=true
             --stacktrace
           )
           diagnostics_args=()
