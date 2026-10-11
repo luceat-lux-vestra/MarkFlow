@@ -659,35 +659,50 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
 
             val x = loc.x + minOf(4, fold.widthInPixels - 1)
             val y = loc.y + fold.heightInPixels / 2
-            val click = MouseEvent(
-                editor.contentComponent, MouseEvent.MOUSE_CLICKED,
-                System.currentTimeMillis(), 0,
+            // EditorImpl synthesizes its EditorMouseListener.mouseClicked
+            // notification from a short press/release pair, not from a
+            // stand-alone AWT MOUSE_CLICKED dispatched to its content pane.
+            // Preserve the actual EditorImpl hit-testing path: never call
+            // handleMouseReveal or manufacture EditorMouseEvent here.
+            val pressed = MouseEvent(
+                editor.contentComponent, MouseEvent.MOUSE_PRESSED,
+                System.currentTimeMillis(), java.awt.event.InputEvent.BUTTON1_DOWN_MASK,
                 x, y, 1, false, MouseEvent.BUTTON1,
             )
-            // Observe the *real* EditorImpl->EditorMouseListener route.
-            // This listener is a passive diagnostic and never fabricates a
-            // collapsed fold event or calls the controller directly.
+            val released = MouseEvent(
+                editor.contentComponent, MouseEvent.MOUSE_RELEASED,
+                pressed.`when` + 1, 0,
+                x, y, 1, false, MouseEvent.BUTTON1,
+            )
             val routed = mutableListOf<String>()
             val observer = object : com.intellij.openapi.editor.event.EditorMouseListener {
+                override fun mousePressed(event: EditorMouseEvent) {
+                    routed += "pressed:area=${event.area},input=${event.mouseEvent.id}"
+                }
+                override fun mouseReleased(event: EditorMouseEvent) {
+                    routed += "released:area=${event.area},input=${event.mouseEvent.id}"
+                }
                 override fun mouseClicked(event: EditorMouseEvent) {
-                    routed += "area=${event.area},fold=${event.collapsedFoldRegion?.javaClass?.simpleName}," +
+                    routed += "clicked:area=${event.area},fold=${event.collapsedFoldRegion?.javaClass?.simpleName}," +
                         "same=${event.collapsedFoldRegion === fold},input=${event.mouseEvent.id}"
                 }
             }
             editor.addEditorMouseListener(observer)
             try {
-                editor.contentComponent.dispatchEvent(click)
+                editor.contentComponent.dispatchEvent(pressed)
+                editor.contentComponent.dispatchEvent(released)
             } finally {
                 editor.removeEditorMouseListener(observer)
             }
 
             assertTrue(
-                "EditorImpl actual click route is unverified: consumed=${click.isConsumed}," +
-                    " regionValid=${fold.isValid}, regionLocation=${fold.location}," +
-                    " point=(${click.x},${click.y}), showing=${editor.contentComponent.isShowing}," +
+                "EditorImpl actual press/release click route is unverified: releasedConsumed=${released.isConsumed}," +
+                    " pressedConsumed=${pressed.isConsumed}, regionValid=${fold.isValid}," +
+                    " regionLocation=${fold.location}, point=(${released.x},${released.y})," +
+                    " showing=${editor.contentComponent.isShowing}," +
                     " componentMouseListeners=${editor.contentComponent.mouseListeners.size}," +
                     " routed=$routed",
-                click.isConsumed,
+                released.isConsumed,
             )
             assertFalse("Owned region still visible after real editor component click", fold.isValid)
             assertEquals(contentOffset, editor.caretModel.offset)
