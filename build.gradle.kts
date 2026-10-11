@@ -5,6 +5,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.Sync
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
+import java.security.MessageDigest
 
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.io.File
@@ -73,7 +74,7 @@ val verifyAndExtractStarterJar = tasks.register<Sync>("verifyAndExtractStarterJa
         val expected = providers.environmentVariable("E2E_PLUGIN_SHA256").orNull
             ?: error("Missing pinned E2E_PLUGIN_SHA256 in Starter archive consumer")
         check(Regex("[0-9a-f]{64}").matches(expected)) { "Invalid Starter package digest" }
-        val hasher = java.security.MessageDigest.getInstance("SHA-256")
+        val hasher = MessageDigest.getInstance("SHA-256")
         archive.inputStream().use { input ->
             val bytes = ByteArray(64 * 1024)
             while (true) {
