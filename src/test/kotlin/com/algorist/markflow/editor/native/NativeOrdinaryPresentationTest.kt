@@ -106,6 +106,10 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         val stamp = document.modificationStamp
         editor.caretModel.moveToOffset(source.length)
         val caret = editor.caretModel.offset
+        val firstParagraphOffset = source.indexOf("Paragraph after H1.")
+        val secondHeadingOffset = source.indexOf("## Heading level 2")
+        val firstParagraphY = editor.offsetToXY(firstParagraphOffset).y
+        val secondHeadingY = editor.offsetToXY(secondHeadingOffset).y
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot.capture(document, 0L)
         )
@@ -147,6 +151,10 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
                 editor.inlayModel.getBlockElementsInRange(0, document.textLength)
                     .count { it.renderer is NativeHeadingInlayRenderer })
             assertEquals(2, pilot.evidenceSnapshot().fullyConcealed)
+            assertEquals("H1 following paragraph must keep its source anchor",
+                firstParagraphY, editor.offsetToXY(firstParagraphOffset).y)
+            assertEquals("16px gap must appear after first paragraph, before H2",
+                secondHeadingY + 16, editor.offsetToXY(secondHeadingOffset).y)
             // Reveal by moving the caret inside authoritative H1. The owner
             // must remove only its own fold/inlay; JetBrains's section remains.
             editor.caretModel.moveToOffset(source.indexOf("Heading level 1") + 2)
@@ -907,8 +915,12 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val projectedY = editor.offsetToXY(tailOffset).y
             assertEquals("H1 bottom spacing must NOT precede the title", originalHeadingY,
                 editor.offsetToXY(0).y)
-            assertEquals("Co-start H1 must add only measured 16px Preview bottom spacing",
-                16, projectedY - originalY)
+            assertEquals("The paragraph immediately after H1 must not shift",
+                originalY, projectedY)
+            val onlyGap = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                .single { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer }
+            assertEquals("Section spacing must be anchored after the paragraph",
+                document.getLineEndOffset(2), onlyGap.offset)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
 

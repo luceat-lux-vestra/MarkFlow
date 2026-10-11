@@ -440,13 +440,24 @@ internal class NativeHeadingPresentationController(
             removeFolds(listOf(fold))
             return
         }
-        // An inline H1 uses the original 22px source row and therefore lacks
-        // the bundled Preview's 16px heading-to-next-block spacing. Retain
-        // that spacing as a *blank* owned block only: never add a second text
-        // heading or its full typography height. This is limited to the
-        // co-start test pilot; no global heading geometry is changed.
+        // #353 measured 2026.2.3 JCEF paragraph text-range gap:
+        // P2 - P1 = 102.297 CSS px, source-line candidate = 85 device px.
+        // The missing space lies *after the first paragraph* (before the
+        // next section heading), NOT between H1 and that paragraph.
+        // Earlier H1-anchored spacer attempts moved H1 or P1 but left the
+        // relative P1-to-P2 interval unchanged. Only apply to a parser-proven
+        // H1 followed by one verified blank line and nonblank paragraph;
+        // avoid altering unrelated source ranges or platform-owned folds.
+        val paragraphLine = lineSpan.last + 1
+        if (paragraphLine >= doc.lineCount ||
+            doc.getLineStartOffset(paragraphLine) >= doc.getLineEndOffset(paragraphLine)) {
+            inline.dispose()
+            removeFolds(listOf(fold))
+            return
+        }
+        val paragraphEnd = doc.getLineEndOffset(paragraphLine)
         val paragraphGap = editor.inlayModel.addBlockElement(
-            foldEnd, true, false, 0, NativeHeadingParagraphGapRenderer
+            paragraphEnd, true, false, 0, NativeHeadingParagraphGapRenderer
         )
         if (paragraphGap == null || !paragraphGap.isValid) {
             paragraphGap?.takeIf { it.isValid }?.dispose()
@@ -679,10 +690,10 @@ internal class NativeHeadingInlayRenderer(
 
 /**
  * Pilot-only whitespace component, not a rich heading or baseline-approved
- * typography. Preview H1 bottom margin was measured at 16 CSS pixels in the
- * 2026.2.3 JCEF DOM ledger (device-pixel ratio 1). This adds only the missing
- * block spacing after an otherwise source-line-height H1 inline replacement.
- * The 89-case acceptance remains separately fail-closed.
+ * typography. Preview text Range P2-P1 measured 102.297 CSS px versus native
+ * 85 px at DPR 1. The 16px CSS block-margin contribution is placed after the
+ * first paragraph rather than after H1: only then can the source-aligned P2-P1
+ * interval change. This candidate is not approved for 89-case acceptance.
  */
 internal object NativeHeadingParagraphGapRenderer : EditorCustomElementRenderer {
     private const val BUNDLED_PREVIEW_HEADING_BOTTOM_GAP_PX = 16
