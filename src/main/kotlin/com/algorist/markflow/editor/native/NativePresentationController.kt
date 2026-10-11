@@ -84,7 +84,7 @@ internal class NativePresentationController(
     private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
     private val tablePresentation: NativeTablePresentationController =
         NativeTablePresentationController(editor, richPresentationEnabled),
-    private val headingSourceLineReplacement: Boolean = false,
+    headingSourceLineReplacement: Boolean = false,
 ) : Disposable {
     private val ordinaryPresentation = NativeOrdinaryPresentationController(editor, headingSourceLineReplacement)
     private var disposed = false

@@ -80,7 +80,7 @@ internal data class NativeOrdinaryPresentationEvidence(
  */
 internal class NativeOrdinaryPresentationController(
     private val editor: Editor,
-    private val headingSourceLineReplacement: Boolean = false,
+    headingSourceLineReplacement: Boolean = false,
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
