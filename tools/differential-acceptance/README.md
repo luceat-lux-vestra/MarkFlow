@@ -459,3 +459,48 @@ mouse-hit, source reveal, keyboard/caret, font geometry, native-vs-bundled
 Preview, undo/reopen and foreign-fold tests before accepting #350.
 The known `HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` and 86
 not-yet-executed corpus cases continue to fail-close PR #364.
+
+
+### Stage E12 — guarded native custom-fold controller lifecycle
+
+The custom line renderer and fail-closed line planner are now wired
+into the **real** `NativeHeadingPresentationController` under the
+explicit constructor-only pilot parameter
+`sourceLineReplacement = true`. The shipping default remains
+`false`, with all existing block-inlay behavior unchanged until a
+separately accepted production migration.
+
+When enabled, an eligible full-source-line heading installs a
+`CustomFoldRegion` over the heading and, if independently verified
+safe, its immediately following blank line. A failed custom fold
+installation is **not** silently replaced by a double-height inlay:
+the original authoritative Markdown stays editable. Setext and
+unreviewed multi-line headings remain on the prior presentation path.
+
+The controller independently owns the custom fold and never claims
+ownership of a JetBrains Markdown syntax fold. Source-identity and
+actual fold object identity are checked before left-click reveal;
+wrong-button/foreign/stale fold events cannot remove the heading.
+Removing only the owned region exposes the original source, moves the
+caret to the parser heading content offset, and a subsequent inactive
+refresh reinstalls the region. Evidence distinguishes old
+`ownedInlays` from the new `ownedCustomFolds`, without falsely
+reporting a custom fold as an inlay.
+
+A pinned IntelliJ platform test exercises this **actual controller**
+mode, unlike E10's synthetic standalone listener pilot. It asserts
+the two-line vertical-advance delta, foreign fold survival, source
+bytes, stamp, caret, reveal count, activity-driven reinstallation
+and disposal cleanup. The test constructs an EditorMouseEvent
+for deterministic ownership checks; physical pointer hit-testing
+is still outstanding. All exact-final-HEAD CI and Starter evidence
+remain mandatory.
+
+There is intentionally **no change to production call sites or
+ordinary Markdown heading E2E contracts** in this stage. Once the
+guarded controller, glyph-paint and line-planner tests pass, the next
+bounded integration step is an explicitly real IDE screenshot and
+mouse-flow pilot before making this mode the default, updating all
+legacy `headingInlays`-based consumers, and solving the #350
+reference-anchored cumulative-layout contract. #353 full corpus
+remains 86 cases short and this PR must not be merged.
