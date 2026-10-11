@@ -17,11 +17,14 @@ import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
 import java.awt.Robot
+import java.awt.image.BufferedImage
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import javax.imageio.ImageIO
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -44,6 +47,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(renderedHeadingBoxNegativeControls()) { "Stage E5 native/DOM box identity negative controls failed" }
         check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
+        check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
@@ -665,6 +669,21 @@ class MarkFlowStarterDifferentialManifestTest {
                                 ) && paragraphB.startsWith(
                                     "schema=markflow-reference-paragraph-text-range/v1\n"
                                 )) { "Missing actual B source-aligned JCEF DOM evidence" }
+                                // Unlike Editor Insets or drawString inputs, this
+                                // evidence reads actual ink from both retained
+                                // screen captures. It remains diagnostic-only:
+                                // raster offsets and DOM Range bounds are not
+                                // an approved common box-model contract.
+                                val nativeImage = requireNotNull(ImageIO.read(
+                                    abDest.resolve("native-b.png").toFile()
+                                )) { "Native B screenshot could not be decoded" }
+                                val previewImage = requireNotNull(ImageIO.read(
+                                    abDest.resolve("preview-b.png").toFile()
+                                )) { "JCEF B screenshot could not be decoded" }
+                                Files.writeString(
+                                    abDest.resolve("heading-ink-x-diagnostic.tsv"),
+                                    headingInkXDiagnostic(nativeImage, previewImage, nativeB, headingB)
+                                )
                                 val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
                                 val driftA = Files.readString(
                                     dest.resolve("source-following-text-line-drift.tsv"))
@@ -960,6 +979,133 @@ class MarkFlowStarterDifferentialManifestTest {
               ].join('\n');
             })()
         """.trimIndent()
+    }
+
+
+    /**
+     * Stage E16: actual screenshot-ink left edge for each source-identified
+     * heading, not Editor Insets or an inferred drawString paint origin.
+     *
+     * The screenshot origins are the individual content-area captures, so
+     * positions are reported within their respective crop coordinate spaces.
+     * A small 400px left strip and the *real* fold/DOM text vertical boxes
+     * limit unrelated UI pixels. Pinned Islands Light only; a threshold of
+     * 205 is a raster feature detector, NEVER a visual parity tolerance.
+     *
+     * Fail closed on a missing source row or an unidentifiable ink box. No
+     * pixel match or geometry threshold is accepted as release parity here.
+     */
+    private fun firstHeadingInkPixelX(
+        image: BufferedImage,
+        top: Int,
+        bottomExclusive: Int,
+    ): Int? {
+        require(top >= 0 && bottomExclusive > top && bottomExclusive <= image.height) {
+            "Heading raster vertical bounds outside actual screenshot"
+        }
+        val xLimit = minOf(image.width, 400)
+        require(xLimit > 0) { "Empty heading raster scan" }
+        for (x in 0 until xLimit) {
+            for (y in top until bottomExclusive) {
+                val color = image.getRGB(x, y)
+                val red = (color ushr 16) and 255
+                val green = (color ushr 8) and 255
+                val blue = color and 255
+                if (red < 205 && green < 205 && blue < 205) return x
+            }
+        }
+        return null
+    }
+
+    private fun headingInkRasterNegativeControls(): Boolean {
+        val image = BufferedImage(80, 24, BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.color = java.awt.Color.WHITE
+            graphics.fillRect(0, 0, image.width, image.height)
+            graphics.color = java.awt.Color(235, 235, 235)
+            graphics.fillRect(1, 2, 2, 6)
+            graphics.color = java.awt.Color(115, 118, 124)
+            graphics.fillRect(7, 2, 3, 6)
+            graphics.color = java.awt.Color.BLACK
+            graphics.fillRect(15, 14, 4, 4)
+        } finally {
+            graphics.dispose()
+        }
+        return firstHeadingInkPixelX(image, 0, 10) == 7 &&
+            firstHeadingInkPixelX(image, 13, 20) == 15 &&
+            firstHeadingInkPixelX(image, 19, 23) == null &&
+            runCatching { firstHeadingInkPixelX(image, -1, 10) }.isFailure &&
+            runCatching { firstHeadingInkPixelX(image, 10, 25) }.isFailure
+    }
+
+    private fun headingInkXDiagnostic(
+        nativeImage: BufferedImage,
+        referenceImage: BufferedImage,
+        nativeLedger: String,
+        referenceLedger: String,
+    ): String {
+        check(nativeLedger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n"))
+        check(referenceLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n"))
+        fun rows(value: String): List<Map<String, String>> =
+            value.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\t').associate { token ->
+                    val keyAndValue = token.split('=', limit = 2)
+                    require(keyAndValue.size == 2) { "Malformed heading identity/geometry row" }
+                    keyAndValue[0] to keyAndValue[1]
+                }
+            }.toList()
+        val nativeRows = rows(nativeLedger)
+        val referenceRows = rows(referenceLedger)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Stage E16 needs all six real source-aligned headings"
+        }
+        val values = mutableListOf(
+            "schema=markflow-heading-raster-ink-x/v1",
+            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
+            "coordinate_space=NATIVE_AND_JCEF_INDEPENDENT_SCREENSHOT_CROPS",
+            "ink_detector=LIGHT_THEME_RGB_CHANNELS_BELOW_205_FIRST_PIXEL_IN_HEADING_VERTICAL_BOX",
+            "level\tsource_line\tnative_raster_ink_left_px\tpreview_raster_ink_left_px" +
+                "\tpreview_minus_native_raster_px\tnative_declared_paint_origin_px" +
+                "\tpreview_jcef_dom_range_left_css_px"
+        )
+        nativeRows.zip(referenceRows).forEachIndexed { index, (nativeRow, referenceRow) ->
+            val level = index + 1
+            val sourceLine = index * 4
+            check(nativeRow.getValue("level") == level.toString() &&
+                referenceRow.getValue("level") == level.toString() &&
+                nativeRow.getValue("source_line_zero_based") == sourceLine.toString() &&
+                referenceRow.getValue("source_line_zero_based") == sourceLine.toString()) {
+                "Stage E16 source-identified raster heading mismatch"
+            }
+            val (top, bottom) = if (level == 1) {
+                check(nativeRow.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
+                    nativeRow.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE")
+                val origin = nativeRow.getValue("inline_pilot_bounds_y_px").toInt()
+                origin to origin + maxOf(35, nativeRow.getValue("inline_pilot_height_px").toInt())
+            } else {
+                check(nativeRow.getValue("fold_status") == "INSTALLED")
+                val origin = nativeRow.getValue("fold_origin_y_document_px").toInt()
+                origin to origin + nativeRow.getValue("fold_height_px").toInt()
+            }
+            val textTop = referenceRow.getValue("heading_text_range_top_css_px").toDouble()
+            val textHeight = referenceRow.getValue("heading_text_range_height_css_px").toDouble()
+            check(textTop.isFinite() && textHeight.isFinite() && textHeight > 0)
+            val nativeX = requireNotNull(firstHeadingInkPixelX(nativeImage, top, bottom)) {
+                "No actual native screenshot ink at H" + level
+            }
+            val previewX = requireNotNull(firstHeadingInkPixelX(
+                referenceImage, floor(textTop).toInt(), ceil(textTop + textHeight).toInt()
+            )) { "No actual JCEF screenshot ink at H" + level }
+            val paintInputX = nativeRow.getValue("native_paint_text_origin_x_document_px").toInt()
+            val domTextX = referenceRow.getValue("heading_text_range_left_css_px").toDouble()
+            check(paintInputX >= 0 && domTextX.isFinite() && domTextX >= 0)
+            values += listOf(
+                level, sourceLine, nativeX, previewX, previewX - nativeX, paintInputX,
+                "%.3f".format(java.util.Locale.ROOT, domTextX)
+            ).joinToString("\t")
+        }
+        return values.joinToString("\n", postfix = "\n")
     }
 
     private val headingReferenceDomProbe = """
