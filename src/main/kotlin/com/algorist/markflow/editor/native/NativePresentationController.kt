@@ -84,8 +84,9 @@ internal class NativePresentationController(
     private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
     private val tablePresentation: NativeTablePresentationController =
         NativeTablePresentationController(editor, richPresentationEnabled),
+    headingSourceLineReplacement: Boolean = false,
 ) : Disposable {
-    private val ordinaryPresentation = NativeOrdinaryPresentationController(editor)
+    private val ordinaryPresentation = NativeOrdinaryPresentationController(editor, headingSourceLineReplacement)
     private var disposed = false
     private var refreshRequestGeneration = 0L
     private var refreshesApplied = 0L
@@ -235,6 +236,9 @@ internal class NativePresentationController(
             sourceFallbacks = sourceFallbacks,
         )
     }
+
+    fun headingPilotEvidenceSnapshot(): NativeHeadingPresentationEvidence =
+        ordinaryPresentation.headingPilotEvidenceSnapshot()
 
     fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
 

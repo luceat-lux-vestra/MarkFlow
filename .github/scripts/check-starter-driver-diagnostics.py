@@ -17,6 +17,9 @@ REQUIRED_SUITES = {
     "com.algorist.markflow.e2e.MarkFlowStarterTableTest",
     "com.algorist.markflow.e2e.MarkFlowStarterTaskListTest",
     "com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest",
     "com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest",
 }
 MARKFLOW_MARKER = "com.algorist.markflow."
@@ -286,6 +289,18 @@ def self_test() -> None:
         result = analyze(root)
         assert result["verdict"] == "FAIL", result
         assert result["junit"]["missingSuites"], result
+
+    # The exact OS Robot heading proof must be non-optional; a missing test XML
+    # must never be interpreted as a passing derived-content Starter shard.
+    with tempfile.TemporaryDirectory(prefix="markflow-starter-diagnostics-heading-robot-") as temp:
+        root = Path(temp)
+        _write_required_suites(root)
+        _write_platform_log(root)
+        robot_suite = "com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest"
+        (root / "test-results" / f"TEST-{robot_suite}.xml").unlink()
+        result = analyze(root)
+        assert result["verdict"] == "FAIL", result
+        assert robot_suite in result["junit"]["missingSuites"], result
 
     with tempfile.TemporaryDirectory(prefix="markflow-starter-diagnostics-skip-") as temp:
         root = Path(temp)

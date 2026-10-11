@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.CustomFoldRegion
 
 /**
  * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
@@ -11,7 +12,7 @@ import com.intellij.openapi.editor.Editor
  * platform-editor opening path. Starter/Driver tests therefore observe production ownership rather
  * than constructing a parallel test-only editor lifecycle.
  */
-@Suppress("unused")
+@Suppress("unused", "UnstableApiUsage")
 internal object NativeProjectionE2EBridge {
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -77,6 +78,62 @@ internal object NativeProjectionE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).evidenceSnapshot().headingFullyConcealed
     }
+    /** Read-only production-controller proof; never creates or clicks any fold. */
+    fun headingRobotEvidence(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireController(editor)
+        val state = controller.headingPilotEvidenceSnapshot()
+        val custom = editor.foldingModel.allFoldRegions
+            .filterIsInstance<CustomFoldRegion>()
+            .filter { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+        // Evidence-only diagnosis of real production fold eligibility. This path
+        // must never create, remove or expand any fold as part of a probe.
+        val heading = controller.currentPlan
+            ?.let(NativeHeadingProjectionPlanner::plan)
+            ?.singleOrNull()
+        val span = heading?.let { NativeHeadingCustomFoldLinePlanner.plan(editor, it) }
+        val candidateRange = heading?.sourceRange
+        val overlaps = editor.foldingModel.allFoldRegions.asSequence()
+            .filter { fold -> fold.isValid && candidateRange != null &&
+                fold.startOffset < candidateRange.endOffset &&
+                fold.endOffset > candidateRange.startOffset }
+            .joinToString(",") { fold ->
+                "${fold.startOffset}-${fold.endOffset}:${if (fold.isExpanded) "E" else "C"}"
+            }
+        return "models=${state.models};inlays=${state.ownedInlays};folds=${state.ownedFolds};" +
+            "custom=${state.ownedCustomFolds};reveals=${state.mouseReveals};" +
+            "physicalCustom=${custom.size};showing=${editor.contentComponent.isShowing};" +
+            "caret=${editor.caretModel.offset};stamp=${editor.document.modificationStamp};" +
+            "fallbacks=${state.accessibilityFallbacks};" +
+            "sourceRange=${candidateRange?.startOffset}-${candidateRange?.endOffset};" +
+            "lineSpan=${span?.first}..${span?.last};overlaps=$overlaps"
+    }
+
+    /** Screen coordinates for the genuine JDK Robot pointer path, not AWT dispatch. */
+    fun headingRobotScreenPoint(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(editor.contentComponent.isShowing) { "Heading Robot requires visible production editor" }
+        val state = requireController(editor).headingPilotEvidenceSnapshot()
+        check(state.ownedCustomFolds == 1 && state.ownedInlays == 0) {
+            "Robot cannot click a non-owned or additive heading: $state"
+        }
+        val region = editor.foldingModel.allFoldRegions
+            .filterIsInstance<CustomFoldRegion>()
+            .single { it.isValid && !it.isExpanded && it.renderer is NativeHeadingCustomFoldRenderer }
+        // The fold can be owned and valid before the editor layout has a
+        // positive physical hit rectangle. Do not synthesize a click target.
+        val location = region.location ?: return "NOT_READY:fold-location-missing"
+        val width = region.widthInPixels
+        val height = region.heightInPixels
+        if (width <= 1 || height <= 1) {
+            val viewport = editor.scrollingModel.visibleArea
+            return "NOT_READY:fold=${width}x${height};viewport=${viewport.width}x${viewport.height}"
+        }
+        val screen = editor.contentComponent.locationOnScreen
+        return "${screen.x + location.x + minOf(4, width - 1)}," +
+            "${screen.y + location.y + height / 2}"
+    }
+
     fun headingFoldTopology(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = requireController(editor)

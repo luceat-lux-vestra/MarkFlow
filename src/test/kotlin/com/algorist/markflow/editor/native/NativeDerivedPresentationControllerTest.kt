@@ -261,6 +261,68 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         )
     }
 
+    fun testDefaultMermaidFitDoesNotMagnifySmallRasterBeyondTwoTimes() {
+        // Real #353 Gantt artifact: 284x196 intrinsic, 1176px available width.
+        // Earlier FIT_TO_VIEWPORT showed a jagged 1176x812 raster (~4.14x).
+        assertEquals(
+            568 to 392,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 284, imageHeight = 196,
+                viewportWidth = 1176, lineHeight = 22,
+            )
+        )
+        // An explicit large zoom must not bypass the PNG density guard.
+        assertEquals(
+            568 to 392,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 284, imageHeight = 196,
+                viewportWidth = 1176, lineHeight = 22,
+                mermaidSizeMode = "FIT_TO_VIEWPORT", mermaidZoomPercent = 200,
+            )
+        )
+        // The other modes retain their established semantics.
+        assertEquals(
+            284 to 196,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 284, imageHeight = 196,
+                viewportWidth = 1176, lineHeight = 22,
+                mermaidSizeMode = "ACTUAL_SIZE_SCROLL",
+            )
+        )
+        assertEquals(
+            284 to 196,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 284, imageHeight = 196,
+                viewportWidth = 1176, lineHeight = 22,
+                mermaidSizeMode = "SHRINK_TO_FIT",
+            )
+        )
+        // Wide diagrams still fit the viewport rather than being cropped.
+        assertEquals(
+            900 to 90,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 2000, imageHeight = 200,
+                viewportWidth = 900, lineHeight = 22,
+                mermaidSizeMode = "FIT_TO_VIEWPORT",
+            )
+        )
+        // A bounded upscale below 2x remains available when zoomed out.
+        assertEquals(
+            300 to 207,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 284, imageHeight = 196,
+                viewportWidth = 600, lineHeight = 22,
+                mermaidSizeMode = "FIT_TO_VIEWPORT", mermaidZoomPercent = 50,
+            )
+        )
+    }
+
     private fun plan(configGeneration: Long): NativeProjectionPlan =
         NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot.capture(myFixture.editor.document, configGeneration)

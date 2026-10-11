@@ -28,9 +28,10 @@ jobs:
     name: Head validation evidence
     runs-on: ubuntu-24.04-arm
     # Metadata-only replays may begin while the canonical exact-head validation is still running.
-    # The full canonical graph routinely exceeds 15 minutes, so the waiter must outlive that
-    # observed duration without increasing GitHub API polling frequency.
-    timeout-minutes: 35
+    # The mandatory Test workload now has a 50-minute budget (Gradle check alone took 29m29s).
+    # Allow the metadata-only waiter to outlive full canonical evidence without increasing
+    # GitHub API polling frequency; unknown/incomplete canonical evidence still fails closed.
+    timeout-minutes: 65
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -43,7 +44,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 240); do
             runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
@@ -432,7 +433,12 @@ jobs:
     name: Test
     needs: [ build ]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    # Exact-head 96332952: ./gradlew check finished SUCCESSFUL in 29m29s,
+    # but GitHub then cancelled the 30m job before mandatory webview source
+    # tests/coverage upload. This is a job deadline, not a failed test.
+    # Preserve ALL checks and fail-closed Merge Gate; allow the full observed
+    # workload to complete without adding runners or skipping webview tests.
+    timeout-minutes: 50
     steps:
       - name: Docs-only fast path
         if: ${{ needs.build.outputs.docs_only == 'true' }}
@@ -542,7 +548,28 @@ jobs:
 
       - name: Run Tests
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        run: ./gradlew check
+        shell: bash
+        run: |
+          set -euo pipefail
+          # IDEA BasePlatformTestCase's editor is detached from Swing by
+          # default. #350's actual EditorImpl AWT route test attaches it to
+          # a visible frame; never synthesize a passed click in headless mode.
+          command -v Xvfb
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-platform-unit-xvfb.log" 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+          export DISPLAY=:99
+          for attempt in {1..30}; do
+            test -S /tmp/.X11-unix/X99 && break
+            echo "Waiting for the test Xvfb socket (attempt ${attempt}/30)"
+            sleep 0.2
+          done
+          test -S /tmp/.X11-unix/X99 || {
+            echo "::error::Platform unit test Xvfb failed to start"
+            cat "$RUNNER_TEMP/markflow-platform-unit-xvfb.log"
+            exit 1
+          }
+          ./gradlew check
 
       # Native ARM64 hosted images lack Chromium; all 40 real browser cases remain mandatory.
       - name: Install native ARM64 Chromium for webview acceptance

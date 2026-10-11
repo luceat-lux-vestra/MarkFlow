@@ -1,0 +1,1592 @@
+package com.algorist.markflow.e2e
+
+import com.intellij.driver.client.Remote
+import com.intellij.driver.model.OnDispatcher
+import com.intellij.driver.sdk.Editor
+import com.intellij.driver.sdk.waitFor
+import com.intellij.driver.sdk.waitForIndicators
+import com.intellij.driver.sdk.ui.ui
+import com.intellij.driver.sdk.ui.components.common.jcef
+import com.intellij.ide.starter.driver.engine.runIdeWithDriver
+import com.intellij.ide.starter.models.IdeInfo
+import com.intellij.ide.starter.models.TestCase
+import com.intellij.ide.starter.plugins.PluginConfigurator
+import com.intellij.ide.starter.project.LocalProjectInfo
+import com.intellij.ide.starter.runner.Starter
+import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
+import org.junit.jupiter.api.Test
+import java.awt.Rectangle
+import java.awt.Robot
+import java.awt.image.BufferedImage
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.security.MessageDigest
+import javax.imageio.ImageIO
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+
+/** Stage D: capture proof only. Missing captures and visual acceptance never become PASS. */
+class MarkFlowStarterDifferentialManifestTest {
+    private class Case(
+        val id: String, val parent: String, val domain: String, val classification: String,
+        val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
+        val comparable: Boolean
+    )
+
+    @Test
+    fun boundedManifestCasesCaptureActualReferenceAndNative() {
+        val root = Path.of("").toAbsolutePath().normalize()
+        val manifest = Files.readAllBytes(root.resolve("fixtures/differential-acceptance/corpus.tsv"))
+        val inventory = inventory(root, String(manifest, StandardCharsets.UTF_8))
+        check(inventory.map { it.parent }.toSet().size == 88)
+        check(inventory.map { it.id }.toSet().size == inventory.size)
+        check(headingSourceIdentityNegativeControls()) { "Stage E2 heading-geometry negative controls failed" }
+        check(renderedHeadingBoxNegativeControls()) { "Stage E5 native/DOM box identity negative controls failed" }
+        check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
+        check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
+        check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
+        // Stage D capture completion and full #353 acceptance are separate
+        // contracts. Never infer release approval from a successful bounded
+        // source-identical capture of only three out of 89 expanded cases.
+        val contract = System.getProperty("markflow.differential.contract") ?: "capture"
+        require(contract == "capture" || contract == "acceptance") {
+            "Unknown differential contract: $contract"
+        }
+        val selectedIds = (System.getProperty("markflow.differential.caseIds")
+            ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
+        check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
+        val indexed = inventory.associateBy { it.id }
+        val selected = selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
+        check(selected.all { it.comparable && it.classification == "supported" })
+        val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
+            .directory(root.toFile()).start().let {
+                val actual = it.inputStream.bufferedReader().readText().trim()
+                check(it.waitFor() == 0 && actual.matches(Regex("[0-9a-f]{40}")))
+                actual
+            }
+        System.getenv("STARTER_SOURCE_SHA")?.takeIf { it.isNotBlank() }?.let {
+            check(it == sourceHead) { "Non-authoritative Starter source checkout" }
+        }
+        val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
+        val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
+        check(version == "2026.2.3")
+        val output = root.resolve("build/e2e-evidence/derived-content/differential-manifest")
+        Files.createDirectories(output)
+        val states = inventory.associate { it.id to "NOT_EXECUTED" }.toMutableMap()
+        val structuralFailures = mutableListOf<String>()
+        val sandbox = Files.createTempDirectory("markflow-353-manifest-")
+        val project = sandbox.resolve("project")
+        var failure: Throwable? = null
+        try {
+            val base = root.resolve("src/integrationTest/resources/projects/markdown-smoke")
+            check(base.toFile().copyRecursively(project.toFile(), overwrite = true))
+            // A and B are byte-identical but distinct file-editor lifecycles.
+            // Only this exact B filename is opted into source-line replacement.
+            val abHeading = selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }
+            if (abHeading != null) {
+                val bFixture = project.resolve("heading-layout-b.md")
+                check(!Files.exists(bFixture))
+                Files.write(bFixture, abHeading.bytes)
+            }
+            selected.forEach { entry ->
+                val target = project.resolve(entry.id + ".md")
+                check(!Files.exists(target)) { "Capture fixture collision" }
+                Files.write(target, entry.bytes)
+                val dest = output.resolve(entry.id)
+                Files.createDirectories(dest)
+                Files.write(dest.resolve("source.md"), entry.bytes)
+                Files.writeString(dest.resolve("identity.txt"),
+                    "case_id=" + entry.id + "\nmanifest_id=" + entry.parent +
+                    "\nclassification=" + entry.classification + "\nfixture=" + entry.path +
+                    "\nsource_sha256=" + sha(entry.bytes) +
+                    "\nblock_sha256=" + (entry.blockHash ?: "none") +
+                    "\nsource_line_zero_based=" + entry.line +
+                    "\nsource_head=" + sourceHead +
+                    "\nmanifest_sha256=" + sha(manifest) + "\n")
+            }
+            Starter.newContext(
+                testName = "markflow-353-bounded-manifest-real-pairs",
+                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
+            ).apply {
+                PluginConfigurator(this).installPluginFromPath(plugin)
+            }.applyVMOptionsPatch {
+                addSystemProperty("ide.browser.jcef.enabled", true)
+                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+                addSystemProperty("idea.trust.all.projects", true)
+                addSystemProperty("jb.consents.confirmation.enabled", false)
+                if (abHeading != null) {
+                    addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
+                }
+                addSystemProperty("sun.java2d.uiScale", "1.0")
+                addSystemProperty("ide.ui.scale", "1.0")
+            }.runIdeWithDriver().useDriverAndCloseIde {
+                waitForIndicators(5.minutes)
+                val driver = this
+                val markFlow = MarkFlowIdeDriver(driver)
+                val visual = driver.utility(DifferentialManifestVisualRemote::class)
+                val preview = driver.utility(DifferentialManifestPreviewRemote::class)
+                val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
+                val robot = Robot()
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.rasterGeometryNegativeControls()
+                }) { "Stage D raster geometry negative controls failed" }
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.nativeHeadingGeometryNegativeControls()
+                }) { "Stage E1 source-span geometry negative controls failed" }
+                driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
+                for (entry in selected) {
+                    val dest = output.resolve(entry.id)
+                    states[entry.id] = "CAPTURE_FAILED"
+                    try {
+                        val editor = markFlow.openMarkdown(entry.id + ".md")
+                        markFlow.assertProductionProjectionAttached(editor)
+                        val remoteEditor = editor.editor
+                        val source = String(entry.bytes, StandardCharsets.UTF_8)
+                        check(markFlow.source(editor) == source)
+                        val stamp = markFlow.modificationStamp(editor)
+                        val runtime = driver.withContext(OnDispatcher.EDT) {
+                            preview.jcefRuntimeEvidence()
+                        }
+                        Files.writeString(dest.resolve("jcef-runtime-evidence.txt"), runtime)
+                        check(runtime.lineSequence().any {
+                            it.startsWith("idea_apparmor_current=") &&
+                                it.contains("/idea-IU-262.10968.63/bin/idea")
+                        }) { "Unconfined IDEA runtime" }
+                        driver.withContext(OnDispatcher.EDT) { visual.prepare(remoteEditor) }
+                        // Caret outside the Mermaid fence avoids hiding its rendered inlay.
+                        markFlow.resetToSingleCaret(editor, source.length)
+                        driver.withContext(OnDispatcher.EDT) {
+                            preview.showNativeAtSourceLine(remoteEditor, entry.line)
+                        }
+                        waitFor(
+                            message = "Native derived capture readiness: " + entry.id,
+                            timeout = 50.seconds,
+                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                visual.visualEvidence(remoteEditor)
+                            } },
+                            checker = { evidence ->
+                                val values = evidence.split(';').mapNotNull { token ->
+                                    val pieces = token.split('=')
+                                    if (pieces.size == 2) pieces[1].toIntOrNull()?.let {
+                                        pieces[0] to it
+                                    } else null
+                                }.toMap()
+                                values["derivedPending"] == 0 &&
+                                    (entry.domain != "mermaid" ||
+                                        (values["derivedDecoded"] ?: 0) > 0)
+                            }
+                        )
+                        driver.withContext(OnDispatcher.EDT) {
+                            visual.normalizeEditorChromeForCapture(remoteEditor)
+                        }
+                        val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
+                            visual.environmentIdentity(remoteEditor)
+                        }
+                        val nativeRasterGeometry = driver.withContext(OnDispatcher.EDT) {
+                            preview.nativeRasterGeometry(remoteEditor)
+                        }
+                        // Source-line coordinates and real heading inlay dimensions are
+                        // observed only from the installed native production projection.
+                        // These are NOT matched to platform DOM coordinates yet.
+                        val nativeHeadingGeometry = driver.withContext(OnDispatcher.EDT) {
+                            preview.nativeHeadingSourceGeometry(remoteEditor)
+                        }
+                        val measuredHeadings = nativeHeadingGeometry.lineSequence()
+                            .firstOrNull { it.startsWith("measured_atx_heading_count=") }
+                            ?.substringAfter('=')?.toIntOrNull()
+                            ?: error("Stage E1 heading ledger is not parseable")
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            check(measuredHeadings == 6) {
+                                "Stage E1 requires all six installed H1-H6 heading inlays"
+                            }
+                        }
+                        Files.writeString(
+                            dest.resolve("native-heading-source-geometry.txt"),
+                            nativeHeadingGeometry, StandardCharsets.UTF_8
+                        )
+                        val rasterCount = nativeRasterGeometry.lineSequence()
+                            .firstOrNull { it.startsWith("raster_count=") }
+                            ?.substringAfter('=')?.toIntOrNull()
+                            ?: error("Stage D native raster geometry is not parseable")
+                        if (entry.domain == "mermaid") {
+                            check(rasterCount >= 1) {
+                                "Stage D Mermaid case has no measured native raster inlays"
+                            }
+                        }
+                        Files.writeString(
+                            dest.resolve("native-raster-geometry.txt"),
+                            nativeRasterGeometry, StandardCharsets.UTF_8
+                        )
+                        if (entry.id == "mermaid-gantt") {
+                            check(rasterCount == 1) { "Gantt must own exactly one measured native raster" }
+                            val row = nativeRasterGeometry.lineSequence().single {
+                                it.startsWith("index=")
+                            }
+                            val fields = row.split('\t').associate { field ->
+                                val parts = field.split('=', limit = 2)
+                                check(parts.size == 2) { "Malformed Gantt raster dimension" }
+                                parts[0] to parts[1]
+                            }
+                            fun size(name: String): Int =
+                                requireNotNull(fields[name]?.toIntOrNull()) { "Missing Gantt " + name }
+                            val iw = size("intrinsic_width")
+                            val ih = size("intrinsic_height")
+                            val dw = size("displayed_width")
+                            val dh = size("displayed_height")
+                            if (ganttRasterExceededCandidateScale(iw, ih, dw, dh)) {
+                                structuralFailures += listOf(
+                                    entry.id, "CANDIDATE_GANTT_MAX_UPSCALE_X2",
+                                    dw.toString() + "x" + dh,
+                                    (iw * 2L).toString() + "x" + (ih * 2L)
+                                ).joinToString("\t")
+                            }
+                            // E7: a proper display scale cannot recover labels
+                            // already compressed into a tiny intrinsic Gantt SVG.
+                            // This bound is scoped ONLY to the pinned 4-day Gantt
+                            // fixture at a 1200px editor width and is candidate
+                            // evidence, not an all-diagram width requirement.
+                            if (ganttIntrinsicRasterWidthTooNarrow(iw)) {
+                                structuralFailures += listOf(
+                                    entry.id, "CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800",
+                                    iw.toString(), "800"
+                                ).joinToString("\t")
+                            }
+                        }
+                        val native = driver.withContext(OnDispatcher.EDT) {
+                            Rectangle(
+                                visual.contentScreenX(remoteEditor), visual.contentScreenY(remoteEditor),
+                                visual.contentWidth(remoteEditor), visual.contentHeight(remoteEditor)
+                            )
+                        }
+                        check(native.width == 1200 && native.height == 760)
+                        robot.waitForIdle()
+                        check(ImageIO.write(robot.createScreenCapture(native), "png",
+                            dest.resolve("markflow.png").toFile()))
+                        val refIdentity = driver.withContext(OnDispatcher.EDT) {
+                            preview.showReferenceAtSourceLine(remoteEditor, entry.line)
+                        }
+                        waitFor(
+                            message = "Bundled preview visible: " + entry.id,
+                            timeout = 30.seconds,
+                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                preview.referenceShowing(remoteEditor)
+                            } },
+                            checker = { it }
+                        )
+                        val reference = driver.withContext(OnDispatcher.EDT) {
+                            val xywh = preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
+                            check(xywh.size == 4)
+                            Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
+                        }
+                        waitFor(
+                            message = "Bundled JCEF paints nonblank source: " + entry.id,
+                            timeout = 60.seconds,
+                            getter = {
+                                robot.waitForIdle()
+                                val image = robot.createScreenCapture(reference)
+                                check(ImageIO.write(image, "png", dest.resolve("intellij-preview.png").toFile()))
+                                diagnostics.referenceHasVisibleContent(image)
+                            },
+                            checker = { it }
+                        )
+                        // E10: independently measure the genuine Preview Mermaid SVG.
+                        // Source-identifying text selects a real diagram rather than any
+                        // incidental IDE/browser icon. These are DIAGNOSTIC values until
+                        // a maintainer has reviewed a structural viewport contract.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val requiredLabel = if (entry.id == "mermaid-gantt") {
+                                "MarkFlow Example Schedule"
+                            } else {
+                                "Rendered correctly?"
+                            }
+                            val svgEvidence = driver.ui.jcef().callJs(
+                                mermaidReferenceSvgProbe(requiredLabel)
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-mermaid-svg-dom-geometry.txt"),
+                                svgEvidence + "\n", StandardCharsets.UTF_8
+                            )
+                            check(svgEvidence.startsWith(
+                                "schema=markflow-reference-mermaid-svg-dom-geometry/v1\n"
+                            )) {
+                                "E10 genuine bundled Mermaid SVG not source-identifiable; " +
+                                    "retained reference probe: " + svgEvidence.take(500)
+                            }
+                            val nativeRow = nativeRasterGeometry.lineSequence().single {
+                                it.startsWith("index=")
+                            }.split('\t').associate { property ->
+                                val fields = property.split('=', limit = 2)
+                                check(fields.size == 2) { "E10 native raster field malformed" }
+                                fields[0] to fields[1]
+                            }
+                            val svgRows = svgEvidence.lineSequence()
+                                .filter { '=' in it }.associate {
+                                    it.substringBefore('=') to it.substringAfter('=')
+                                }
+                            fun nativeDimension(name: String): Int =
+                                requireNotNull(nativeRow[name]?.toIntOrNull()) {
+                                    "E10 native raster missing " + name
+                                }
+                            fun svgDimension(name: String): Double =
+                                requireNotNull(svgRows[name]?.toDoubleOrNull()) {
+                                    "E10 reference SVG missing " + name
+                                }
+                            val nativeDisplayedWidth = nativeDimension("displayed_width")
+                            val nativeDisplayedHeight = nativeDimension("displayed_height")
+                            val svgCssWidth = svgDimension("svg_css_width")
+                            val svgCssHeight = svgDimension("svg_css_height")
+                            check(svgCssWidth.isFinite() && svgCssWidth > 0.0 &&
+                                svgCssHeight.isFinite() && svgCssHeight > 0.0)
+                            Files.writeString(
+                                dest.resolve("mermaid-native-reference-size-diagnostic.tsv"),
+                                "schema=markflow-mermaid-native-reference-size/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
+                                    "case_id\tartifact_width_px\tartifact_height_px\t" +
+                                    "native_width_px\tnative_height_px\t" +
+                                    "reference_svg_width_css_px\treference_svg_height_css_px\t" +
+                                    "native_to_reference_width_ratio\tnative_to_reference_height_ratio\n" +
+                                    listOf(entry.id,
+                                        nativeDimension("intrinsic_width"),
+                                        nativeDimension("intrinsic_height"),
+                                        nativeDisplayedWidth, nativeDisplayedHeight,
+                                        svgCssWidth, svgCssHeight,
+                                        nativeDisplayedWidth / svgCssWidth,
+                                        nativeDisplayedHeight / svgCssHeight
+                                    ).joinToString("\t") + "\n"
+                            )
+                        }
+                        // Stage E2: real bundled JCEF DOM headings, identified by exact
+                        // source text and ordered source lines, not screenshot offsets.
+                        // Driver JCEF JS queries run against the loaded platform preview.
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            val dom = driver.ui.jcef()
+                            val referenceHeadingLedger = dom.callJs(headingReferenceDomProbe)
+                            check(referenceHeadingLedger.startsWith(
+                                "schema=markflow-reference-heading-dom-geometry/v1\n"
+                            )) { "Platform JCEF DOM heading probe not authoritative" }
+                            val result = compareHeadingSourceCheckpoints(
+                                nativeHeadingGeometry, referenceHeadingLedger
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-heading-dom-geometry.txt"),
+                                referenceHeadingLedger + "\n", StandardCharsets.UTF_8
+                            )
+                            Files.writeString(
+                                dest.resolve("source-heading-relative-drift.tsv"),
+                                result, StandardCharsets.UTF_8
+                            )
+                            // Stage E5: never gate a source-line Y against a DOM
+                            // element top. They describe different layout objects.
+                            // Preserve the legacy diagnostic series, but compare the
+                            // actual installed native inlay rectangles separately.
+                            val boxLedger = compareRenderedHeadingBoxes(
+                                nativeHeadingGeometry, referenceHeadingLedger
+                            )
+                            Files.writeString(
+                                dest.resolve("source-heading-rendered-box-drift.tsv"),
+                                boxLedger, StandardCharsets.UTF_8
+                            )
+                            // E6: match actual following source paragraphs to the real
+                            // Preview DOM Range text rectangles, not outer CSS boxes.
+                            val sourceLines = source.split('\n')
+                            for (index in 0 until 6) {
+                                val sourceLine = 4 * index + 2
+                                check(sourceLines[sourceLine] == "Paragraph after H" + (index + 1) + ".") {
+                                    "Stage E6 fixture source identity changed"
+                                }
+                            }
+                            val paragraphDom = dom.callJs(followingParagraphDomProbe)
+                            check(paragraphDom.startsWith(
+                                "schema=markflow-reference-paragraph-text-range/v1\n"
+                            )) { "Genuine platform paragraph text ranges unavailable" }
+                            val paragraphDelta = compareFollowingTextAnchors(
+                                nativeHeadingGeometry, paragraphDom
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-following-paragraph-dom-geometry.txt"),
+                                paragraphDom + "\n", StandardCharsets.UTF_8
+                            )
+                            Files.writeString(
+                                dest.resolve("source-following-text-line-drift.tsv"),
+                                paragraphDelta, StandardCharsets.UTF_8
+                            )
+                            // Neither native inlay block nor HTML heading DOM box
+                            // defines an agreed shared text/baseline anchor yet.
+                            // Thus no arbitrary box delta is certified as parity.
+                            // Keep the work intentionally fail-closed, not falsely
+                            // FAIL_KNOWN_DEFECT on a dimensionally invalid comparison.
+                            structuralFailures += listOf(
+                                entry.id, "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED",
+                                "NATIVE_INLAY_BOX_VS_PREVIEW_DOM_HEADING_BOX",
+                                "REVIEW_SHARED_TEXT_BASELINE_AND_BOX_MODEL"
+                            ).joinToString("\t")
+                        }
+                        check(driver.withContext(OnDispatcher.EDT) {
+                            preview.sourceText(remoteEditor)
+                        } == source)
+                        check(driver.withContext(OnDispatcher.EDT) {
+                            preview.sourceStamp(remoteEditor)
+                        } == stamp)
+                        check(!driver.withContext(OnDispatcher.EDT) {
+                            preview.sourceUnsaved(remoteEditor)
+                        })
+                        driver.withContext(OnDispatcher.EDT) { preview.restoreNative(remoteEditor) }
+                        waitFor(
+                            message = "Native restored: " + entry.id, timeout = 20.seconds,
+                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeShowing(remoteEditor)
+                            } },
+                            checker = { it }
+                        )
+                        check(markFlow.source(editor) == source)
+                        check(Files.readAllBytes(project.resolve(entry.id + ".md")).contentEquals(entry.bytes))
+                        Files.writeString(dest.resolve("identity.txt"),
+                            Files.readString(dest.resolve("identity.txt")) +
+                                "reference=" + refIdentity + "\nnative_viewport=" +
+                                native.width + "x" + native.height + "\npreview_viewport=" +
+                                reference.width + "x" + reference.height + "\n" + nativeEnvironment)
+                        diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
+                        // E11: keep the measured FIT_TO_VIEWPORT capture as A, then
+                        // measure the *same* production Editor with the existing
+                        // SHRINK_TO_FIT setting as B. This is a test-only A/B:
+                        // no new rendering implementation or relaxed acceptance.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val originalSource = source
+                            val originalStamp = stamp
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "SHRINK_TO_FIT"
+                                )
+                            }
+                            fun rasterRecord(geometry: String): Map<String, Int> {
+                                val rows = geometry.lineSequence()
+                                    .filter { it.startsWith("index=") }.toList()
+                                check(rows.size == 1) { "E11 requires one real native raster" }
+                                return rows.single().split('\t').associate { field ->
+                                    val values = field.split('=', limit = 2)
+                                    check(values.size == 2) { "E11 raster ledger malformed" }
+                                    values[0] to requireNotNull(values[1].toIntOrNull()) {
+                                        "E11 raster ledger value missing"
+                                    }
+                                }
+                            }
+                            val originalRaster = rasterRecord(nativeRasterGeometry)
+                            // Mermaid's size mode also changes SVG useMaxWidth;
+                            // the renderer may legitimately generate a different
+                            // *intrinsic* PNG. Never assume FIT and SHRINK rasters
+                            // are byte-/dimension-identical. Compare each mode
+                            // against its own genuine decoded PNG instead.
+                            waitFor(
+                                message = "E11 real-IDE native SHRINK_TO_FIT settled",
+                                timeout = 50.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    runCatching {
+                                        val visualState = visual.visualEvidence(remoteEditor)
+                                        val raster = rasterRecord(
+                                            preview.nativeRasterGeometry(remoteEditor)
+                                        )
+                                        visualState.contains("derivedPending=0") &&
+                                            raster.getValue("displayed_width") in
+                                                1..raster.getValue("intrinsic_width") &&
+                                            raster.getValue("displayed_height") in
+                                                1..raster.getValue("intrinsic_height")
+                                    }.getOrDefault(false)
+                                } },
+                                checker = { it }
+                            )
+                            val shrinkEvidence = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeRasterGeometry(remoteEditor)
+                            }
+                            val shrinkRaster = rasterRecord(shrinkEvidence)
+                            check(shrinkRaster.getValue("displayed_width") in
+                                    1..shrinkRaster.getValue("intrinsic_width") &&
+                                shrinkRaster.getValue("displayed_height") in
+                                    1..shrinkRaster.getValue("intrinsic_height")) {
+                                "E11 SHRINK_TO_FIT enlarged or collapsed the rendered PNG"
+                            }
+                            Files.writeString(
+                                dest.resolve("mermaid-shrink-native-raster-geometry.txt"),
+                                shrinkEvidence
+                            )
+                            robot.waitForIdle()
+                            check(ImageIO.write(robot.createScreenCapture(native), "png",
+                                dest.resolve("mermaid-shrink-native.png").toFile()))
+                            Files.writeString(
+                                dest.resolve("mermaid-fit-versus-shrink-diagnostic.tsv"),
+                                "schema=markflow-mermaid-real-ide-size-mode-ab/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_VISUAL_BASELINE\n" +
+                                    "case_id\tmode\tintrinsic_width_px\tintrinsic_height_px\t" +
+                                    "displayed_width_px\tdisplayed_height_px\n" +
+                                    listOf(entry.id, "FIT_TO_VIEWPORT",
+                                        originalRaster.getValue("intrinsic_width"),
+                                        originalRaster.getValue("intrinsic_height"),
+                                        originalRaster.getValue("displayed_width"),
+                                        originalRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n" +
+                                    listOf(entry.id, "SHRINK_TO_FIT",
+                                        shrinkRaster.getValue("intrinsic_width"),
+                                        shrinkRaster.getValue("intrinsic_height"),
+                                        shrinkRaster.getValue("displayed_width"),
+                                        shrinkRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n"
+                            )
+                            // Source authority, caret and mod stamp must survive
+                            // the size-mode change; restore the original mode so
+                            // subsequent cases are not coupled through settings.
+                            check(driver.withContext(OnDispatcher.EDT) {
+                                preview.sourceText(remoteEditor) == originalSource &&
+                                    preview.sourceStamp(remoteEditor) == originalStamp
+                            }) { "E11 mode A/B mutated the authoritative source" }
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "FIT_TO_VIEWPORT"
+                                )
+                            }
+                        }
+                        markFlow.close(editor)
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            val abDest = output.resolve("heading-layout-ab")
+                            Files.createDirectories(abDest)
+                            val b = markFlow.openMarkdown("heading-layout-b.md")
+                            val bEditor = b.editor
+                            var bFailure: Throwable? = null
+                            try {
+                                markFlow.assertProductionProjectionAttached(b)
+                                check(markFlow.source(b) == source)
+                                val bStamp = markFlow.modificationStamp(b)
+                                driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
+                                markFlow.resetToSingleCaret(b, source.length)
+                                val bCaretBefore = markFlow.primaryCaretOffset(b)
+                                check(bCaretBefore == source.length)
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showNativeAtSourceLine(bEditor, entry.line)
+                                }
+                                waitFor(
+                                    message = "CustomFold IDE lifecycle settled",
+                                    timeout = 50.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        visual.visualEvidence(bEditor)
+                                    } },
+                                    checker = { it.contains("derivedPending=0") }
+                                )
+                                val nativeB = driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeHeadingReplacementGeometry(bEditor)
+                                }
+                                // Retain the actual five/six-fold observation BEFORE
+                                // any later screen or JCEF probe can fail.
+                                Files.writeString(
+                                    abDest.resolve("native-b-customfold.txt"), nativeB
+                                )
+                                val bCustomCount = nativeB.lineSequence().single {
+                                    it.startsWith("measured_atx_heading_count=")
+                                }.substringAfter('=').toInt()
+                                val bMissing = nativeB.lineSequence().single {
+                                    it.startsWith("missing_heading_levels=")
+                                }.substringAfter('=')
+                                val bShowing = nativeB.lineSequence().single {
+                                    it.startsWith("editor_is_showing=")
+                                }.substringAfter('=') == "true"
+                                // A CustomFold at H1's 0-offset is rejected by IDEA
+                                // because the platform owns an expanded 0..EOF
+                                // section. The explicit opt-in candidate uses a
+                                // same-line InlineElement + a collapsed *owned*
+                                // ordinary FoldRegion instead. Demand evidence
+                                // for both owners; 5 CustomFolds alone is NOT 6/6.
+                                val bInlineCount = nativeB.lineSequence().single {
+                                    it.startsWith("co_start_inline_pilot_count=")
+                                }.substringAfter('=').toInt()
+                                val h1Evidence = nativeB.lineSequence().single {
+                                    it.startsWith("level=1\t")
+                                }.split('\t').associate { part ->
+                                    val pair = part.split('=', limit = 2)
+                                    check(pair.size == 2) { "Malformed H1 geometry evidence" }
+                                    pair[0] to pair[1]
+                                }
+                                val h1InlineInstalled =
+                                    bInlineCount == 1 &&
+                                    h1Evidence["fold_status"] == "MISSING" &&
+                                    h1Evidence["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
+                                    h1Evidence["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                                    (h1Evidence["inline_pilot_width_px"]?.toIntOrNull() ?: 0) > 1 &&
+                                    (h1Evidence["inline_pilot_height_px"]?.toIntOrNull() ?: 0) >=
+                                        nativeB.lineSequence().single {
+                                            it.startsWith("plain_line_height_px=")
+                                        }.substringAfter('=').toInt()
+                                val compositeCount = bCustomCount + (if (h1InlineInstalled) 1 else 0)
+                                Files.writeString(abDest.resolve("capture-status.txt"),
+                                    "candidate=UNVERIFIED\n" +
+                                        "installed_heading_customfolds=" + bCustomCount + "\n" +
+                                        "installed_heading_inline_pilot=" + (if (h1InlineInstalled) 1 else 0) + "\n" +
+                                        "installed_heading_composite=" + compositeCount + "\n" +
+                                        "missing_customfold_levels=" + bMissing + "\n" +
+                                        "editor_is_showing=" + bShowing + "\n")
+                                // A candidate screen obtained while the native Editor is
+                                // hidden is not comparable with the JCEF screenshot.
+                                check(bShowing) { "E9 B native editor is hidden; diagnostic retained" }
+                                val bEnv = driver.withContext(OnDispatcher.EDT) {
+                                    visual.environmentIdentity(bEditor)
+                                }
+                                val bBounds = driver.withContext(OnDispatcher.EDT) {
+                                    Rectangle(
+                                        visual.contentScreenX(bEditor), visual.contentScreenY(bEditor),
+                                        visual.contentWidth(bEditor), visual.contentHeight(bEditor)
+                                    )
+                                }
+                                check(bBounds.width == native.width && bBounds.height == native.height)
+                                robot.waitForIdle()
+                                check(ImageIO.write(robot.createScreenCapture(bBounds), "png",
+                                    abDest.resolve("native-b.png").toFile()))
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showReferenceAtSourceLine(bEditor, entry.line)
+                                }
+                                waitFor(
+                                    message = "B bundled Preview visible",
+                                    timeout = 30.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        preview.referenceShowing(bEditor)
+                                    } },
+                                    checker = { it }
+                                )
+                                val refBounds = driver.withContext(OnDispatcher.EDT) {
+                                    val p = preview.referenceBounds(bEditor).split(',').map(String::toInt)
+                                    check(p.size == 4)
+                                    Rectangle(p[0], p[1], p[2], p[3])
+                                }
+                                waitFor(
+                                    message = "B bundled JCEF rendered nonblank",
+                                    timeout = 60.seconds,
+                                    getter = {
+                                        robot.waitForIdle()
+                                        val img = robot.createScreenCapture(refBounds)
+                                        check(ImageIO.write(img, "png",
+                                            abDest.resolve("preview-b.png").toFile()))
+                                        diagnostics.referenceHasVisibleContent(img)
+                                    },
+                                    checker = { it }
+                                )
+                                val domB = driver.ui.jcef()
+                                val headingB = domB.callJs(headingReferenceDomProbe)
+                                val paragraphB = domB.callJs(followingParagraphDomProbe)
+                                check(headingB.startsWith(
+                                    "schema=markflow-reference-heading-dom-geometry/v1\n"
+                                ) && paragraphB.startsWith(
+                                    "schema=markflow-reference-paragraph-text-range/v1\n"
+                                )) { "Missing actual B source-aligned JCEF DOM evidence" }
+                                // Unlike Editor Insets or drawString inputs, this
+                                // evidence reads actual ink from both retained
+                                // screen captures. It remains diagnostic-only:
+                                // raster offsets and DOM Range bounds are not
+                                // an approved common box-model contract.
+                                val nativeImage = requireNotNull(ImageIO.read(
+                                    abDest.resolve("native-b.png").toFile()
+                                )) { "Native B screenshot could not be decoded" }
+                                val previewImage = requireNotNull(ImageIO.read(
+                                    abDest.resolve("preview-b.png").toFile()
+                                )) { "JCEF B screenshot could not be decoded" }
+                                Files.writeString(
+                                    abDest.resolve("heading-ink-x-diagnostic.tsv"),
+                                    headingInkXDiagnostic(nativeImage, previewImage, nativeB, headingB)
+                                )
+                                val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
+                                val driftA = Files.readString(
+                                    dest.resolve("source-following-text-line-drift.tsv"))
+                                fun tableRows(text: String): List<List<String>> =
+                                    text.lineSequence().filter {
+                                        it.firstOrNull() in '1'..'6' && it.contains('\t')
+                                    }.map { it.split('\t') }.toList()
+                                val rowsA = tableRows(driftA)
+                                val rowsB = tableRows(driftB)
+                                check(rowsA.size == 6 && rowsB.size == 6)
+                                val abRows = rowsA.zip(rowsB).mapIndexed { index, (a, bb) ->
+                                    check(a.size == 5 && bb.size == 5 &&
+                                        a[0] == (index + 1).toString() &&
+                                        bb[0] == a[0] &&
+                                        a[1] == (4 * index + 2).toString() &&
+                                        bb[1] == a[1]) { "A/B source identity mismatch" }
+                                    val ya = a[2].toInt()
+                                    val yb = bb[2].toInt()
+                                    check(a[3].toDouble().isFinite() && bb[3].toDouble().isFinite())
+                                    listOf(
+                                        a[0], a[1], ya.toString(), yb.toString(),
+                                        a[3], bb[3], (ya - yb).toString(),
+                                        a[4], bb[4]
+                                    ).joinToString("\t")
+                                }
+                                Files.writeString(abDest.resolve("ab-paragraph-deltas.tsv"),
+                                    "schema=markflow-heading-ab-relative-diagnostic/v1\n" +
+                                        "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
+                                        "level\tsource_line\tnative_a_px\tnative_b_px\tpreview_a_css_px\tpreview_b_css_px\tnative_a_minus_b_px\tdelta_a_px\tdelta_b_px\n" +
+                                        abRows.joinToString("\n", postfix = "\n"))
+                                Files.writeString(abDest.resolve("native-a-inlay.txt"),
+                                    Files.readString(dest.resolve("native-heading-source-geometry.txt")))
+                                Files.writeString(abDest.resolve("native-b-customfold.txt"), nativeB)
+                                Files.writeString(abDest.resolve("preview-a-heading-dom.txt"),
+                                    Files.readString(dest.resolve("intellij-heading-dom-geometry.txt")))
+                                Files.writeString(abDest.resolve("preview-b-heading-dom.txt"), headingB)
+                                Files.writeString(abDest.resolve("preview-a-paragraph-dom.txt"),
+                                    Files.readString(dest.resolve("intellij-following-paragraph-dom-geometry.txt")))
+                                Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
+                                // SHOW_PREVIEW deliberately hides EditorComponentImpl.
+                                // Use the exact remote Editor captured before the switch,
+                                // not MarkFlowIdeDriver's visible UI locator.
+                                val hiddenIdentity = driver.withContext(OnDispatcher.EDT) {
+                                    listOf(
+                                        preview.sourceText(bEditor),
+                                        preview.sourceStamp(bEditor).toString(),
+                                        preview.primaryCaretOffset(bEditor).toString(),
+                                    )
+                                }
+                                check(hiddenIdentity[0] == source)
+                                check(hiddenIdentity[1] == bStamp.toString())
+                                check(hiddenIdentity[2] == bCaretBefore.toString()) {
+                                    "B JCEF capture unexpectedly moved the native caret"
+                                }
+                                check(!driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceUnsaved(bEditor)
+                                })
+                                check(Files.readAllBytes(project.resolve("heading-layout-b.md"))
+                                    .contentEquals(entry.bytes))
+                                Files.writeString(abDest.resolve("identity.txt"),
+                                    "schema=markflow-heading-layout-ab/v1\n" +
+                                        "source_sha256_a=" + sha(entry.bytes) + "\n" +
+                                        "source_sha256_b=" + sha(Files.readAllBytes(
+                                            project.resolve("heading-layout-b.md"))) + "\n" +
+                                        "source_head=" + sourceHead + "\n" +
+                                        "ide_version=" + version + "\n" +
+                                        "caret_offset_before=" + bCaretBefore + "\n" +
+                                        "caret_offset_after=" + hiddenIdentity[2] + "\n" +
+                                        "native_a_environment=" + nativeEnvironment + "\n" +
+                                        "native_b_environment=" + bEnv + "\n" +
+                                        "production_default=sourceLineReplacement_false\n" +
+                                        "full_differential_acceptance=false\n")
+                                // The candidate contract is six *owned heading
+                                // replacements*, not six instances of the same
+                                // JetBrains folding subtype. Every owner must be
+                                // individually observed. Preview visual parity is
+                                // still separately blocked by the unreviewed
+                                // source-aligned DOM/typography anchor contract.
+                                if (compositeCount != 6 || bCustomCount != 5 ||
+                                    bMissing != "1" ||
+                                    !nativeB.contains("legacy_heading_inlay_count=0")) {
+                                    structuralFailures += listOf(
+                                        entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
+                                        "custom=" + bCustomCount + ";inline=" +
+                                            (if (h1InlineInstalled) 1 else 0) +
+                                            ";missing_custom=" + bMissing,
+                                        "5_CUSTOM_PLUS_1_OWNED_INLINE"
+                                    ).joinToString("\t")
+                                    error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
+                                        compositeCount + "/6; foreign fold evidence retained")
+                                }
+                            } catch (cause: Throwable) {
+                                bFailure = cause
+                                throw cause
+                            } finally {
+                                // SHOW_PREVIEW hides EditorComponentImpl. The normal
+                                // Driver close() locates only a visible editor; restore
+                                // native first so cleanup cannot mask the authoritative
+                                // diagnostic error with a 15s UI locator timeout.
+                                val cleanup = runCatching {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        preview.restoreNative(bEditor)
+                                    }
+                                    waitFor(
+                                        message = "B native editor restored for safe close",
+                                        timeout = 20.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeShowing(bEditor)
+                                        } },
+                                        checker = { it }
+                                    )
+                                    markFlow.close(b)
+                                }
+                                val cleanupError = cleanup.exceptionOrNull()
+                                if (cleanupError != null) {
+                                    val originalError = bFailure
+                                    if (originalError == null) throw cleanupError
+                                    originalError.addSuppressed(cleanupError)
+                                }
+                            }
+                        }
+                        // Do not report a successful capture if its mandatory
+                        // same-source A/B evidence failed earlier in this case.
+                        states[entry.id] = "CAPTURED_UNVERIFIED"
+                    } catch (cause: Throwable) {
+                        Files.writeString(dest.resolve("failure.txt"),
+                            cause.javaClass.name + ": " + cause.message + "\n")
+                        // A missing H1 replacement (whether CustomFold or the
+                        // explicit opt-in owned inline fallback) remains a hard
+                        // structural FAIL. Keep independent Mermaid captures,
+                        // but do not suppress unexpected exceptions.
+                        if (entry.id == "md-atx-headings-h1-h6" &&
+                            cause is IllegalStateException &&
+                            cause.message?.startsWith(
+                                "E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE:"
+                            ) == true) {
+                            continue
+                        }
+                        throw cause
+                    }
+                }
+            }
+        } catch (cause: Throwable) {
+            failure = cause
+        } finally {
+            val records = inventory.joinToString(",\n") {
+                "    {\"case_id\":\"" + it.id + "\",\"manifest_case_id\":\"" +
+                    it.parent + "\",\"classification\":\"" + it.classification +
+                    "\",\"capture_status\":\"" + states.getValue(it.id) + "\"}"
+            }
+            val captured = states.values.count { it == "CAPTURED_UNVERIFIED" }
+            val failed = states.values.count { it == "CAPTURE_FAILED" }
+            // The unreviewed common Heading box/baseline is genuine
+            // acceptance-blocking evidence, but is NOT a failed attempt to
+            // capture the paired images. Retain it in the original structural
+            // ledger; do not quietly erase it or call visual parity PASS.
+            val captureFailures = structuralFailures.filterNot {
+                it.split('\t').getOrNull(1) == "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED"
+            }
+            Files.writeString(
+                output.resolve("candidate-structural-failures.tsv"),
+                "case_id\tcandidate_gate\tobserved\tlimit\n" +
+                    structuralFailures.joinToString("\n", postfix = "\n")
+            )
+            Files.writeString(output.resolve("summary.json"),
+                "{\n\"schema\":\"markflow-stage-d-capture/v1\",\n" +
+                    "\"source_head\":\"" + sourceHead + "\",\n" +
+                    "\"manifest_sha256\":\"" + sha(manifest) + "\",\n" +
+                    "\"manifest_cases\":88,\n\"expanded_cases\":" + inventory.size + ",\n" +
+                    "\"selected_cases\":" + selected.size + ",\n" +
+                    "\"captured_unverified\":" + captured + ",\n" +
+                    "\"capture_failed\":" + failed + ",\n" +
+                    "\"not_executed\":" + (inventory.size - captured - failed) + ",\n" +
+                    "\"geometry_gate\":\"" +
+                        (if (captureFailures.isEmpty()) "PENDING_REVIEW_AND_FULL_CORPUS"
+                         else "FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS") + "\",\n" +
+                    "\"capture_contract\":\"" + contract + "\",\n" +
+                    "\"capture_failure_count\":" + captureFailures.size + ",\n" +
+                    "\"acceptance_review_required_count\":" +
+                        (structuralFailures.size - captureFailures.size) + ",\n" +
+                    "\"release_eligible\":false,\n" +
+                    "\"candidate_structural_failure_count\":" + structuralFailures.size + ",\n" +
+                    "\"full_differential_acceptance\":false,\n" +
+                    "\"cases\":[\n" + records + "\n]}\n")
+            sandbox.toFile().deleteRecursively()
+        }
+        if (failure != null) throw failure
+        val incomplete = selected.filter { states[it.id] != "CAPTURED_UNVERIFIED" }
+        check(incomplete.isEmpty()) {
+            "Stage E9 selected-case capture remains FAIL: " +
+                incomplete.joinToString { it.id + "=" + states.getValue(it.id) } +
+                "; retained structural failures: " + structuralFailures.joinToString("; ")
+        }
+        // Capture CI remains strict about missing/invalid captures and
+        // unexpected real structural defects. It must NOT claim that reviewed
+        // box-model parity, or all 89 manifest cases, passed.
+        val captureFailures = structuralFailures.filterNot {
+            it.split('\t').getOrNull(1) == "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED"
+        }
+        check(captureFailures.isEmpty()) {
+            "Stage D actual structural capture failures: " +
+                captureFailures.joinToString("; ")
+        }
+        if (contract == "acceptance") {
+            check(structuralFailures.isEmpty() &&
+                selected.size == inventory.size &&
+                inventory.all { states[it.id] == "CAPTURED_UNVERIFIED" }) {
+                "Full differential acceptance BLOCKED: " +
+                    (inventory.size - states.values.count { it == "CAPTURED_UNVERIFIED" }) +
+                    " source cases not captured, " + structuralFailures.size +
+                    " unresolved structural/review findings. No threshold bypass permitted."
+            }
+            // Even complete capture and zero known failures are not proof of
+            // reviewed perceptual, scroll and baseline parity. A dedicated
+            // reviewed acceptance implementation must replace this guard.
+            error("Full #353 visual/differential acceptance remains unimplemented")
+        }
+    }
+
+    private fun inventory(root: Path, manifest: String): List<Case> {
+        check(manifest.endsWith("\n") && !manifest.contains('\r'))
+        val rows = manifest.trimEnd('\n').split('\n')
+        check(rows.first().split('\t').size == 12)
+        val items = mutableListOf<Case>()
+        val ids = mutableSetOf<String>()
+        for (row in rows.drop(1)) {
+            val parts = row.split('\t')
+            check(parts.size == 12 && ids.add(parts[0]))
+            val id = parts[0]
+            check(id.matches(Regex("[a-z0-9]+(?:-[a-z0-9]+)*")))
+            val domain = parts[1]
+            check(domain == "markdown" || domain == "mermaid")
+            val classification = parts[3]
+            check(classification in setOf("supported", "degraded", "unsupported"))
+            check(parts[4] == "covered" && parts[6] == "exact-source")
+            val path = parts[5]
+            check(path.matches(Regex("[A-Za-z0-9._/-]+")) &&
+                !path.startsWith("/") && path.split('/').none { it == "." || it == ".." })
+            val file = root.resolve(path).toRealPath()
+            check(file.startsWith(root.toRealPath()) && Files.isRegularFile(file))
+            val bytes = Files.readAllBytes(file)
+            check(bytes.isNotEmpty())
+            val source = String(bytes, StandardCharsets.UTF_8)
+            check(source.toByteArray(StandardCharsets.UTF_8).contentEquals(bytes))
+            check(parts[8] == "yes" || parts[8] == "no")
+            val comparable = parts[8] == "yes"
+            if (domain == "markdown") {
+                items += Case(id, id, domain, classification, path, bytes, 0, null, comparable)
+            } else {
+                val lines = source.split('\n')
+                val blocks = mutableListOf<Pair<Int, String>>()
+                var pos = 0
+                val opener = Regex("^ {0,3}(\u0060{3,}|~{3,})mermaid[ \\t]*$")
+                while (pos < lines.size) {
+                    val opening = opener.matchEntire(lines[pos])
+                    if (opening == null) { pos++; continue }
+                    val fence = opening.groupValues[1]
+                    var end = pos + 1
+                    while (end < lines.size) {
+                        val closing = lines[end].trim()
+                        if (closing.length >= fence.length &&
+                            closing.all { it == fence[0] }) break
+                        end++
+                    }
+                    check(end < lines.size && end > pos + 1) { "Unclosed Mermaid block: " + path }
+                    val body = lines.subList(pos + 1, end).joinToString("\n")
+                    check(body.isNotBlank())
+                    blocks += pos to sha(body.toByteArray(StandardCharsets.UTF_8))
+                    pos = end + 1
+                }
+                check(blocks.isNotEmpty()) { "Mermaid blocks omitted: " + path }
+                blocks.forEachIndexed { index, block ->
+                    val caseId = if (blocks.size == 1) id else
+                        id + "--block-" + (index + 1).toString().padStart(2, '0')
+                    items += Case(caseId, id, domain, classification, path,
+                        bytes, block.first, block.second, comparable)
+                }
+            }
+        }
+        return items
+    }
+
+    /**
+     * From the actual bundled Markdown preview DOM. Each heading must match the
+     * review-owned H1-H6 source fixture exactly; a blank or unrelated JCEF page
+     * is not an oracle. Relative bounding coordinates are invariant under a
+     * shared browser scroll displacement (unlike viewport screenshot offsets).
+     */
+    /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
+    private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
+        require(sourceLabel == "Rendered correctly?" ||
+            sourceLabel == "MarkFlow Example Schedule")
+        val label = sourceLabel // fixed in-repository fixture labels; no arbitrary JS input
+        return """
+            (() => {
+              const expected = '${label}';
+              const candidates = Array.from(document.querySelectorAll('svg')).filter(svg => {
+                const text = (svg.textContent || '').replace(/\s+/g, ' ').trim();
+                const rect = svg.getBoundingClientRect();
+                return text.includes(expected) && rect.width > 40 && rect.height > 40;
+              });
+              if (candidates.length !== 1) {
+                return 'FAIL: source-identifiable Mermaid SVG count=' + candidates.length +
+                    ';expected=' + expected + ';allSvg=' + document.querySelectorAll('svg').length;
+              }
+              const svg = candidates[0];
+              const bounds = svg.getBoundingClientRect();
+              const viewport = { width: window.innerWidth, height: window.innerHeight };
+              if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+                return 'FAIL: Mermaid SVG bounds nonfinite';
+              }
+              const fmt = n => Number(n).toFixed(3);
+              return [
+                'schema=markflow-reference-mermaid-svg-dom-geometry/v1',
+                'source_label=' + expected,
+                'svg_css_width=' + fmt(bounds.width),
+                'svg_css_height=' + fmt(bounds.height),
+                'svg_css_left=' + fmt(bounds.left),
+                'svg_css_top=' + fmt(bounds.top),
+                'preview_window_inner_width_css=' + viewport.width,
+                'preview_window_inner_height_css=' + viewport.height,
+                'browser_device_pixel_ratio=' + fmt(window.devicePixelRatio),
+                'svg_viewbox=' + (svg.getAttribute('viewBox') || 'UNAVAILABLE')
+              ].join('\n');
+            })()
+        """.trimIndent()
+    }
+
+
+    /**
+     * Stage E16: actual screenshot-ink left edge for each source-identified
+     * heading, not Editor Insets or an inferred drawString paint origin.
+     *
+     * The screenshot origins are the individual content-area captures, so
+     * positions are reported within their respective crop coordinate spaces.
+     * A small 400px left strip and the *real* fold/DOM text vertical boxes
+     * limit unrelated UI pixels. Pinned Islands Light only; a threshold of
+     * 205 is a raster feature detector, NEVER a visual parity tolerance.
+     *
+     * Fail closed on a missing source row or an unidentifiable ink box. No
+     * pixel match or geometry threshold is accepted as release parity here.
+     */
+    private fun firstHeadingInkPixelX(
+        image: BufferedImage,
+        top: Int,
+        bottomExclusive: Int,
+    ): Int? {
+        require(top >= 0 && bottomExclusive > top && bottomExclusive <= image.height) {
+            "Heading raster vertical bounds outside actual screenshot"
+        }
+        val xLimit = minOf(image.width, 400)
+        require(xLimit > 0) { "Empty heading raster scan" }
+        for (x in 0 until xLimit) {
+            for (y in top until bottomExclusive) {
+                val color = image.getRGB(x, y)
+                val red = (color ushr 16) and 255
+                val green = (color ushr 8) and 255
+                val blue = color and 255
+                if (red < 205 && green < 205 && blue < 205) return x
+            }
+        }
+        return null
+    }
+
+    private fun headingInkRasterNegativeControls(): Boolean {
+        val image = BufferedImage(80, 24, BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.color = java.awt.Color.WHITE
+            graphics.fillRect(0, 0, image.width, image.height)
+            graphics.color = java.awt.Color(235, 235, 235)
+            graphics.fillRect(1, 2, 2, 6)
+            graphics.color = java.awt.Color(115, 118, 124)
+            graphics.fillRect(7, 2, 3, 6)
+            graphics.color = java.awt.Color.BLACK
+            graphics.fillRect(15, 14, 4, 4)
+        } finally {
+            graphics.dispose()
+        }
+        return firstHeadingInkPixelX(image, 0, 10) == 7 &&
+            firstHeadingInkPixelX(image, 13, 20) == 15 &&
+            firstHeadingInkPixelX(image, 19, 23) == null &&
+            runCatching { firstHeadingInkPixelX(image, -1, 10) }.isFailure &&
+            runCatching { firstHeadingInkPixelX(image, 10, 25) }.isFailure
+    }
+
+    private fun headingInkXDiagnostic(
+        nativeImage: BufferedImage,
+        referenceImage: BufferedImage,
+        nativeLedger: String,
+        referenceLedger: String,
+    ): String {
+        check(nativeLedger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n"))
+        check(referenceLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n"))
+        fun rows(value: String): List<Map<String, String>> =
+            value.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\t').associate { token ->
+                    val keyAndValue = token.split('=', limit = 2)
+                    require(keyAndValue.size == 2) { "Malformed heading identity/geometry row" }
+                    keyAndValue[0] to keyAndValue[1]
+                }
+            }.toList()
+        val nativeRows = rows(nativeLedger)
+        val referenceRows = rows(referenceLedger)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Stage E16 needs all six real source-aligned headings"
+        }
+        val values = mutableListOf(
+            "schema=markflow-heading-raster-ink-x/v1",
+            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
+            "coordinate_space=NATIVE_AND_JCEF_INDEPENDENT_SCREENSHOT_CROPS",
+            "ink_detector=LIGHT_THEME_RGB_CHANNELS_BELOW_205_FIRST_PIXEL_IN_HEADING_VERTICAL_BOX",
+            "level\tsource_line\tnative_raster_ink_left_px\tpreview_raster_ink_left_px" +
+                "\tpreview_minus_native_raster_px\tnative_declared_paint_origin_px" +
+                "\tpreview_jcef_dom_range_left_css_px"
+        )
+        nativeRows.zip(referenceRows).forEachIndexed { index, (nativeRow, referenceRow) ->
+            val level = index + 1
+            val sourceLine = index * 4
+            check(nativeRow.getValue("level") == level.toString() &&
+                referenceRow.getValue("level") == level.toString() &&
+                nativeRow.getValue("source_line_zero_based") == sourceLine.toString() &&
+                referenceRow.getValue("source_line_zero_based") == sourceLine.toString()) {
+                "Stage E16 source-identified raster heading mismatch"
+            }
+            val (top, bottom) = if (level == 1) {
+                check(nativeRow.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
+                    nativeRow.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE")
+                val origin = nativeRow.getValue("inline_pilot_bounds_y_px").toInt()
+                origin to origin + maxOf(35, nativeRow.getValue("inline_pilot_height_px").toInt())
+            } else {
+                check(nativeRow.getValue("fold_status") == "INSTALLED")
+                val origin = nativeRow.getValue("fold_origin_y_document_px").toInt()
+                origin to origin + nativeRow.getValue("fold_height_px").toInt()
+            }
+            val textTop = referenceRow.getValue("heading_text_range_top_css_px").toDouble()
+            val textHeight = referenceRow.getValue("heading_text_range_height_css_px").toDouble()
+            check(textTop.isFinite() && textHeight.isFinite() && textHeight > 0)
+            val nativeX = requireNotNull(firstHeadingInkPixelX(nativeImage, top, bottom)) {
+                "No actual native screenshot ink at H" + level
+            }
+            val previewX = requireNotNull(firstHeadingInkPixelX(
+                referenceImage, floor(textTop).toInt(), ceil(textTop + textHeight).toInt()
+            )) { "No actual JCEF screenshot ink at H" + level }
+            val paintInputX = nativeRow.getValue("native_paint_text_origin_x_document_px").toInt()
+            val domTextX = referenceRow.getValue("heading_text_range_left_css_px").toDouble()
+            check(paintInputX >= 0 && domTextX.isFinite() && domTextX >= 0)
+            values += listOf(
+                level, sourceLine, nativeX, previewX, previewX - nativeX, paintInputX,
+                "%.3f".format(java.util.Locale.ROOT, domTextX)
+            ).joinToString("\t")
+        }
+        return values.joinToString("\n", postfix = "\n")
+    }
+
+    private val headingReferenceDomProbe = """
+        (() => {
+          const rows = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+            .filter(h => /^Heading level [1-6]$/.test(h.textContent.trim()));
+          if (rows.length !== 6) return 'FAIL: DOM heading count=' + rows.length;
+          const firstY = rows[0].getBoundingClientRect().top;
+          const lines = [
+            'schema=markflow-reference-heading-dom-geometry/v1',
+            'geometry_scope=PLATFORM_PREVIEW_JCEF_DOM',
+            'heading_count=6',
+            'device_pixel_ratio=' + window.devicePixelRatio,
+          ];
+          for (let index = 0; index < 6; index++) {
+            const el = rows[index];
+            const level = index + 1;
+            if (el.tagName.toLowerCase() !== 'h' + level ||
+                el.textContent.trim() !== 'Heading level ' + level)
+              return 'FAIL: DOM/source heading mismatch at ' + level;
+            const rect = el.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const textRect = range.getBoundingClientRect();
+            const css = getComputedStyle(el);
+            if (!(rect.height > 0) || !(rect.width > 0) ||
+                !(textRect.width > 0) || !(textRect.height > 0))
+              return 'FAIL: DOM collapsed heading or text range ' + level;
+            lines.push('level=' + level +
+              '\tsource_line_zero_based=' + (index * 4) +
+              '\treference_y_relative_css_px=' + (rect.top - firstY).toFixed(3) +
+              '\treference_height_css_px=' + rect.height.toFixed(3) +
+              '\tcomputed_margin_top_css_px=' + parseFloat(css.marginTop).toFixed(3) +
+              '\tcomputed_margin_bottom_css_px=' + parseFloat(css.marginBottom).toFixed(3) +
+              '\tcomputed_font_family=' + css.fontFamily.replace(/[\t\r\n]/g, ' ') +
+              '\tcomputed_font_size_css_px=' + css.fontSize +
+              '\tcomputed_font_weight=' + css.fontWeight +
+              '\tcomputed_line_height_css_px=' + css.lineHeight +
+              '\tcomputed_color=' + css.color +
+              '\tcomputed_letter_spacing=' + css.letterSpacing +
+              '\theading_box_left_css_px=' + rect.left.toFixed(3) +
+              '\theading_text_range_left_css_px=' + textRect.left.toFixed(3) +
+              '\theading_text_range_top_css_px=' + textRect.top.toFixed(3) +
+              '\theading_text_range_height_css_px=' + textRect.height.toFixed(3));
+          }
+          return lines.join('\n');
+        })()
+    """.trimIndent()
+
+    /**
+     * E6: inspect real source-identical <p> text Range rectangles. The range
+     * top is a browser inline-layout observation, NOT guaranteed font ink top.
+     */
+    private val followingParagraphDomProbe = """
+        (() => {
+          const paragraphs = Array.from(document.querySelectorAll('p'))
+            .filter(p => /^Paragraph after H[1-6]\.$/.test(p.textContent.trim()));
+          if (paragraphs.length !== 6)
+            return 'FAIL: paragraph count ' + paragraphs.length;
+          const lines = [
+            'schema=markflow-reference-paragraph-text-range/v1',
+            'geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE',
+            'paragraph_count=6',
+            'device_pixel_ratio=' + window.devicePixelRatio,
+          ];
+          let originY = null;
+          let previousY = null;
+          for (let i = 0; i < 6; i++) {
+            const p = paragraphs[i];
+            if (p.textContent.trim() !== 'Paragraph after H' + (i + 1) + '.')
+              return 'FAIL: paragraph text/source mismatch ' + (i + 1);
+            const range = document.createRange();
+            range.selectNodeContents(p);
+            const rect = range.getBoundingClientRect();
+            const box = p.getBoundingClientRect();
+            const css = getComputedStyle(p);
+            if (!(rect.height > 0 && rect.width > 0 &&
+                  box.height > 0 && box.width > 0))
+              return 'FAIL: collapsed paragraph range ' + (i + 1);
+            if (originY === null) originY = rect.top;
+            if (previousY !== null && !(rect.top > previousY))
+              return 'FAIL: unordered paragraph text ranges';
+            previousY = rect.top;
+            lines.push('paragraph_index=' + (i + 1) +
+              '\tsource_line_zero_based=' + (4 * i + 2) +
+              '\tpreview_text_range_top_relative_css_px=' + (rect.top - originY).toFixed(3) +
+              '\tpreview_text_range_height_css_px=' + rect.height.toFixed(3) +
+              '\tpreview_p_box_top_relative_css_px=' + (box.top - originY).toFixed(3) +
+              '\tpreview_text_range_left_css_px=' + rect.left.toFixed(3) +
+              '\tcomputed_font_family=' + css.fontFamily.replace(/[\t\r\n]/g, ' ') +
+              '\tcomputed_font_size_css_px=' + css.fontSize +
+              '\tcomputed_font_weight=' + css.fontWeight +
+              '\tcomputed_line_height_css_px=' + css.lineHeight +
+              '\tcomputed_color=' + css.color);
+          }
+          return lines.join('\n');
+        })()
+    """.trimIndent()
+
+    /**
+     * Same-source paragraph position deltas, NOT DOM-vs-native baseline parity.
+     * Native logical line top and DOM text Range top can differ by font metrics.
+     */
+    private fun compareFollowingTextAnchors(native: String, preview: String): String {
+        check(native.lineSequence().any { it == "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY" })
+        check(preview.lineSequence().any { it == "geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE" })
+        fun rows(ledger: String, prefix: String): List<Map<String, String>> =
+            ledger.lineSequence().filter { it.startsWith(prefix) }.map { line ->
+                line.split('\t').associate { field ->
+                    val pair = field.split('=', limit = 2)
+                    require(pair.size == 2) { "Malformed paragraph geometry" }
+                    pair[0] to pair[1]
+                }
+            }.toList()
+        val nativeRows = rows(native, "level=")
+        val previewRows = rows(preview, "paragraph_index=")
+        check(nativeRows.size == 6 && previewRows.size == 6) {
+            "Stage E6 needs all six source-identical following text lines"
+        }
+        val nativeOrigin = nativeRows.first().getValue("following_y_document_px").toInt()
+        var previousNative = -1
+        var previousPreview = -1.0
+        val lines = mutableListOf(
+            "schema=markflow-following-text-line-drift/v1",
+            "comparison_scope=DIAGNOSTIC_NATIVE_LOGICAL_LINE_VS_JCEF_TEXT_RANGE",
+            "level\tsource_line_zero_based\tnative_text_line_relative_px\tpreview_text_range_relative_css_px\trelative_delta_px"
+        )
+        nativeRows.zip(previewRows).forEachIndexed { i, (n, p) ->
+            val level = i + 1
+            val sourceLine = 4 * i + 2
+            check(n.getValue("level") == level.toString() &&
+                p.getValue("paragraph_index") == level.toString() &&
+                n.getValue("following_line_zero_based") == sourceLine.toString() &&
+                p.getValue("source_line_zero_based") == sourceLine.toString()) {
+                "Stage E6 unmatched paragraph source identity"
+            }
+            val nativeY = n.getValue("following_y_document_px").toInt() - nativeOrigin
+            val previewY = p.getValue("preview_text_range_top_relative_css_px").toDouble()
+            val previewHeight = p.getValue("preview_text_range_height_css_px").toDouble()
+            check(previewY.isFinite() && previewHeight.isFinite() && previewHeight > 0)
+            check(if (i == 0) nativeY == 0 && previewY == 0.0
+                else nativeY > previousNative && previewY > previousPreview) {
+                "Stage E6 collapsed/unsorted paragraph text"
+            }
+            lines += listOf(
+                level.toString(), sourceLine.toString(), nativeY.toString(),
+                "%.3f".format(java.util.Locale.ROOT, previewY),
+                "%.3f".format(java.util.Locale.ROOT, nativeY - previewY),
+            ).joinToString("\t")
+            previousNative = nativeY
+            previousPreview = previewY
+        }
+        return lines.joinToString("\n", postfix = "\n")
+    }
+
+    private fun followingTextAnchorNegativeControls(): Boolean {
+        fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=" + (i + 1) + "\tfollowing_line_zero_based=" + (4 * i + 2) +
+                    "\tfollowing_y_document_px=" + (i * 120 + 50)
+            }
+        fun preview() = "geometry_scope=PLATFORM_PREVIEW_JCEF_TEXT_RANGE\n" +
+            (0..5).joinToString("\n") { i ->
+                "paragraph_index=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i + 2) +
+                    "\tpreview_text_range_top_relative_css_px=" + (i * 90) + ".0" +
+                    "\tpreview_text_range_height_css_px=16.0"
+            }
+        val valid = compareFollowingTextAnchors(native(), preview())
+        check(valid.lineSequence().any { it == "6\t22\t600\t450.000\t150.000" })
+        val wrongSource = preview().replace(
+            "paragraph_index=3\tsource_line_zero_based=10",
+            "paragraph_index=3\tsource_line_zero_based=11"
+        )
+        val collapsed = preview().replace(
+            "paragraph_index=3\tsource_line_zero_based=10\tpreview_text_range_top_relative_css_px=180.0",
+            "paragraph_index=3\tsource_line_zero_based=10\tpreview_text_range_top_relative_css_px=90.0"
+        )
+        val zeroHeight = preview().replace(
+            "preview_text_range_height_css_px=16.0", "preview_text_range_height_css_px=0.0"
+        )
+        return runCatching { compareFollowingTextAnchors(native(), wrongSource) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), collapsed) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), zeroHeight) }.isFailure &&
+            runCatching { compareFollowingTextAnchors(native(), "NOT_A_PREVIEW") }.isFailure
+    }
+
+    /**
+     * Compare source-identical heading anchors in their OWN coordinate systems:
+     * relative to H1, so absolute scroll positioning is irrelevant.
+     * Deliberately diagnostic-only until a reviewed cross-layout threshold
+     * exists. No arbitrary tolerance can silently turn this into PASS.
+     */
+    private fun compareHeadingSourceCheckpoints(native: String, reference: String): String {
+        fun rows(value: String): List<Map<String, String>> =
+            value.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\t').associate { token ->
+                    val parts = token.split('=', limit = 2)
+                    require(parts.size == 2) { "Malformed geometry row" }
+                    parts[0] to parts[1]
+                }
+            }.toList()
+        val nativeRows = rows(native)
+        val referenceRows = rows(reference)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Six genuine source-aligned heading checkpoints required"
+        }
+        val nativeOrigin = nativeRows.first().getValue("heading_y_document_px").toInt()
+        val result = mutableListOf(
+            "schema=markflow-heading-relative-drift/v1",
+            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
+            "level\tsource_line_zero_based\tnative_relative_px\treference_relative_css_px\tdelta_px"
+        )
+        var previousNative = -1
+        var previousReference = -1.0
+        nativeRows.zip(referenceRows).forEachIndexed { index, (nativeRow, referenceRow) ->
+            val level = index + 1
+            val line = (index * 4).toString()
+            check(nativeRow.getValue("level") == level.toString() &&
+                referenceRow.getValue("level") == level.toString() &&
+                nativeRow.getValue("source_line_zero_based") == line &&
+                referenceRow.getValue("source_line_zero_based") == line) {
+                "Native/reference source heading identity mismatch"
+            }
+            val nativeY = nativeRow.getValue("heading_y_document_px").toInt() - nativeOrigin
+            val referenceY = referenceRow.getValue("reference_y_relative_css_px").toDouble()
+            check(nativeY >= 0 && nativeY > previousNative &&
+                referenceY >= 0 && referenceY > previousReference || index == 0 &&
+                    nativeY == 0 && referenceY == 0.0) {
+                "Native/reference heading anchors are collapsed, unordered, or unaligned"
+            }
+            result += listOf(level, index * 4, nativeY,
+                "%.3f".format(java.util.Locale.ROOT, referenceY),
+                "%.3f".format(java.util.Locale.ROOT, nativeY - referenceY)
+            ).joinToString("\t")
+            previousNative = nativeY
+            previousReference = referenceY
+        }
+        return result.joinToString("\n", postfix = "\n")
+    }
+
+    /**
+     * Stage E5: measured installed native *block inlay rectangle* versus
+     * measured bundled Preview *heading element rectangle*. This is a
+     * substantially closer pair of geometric objects than source-line Y
+     * versus DOM top, but these still have DIFFERENT box models, font metrics
+     * and CSS margins. Do not interpret their difference as text-baseline
+     * parity or as an approved acceptance tolerance.
+     */
+    private fun compareRenderedHeadingBoxes(native: String, reference: String): String {
+        check(native.lineSequence().any {
+            it == "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY"
+        })
+        check(reference.lineSequence().any {
+            it == "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM"
+        })
+        fun parseRows(content: String): List<Map<String, String>> =
+            content.lineSequence().filter { it.startsWith("level=") }.map { line ->
+                line.split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    require(pair.size == 2) { "Malformed installed heading geometry" }
+                    pair[0] to pair[1]
+                }
+            }.toList()
+        val nativeRows = parseRows(native)
+        val referenceRows = parseRows(reference)
+        check(nativeRows.size == 6 && referenceRows.size == 6) {
+            "Stage E5 needs all six source-identical heading block boxes"
+        }
+        val firstNativeTop = nativeRows.first().getValue("inlay_bounds_y").toInt()
+        val result = mutableListOf(
+            "schema=markflow-heading-rendered-box-drift/v1",
+            "comparison_scope=DIAGNOSTIC_BOX_VS_BOX_NOT_APPROVED_BASELINE",
+            "level\tsource_line_zero_based\tnative_inlay_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_inlay_height_px\tpreview_heading_height_css_px",
+        )
+        var previousNativeTop = -1
+        var previousReferenceTop = -1.0
+        nativeRows.zip(referenceRows).forEachIndexed { index, (n, ref) ->
+            val level = index + 1
+            val line = index * 4
+            check(n.getValue("level") == "$level" &&
+                ref.getValue("level") == "$level" &&
+                n.getValue("source_line_zero_based") == "$line" &&
+                ref.getValue("source_line_zero_based") == "$line") {
+                "Stage E5 box/source identity mismatch"
+            }
+            val absoluteNativeTop = n.getValue("inlay_bounds_y").toInt()
+            val nativeHeight = n.getValue("inlay_bounds_height").toInt()
+            val reportedHeight = n.getValue("inlay_height_px").toInt()
+            val referenceTop = ref.getValue("reference_y_relative_css_px").toDouble()
+            val referenceHeight = ref.getValue("reference_height_css_px").toDouble()
+            val nativeTop = absoluteNativeTop - firstNativeTop
+            check(nativeHeight == reportedHeight && nativeHeight > 0 &&
+                referenceHeight > 0 && referenceTop.isFinite())
+            check(if (index == 0) nativeTop == 0 && referenceTop == 0.0
+                else nativeTop > previousNativeTop && referenceTop > previousReferenceTop) {
+                "Stage E5 collapsed or unordered visible heading rectangles"
+            }
+            result += listOf(
+                level.toString(), line.toString(), nativeTop.toString(),
+                "%.3f".format(java.util.Locale.ROOT, referenceTop),
+                "%.3f".format(java.util.Locale.ROOT, nativeTop - referenceTop),
+                nativeHeight.toString(),
+                "%.3f".format(java.util.Locale.ROOT, referenceHeight),
+            ).joinToString("\t")
+            previousNativeTop = nativeTop
+            previousReferenceTop = referenceTop
+        }
+        return result.joinToString("\n", postfix = "\n")
+    }
+
+    private fun renderedHeadingBoxNegativeControls(): Boolean {
+        fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
+                    "inlay_bounds_y=${i * 110}\tinlay_bounds_height=30\tinlay_height_px=30"
+            }
+        fun reference() = "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM\n" +
+            (0..5).joinToString("\n") { i ->
+                "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
+                    "reference_y_relative_css_px=${i * 100}.0\treference_height_css_px=22.0"
+            }
+        val result = compareRenderedHeadingBoxes(native(), reference())
+        check(result.lineSequence().any {
+            it == "6\t20\t550\t500.000\t50.000\t30\t22.000"
+        })
+        return runCatching {
+            compareRenderedHeadingBoxes(
+                native().replace("inlay_bounds_height=30", "inlay_bounds_height=31"), reference()
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(
+                native().replace("level=4\tsource_line_zero_based=12",
+                    "level=4\tsource_line_zero_based=13"), reference()
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(
+                native(), reference().replace(
+                    "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=200.0",
+                    "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=100.0"
+                )
+            )
+        }.isFailure && runCatching {
+            compareRenderedHeadingBoxes(native(), "NOT_A_REAL_PREVIEW")
+        }.isFailure
+    }
+
+    /**
+     * Real comparator adversarial fixtures: a changed source-line identity, a
+     * collapsed preview anchor, or an unrelated page must never look aligned.
+     * No threshold or golden update is inferred from the positive fixture.
+     */
+    private fun headingSourceIdentityNegativeControls(): Boolean {
+        val native = (0..5).joinToString("\n") { i ->
+            "level=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i) +
+                "\theading_y_document_px=" + (40 + 100 * i)
+        }
+        val reference = (0..5).joinToString("\n") { i ->
+            "level=" + (i + 1) + "\tsource_line_zero_based=" + (4 * i) +
+                "\treference_y_relative_css_px=" + (90.0 * i)
+        }
+        val valid = compareHeadingSourceCheckpoints(native, reference)
+        val terminal = valid.lineSequence().firstOrNull { it.startsWith("6\t20\t") }
+        if (terminal != "6\t20\t500\t450.000\t50.000") return false
+        val wrongSource = reference.replace(
+            "level=3\tsource_line_zero_based=8",
+            "level=3\tsource_line_zero_based=7"
+        )
+        val collapsed = reference.replace(
+            "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=180.0",
+            "level=3\tsource_line_zero_based=8\treference_y_relative_css_px=90.0"
+        )
+        return runCatching { compareHeadingSourceCheckpoints(native, wrongSource) }.isFailure &&
+            runCatching { compareHeadingSourceCheckpoints(native, collapsed) }.isFailure &&
+            runCatching { compareHeadingSourceCheckpoints(native, "NOT_READY") }.isFailure
+    }
+
+    /**
+     * Conservative CI repro guard for the known #352 Gantt pixelation defect.
+     * x2 is a CANDIDATE engineering ceiling at UI scale 1, NOT a reviewed
+     * renderer parity or a substitute for semantic text-overlap checks.
+     */
+    private fun ganttRasterExceededCandidateScale(
+        intrinsicWidth: Int, intrinsicHeight: Int, displayedWidth: Int, displayedHeight: Int
+    ): Boolean {
+        require(intrinsicWidth > 0 && intrinsicHeight > 0)
+        require(displayedWidth > 0 && displayedHeight > 0)
+        return displayedWidth.toLong() > intrinsicWidth.toLong() * 2L ||
+            displayedHeight.toLong() > intrinsicHeight.toLong() * 2L
+    }
+
+    // Scoped Gantt-only fixture safeguard against a hidden 284px JCEF canvas.
+    private fun ganttIntrinsicRasterWidthTooNarrow(width: Int): Boolean {
+        require(width > 0)
+        return width < 800
+    }
+
+    private fun candidateRasterScaleNegativeControls(): Boolean =
+        !ganttRasterExceededCandidateScale(320, 180, 640, 360) &&
+            ganttRasterExceededCandidateScale(320, 180, 641, 360) &&
+            ganttRasterExceededCandidateScale(320, 180, 640, 361) &&
+            !ganttRasterExceededCandidateScale(320, 180, 320, 180) &&
+            ganttIntrinsicRasterWidthTooNarrow(799) &&
+            !ganttIntrinsicRasterWidthTooNarrow(800) &&
+            !ganttIntrinsicRasterWidthTooNarrow(960)
+
+    private fun sha(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
+            "%02x".format(it.toInt() and 0xff)
+        }
+}
+
+@Remote(value = "com.algorist.markflow.editor.native.NativeVisualAcceptanceE2EBridge",
+    plugin = "com.algorist.markflow")
+private interface DifferentialManifestVisualRemote {
+    fun prepareEditorChromeBeforeOpen()
+    fun prepare(editor: Editor): String
+    fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String
+    fun normalizeEditorChromeForCapture(editor: Editor): Int
+    fun environmentIdentity(editor: Editor): String
+    fun contentScreenX(editor: Editor): Int
+    fun contentScreenY(editor: Editor): Int
+    fun contentWidth(editor: Editor): Int
+    fun contentHeight(editor: Editor): Int
+    fun visualEvidence(editor: Editor): String
+}
+
+@Remote(value = "com.algorist.markflow.editor.native.NativeDifferentialPreviewE2EBridge",
+    plugin = "com.algorist.markflow")
+private interface DifferentialManifestPreviewRemote {
+    fun showNativeAtSourceLine(editor: Editor, line: Int): String
+    fun showReferenceAtSourceLine(editor: Editor, line: Int): String
+    fun referenceShowing(editor: Editor): Boolean
+    fun referenceBounds(editor: Editor): String
+    fun jcefRuntimeEvidence(): String
+    fun nativeRasterGeometry(editor: Editor): String
+    fun rasterGeometryNegativeControls(): Boolean
+    fun nativeHeadingSourceGeometry(editor: Editor): String
+    fun nativeHeadingReplacementGeometry(editor: Editor): String
+    fun nativeHeadingGeometryNegativeControls(): Boolean
+    fun sourceText(editor: Editor): String
+    fun sourceStamp(editor: Editor): Long
+    fun primaryCaretOffset(editor: Editor): Int
+    fun sourceUnsaved(editor: Editor): Boolean
+    fun restoreNative(editor: Editor)
+    fun nativeShowing(editor: Editor): Boolean
+}
