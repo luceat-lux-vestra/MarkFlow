@@ -865,7 +865,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\"capture_failed\":" + failed + ",\n" +
                     "\"not_executed\":" + (inventory.size - captured - failed) + ",\n" +
                     "\"geometry_gate\":\"" +
-                        (if (structuralFailures.isEmpty()) "PENDING_REVIEW_AND_FULL_CORPUS"
+                        (if (captureFailures.isEmpty()) "PENDING_REVIEW_AND_FULL_CORPUS"
                          else "FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS") + "\",\n" +
                     "\"capture_contract\":\"" + contract + "\",\n" +
                     "\"capture_failure_count\":" + captureFailures.size + ",\n" +

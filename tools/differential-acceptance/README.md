@@ -90,10 +90,10 @@ acceptance blocker in `candidate-structural-failures.tsv`, but does not
 by itself negate successful source-identical image capture.
 
 Two explicitly named test contracts are available:
-- `-Dmarkflow.differential.contract=capture` (default): checks bounded
+- `-PdifferentialContract=capture` (default): checks bounded
   source-identical capture; emits `full_differential_acceptance=false` and
   `release_eligible=false`, with all unexecuted/unknown cases retained.
-- `-Dmarkflow.differential.contract=acceptance`: **always fail closed** until
+- `-PdifferentialContract=acceptance`: **always fail closed** until
   every expanded case is executed, structural issues reviewed and the final
   visual acceptance implementation completed. This is not a production
   release gate that can be turned green by selecting fewer cases.

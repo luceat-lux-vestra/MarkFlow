@@ -400,6 +400,13 @@ intellijPlatformTesting {
             providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
                 systemProperty("markflow.differential.caseIds", ids)
             }
+            // Explicitly distinguish the bounded Stage D capture contract
+            // from unfinished #353 release acceptance. Unknown modes are
+            // rejected inside the test; no implicit acceptance path exists.
+            systemProperty(
+                "markflow.differential.contract",
+                providers.gradleProperty("differentialContract").orNull ?: "capture",
+            )
         }
     }
 
