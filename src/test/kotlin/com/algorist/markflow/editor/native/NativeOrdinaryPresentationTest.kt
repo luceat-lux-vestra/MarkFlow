@@ -896,12 +896,16 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
                 .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
             assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, document.textLength)
                 .count { it.isValid && it.renderer is NativeHeadingInlayRenderer })
+            assertEquals("Exactly one measured paragraph-spacing inlay, never a second heading", 1,
+                editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                    .count { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer })
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(0, foreign.startOffset)
             assertEquals(document.textLength, foreign.endOffset)
             val projectedY = editor.offsetToXY(tailOffset).y
-            assertTrue("Projected following paragraph must stay after H1", projectedY > 0)
+            assertEquals("Co-start H1 must add only measured 16px Preview bottom spacing",
+                16, projectedY - originalY)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
 
@@ -922,6 +926,8 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             evidence = controller.evidenceSnapshot()
             assertEquals(0, evidence.ownedInlays)
             assertEquals(0, evidence.ownedFolds)
+            assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                .count { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer })
             assertEquals(originalY, editor.offsetToXY(tailOffset).y)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
