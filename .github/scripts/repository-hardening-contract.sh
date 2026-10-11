@@ -331,9 +331,9 @@ grep -Fq 'check(structuralFailures.isEmpty() &&' "$manifest_test" ||
   die "Full #353 acceptance must reject every unresolved structural finding"
 grep -Fq 'error("Full #353 visual/differential acceptance remains unimplemented")' "$manifest_test" ||
   die "Unimplemented visual acceptance must remain fail-closed"
-grep -Fq '"full_differential_acceptance\\":false' "$manifest_test" ||
+grep -Fq '\"full_differential_acceptance\":false' "$manifest_test" ||
   die "Incomplete Stage D capture cannot claim full visual acceptance"
-grep -Fq '"release_eligible\\":false' "$manifest_test" ||
+grep -Fq '\"release_eligible\":false' "$manifest_test" ||
   die "Unreviewed Stage D capture cannot authorize release"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
