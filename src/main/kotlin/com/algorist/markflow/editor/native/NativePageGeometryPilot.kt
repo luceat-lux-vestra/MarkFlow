@@ -136,6 +136,13 @@ internal class NativePageGeometryPilot private constructor(
                             doc.getLineEndOffset(line + 1)
                         val nextHeading = doc.getLineStartOffset(line + 2) in headingOffsets
                         if (!beforeBlank || !afterBlank || !nextHeading) return@forEach
+                        // The legacy H1 inline fallback may have installed
+                        // this boundary first. Whichever owner got there first
+                        // remains the sole owner; never stack two 16px inlays.
+                        val headingOwnsGap = editor.inlayModel.getBlockElementsInRange(end, end)
+                            .any { it.isValid && it.offset == end &&
+                                it.renderer === NativeHeadingParagraphGapRenderer }
+                        if (headingOwnsGap) return@forEach
                         val extra = editor.inlayModel.addBlockElement(
                             end, true, false, 0, NativePageParagraphSpacing
                         ) ?: error("Paragraph spacing inlay rejected by IDEA")
