@@ -426,6 +426,23 @@ tasks.named("buildPlugin") {
     dependsOn(buildWebview)
 }
 
+// The vendor's testIdeUi.archiveFile defaults to buildPlugin.archiveFile.
+// Redirect that *standard Gradle Zip* output provider only in the CI
+// consumer; do not call the vendor's @Incubating TestIdeUiTask archiveFile
+// API (Qodana UnstableApiUsage High). Real buildPlugin execution is prohibited
+// in consumer mode so it cannot overwrite the exact trusted package.
+if (starterPackagedPlugin) {
+    tasks.named<org.gradle.api.tasks.bundling.Zip>("buildPlugin") {
+        destinationDirectory.set(layout.buildDirectory.dir("e2e-package"))
+        archiveFileName.set("plugin.zip")
+        doFirst {
+            throw GradleException(
+                "Starter packaged-plugin consumer must not rebuild/overwrite the verified plugin ZIP"
+            )
+        }
+    }
+}
+
 tasks {
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
@@ -439,9 +456,8 @@ tasks {
 intellijPlatformTesting {
     val integrationTest by testIdeUi.registering {
         if (starterPackagedPlugin) {
-            // The vendor 2.19.0 testIdeUi task accepts an exact archiveFile.
-            // Its companion sandbox normally reads composedJar (and recompiles
-            // production). Supply the very same verified plugin's inner jar.
+            // The vendor's companion sandbox normally reads composedJar
+            // (and recompiles production). Supply the verified plugin's own jar.
             prepareSandboxTask {
                 pluginJar.set(starterCompiledJar)
                 dependsOn(verifyAndExtractStarterJar)
@@ -449,7 +465,8 @@ intellijPlatformTesting {
         }
         task {
             if (starterPackagedPlugin) {
-                archiveFile.set(starterPackageZip)
+                // testIdeUi uses the standard buildPlugin.archiveFile provider above.
+                // ZIP identity is verified again by our explicit prerequisite.
                 dependsOn(verifyAndExtractStarterJar)
             }
             val integrationTestSourceSet = sourceSets.getByName("integrationTest")
