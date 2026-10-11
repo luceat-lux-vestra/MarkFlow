@@ -134,6 +134,9 @@ jobs:
       - name: Verify repository hardening contract
         run: bash .github/scripts/repository-hardening-contract.sh
 
+      - name: Verify protected-main Gradle cache seed guards
+        run: bash .github/scripts/check-gradle-cache-seed.sh
+
       - name: Run release preflight fixtures
         run: bash .github/scripts/release-preflight-test.sh
 
