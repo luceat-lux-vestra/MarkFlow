@@ -89,7 +89,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,derived-manifest,lifecycle,visual-acceptance"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,derived-manifest"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact Starter plugin artifact
