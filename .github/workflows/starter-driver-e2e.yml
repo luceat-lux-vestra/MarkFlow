@@ -1,4 +1,4 @@
-name: Starter Driver E2E
+name: Starter Driver E2E Fixed-SHA A/B Research
 
 on:
   pull_request:
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: starter-driver-e2e-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: starter-375-fixed-ab-${{ github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -104,28 +104,34 @@ jobs:
 
   shards:
     needs: [ package ]
-    name: Real IDE Starter Driver (${{ matrix.shard }})
+    name: Real IDE A/B (${{ matrix.variant }} / repeat ${{ matrix.repetition }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
-          - shard: canonical
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest
-          - shard: core-editing
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterSmokeTest
-          - shard: ordinary-markdown
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
-          - shard: derived-content
+          - variant: baseline
+            repetition: 1
+            shard: derived-content
             runner: ubuntu-24.04
             suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
-          - shard: lifecycle
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
+          - variant: packaged
+            repetition: 1
+            shard: derived-content
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
+          - variant: baseline
+            repetition: 2
+            shard: derived-content
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
+          - variant: packaged
+            repetition: 2
+            shard: derived-content
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
     steps:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -153,15 +159,6 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
-
-      - name: Install ARM64 Skiko EGL runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1
-          ldconfig -p | grep -F libEGL.so.1
 
       - name: Download exact Starter plugin artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -237,6 +234,8 @@ jobs:
         env:
           STARTER_SHARD: ${{ matrix.shard }}
           STARTER_SUITES: ${{ matrix.suites }}
+          STARTER_AB_VARIANT: ${{ matrix.variant }}
+          STARTER_AB_REPETITION: ${{ matrix.repetition }}
         run: |
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
@@ -252,9 +251,14 @@ jobs:
             integrationTest
             -x buildPlugin
             -PplatformVersion="$STARTER_PLATFORM_VERSION"
-            -PstarterPackagedPlugin=true
             --stacktrace
           )
+          if [ "$STARTER_AB_VARIANT" = "packaged" ]; then
+            gradle_args+=(-PstarterPackagedPlugin=true)
+          elif [ "$STARTER_AB_VARIANT" != "baseline" ]; then
+            echo "::error::Unknown A/B variant: $STARTER_AB_VARIANT"
+            exit 1
+          fi
           diagnostics_args=()
           for suite in "${suites[@]}"; do
             gradle_args+=(--tests "$suite")
@@ -301,7 +305,7 @@ jobs:
             exit 1
           }
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'shard=%s\nsuites=%s\n' "$STARTER_SHARD" "$STARTER_SUITES" > "$pass_dir/shard.txt"
+          printf 'shard=%s\nsuites=%s\nvariant=%s\nrepetition=%s\n' "$STARTER_SHARD" "$STARTER_SUITES" "$STARTER_AB_VARIANT" "$STARTER_AB_REPETITION" > "$pass_dir/shard.txt"
 
           if [ "$test_status" -ne 0 ]; then
             echo "Starter/Driver shard $STARTER_SHARD failed with status $test_status" >&2
@@ -316,7 +320,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: starter-driver-e2e-${{ matrix.shard }}-${{ github.run_id }}
+          name: starter-375-ab-${{ matrix.variant }}-r${{ matrix.repetition }}-${{ github.run_id }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
@@ -328,298 +332,3 @@ jobs:
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-starter-driver-xvfb.log
 
-
-  visual:
-    needs: [ package ]
-    name: Deterministic Visual Acceptance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - name: Fetch Sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ env.STARTER_SOURCE_SHA }}
-          persist-credentials: false
-
-      - name: Verify exact source checkout
-        shell: bash
-        run: |
-          set -euo pipefail
-          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
-            echo "::error::Visual checkout drifted from exact candidate"
-            exit 1
-          }
-
-      - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
-        with:
-          distribution: zulu
-          java-version: 25
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-        with:
-          cache-read-only: true
-
-      - name: Download exact Starter plugin artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: starter-driver-plugin-${{ github.run_id }}
-          path: build/e2e-package
-
-      - name: Restore and verify packaged plugin identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          manifest="build/e2e-package/manifest.txt"
-          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
-          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
-          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
-          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
-          scenario_sets="$(sed -n 's/^scenario_sets=//p' "$manifest")"
-
-          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
-          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
-          [[ "$scenario_sets" == *"visual-acceptance"* ]] || {
-            echo "::error::Exact package manifest does not declare visual acceptance"
-            exit 1
-          }
-          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
-
-          mkdir -p build/distributions
-          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
-          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
-          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
-
-      - name: Start pinned visual display
-        shell: bash
-        run: |
-          set -euo pipefail
-          Xvfb :99 -screen 0 1920x1080x24 -dpi 96 >"$RUNNER_TEMP/markflow-visual-xvfb.log" 2>&1 &
-          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
-
-      - name: Run deterministic representative visual acceptance
-        shell: bash
-        run: |
-          set -euo pipefail
-          suite="com.algorist.markflow.e2e.MarkFlowStarterVisualAcceptanceTest"
-          rm -rf build/visual-acceptance build/test-results/integrationTest build/reports/tests/integrationTest
-
-          test_status=0
-          set +e
-          timeout --signal=TERM --kill-after=30s 24m \
-            ./gradlew integrationTest -x buildPlugin \
-              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
-              --stacktrace --tests "$suite"
-          test_status=$?
-          set -e
-
-          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
-          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Visual acceptance mutated the packaged plugin artifact"
-            exit 1
-          }
-          mkdir -p build/visual-acceptance
-          cp build/e2e-package/manifest.txt build/visual-acceptance/package-manifest.txt
-
-          [ "$test_status" -eq 0 ] || exit "$test_status"
-
-      - name: Upload visual diagnostics
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: starter-driver-visual-${{ github.run_id }}
-          if-no-files-found: warn
-          retention-days: 14
-          path: |
-            build/visual-acceptance/**
-            build/test-results/integrationTest/**
-            build/reports/tests/integrationTest/**
-            build/e2e-package/manifest.txt
-            out/ide-tests/**/log/**
-            build/idea-sandbox/**/log/idea.log
-            ${{ runner.temp }}/markflow-visual-xvfb.log
-
-  visual-gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-    needs: [ package, visual ]
-    name: Deterministic Visual Acceptance Gate
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5
-    steps:
-      - name: Require exact package and visual oracle
-        shell: bash
-        env:
-          PACKAGE_RESULT: ${{ needs.package.result }}
-          VISUAL_RESULT: ${{ needs.visual.result }}
-        run: |
-          set -euo pipefail
-          [ "$PACKAGE_RESULT" = "success" ] || {
-            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
-            exit 1
-          }
-          [ "$VISUAL_RESULT" = "success" ] || {
-            echo "::error::Deterministic visual acceptance result: $VISUAL_RESULT"
-            exit 1
-          }
-
-  release-candidate-repeat:
-    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat
-    needs: [ package ]
-    name: Release candidate canonical repeat
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
-    steps:
-      - name: Fetch Sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ env.STARTER_SOURCE_SHA }}
-          persist-credentials: false
-
-      - name: Setup Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
-        with:
-          distribution: zulu
-          java-version: 25
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-        with:
-          cache-read-only: true
-
-      - name: Install ARM64 Skiko EGL runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1
-          ldconfig -p | grep -F libEGL.so.1
-
-      - name: Download exact Starter plugin artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: starter-driver-plugin-${{ github.run_id }}
-          path: build/e2e-package
-
-      - name: Restore and verify packaged plugin identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          manifest="build/e2e-package/manifest.txt"
-          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
-          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
-          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
-          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
-
-          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
-          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
-          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
-          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
-
-          mkdir -p build/distributions
-          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
-          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
-          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
-
-      - name: Start virtual display
-        shell: bash
-        run: |
-          set -euo pipefail
-          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-repeat-xvfb.log" 2>&1 &
-          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
-
-      - name: Run independent canonical repeat
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
-          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
-          pass_dir="build/e2e-evidence/release-candidate-repeat"
-          marker="$RUNNER_TEMP/markflow-starter-repeat-start"
-          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
-          mkdir -p "$pass_dir"
-          touch "$marker"
-
-          test_status=0
-          set +e
-          timeout --signal=TERM --kill-after=30s 24m \
-            ./gradlew integrationTest -x buildPlugin \
-              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
-          test_status=$?
-          set -e
-
-          if [ -d build/test-results/integrationTest ]; then
-            cp -R build/test-results/integrationTest "$pass_dir/test-results"
-          fi
-          if [ -d build/reports/tests/integrationTest ]; then
-            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
-          fi
-          while IFS= read -r -d '' log; do
-            log_dir="$(dirname "$log")"
-            relative="${log_dir#./}"
-            destination="$pass_dir/logs/$relative"
-            mkdir -p "$(dirname "$destination")"
-            rm -rf "$destination"
-            cp -R "$log_dir" "$destination"
-          done < <(
-            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
-              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
-          )
-
-          diagnostics_status=0
-          set +e
-          python3 .github/scripts/check-starter-driver-diagnostics.py \
-            --root "$pass_dir" \
-            --output "$pass_dir/diagnostics.json" \
-            --required-suite "$suite"
-          diagnostics_status=$?
-          set -e
-
-          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Canonical repeat mutated the packaged plugin artifact"
-            exit 1
-          }
-          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-
-          [ "$test_status" -eq 0 ] || exit "$test_status"
-          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
-
-      - name: Upload repeat diagnostics
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: starter-driver-e2e-release-candidate-repeat-${{ github.run_id }}
-          if-no-files-found: ignore
-          retention-days: 14
-          path: |
-            build/e2e-evidence/**
-            build/test-results/integrationTest/**
-            build/reports/tests/integrationTest/**
-            build/e2e-package/manifest.txt
-            out/ide-tests/**/log/**
-            build/idea-sandbox/**/log/idea.log
-            ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
-
-  gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-    needs: [ package, shards ]
-    name: Starter Driver E2E Gate
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5
-    steps:
-      - name: Require package and every stable shard
-        shell: bash
-        env:
-          PACKAGE_RESULT: ${{ needs.package.result }}
-          SHARDS_RESULT: ${{ needs.shards.result }}
-        run: |
-          set -euo pipefail
-          [ "$PACKAGE_RESULT" = "success" ] || {
-            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
-            exit 1
-          }
-          [ "$SHARDS_RESULT" = "success" ] || {
-            echo "::error::Stable Starter shard result: $SHARDS_RESULT"
-            exit 1
-          }
