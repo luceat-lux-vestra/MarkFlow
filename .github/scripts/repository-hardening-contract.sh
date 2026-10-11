@@ -261,6 +261,10 @@ grep -Fq 'testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight' 
   die "Stage E9 lost verified heading+blank two-line geometry proof"
 grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
   die "Stage E10 lost owned custom heading click/reveal and foreign fold preservation proof"
+grep -Fq 'internal class NativeHeadingCustomFoldRenderer(' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
+  die "Stage E11 lost custom heading production-capable renderer"
+grep -Fq 'testHeadingCustomFoldRendererMatchesExistingH2TypographyAndPaintsPixels' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E11 lost custom heading glyph-paint and typography parity test"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
