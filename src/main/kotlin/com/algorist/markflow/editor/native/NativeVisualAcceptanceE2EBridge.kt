@@ -8,6 +8,7 @@ import com.algorist.markflow.settings.state.MermaidErrorDisplay
 import com.algorist.markflow.settings.state.MermaidSizeMode
 import com.algorist.markflow.settings.state.ThemeSource
 import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.ide.ui.LafManager
@@ -164,6 +165,40 @@ internal object NativeVisualAcceptanceE2EBridge {
         }
         NativeMarkFlowProductionLifecycle.refreshAll()
         return environmentIdentity(editor)
+    }
+
+    /**
+     * #353 diagnostic-only real-IDE A/B for existing, public Mermaid size modes.
+     * Restrict changes to two controlled source-identical corpus fixtures.
+     * Production's default FIT_TO_VIEWPORT remains untouched; never manipulate
+     * a platform-owned folding region, synthetic PNG, or authoritative source.
+     */
+    fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(mode == MermaidSizeMode.SHRINK_TO_FIT.name ||
+            mode == MermaidSizeMode.FIT_TO_VIEWPORT.name) {
+            "E11 sizing pilot permits only pre-existing FIT/SHRINK modes"
+        }
+        val filename = FileDocumentManager.getInstance().getFile(editor.document)?.name
+        check(filename == "mermaid-flowchart-minimal.md" || filename == "mermaid-gantt.md") {
+            "E11 sizing pilot must not change unrelated native editors: " + filename
+        }
+        check(editor.contentComponent.isShowing) {
+            "E11 native editor must remain visible during sizing pilot"
+        }
+        val source = editor.document.immutableCharSequence.toString()
+        val stamp = editor.document.modificationStamp
+        val settings = MarkFlowSettingsService.getInstance()
+        settings.updateFromUi(settings.state.copy(mermaidSizeMode = mode))
+        NativeMarkFlowProductionLifecycle.refreshAll()
+        check(settings.runtimeSettings().mermaidSizeMode == mode) {
+            "E11 sizing mode was not applied to genuine runtime settings"
+        }
+        check(editor.document.modificationStamp == stamp &&
+            editor.document.immutableCharSequence.toString() == source) {
+            "E11 setting change unexpectedly mutated the authoritative Markdown"
+        }
+        return "mode=" + mode + ";document_stamp=" + stamp
     }
 
     /**
