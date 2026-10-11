@@ -474,6 +474,103 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         candidate("Heading\n=======\n\nTail\n", null)
     }
 
+    /**
+     * Integration pilot: real production heading controller with explicit
+     * sourceLineReplacement=true (the shipping default stays false).
+     * Tests ownership through the actual controller's click and refresh paths.
+     */
+    fun testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-controller-pilot.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val caretInTail = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(caretInTail)
+        val baselineY = editor.offsetToXY(caretInTail).y
+        val stampBefore = document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreign = editor.foldingModel.addFoldRegion(0, 2, "platform heading marker")
+            requireNotNull(foreign).isExpanded = false
+        }
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        fun click(
+            region: com.intellij.openapi.editor.FoldRegion?,
+            button: Int = MouseEvent.BUTTON1,
+        ): EditorMouseEvent {
+            val mouse = MouseEvent(
+                editor.contentComponent, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, 0, 0, 1, false, button,
+            )
+            return EditorMouseEvent(
+                editor, mouse, EditorMouseEventArea.EDITING_AREA,
+                0, editor.offsetToLogicalPosition(0),
+                editor.offsetToVisualPosition(0), false, region, null, null,
+            )
+        }
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            var evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(1, evidence.ownedCustomFolds)
+            assertEquals(1, evidence.ownedFolds)
+            assertEquals(1, evidence.fullyConcealed)
+            val fold = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>().single()
+            assertEquals(
+                "Product pilot must replace both heading and verified blank source lines",
+                fold.heightInPixels - editor.lineHeight * 2,
+                editor.offsetToXY(caretInTail).y - baselineY,
+            )
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            val foreignEvent = click(foreign)
+            assertFalse(controller.handleMouseReveal(foreignEvent))
+            assertFalse(foreignEvent.isConsumed)
+            val rightEvent = click(fold, MouseEvent.BUTTON3)
+            assertFalse(controller.handleMouseReveal(rightEvent))
+            assertFalse(rightEvent.isConsumed)
+            assertEquals(1, controller.evidenceSnapshot().ownedCustomFolds)
+
+            val actual = click(fold)
+            assertTrue(controller.handleMouseReveal(actual))
+            assertTrue(actual.isConsumed)
+            assertFalse(fold.isValid)
+            assertEquals(model.contentRange.startOffset, editor.caretModel.offset)
+            assertEquals(baselineY, editor.offsetToXY(caretInTail).y)
+            evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.ownedCustomFolds)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(0, evidence.fullyConcealed)
+            assertEquals(1L, evidence.mouseReveals)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+
+            val stale = click(fold)
+            assertFalse(controller.handleMouseReveal(stale))
+            editor.caretModel.moveToOffset(caretInTail)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.ownedCustomFolds)
+            assertEquals(1, evidence.fullyConcealed)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            controller.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(0, editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>().size)
+        assertEquals(baselineY, editor.offsetToXY(caretInTail).y)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
         val source = """# Heading
 
