@@ -87,6 +87,76 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * #353 H1: distinguish an enclosing platform-style section fold from a
+     * short Markdown syntax fold. A long expanded region beginning at H1's
+     * source offset competes with a whole-line H1 CustomFoldRegion, while a
+     * strictly nested H2 CustomFold can be installed. Preserve all foreign
+     * fold ownership; do not manufacture a green 6/6 by removing it.
+     *
+     * This is a deterministic synthetic platform-fold contract in
+     * BasePlatformTestCase. The actual 2026.2.3 Markdown provider and the
+     * exact B fixture remain independently validated in Starter.
+     */
+    fun testH1CustomFoldFailsClosedOnExpandedForeignSectionSharingStart() {
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
+        myFixture.configureByText("heading-platform-section-collision.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val stamp = document.modificationStamp
+        editor.caretModel.moveToOffset(source.length)
+        val caret = editor.caretModel.offset
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot.capture(document, 0L)
+        )
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertEquals(listOf(1, 2), NativeHeadingProjectionPlanner.plan(plan).map { it.level })
+
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        val pilot = NativeHeadingPresentationController(
+            editor, sourceLineReplacement = true
+        )
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(
+                    0, document.textLength - 1, "platform-owned Markdown section"
+                )
+                requireNotNull(foreign).isExpanded = true
+            }
+            val section = requireNotNull(foreign)
+            assertTrue(section.isValid)
+            assertTrue(section.isExpanded)
+            pilot.applyPlan(plan, richPresentationEnabled = true)
+            val installed = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>()
+                .filter { it.isValid && !it.isExpanded &&
+                    it.renderer is NativeHeadingCustomFoldRenderer }
+            assertEquals(
+                "The same-start platform section must block H1 without blocking the nested H2",
+                1, installed.size,
+            )
+            assertEquals(source.indexOf("## Heading level 2"), installed.single().startOffset)
+            assertEquals(1, pilot.evidenceSnapshot().ownedCustomFolds)
+            assertTrue("Never remove or replace the foreign section fold", section.isValid)
+            assertTrue("Never change platform expansion state to force H1", section.isExpanded)
+            assertEquals(stamp, document.modificationStamp)
+            assertEquals(source, document.text)
+            assertEquals(caret, editor.caretModel.offset)
+        } finally {
+            pilot.dispose()
+            // Even disposal must leave platform-owned folding untouched.
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(stamp, document.modificationStamp)
+        assertEquals(source, document.text)
+        assertEquals(caret, editor.caretModel.offset)
+    }
+
+    /**
      * #350 custom-fold compatibility with the bundled Markdown editor's own
      * collapsed heading-syntax fold. A custom line fold may coexist with a
      * foreign fold entirely inside that line; neither must be owned/removed
