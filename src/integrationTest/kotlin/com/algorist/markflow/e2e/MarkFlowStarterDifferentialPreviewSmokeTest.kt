@@ -13,6 +13,7 @@ import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import java.awt.Rectangle
 import java.awt.Color
 import java.awt.Font
@@ -32,20 +33,14 @@ import kotlin.time.Duration.Companion.seconds
  * First bounded real-platform capture for #353. This proves UI access and emits
  * raw screenshots. It DOES NOT certify convergence, geometry or visual parity.
  */
+@ExtendWith(SharedJcefStarterExtension::class)
 class MarkFlowStarterDifferentialPreviewSmokeTest {
     @Test
     fun capturesNativeAndBundledPreviewWithoutChangingAuthoritativeSource() {
-        val plugin = System.getProperty("path.to.build.plugin")
-            ?.takeIf(String::isNotBlank)?.let(Path::of)
-            ?: error("Starter requires path.to.build.plugin")
         val version = System.getProperty("markflow.test.platformVersion")
             ?: error("Starter requires markflow.test.platformVersion")
         check(version == "2026.2.3") { "Platform preview is pinned to IDEA 2026.2.3" }
-        val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
-            .toAbsolutePath().normalize()
-        val sandbox = Files.createTempDirectory("markflow-differential-preview-")
-        val project = sandbox.resolve("project")
-        check(fixtureProject.toFile().copyRecursively(project.toFile(), overwrite = true))
+        val project = SharedJcefStarterRun.project
         val file = project.resolve("VISUAL-DERIVED.md")
         val expectedBytes = Files.readAllBytes(file)
         val expectedSource = String(expectedBytes, StandardCharsets.UTF_8)
@@ -56,22 +51,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
         val output = Path.of("build/e2e-evidence/derived-content/differential-preview-smoke")
             .toAbsolutePath().normalize()
         Files.createDirectories(output)
-
-        try {
-            Starter.newContext(
-                testName = "markflow-353-platform-preview-raw-pair",
-                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
-                    .useRelease(version)
-            ).apply {
-                PluginConfigurator(this).installPluginFromPath(plugin)
-            }.applyVMOptionsPatch {
-                addSystemProperty("ide.browser.jcef.enabled", true)
-                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                addSystemProperty("idea.trust.all.projects", true)
-                addSystemProperty("jb.consents.confirmation.enabled", false)
-                addSystemProperty("sun.java2d.uiScale", "1.0")
-                addSystemProperty("ide.ui.scale", "1.0")
-            }.runIdeWithDriver().useDriverAndCloseIde {
+        SharedJcefStarterRun.driver.withContext {
                 waitForIndicators(5.minutes)
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
@@ -222,9 +202,6 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 writeDiagnosticPair(output, sha256(expectedBytes), sourceLine)
                 markFlow.close(editor)
             }
-        } finally {
-            sandbox.toFile().deleteRecursively()
-        }
     }
 
     /**
