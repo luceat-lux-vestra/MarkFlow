@@ -497,8 +497,17 @@ internal class NativeHeadingInlayRenderer(
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val font = headingFont()
         val metrics = editor.contentComponent.getFontMetrics(font)
-        val available = max(1, editor.scrollingModel.visibleArea.width - HORIZONTAL_PADDING * 2)
-        return min(available, max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2))
+        val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
+        // IDEA caches renderer width as each fold/inlay is created. A Markdown
+        // editor can have zero viewport width during startup and only become
+        // visible later. Do not cache a one-pixel placeholder in that phase.
+        val viewportWidth = editor.scrollingModel.visibleArea.width
+            .takeIf { it > 0 } ?: editor.contentComponent.width
+        return if (viewportWidth > 0) {
+            min(naturalWidth, max(1, viewportWidth - HORIZONTAL_PADDING * 2))
+        } else {
+            naturalWidth
+        }
     }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int {
@@ -611,8 +620,17 @@ internal class NativeHeadingCustomFoldRenderer(
 
     override fun calcWidthInPixels(region: CustomFoldRegion): Int {
         val metrics = editor.contentComponent.getFontMetrics(headingFont())
-        val available = max(1, editor.scrollingModel.visibleArea.width - HORIZONTAL_PADDING * 2)
-        return min(available, max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2))
+        val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
+        // IDEA caches renderer width as each fold/inlay is created. A Markdown
+        // editor can have zero viewport width during startup and only become
+        // visible later. Do not cache a one-pixel placeholder in that phase.
+        val viewportWidth = editor.scrollingModel.visibleArea.width
+            .takeIf { it > 0 } ?: editor.contentComponent.width
+        return if (viewportWidth > 0) {
+            min(naturalWidth, max(1, viewportWidth - HORIZONTAL_PADDING * 2))
+        } else {
+            naturalWidth
+        }
     }
 
     override fun calcHeightInPixels(region: CustomFoldRegion): Int {

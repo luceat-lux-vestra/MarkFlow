@@ -404,6 +404,10 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val custom = requireNotNull(region) { "Custom two-line region unavailable" }
             assertTrue(custom.isValid)
             assertEquals("H2 width must match previous native typography", originalWidth, custom.widthInPixels)
+            assertTrue(
+                "Custom Heading must never cache a one-pixel ellipsis in an unlaid-out viewport",
+                custom.widthInPixels > 1,
+            )
             assertEquals("H2 height must match previous native typography", originalHeight, custom.heightInPixels)
             assertEquals("Heading plus blank line must be REPLACED, not added",
                 originalHeight - editor.lineHeight * 2, editor.offsetToXY(tailOffset).y - plainY)
@@ -511,6 +515,113 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
         assertEquals(source, document.text)
         assertEquals(stamp, document.modificationStamp)
+    }
+
+    /**
+     * An ordinary platform fold with exactly the same bounds as the last
+     * Heading line can coexist with the custom replacement: the platform
+     * explicitly allows identical normal/custom fold ranges and lets the
+     * custom renderer take display precedence. Never delete that normal fold.
+     */
+    fun testSourceReplacingHeadingCoexistsWithEqualRangePlatformFold() {
+        val source = "Tail\n\n# Heading\n"
+        myFixture.configureByText("heading-equal-fold-compatibility.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tail = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tail)
+        val stamp = document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
+        val line = document.getLineNumber(model.sourceRange.startOffset)
+        assertEquals(line..line, NativeHeadingCustomFoldLinePlanner.plan(editor, model))
+        val start = document.getLineStartOffset(line)
+        val end = document.getLineEndOffset(line)
+        var platform: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            platform = editor.foldingModel.addFoldRegion(start, end, "IDEA Markdown section")
+        }
+        val foreign = requireNotNull(platform) { "Equal-range normal fold was not installed" }
+        assertTrue(foreign.isValid)
+        assertTrue(foreign.isExpanded)
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(1, evidence.ownedCustomFolds)
+            assertEquals(1, evidence.fullyConcealed)
+            assertEquals(0, evidence.ownedInlays)
+            assertTrue("MarkFlow must not remove or resize the normal fold", foreign.isValid)
+            assertTrue(foreign.isExpanded)
+            assertEquals(start, foreign.startOffset)
+            assertEquals(end, foreign.endOffset)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+            assertEquals(tail, editor.caretModel.offset)
+        } finally {
+            controller.dispose()
+        }
+        // Releasing the MarkFlow renderer must leave IDE-owned folds intact.
+        assertTrue(foreign.isValid)
+        assertTrue(foreign.isExpanded)
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            if (foreign.isValid) editor.foldingModel.removeFoldRegion(foreign)
+        }
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+    }
+
+    /**
+     * Even a final Heading with one trailing source newline can conflict
+     * with an IDE-owned section fold that includes the document's last byte.
+     * The normal fold begins at the same offset but is just one byte longer
+     * than the renderer's parser-proven whole-line replacement span.
+     */
+    fun testSourceReplacingHeadingRejectsSameStartFoldIncludingFinalNewline() {
+        val source = "Tail\n\n# Heading\n"
+        myFixture.configureByText("heading-trailing-newline-parent.md", source)
+        val editor = myFixture.editor
+        val doc = editor.document
+        val caret = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(caret)
+        val stamp = doc.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        val heading = NativeHeadingProjectionPlanner.plan(plan).single()
+        val line = doc.getLineNumber(heading.sourceRange.startOffset)
+        assertEquals(line..line, NativeHeadingCustomFoldLinePlanner.plan(editor, heading))
+        val first = doc.getLineStartOffset(line)
+        val lastHeadingByte = doc.getLineEndOffset(line)
+        assertEquals(doc.textLength - 1, lastHeadingByte)
+        var parent: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            parent = editor.foldingModel.addFoldRegion(first, doc.textLength, "IDE heading EOF region")
+        }
+        val external = requireNotNull(parent)
+        assertTrue(external.isValid)
+        assertTrue(external.isExpanded)
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val ev = controller.evidenceSnapshot()
+            assertEquals(1, ev.models)
+            assertEquals(0, ev.ownedCustomFolds)
+            assertEquals(0, ev.ownedInlays)
+            assertTrue("IDE-owned EOF parent must survive a failed custom install", external.isValid)
+            assertTrue(external.isExpanded)
+            assertEquals(first, external.startOffset)
+            assertEquals(doc.textLength, external.endOffset)
+            assertEquals(caret, editor.caretModel.offset)
+            assertEquals(source, doc.text)
+            assertEquals(stamp, doc.modificationStamp)
+        } finally {
+            controller.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (external.isValid) editor.foldingModel.removeFoldRegion(external)
+            }
+        }
+        assertEquals(source, doc.text)
+        assertEquals(stamp, doc.modificationStamp)
     }
 
     /**
