@@ -54,6 +54,39 @@ if ( assert_pr_only_source_trigger "$trigger_fixture_dir/missing-pr.yml" "missin
   die "PR-only trigger guard accepted a missing PR event"
 fi
 
+# The automatic Gradle cache writer is a separate, non-authoritative main-only
+# workflow. Prevent PR-head cache poisoning and post-merge validation fan-out.
+cache_seed_workflow=".github/workflows/gradle-cache-seed.yml"
+assert_trusted_main_cache_seed() {
+  local workflow="$1"
+  [ -f "$workflow" ] || die "protected-main Gradle cache seed workflow is missing"
+  grep -Fxq '  push:' "$workflow" || die "cache seed must run on protected main pushes"
+  grep -Fxq '    branches:' "$workflow" || die "cache seed push branch scope is missing"
+  grep -Fxq '      - main' "$workflow" || die "cache seed must target main"
+  grep -Fxq '  workflow_dispatch:' "$workflow" || die "cache seed manual recovery is missing"
+  if grep -Eq '^  (pull_request|pull_request_target|workflow_run|repository_dispatch):' "$workflow"; then
+    die "cache seed may not run with an untrusted event"
+  fi
+  grep -Fxq '  contents: read' "$workflow" || die "cache seed needs only read access"
+  grep -Fxq "    if: github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main'" "$workflow" || die "cache seed main/repository guard was weakened"
+  grep -Fxq '    runs-on: ubuntu-24.04-arm' "$workflow" || die "cache seed must use ARM64"
+  grep -Fxq '          cache-read-only: false' "$workflow" || die "cache seed must be an explicit main cache writer"
+  grep -Fq '          persist-credentials: false' "$workflow" || die "cache seed checkout must not persist credentials"
+  grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "cache seed must checkout the trigger SHA"
+  grep -Fq '        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"' "$workflow" || die "cache seed must verify exact checkout"
+  grep -Fxq '        run: ./gradlew buildPlugin' "$workflow" || die "cache seed must populate actual plugin build inputs"
+}
+assert_trusted_main_cache_seed "$cache_seed_workflow"
+
+# Mutation controls: security-critical guards must fail closed.
+sed "s/github.ref == 'refs\/heads\/main'/github.ref == 'refs\/heads\/feature'/" "$cache_seed_workflow" > "$trigger_fixture_dir/cache-wrong-ref.yml"
+if ( assert_trusted_main_cache_seed "$trigger_fixture_dir/cache-wrong-ref.yml" ) 2>/dev/null; then
+  die "cache seed main-ref negative fixture was incorrectly accepted"
+fi
+sed 's/cache-read-only: false/cache-read-only: true/' "$cache_seed_workflow" > "$trigger_fixture_dir/cache-read-only.yml"
+if ( assert_trusted_main_cache_seed "$trigger_fixture_dir/cache-read-only.yml" ) 2>/dev/null; then
+  die "cache seed disabled-writer negative fixture was incorrectly accepted"
+fi
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
