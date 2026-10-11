@@ -67,9 +67,12 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
             // A raw absolute Y delta includes the local font/line-height
             // change. Check the paragraph margin via its owned inlay instead.
             val extra = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
-                .single { it.isValid && it.renderer === NativePageParagraphSpacing }
+                .single { it.isValid && it.renderer is NativePageParagraphSpacing }
             assertEquals(doc.getLineEndOffset(2), extra.offset)
-            assertEquals(16, extra.heightInPixels)
+            val spacing = extra.renderer as NativePageParagraphSpacing
+            assertEquals(2, spacing.followingHeadingLevel)
+            assertTrue(spacing.heightPx in 1..64)
+            assertEquals(spacing.heightPx, extra.heightInPixels)
             assertTrue(editor.offsetToXY(secondHeading).y > editor.offsetToXY(paragraph).y)
             // Editor-owned XY <-> source offset mapping must survive even
             // though the document's visual font metrics have changed.
@@ -83,7 +86,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
-                .count { it.isValid && it.renderer === NativePageParagraphSpacing })
+                .count { it.isValid && it.renderer is NativePageParagraphSpacing })
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
                 if (foreign.isValid) editor.foldingModel.removeFoldRegion(foreign)
             }
@@ -93,6 +96,50 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         assertEquals(caret, editor.caretModel.offset)
         assertEquals(originalText, doc.text)
         assertEquals(stamp, doc.modificationStamp)
+    }
+
+    fun testPinnedJcefHeadingLevelsResolveIndependentParagraphGapHeights() {
+        val source = (1..6).joinToString("\n\n") { level ->
+            "${"#".repeat(level)} Heading level $level\n\nParagraph after H$level."
+        } + "\n"
+        myFixture.configureByText("heading-layout-b.md", source)
+        val editor = myFixture.editor as EditorEx
+        val originalScheme = editor.colorsScheme
+        val originalBorder = editor.scrollPane.border
+        val originalStamp = editor.document.modificationStamp
+        val pilot = requireNotNull(NativePageGeometryPilot.install(editor))
+        try {
+            val gaps = editor.inlayModel.getBlockElementsInRange(
+                0, editor.document.textLength,
+            ).filter { it.isValid && it.renderer is NativePageParagraphSpacing }
+                .sortedBy { it.offset }
+            assertEquals(5, gaps.size)
+            assertEquals((2..6).toList(), gaps.map {
+                (it.renderer as NativePageParagraphSpacing).followingHeadingLevel
+            })
+            for (gap in gaps) {
+                val renderer = gap.renderer as NativePageParagraphSpacing
+                // The model targets independently measured JCEF intervals
+                // to subpixel rounding, without asserting 89-case acceptance.
+                val predictedNativeInterval = editor.lineHeight * 2 +
+                    renderer.anticipatedFoldHeightPx + gap.heightInPixels
+                assertTrue(
+                    "Heading H${renderer.followingHeadingLevel} interval is not pinned to JCEF: " +
+                        "native=$predictedNativeInterval css=${renderer.referenceIntervalCssPx}",
+                    kotlin.math.abs(
+                        predictedNativeInterval - renderer.referenceIntervalCssPx
+                    ) <= 0.5,
+                )
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(originalStamp, editor.document.modificationStamp)
+        } finally {
+            pilot.dispose()
+        }
+        assertSame(originalScheme, editor.colorsScheme)
+        assertSame(originalBorder, editor.scrollPane.border)
+        assertEquals(source, editor.document.text)
+        assertEquals(originalStamp, editor.document.modificationStamp)
     }
 
     fun testCodeFencesFailClosedWithoutTouchingEditorOrPlatformFold() {
@@ -149,10 +196,10 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
                 headings.evidenceSnapshot().ownedInlays)
             val gaps = editor.inlayModel.getBlockElementsInRange(firstParagraphEnd, firstParagraphEnd)
                 .filter { it.isValid && it.offset == firstParagraphEnd &&
-                    (it.renderer === NativePageParagraphSpacing ||
+                    (it.renderer is NativePageParagraphSpacing ||
                         it.renderer === NativeHeadingParagraphGapRenderer) }
             assertEquals("Only one owner may allocate the H1 -> H2 paragraph margin", 1, gaps.size)
-            assertSame(NativePageParagraphSpacing, gaps.single().renderer)
+            assertTrue(gaps.single().renderer is NativePageParagraphSpacing)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(originalText, doc.text)
@@ -170,7 +217,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         }
         assertEquals(0, editor.inlayModel.getBlockElementsInRange(
             firstParagraphEnd, firstParagraphEnd
-        ).count { it.isValid && (it.renderer === NativePageParagraphSpacing ||
+        ).count { it.isValid && (it.renderer is NativePageParagraphSpacing ||
             it.renderer === NativeHeadingParagraphGapRenderer) })
         assertEquals(originalText, doc.text)
         assertEquals(stamp, doc.modificationStamp)
@@ -193,7 +240,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
                 assertEquals(1, editor.inlayModel.getBlockElementsInRange(
                     firstParagraphEnd, firstParagraphEnd
                 ).count { it.isValid && it.offset == firstParagraphEnd &&
-                    (it.renderer === NativePageParagraphSpacing ||
+                    (it.renderer is NativePageParagraphSpacing ||
                         it.renderer === NativeHeadingParagraphGapRenderer) })
             } finally {
                 pilot.dispose()

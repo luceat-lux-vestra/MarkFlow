@@ -461,7 +461,7 @@ internal class NativeHeadingPresentationController(
         // spacing. Do not dispose or re-own the pilot's inlay.
         val pageOwnsGap = editor.inlayModel.getBlockElementsInRange(paragraphEnd, paragraphEnd)
             .any { it.isValid && it.offset == paragraphEnd &&
-                it.renderer === NativePageParagraphSpacing }
+                it.renderer is NativePageParagraphSpacing }
         val paragraphGap = if (pageOwnsGap) null else editor.inlayModel.addBlockElement(
             paragraphEnd, true, false, 0, NativeHeadingParagraphGapRenderer
         )

@@ -349,6 +349,9 @@ internal object NativeDifferentialPreviewE2EBridge {
             "native_body_font_family=" + editor.contentComponent.font.family,
             "native_body_font_size_px=" + editor.contentComponent.font.size2D,
             "native_research_page_pilot=" + (NativeMarkFlowProductionLifecycle.researchPagePilot(editor) != null),
+            "native_page_spacers_by_following_heading_px=" +
+                (NativeMarkFlowProductionLifecycle.researchPagePilot(editor)
+                    ?.measurements()?.paragraphSpacerLevelsAndHeights ?: "UNAVAILABLE"),
             "native_editor_left_inset_px=" + editor.insets.left,
             "native_editor_top_inset_px=" + editor.insets.top,
             "native_editor_line_height_px=" + editor.lineHeight,

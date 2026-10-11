@@ -13,6 +13,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import javax.swing.BorderFactory
 import javax.swing.border.Border
+import kotlin.math.roundToInt
 
 /**
  * Research-only #353 source-neutral page typography experiment.
@@ -44,6 +45,7 @@ internal class NativePageGeometryPilot private constructor(
         val leftInsetPx: Int,
         val topInsetPx: Int,
         val paragraphSpacerCount: Int,
+        val paragraphSpacerLevelsAndHeights: String,
     )
 
     fun measurements(): Measurements {
@@ -56,6 +58,14 @@ internal class NativePageGeometryPilot private constructor(
             insets.left,
             insets.top,
             paragraphSpacing.count { it.isValid },
+            paragraphSpacing.asSequence()
+                .filter { it.isValid }
+                .mapNotNull { inlay ->
+                    (inlay.renderer as? NativePageParagraphSpacing)?.let { renderer ->
+                        "${renderer.followingHeadingLevel}:${inlay.heightInPixels}"
+                    }
+                }
+                .joinToString(","),
         )
     }
 
@@ -159,9 +169,14 @@ internal class NativePageGeometryPilot private constructor(
                 // spacing at its document end offset. No HTML/CSS margin
                 // collapsing is claimed or simulated.
                 val doc = editor.document
-                val headingOffsets = plan.projections.asSequence()
+                val headingLevelsByOffset = plan.projections.asSequence()
                     .filter { it.kind == NativeProjectionKind.HEADING }
-                    .map { it.sourceRange.startOffset }.toSet()
+                    .mapNotNull { heading ->
+                        heading.headingLevel?.let { level ->
+                            heading.sourceRange.startOffset to level
+                        }
+                    }
+                    .toMap()
                 plan.projections.filter { it.kind == NativeProjectionKind.PARAGRAPH }
                     .forEach { paragraph ->
                         val start = paragraph.sourceRange.startOffset
@@ -175,8 +190,9 @@ internal class NativePageGeometryPilot private constructor(
                             doc.getLineEndOffset(line - 1)
                         val afterBlank = doc.getLineStartOffset(line + 1) ==
                             doc.getLineEndOffset(line + 1)
-                        val nextHeading = doc.getLineStartOffset(line + 2) in headingOffsets
-                        if (!beforeBlank || !afterBlank || !nextHeading) return@forEach
+                        val followingLevel =
+                            headingLevelsByOffset[doc.getLineStartOffset(line + 2)]
+                        if (!beforeBlank || !afterBlank || followingLevel == null) return@forEach
                         // The legacy H1 inline fallback may have installed
                         // this boundary first. Whichever owner got there first
                         // remains the sole owner; never stack two 16px inlays.
@@ -184,8 +200,17 @@ internal class NativePageGeometryPilot private constructor(
                             .any { it.isValid && it.offset == end &&
                                 it.renderer === NativeHeadingParagraphGapRenderer }
                         if (headingOwnsGap) return@forEach
+                        // Pinned research model: derive the required gap from
+                        // independently measured JCEF P-to-P text intervals,
+                        // two IDEA paragraph line heights and the exact native
+                        // CustomFold renderer height for this heading level.
+                        // This deliberately does NOT claim general CSS layout
+                        // fidelity outside the restricted B fixture.
+                        val spacingRenderer = NativePageParagraphSpacing.forFollowingHeading(
+                            editor, followingLevel,
+                        ) ?: return@forEach
                         val extra = editor.inlayModel.addBlockElement(
-                            end, true, false, 0, NativePageParagraphSpacing
+                            end, true, false, 0, spacingRenderer
                         ) ?: error("Paragraph spacing inlay rejected by IDEA")
                         paragraphSpacing += extra
                     }
@@ -216,9 +241,72 @@ internal class NativePageGeometryPilot private constructor(
     }
 }
 
-/** Adds only a measurable non-painting paragraph margin in the research pilot. */
-internal object NativePageParagraphSpacing : com.intellij.openapi.editor.EditorCustomElementRenderer {
+/**
+ * Pinned 2026.2.3 JCEF/IDE B-fixture paragraph rhythm experiment ONLY.
+ *
+ * JCEF reference text-range intervals were independently measured on exact
+ * source-identical A/B captures at DPR=1.0, Islands Light, 1200x760 viewport:
+ * P1->P2(H2) 102.297, P2->P3(H3) 80.719,
+ * P3->P4(H4) 70.984, P4->P5(H5) 70.984, P5->P6(H6) 70.985 CSS px.
+ *
+ * IDEA places two line-height contributions plus the folded heading box into
+ * that same source-anchored interval. One *fixed* 16px gap therefore creates
+ * cumulative error. Solve for the remaining spacing with platform font
+ * metrics; do not embed fixture source text or overwrite the Markdown Document.
+ *
+ * This is a measured, reference-pinned feasibility probe, not a generic CSS
+ * margin-collapsing implementation and not #353 acceptance.
+ */
+internal class NativePageParagraphSpacing private constructor(
+    val followingHeadingLevel: Int,
+    val referenceIntervalCssPx: Double,
+    val anticipatedFoldHeightPx: Int,
+    val heightPx: Int,
+) : com.intellij.openapi.editor.EditorCustomElementRenderer {
     override fun calcWidthInPixels(inlay: Inlay<*>): Int = 1
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int = 16
-    override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) = Unit
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int = heightPx
+    override fun paint(
+        inlay: Inlay<*>,
+        g: Graphics,
+        targetRegion: Rectangle,
+        textAttributes: TextAttributes,
+    ) = Unit
+
+    companion object {
+        private val referenceIntervalsCssPx = mapOf(
+            2 to 102.297,
+            3 to 80.719,
+            4 to 70.984,
+            5 to 70.984,
+            6 to 70.985,
+        )
+
+        fun forFollowingHeading(editor: EditorEx, level: Int): NativePageParagraphSpacing? {
+            val referenceInterval = referenceIntervalsCssPx[level] ?: return null
+            val verticalPadding = when (level) {
+                2 -> 8
+                3 -> 7
+                4 -> 6
+                5 -> 5
+                6 -> 4
+                else -> return null
+            }
+            val font = NativeHeadingPreviewTypographyPilot.font(editor, level)
+            val metrics = editor.contentComponent.getFontMetrics(font)
+            // Mirrors NativeHeadingCustomFoldRenderer's own calcHeightInPixels
+            // and IDEA's minimum custom-region height.
+            val anticipatedFoldHeight = maxOf(
+                editor.lineHeight, metrics.height + verticalPadding * 2,
+            )
+            val gapPx = (
+                referenceInterval - 2.0 * editor.lineHeight - anticipatedFoldHeight
+            ).roundToInt()
+            // Fail closed instead of inserting impossible/negative spacing
+            // when IDE font metrics no longer fit the pinned 2026.2.3 baseline.
+            if (gapPx !in 1..64) return null
+            return NativePageParagraphSpacing(
+                level, referenceInterval, anticipatedFoldHeight, gapPx,
+            )
+        }
+    }
 }
