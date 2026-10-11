@@ -59,6 +59,11 @@ internal object NativeMarkFlowProductionLifecycle {
                 derivedPresentation = derivedPresentation,
                 hostResources = hostResources,
                 rawHtmlPresentation = rawHtmlPresentation,
+                // Explicit, fixture-scoped Starter IDEA opt-in only. Normal production stays
+                // on legacy headings until #350/#353 differential acceptance is complete.
+                headingSourceLineReplacement =
+                    System.getProperty("markflow.starter.headingRobotPilot") == "true" &&
+                        file.name == "heading-robot.md",
             )
             editor.putUserData(controllerKey, controller)
             true
