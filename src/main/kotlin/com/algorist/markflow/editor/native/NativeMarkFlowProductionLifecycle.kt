@@ -28,6 +28,12 @@ internal object NativeMarkFlowProductionLifecycle {
     private val controllerKey = Key.create<NativePresentationController>(
         "com.algorist.markflow.native.production.controller"
     )
+    private val researchPageKey = Key.create<NativePageGeometryPilot>(
+        "com.algorist.markflow.native.research.pageGeometryPilot"
+    )
+
+    fun researchPagePilot(editor: Editor): NativePageGeometryPilot? =
+        editor.getUserData(researchPageKey)
 
     fun controller(editor: Editor): NativePresentationController? = editor.getUserData(controllerKey)
 
@@ -43,10 +49,21 @@ internal object NativeMarkFlowProductionLifecycle {
         if (!MarkFlowFileSupport.isMarkFlowTarget(file)) return false
 
         var runtime: DerivedRendererRuntime? = null
+        var researchPage: NativePageGeometryPilot? = null
         var hostResources: NativeHostResourcePresentationController? = null
         var derivedPresentation: NativeDerivedPresentationController? = null
         var rawHtmlPresentation: NativeRawHtmlPresentationController? = null
         return try {
+            // Research-only exact B fixture, never a production Markdown editor.
+            // Applied before heading custom folds so all geometry uses the same
+            // editor-specific scheme/insets. No global settings are modified.
+            if (System.getProperty("markflow.starter.pageBoxPilot") == "true" &&
+                file.name == "heading-layout-b.md") {
+                researchPage = NativePageGeometryPilot.install(editor)
+                check(researchPage != null) {
+                    "Research page layout pilot rejected this fixture (mixed syntax or IDE state)"
+                }
+            }
             runtime = createRendererRuntimeOrNull()
             hostResources = NativeHostResourcePresentationController(editor)
             derivedPresentation = NativeDerivedPresentationController(editor, runtime)
@@ -70,12 +87,15 @@ internal object NativeMarkFlowProductionLifecycle {
                         file.name == "heading-layout-b.md"),
             )
             editor.putUserData(controllerKey, controller)
+            editor.putUserData(researchPageKey, researchPage)
             true
         } catch (failure: ProcessCanceledException) {
             cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources, runtime)
+            runCatching { researchPage?.dispose() }
             throw failure
         } catch (failure: Throwable) {
             cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources, runtime)
+            runCatching { researchPage?.dispose() }
             LOG.warn(
                 "MarkFlow native production presentation could not attach; exact source editor remains available",
                 failure,
@@ -91,8 +111,12 @@ internal object NativeMarkFlowProductionLifecycle {
         }
         val controller = controller(editor) ?: return false
         editor.putUserData(controllerKey, null)
+        val researchPage = editor.getUserData(researchPageKey)
+        editor.putUserData(researchPageKey, null)
         runCatching { Disposer.dispose(controller) }
             .onFailure { failure -> LOG.warn("MarkFlow native production presentation dispose failed", failure) }
+        runCatching { researchPage?.dispose() }
+            .onFailure { failure -> LOG.warn("Research-only page geometry restoration failed", failure) }
         return true
     }
 

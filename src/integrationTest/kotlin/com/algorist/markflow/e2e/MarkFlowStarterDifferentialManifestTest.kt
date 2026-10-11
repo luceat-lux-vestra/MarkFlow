@@ -109,6 +109,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
                     addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
+                    addSystemProperty("markflow.starter.pageBoxPilot", "true")
                 }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
