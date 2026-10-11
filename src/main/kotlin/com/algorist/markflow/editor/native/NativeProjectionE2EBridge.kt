@@ -120,11 +120,18 @@ internal object NativeProjectionE2EBridge {
         val region = editor.foldingModel.allFoldRegions
             .filterIsInstance<CustomFoldRegion>()
             .single { it.isValid && !it.isExpanded && it.renderer is NativeHeadingCustomFoldRenderer }
-        val location = requireNotNull(region.location) { "CustomFoldRegion location absent" }
-        check(region.widthInPixels > 1 && region.heightInPixels > 1)
+        // The fold can be owned and valid before the editor layout has a
+        // positive physical hit rectangle. Do not synthesize a click target.
+        val location = region.location ?: return "NOT_READY:fold-location-missing"
+        val width = region.widthInPixels
+        val height = region.heightInPixels
+        if (width <= 1 || height <= 1) {
+            val viewport = editor.scrollingModel.visibleArea
+            return "NOT_READY:fold=${width}x${height};viewport=${viewport.width}x${viewport.height}"
+        }
         val screen = editor.contentComponent.locationOnScreen
-        return "${screen.x + location.x + minOf(4, region.widthInPixels - 1)}," +
-            "${screen.y + location.y + region.heightInPixels / 2}"
+        return "${screen.x + location.x + minOf(4, width - 1)}," +
+            "${screen.y + location.y + height / 2}"
     }
 
     fun headingFoldTopology(editor: Editor): String {

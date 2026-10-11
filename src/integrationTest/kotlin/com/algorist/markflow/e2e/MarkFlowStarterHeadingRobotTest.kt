@@ -91,9 +91,19 @@ class MarkFlowStarterHeadingRobotTest {
                 val before = state()
                 check(before["caret"] == tail.toString())
                 check(before["stamp"] == initialStamp.toString())
-                val point = driver.withContext(OnDispatcher.EDT) {
+                waitFor(
+                    message = "production custom heading fold has a clickable pixel rectangle",
+                    timeout = 20.seconds,
+                    getter = { driver.withContext(OnDispatcher.EDT) {
+                        bridge.headingRobotScreenPoint(opened.editor)
+                    } },
+                    checker = { !it.startsWith("NOT_READY:") },
+                )
+                val screenPoint = driver.withContext(OnDispatcher.EDT) {
                     bridge.headingRobotScreenPoint(opened.editor)
-                }.split(',').map(String::toInt)
+                }
+                check(!screenPoint.startsWith("NOT_READY:")) { screenPoint }
+                val point = screenPoint.split(',').map(String::toInt)
                 check(point.size == 2 && point.all { it >= 0 })
                 val (x, y) = point
                 val screen = Toolkit.getDefaultToolkit().screenSize
