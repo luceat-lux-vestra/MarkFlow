@@ -21,10 +21,11 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 5. Give every temporary mechanism an owner and deletion criterion.
 6. Add tests/evidence appropriate to success, failure, recovery, regression, compatibility, lifecycle, edge, ownership and adversarial risk.
 7. Open a pull request using the repository template.
-8. Resolve every review conversation and required check.
-9. Re-review the exact final PR HEAD against fresh `main`, merge-base and live ruleset.
-10. Squash-merge only the reviewed `expected_head_sha`.
-11. Verify resulting `main` SHA/tree/signature and post-main checks before closing the Task.
+8. Inspect the work-branch commit log since merge-base and the complete diff. **Before final CI/review**, consolidate/remove experiment, checkpoint, fixup, and superseded commits; record why no history rewrite is needed if already clean. GitHub Squash Merge is not branch-history cleanup.
+9. If branch history is rewritten, use a safe leased ref update; re-run relevant checks on the rewritten exact HEAD. Resolve review conversations and required checks for that HEAD.
+10. Re-review the exact final PR HEAD against fresh `main`, merge-base and live ruleset. Any SHA change invalidates the prior review PASS.
+11. Squash-merge only the reviewed `expected_head_sha`.
+12. Verify resulting `main` SHA/tree/signature and post-main checks before closing the Task.
 
 Any HEAD change invalidates a prior PASS/evidence.
 
