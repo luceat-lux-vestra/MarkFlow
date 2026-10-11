@@ -110,4 +110,90 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         assertSame(scheme, editor.colorsScheme)
         assertEquals(source, editor.document.text)
     }
+    fun testH1SourceFoldAndPagePilotNeverDoubleOwnParagraphGap() {
+        val source = "# Heading level 1\\n\\nParagraph after H1.\\n\\n" +
+            "## Heading level 2\\n\\nParagraph after H2.\\n"
+        myFixture.configureByText("heading-layout-b.md", source)
+        val editor = myFixture.editor as EditorEx
+        val doc = editor.document
+        val firstParagraphEnd = doc.getLineEndOffset(2)
+        editor.caretModel.moveToOffset(source.indexOf("Paragraph after H1.") + 3)
+
+        // Same-start platform fold is the reason H1 uses an inline fallback
+        // rather than an overlapping IDEA CustomFoldRegion in the pinned IDE.
+        var platform: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            platform = editor.foldingModel.addFoldRegion(0, doc.textLength - 1, "platform section")
+            requireNotNull(platform).isExpanded = true
+        }
+        val foreign = requireNotNull(platform)
+        val originalText = doc.text
+        val stamp = doc.modificationStamp
+        val pilot = requireNotNull(NativePageGeometryPilot.install(editor))
+        val headings = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            assertEquals(1, pilot.measurements().paragraphSpacerCount)
+            headings.applyPlan(
+                NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L)),
+                richPresentationEnabled = true,
+            )
+            assertEquals("H1 must use the same-start inline fallback", 1,
+                headings.evidenceSnapshot().ownedInlays)
+            val gaps = editor.inlayModel.getBlockElementsInRange(firstParagraphEnd, firstParagraphEnd)
+                .filter { it.isValid && it.offset == firstParagraphEnd &&
+                    (it.renderer === NativePageParagraphSpacing ||
+                        it.renderer === NativeHeadingParagraphGapRenderer) }
+            assertEquals("Only one owner may allocate the H1 -> H2 paragraph margin", 1, gaps.size)
+            assertSame(NativePageParagraphSpacing, gaps.single().renderer)
+            assertTrue(foreign.isValid)
+            assertTrue(foreign.isExpanded)
+            assertEquals(originalText, doc.text)
+            assertEquals(stamp, doc.modificationStamp)
+
+            headings.clearPresentation()
+            assertTrue("Releasing H1 must not dispose the page owner's inlay",
+                gaps.single().isValid)
+        } finally {
+            headings.dispose()
+            pilot.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (foreign.isValid) editor.foldingModel.removeFoldRegion(foreign)
+            }
+        }
+        assertEquals(0, editor.inlayModel.getBlockElementsInRange(
+            firstParagraphEnd, firstParagraphEnd
+        ).count { it.isValid && (it.renderer === NativePageParagraphSpacing ||
+            it.renderer === NativeHeadingParagraphGapRenderer) })
+        assertEquals(originalText, doc.text)
+        assertEquals(stamp, doc.modificationStamp)
+    }
+
+    fun testPreexistingHeadingOwnedGapPreventsLatePageGapInstallation() {
+        val source = "# Heading level 1\\n\\nParagraph after H1.\\n\\n" +
+            "## Heading level 2\\n\\nParagraph after H2.\\n"
+        myFixture.configureByText("heading-layout-b.md", source)
+        val editor = myFixture.editor as EditorEx
+        val doc = editor.document
+        val firstParagraphEnd = doc.getLineEndOffset(2)
+        val preexisting = requireNotNull(editor.inlayModel.addBlockElement(
+            firstParagraphEnd, true, false, 0, NativeHeadingParagraphGapRenderer
+        ))
+        try {
+            val pilot = requireNotNull(NativePageGeometryPilot.install(editor))
+            try {
+                assertEquals(0, pilot.measurements().paragraphSpacerCount)
+                assertEquals(1, editor.inlayModel.getBlockElementsInRange(
+                    firstParagraphEnd, firstParagraphEnd
+                ).count { it.isValid && it.offset == firstParagraphEnd &&
+                    (it.renderer === NativePageParagraphSpacing ||
+                        it.renderer === NativeHeadingParagraphGapRenderer) })
+            } finally {
+                pilot.dispose()
+            }
+            assertTrue("Page pilot must not dispose another owner's gap", preexisting.isValid)
+        } finally {
+            if (preexisting.isValid) preexisting.dispose()
+        }
+    }
+
 }
