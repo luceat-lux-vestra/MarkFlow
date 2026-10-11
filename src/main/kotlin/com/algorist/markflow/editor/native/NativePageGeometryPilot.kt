@@ -75,7 +75,6 @@ internal class NativePageGeometryPilot private constructor(
         // global 26px parity rule. The screenshot's image origin includes IDE
         // editor/preview chrome and cannot be equated with CSS page padding.
         private const val EXPERIMENTAL_TOP_INSET_PX = 26
-        private const val EXPERIMENTAL_PARAGRAPH_GAP_PX = 16
 
         fun install(editor: Editor): NativePageGeometryPilot? {
             ApplicationManager.getApplication().assertIsDispatchThread()
@@ -89,6 +88,11 @@ internal class NativePageGeometryPilot private constructor(
                 line.startsWith("```") || line.startsWith("~~~") ||
                     it.startsWith("    ") || it.startsWith("\t")
             }) return null
+            val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+            if (plan.status != ProjectionPlanStatus.READY ||
+                plan.projections.any {
+                    it.kind != NativeProjectionKind.PARAGRAPH && it.kind != NativeProjectionKind.HEADING
+                }) return null
 
             val stamp = editor.document.modificationStamp
             val originalCaret = editor.caretModel.offset
@@ -107,28 +111,36 @@ internal class NativePageGeometryPilot private constructor(
                     EXPERIMENTAL_TOP_INSET_PX, REFERENCE_LEFT_INSET_PX, 0, 0,
                 ))
 
-                // Narrow research-only block model: one non-empty plain
-                // paragraph after a blank line, followed by a blank line and
-                // an ATX heading. Inlay is non-painting and MarkFlow-owned.
-                // Do not attempt arbitrary HTML/CSS margin collapsing here.
+                // Narrow research-only block model based on the real
+                // Markdown AST, not hard-coded "Paragraph after H" text.
+                // A single physical paragraph line, bounded by blank lines,
+                // followed immediately by a parser-proven heading can own
+                // spacing at its document end offset. No HTML/CSS margin
+                // collapsing is claimed or simulated.
                 val doc = editor.document
-                for (line in 2 until doc.lineCount - 2) {
-                    val text = doc.getText(com.intellij.openapi.util.TextRange(
-                        doc.getLineStartOffset(line), doc.getLineEndOffset(line)
-                    ))
-                    val before = doc.getLineStartOffset(line - 1) == doc.getLineEndOffset(line - 1)
-                    val after = doc.getLineStartOffset(line + 1) == doc.getLineEndOffset(line + 1)
-                    val nextStart = doc.getLineStartOffset(line + 2)
-                    val nextEnd = doc.getLineEndOffset(line + 2)
-                    val nextText = doc.getText(com.intellij.openapi.util.TextRange(nextStart, nextEnd))
-                    if (before && after && text.startsWith("Paragraph after H") &&
-                        nextText.startsWith("#") && nextText.dropWhile { it == '#' }.startsWith(" ")) {
+                val headingOffsets = plan.projections.asSequence()
+                    .filter { it.kind == NativeProjectionKind.HEADING }
+                    .map { it.sourceRange.startOffset }.toSet()
+                plan.projections.filter { it.kind == NativeProjectionKind.PARAGRAPH }
+                    .forEach { paragraph ->
+                        val start = paragraph.sourceRange.startOffset
+                        val end = paragraph.sourceRange.endOffset
+                        val line = doc.getLineNumber(start)
+                        if (line < 1 || line + 2 >= doc.lineCount ||
+                            doc.getLineNumber(end - 1) != line ||
+                            start != doc.getLineStartOffset(line) ||
+                            end != doc.getLineEndOffset(line)) return@forEach
+                        val beforeBlank = doc.getLineStartOffset(line - 1) ==
+                            doc.getLineEndOffset(line - 1)
+                        val afterBlank = doc.getLineStartOffset(line + 1) ==
+                            doc.getLineEndOffset(line + 1)
+                        val nextHeading = doc.getLineStartOffset(line + 2) in headingOffsets
+                        if (!beforeBlank || !afterBlank || !nextHeading) return@forEach
                         val extra = editor.inlayModel.addBlockElement(
-                            doc.getLineEndOffset(line), true, false, 0, NativePageParagraphSpacing
+                            end, true, false, 0, NativePageParagraphSpacing
                         ) ?: error("Paragraph spacing inlay rejected by IDEA")
                         paragraphSpacing += extra
                     }
-                }
 
                 check(editor.document.modificationStamp == stamp && editor.document.text == source)
                 check(editor.caretModel.offset == originalCaret)
