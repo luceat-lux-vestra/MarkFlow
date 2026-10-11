@@ -39,6 +39,7 @@ internal data class NativeHeadingPresentationEvidence(
     val levels: List<Int>,
     val accessibilityFallbacks: Long,
     val mouseReveals: Long,
+    val ownedCustomFolds: Int = 0,
 )
 
 /**
@@ -130,10 +131,13 @@ internal object NativeHeadingProjectionPlanner {
  */
 internal class NativeHeadingPresentationController(
     private val editor: Editor,
+    // Explicit integration pilot; no production call site enables it yet.
+    private val sourceLineReplacement: Boolean = false,
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeHeadingModel>()
     private val owned = LinkedHashMap<HeadingKey, OwnedHeadingPresentation>()
+    private val customOwned = LinkedHashMap<HeadingKey, CustomFoldRegion>()
     private var accessibilityFallbacks = 0L
     private var mouseReveals = 0L
     private var disposed = false
@@ -188,17 +192,33 @@ internal class NativeHeadingPresentationController(
     fun evidenceSnapshot(): NativeHeadingPresentationEvidence = NativeHeadingPresentationEvidence(
         models = currentModels.size,
         ownedInlays = owned.values.count { it.inlay.isValid },
-        ownedFolds = owned.values.sumOf { presentation -> presentation.folds.count(FoldRegion::isValid) },
-        fullyConcealed = owned.values.count(::isFullyConcealed),
+        ownedFolds = owned.values.sumOf { presentation -> presentation.folds.count(FoldRegion::isValid) } +
+            customOwned.values.count(CustomFoldRegion::isValid),
+        fullyConcealed = owned.values.count(::isFullyConcealed) +
+            customOwned.values.count { fold -> fold.isValid && !fold.isExpanded },
         levels = currentModels.map(NativeHeadingModel::level),
         accessibilityFallbacks = accessibilityFallbacks,
         mouseReveals = mouseReveals,
+        ownedCustomFolds = customOwned.values.count(CustomFoldRegion::isValid),
     )
 
     internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
         if (disposed || editor.isDisposed) return false
         if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
         if (event.mouseEvent.button != MouseEvent.BUTTON1) return false
+        val clickedFold = event.collapsedFoldRegion
+        if (clickedFold is CustomFoldRegion) {
+            val renderer = clickedFold.renderer as? NativeHeadingCustomFoldRenderer ?: return false
+            val key = HeadingKey(renderer.sourceRange.startOffset, renderer.sourceRange.endOffset)
+            if (customOwned[key] !== clickedFold || !clickedFold.isValid) return false
+            if (currentPlanIdentity?.let(::matchesCurrentIdentity) != true) return false
+            removeOwned(key)
+            editor.selectionModel.removeSelection()
+            editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
+            mouseReveals += 1
+            event.consume()
+            return true
+        }
         val renderer = event.inlay?.renderer as? NativeHeadingInlayRenderer ?: return false
         val key = HeadingKey(renderer.sourceRange.startOffset, renderer.sourceRange.endOffset)
         val presentation = owned[key] ?: return false
@@ -214,8 +234,19 @@ internal class NativeHeadingPresentationController(
     private fun installIfCurrent(identity: ProjectionSourceIdentity, model: NativeHeadingModel) {
         if (!isCurrent(identity) || isActive(model)) return
         val key = HeadingKey.of(model)
-        if (owned[key]?.let(::isFullyConcealed) == true) return
+        if (owned[key]?.let(::isFullyConcealed) == true ||
+            customOwned[key]?.let { it.isValid && !it.isExpanded } == true) return
         removeOwned(key)
+
+        if (sourceLineReplacement) {
+            val span = NativeHeadingCustomFoldLinePlanner.plan(editor, model)
+            if (span != null) {
+                installCustomIfCurrent(identity, key, model, span)
+                // Unsupported overlap must leave source visible, never
+                // silently add the old double-height block inlay.
+                return
+            }
+        }
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
@@ -292,6 +323,38 @@ internal class NativeHeadingPresentationController(
         }
     }
 
+    private fun installCustomIfCurrent(
+        identity: ProjectionSourceIdentity,
+        key: HeadingKey,
+        model: NativeHeadingModel,
+        lineSpan: IntRange,
+    ) {
+        if (!isCurrent(identity) || isActive(model)) return
+        val sourceBefore = editor.document.immutableCharSequence.toString()
+        val stampBefore = editor.document.modificationStamp
+        var installed: CustomFoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            installed = editor.foldingModel.addCustomLinesFolding(
+                lineSpan.first, lineSpan.last,
+                NativeHeadingCustomFoldRenderer(editor, model),
+            )
+        }
+        val region = installed ?: return // fail-closed to exact source
+        if (!region.isValid || region.isExpanded) {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (region.isValid) editor.foldingModel.removeFoldRegion(region)
+            }
+            return
+        }
+        customOwned[key] = region
+        check(editor.document.modificationStamp == stampBefore) {
+            "source-line replacement changed authoritative heading document modification stamp"
+        }
+        check(editor.document.immutableCharSequence.toString() == sourceBefore) {
+            "source-line replacement changed authoritative heading document bytes"
+        }
+    }
+
     private fun headingFoldRanges(model: NativeHeadingModel, source: String): List<ProjectionRange>? {
         val range = model.sourceRange
         if (!range.isInside(source)) return null
@@ -350,13 +413,21 @@ internal class NativeHeadingPresentationController(
     }
 
     private fun clearOwned() {
-        owned.keys.toList().forEach(::removeOwned)
+        (owned.keys + customOwned.keys).toSet().forEach(::removeOwned)
     }
 
     private fun removeOwned(key: HeadingKey) {
-        val presentation = owned.remove(key) ?: return
-        if (presentation.inlay.isValid) presentation.inlay.dispose()
-        removeFolds(presentation.folds)
+        owned.remove(key)?.let { presentation ->
+            if (presentation.inlay.isValid) presentation.inlay.dispose()
+            removeFolds(presentation.folds)
+        }
+        customOwned.remove(key)?.let { region ->
+            if (region.isValid && !editor.isDisposed) {
+                editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                    if (region.isValid) editor.foldingModel.removeFoldRegion(region)
+                }
+            }
+        }
     }
 
     private fun removeFolds(folds: List<FoldRegion>) {
