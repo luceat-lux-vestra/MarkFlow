@@ -579,10 +579,39 @@ class MarkFlowStarterDifferentialManifestTest {
                                 val bShowing = nativeB.lineSequence().single {
                                     it.startsWith("editor_is_showing=")
                                 }.substringAfter('=') == "true"
+                                // A CustomFold at H1's 0-offset is rejected by IDEA
+                                // because the platform owns an expanded 0..EOF
+                                // section. The explicit opt-in candidate uses a
+                                // same-line InlineElement + a collapsed *owned*
+                                // ordinary FoldRegion instead. Demand evidence
+                                // for both owners; 5 CustomFolds alone is NOT 6/6.
+                                val bInlineCount = nativeB.lineSequence().single {
+                                    it.startsWith("co_start_inline_pilot_count=")
+                                }.substringAfter('=').toInt()
+                                val h1Evidence = nativeB.lineSequence().single {
+                                    it.startsWith("level=1\t")
+                                }.split('\t').associate { part ->
+                                    val pair = part.split('=', limit = 2)
+                                    check(pair.size == 2) { "Malformed H1 geometry evidence" }
+                                    pair[0] to pair[1]
+                                }
+                                val h1InlineInstalled =
+                                    bInlineCount == 1 &&
+                                    h1Evidence["fold_status"] == "MISSING" &&
+                                    h1Evidence["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
+                                    h1Evidence["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                                    (h1Evidence["inline_pilot_width_px"]?.toIntOrNull() ?: 0) > 1 &&
+                                    (h1Evidence["inline_pilot_height_px"]?.toIntOrNull() ?: 0) >=
+                                        nativeB.lineSequence().single {
+                                            it.startsWith("plain_line_height_px=")
+                                        }.substringAfter('=').toInt()
+                                val compositeCount = bCustomCount + (if (h1InlineInstalled) 1 else 0)
                                 Files.writeString(abDest.resolve("capture-status.txt"),
                                     "candidate=UNVERIFIED\n" +
-                                        "installed_heading_folds=" + bCustomCount + "\n" +
-                                        "missing_heading_levels=" + bMissing + "\n" +
+                                        "installed_heading_customfolds=" + bCustomCount + "\n" +
+                                        "installed_heading_inline_pilot=" + (if (h1InlineInstalled) 1 else 0) + "\n" +
+                                        "installed_heading_composite=" + compositeCount + "\n" +
+                                        "missing_customfold_levels=" + bMissing + "\n" +
                                         "editor_is_showing=" + bShowing + "\n")
                                 // A candidate screen obtained while the native Editor is
                                 // hidden is not comparable with the JCEF screenshot.
@@ -708,20 +737,24 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "native_b_environment=" + bEnv + "\n" +
                                         "production_default=sourceLineReplacement_false\n" +
                                         "full_differential_acceptance=false\n")
-                                // A real platform-owned 0..EOF section fold can share
-                                // H1's start. We must not mutate that external fold.
-                                // Keep the observed mixed-layout diagnostic, but do not
-                                // turn incomplete source-line replacement into PASS.
-                                if (bCustomCount != 6 || bMissing.isNotEmpty() ||
+                                // The candidate contract is six *owned heading
+                                // replacements*, not six instances of the same
+                                // JetBrains folding subtype. Every owner must be
+                                // individually observed. Preview visual parity is
+                                // still separately blocked by the unreviewed
+                                // source-aligned DOM/typography anchor contract.
+                                if (compositeCount != 6 || bCustomCount != 5 ||
+                                    bMissing != "1" || !h1InlineInstalled ||
                                     !nativeB.contains("legacy_heading_inlay_count=0")) {
                                     structuralFailures += listOf(
-                                        entry.id, "CUSTOMFOLD_INSTALLATION_INCOMPLETE",
-                                        bCustomCount.toString() + "/6;missing=" + bMissing,
-                                        "6/6"
+                                        entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
+                                        "custom=" + bCustomCount + ";inline=" +
+                                            (if (h1InlineInstalled) 1 else 0) +
+                                            ";missing_custom=" + bMissing,
+                                        "5_CUSTOM_PLUS_1_OWNED_INLINE"
                                     ).joinToString("\t")
-                                    error("E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE: " +
-                                        bCustomCount + "/6; missing=" + bMissing +
-                                        "; foreign fold evidence retained")
+                                    error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
+                                        compositeCount + "/6; foreign fold evidence retained")
                                 }
                             } catch (cause: Throwable) {
                                 bFailure = cause
@@ -759,17 +792,14 @@ class MarkFlowStarterDifferentialManifestTest {
                     } catch (cause: Throwable) {
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
-                        // The first ATX heading has a platform-owned expanded
-                        // section fold with the SAME start offset. IDEA rejects
-                        // our nested CustomFoldRegion. This known, retained
-                        // structural FAIL must not prevent capturing the other
-                        // explicitly selected, independent Mermaid cases.
-                        // Do not suppress unexpected exceptions, or accept the
-                        // failing H1 case as CAPTURED_UNVERIFIED.
+                        // A missing H1 replacement (whether CustomFold or the
+                        // explicit opt-in owned inline fallback) remains a hard
+                        // structural FAIL. Keep independent Mermaid captures,
+                        // but do not suppress unexpected exceptions.
                         if (entry.id == "md-atx-headings-h1-h6" &&
                             cause is IllegalStateException &&
                             cause.message?.startsWith(
-                                "E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE:"
+                                "E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE:"
                             ) == true) {
                             continue
                         }
