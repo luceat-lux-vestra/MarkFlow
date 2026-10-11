@@ -252,6 +252,7 @@ jobs:
             integrationTest
             -x buildPlugin
             -PplatformVersion="$STARTER_PLATFORM_VERSION"
+            -PstarterPackagedPlugin=true
             --stacktrace
           )
           diagnostics_args=()
@@ -408,7 +409,8 @@ jobs:
           set +e
           timeout --signal=TERM --kill-after=30s 24m \
             ./gradlew integrationTest -x buildPlugin \
-              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              --stacktrace --tests "$suite"
           test_status=$?
           set -e
 
