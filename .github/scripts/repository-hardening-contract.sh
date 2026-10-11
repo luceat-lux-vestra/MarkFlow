@@ -341,6 +341,16 @@ grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workf
   die "Starter no longer installs its pinned JBR profile"
 grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
   die "JCEF profile installer must be restricted to derived-content"
+# The split manifest now consumes the same real JCEF preview and must use the
+# same pinned scoped AppArmor policy, never a global sandbox opt-out.
+grep -Fq 'Install pinned sandboxed JCEF AppArmor profile (derived-manifest only)' "$starter_workflow" ||
+  die "Split manifest lost the pinned sandboxed JCEF profile"
+grep -Fq "if: matrix.shard == 'derived-manifest'" "$starter_workflow" ||
+  die "Split manifest JCEF profile step has incorrect scope"
+grep -Fq 'derived-content|derived-manifest' "$jcef_profile_script" ||
+  die "Pinned JCEF installer no longer admits both required derived suites"
+grep -Fq '! allowed_starter_shard derived-heading' "$jcef_profile_script" ||
+  die "Pinned JCEF installer lost its non-JCEF shard negative control"
 grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
   die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
 grep -Fq 'userns,' "$jcef_profile_script" ||

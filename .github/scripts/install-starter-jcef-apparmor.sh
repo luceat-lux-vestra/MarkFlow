@@ -3,6 +3,14 @@
 # Run 38009726635 captured proc/self/exe=.../bin/idea, not .../jbr/bin/java.
 # Never disable global userns/AppArmor restrictions or the JCEF sandbox.
 set -euo pipefail
+# Only JCEF-dependent Starter suites may install the pinned, scoped AppArmor
+# userns profile on a disposable x64 runner. No global userns bypass.
+allowed_starter_shard() {
+  case "${1:-}" in
+    derived-content|derived-manifest) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 profile_body() {
   local root="$1"
   [[ "$root" == /home/runner/work/MarkFlow/MarkFlow ]] || {
@@ -26,10 +34,15 @@ if [[ "${1:-}" == --self-test ]]; then
   [[ "$content" != *'/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/jbr/bin/java"'* ]]
   ! profile_body /tmp/untrusted >/dev/null 2>&1
   ! profile_body '/home/runner/work/MarkFlow/MarkFlow/**' >/dev/null 2>&1
+  allowed_starter_shard derived-content
+  allowed_starter_shard derived-manifest
+  ! allowed_starter_shard derived-heading
+  ! allowed_starter_shard canonical
+  ! allowed_starter_shard ''
   echo 'Pinned IDEA executable AppArmor template self-test PASS'
   exit 0
 fi
-[[ "${1:-}" == "" && "${STARTER_SHARD:-}" == derived-content ]] || exit 1
+[[ "${1:-}" == "" ]] && allowed_starter_shard "${STARTER_SHARD:-}" || exit 1
 [[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] || exit 1
 [[ "${STARTER_PLATFORM_VERSION:-}" == 2026.2.3 ]] || exit 1
 [[ -f /sys/module/apparmor/parameters/enabled ]] &&
