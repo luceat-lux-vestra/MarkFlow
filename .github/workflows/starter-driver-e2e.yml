@@ -95,15 +95,17 @@ jobs:
             grep -E '^[0-9a-f]{32,64}$' | LC_ALL=C sort \
             > build/e2e-package/compile-cache-index.txt
           entries="$(wc -l < build/e2e-package/compile-cache-index.txt | tr -d ' ')"
-          [ "$entries" -ge 1 ] && [ "$entries" -le 100 ] || {
-            echo "::error::New Gradle task-cache entries missing/excessive: $entries"; exit 1;
-          }
+          if [ "$entries" -lt 1 ] || [ "$entries" -gt 100 ]; then
+            echo "::error::New Gradle task-cache entries missing/excessive: $entries"
+            exit 1
+          fi
           tar -C "$cache_dir" -czf build/e2e-package/compile-cache.tar.gz \
             -T build/e2e-package/compile-cache-index.txt
           bytes="$(stat -c '%s' build/e2e-package/compile-cache.tar.gz)"
-          [ "$bytes" -gt 0 ] && [ "$bytes" -le 67108864 ] || {
-            echo "::error::Build-cache archive violates pilot 64MiB limit: $bytes"; exit 1;
-          }
+          if [ "$bytes" -le 0 ] || [ "$bytes" -gt 67108864 ]; then
+            echo "::error::Build-cache archive violates pilot 64MiB limit: $bytes"
+            exit 1
+          fi
           cache_sha256="$(sha256sum build/e2e-package/compile-cache.tar.gz | awk '{print $1}')"
           echo "Exact-run build-cache bundle: entries=$entries bytes=$bytes checksum=$cache_sha256"
           {
@@ -256,9 +258,10 @@ jobs:
           archive=build/e2e-package/compile-cache.tar.gz
           index=build/e2e-package/compile-cache-index.txt
           manifest=build/e2e-package/manifest.txt
-          [ -f "$archive" ] && [ -f "$index" ] || {
-            echo "::error::Exact-run compile-cache artifact missing"; exit 1;
-          }
+          if [ ! -f "$archive" ] || [ ! -f "$index" ]; then
+            echo "::error::Exact-run compile-cache artifact missing"
+            exit 1
+          fi
           expected="$(sed -n 's/^compile_cache_sha256=//p' "$manifest")"
           [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
             echo "::error::Malformed compile-cache checksum"; exit 1;
