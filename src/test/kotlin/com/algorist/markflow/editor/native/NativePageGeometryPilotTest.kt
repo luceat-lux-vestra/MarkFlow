@@ -28,7 +28,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         }
         val foreign = requireNotNull(platform)
         val originalScheme = editor.colorsScheme
-        val originalBorder = editor.contentComponent.border
+        val originalBorder = editor.scrollPane.border
         val originalText = doc.text
         val stamp = doc.modificationStamp
         val originalSecondY = editor.offsetToXY(secondHeading).y
@@ -70,7 +70,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         } finally {
             pilot.dispose()
             assertSame(originalScheme, editor.colorsScheme)
-            assertSame(originalBorder, editor.contentComponent.border)
+            assertSame(originalBorder, editor.scrollPane.border)
             assertEquals(originalInsets, editor.insets)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
@@ -92,11 +92,11 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         myFixture.configureByText("mixed-code-pilot.md", source)
         val editor = myFixture.editor
         val scheme = editor.colorsScheme
-        val border = editor.contentComponent.border
+        val border = editor.scrollPane.border
         val stamp = editor.document.modificationStamp
         assertNull(NativePageGeometryPilot.install(editor))
         assertSame(scheme, editor.colorsScheme)
-        assertSame(border, editor.contentComponent.border)
+        assertSame(border, editor.scrollPane.border)
         assertEquals(source, editor.document.text)
         assertEquals(stamp, editor.document.modificationStamp)
     }
