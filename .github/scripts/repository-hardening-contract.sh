@@ -269,6 +269,10 @@ grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "src/main/kotlin/c
   die "Stage E11 lost fail-closed full-line eligibility checks"
 grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
   die "Stage E11 lost source-line fold planner negative controls"
+grep -Fq 'testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E12 lost guarded heading controller test"
+grep -Fq 'private val sourceLineReplacement: Boolean = false' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
+  die "Stage E12 accidentally enabled unvalidated custom heading rendering by default"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
