@@ -440,8 +440,23 @@ internal class NativeHeadingPresentationController(
             removeFolds(listOf(fold))
             return
         }
+        // An inline H1 uses the original 22px source row and therefore lacks
+        // the bundled Preview's 16px heading-to-next-block spacing. Retain
+        // that spacing as a *blank* owned block only: never add a second text
+        // heading or its full typography height. This is limited to the
+        // co-start test pilot; no global heading geometry is changed.
+        val paragraphGap = editor.inlayModel.addBlockElement(
+            foldEnd, true, true, 0, NativeHeadingParagraphGapRenderer
+        )
+        if (paragraphGap == null || !paragraphGap.isValid) {
+            paragraphGap?.takeIf { it.isValid }?.dispose()
+            inline.dispose()
+            removeFolds(listOf(fold))
+            return
+        }
         owned[key] = OwnedHeadingPresentation(
-            folds = listOf(fold), coverageFolds = listOf(fold), inlay = inline,
+            folds = listOf(fold), coverageFolds = listOf(fold),
+            inlay = inline, spacingInlay = paragraphGap,
         )
         check(doc.modificationStamp == originalStamp &&
             doc.immutableCharSequence.toString() == originalText) {
@@ -512,6 +527,7 @@ internal class NativeHeadingPresentationController(
 
     private fun removeOwned(key: HeadingKey) {
         owned.remove(key)?.let { presentation ->
+            if (presentation.spacingInlay?.isValid == true) presentation.spacingInlay.dispose()
             if (presentation.inlay.isValid) presentation.inlay.dispose()
             removeFolds(presentation.folds)
         }
@@ -565,6 +581,7 @@ internal class NativeHeadingPresentationController(
         val folds: List<FoldRegion>,
         val coverageFolds: List<FoldRegion>,
         val inlay: Inlay<*>,
+        val spacingInlay: Inlay<*>? = null,
     )
 
     companion object {
@@ -658,6 +675,28 @@ internal class NativeHeadingInlayRenderer(
     companion object {
         private const val HORIZONTAL_PADDING = 4
     }
+}
+
+/**
+ * Pilot-only whitespace component, not a rich heading or baseline-approved
+ * typography. Preview H1 bottom margin was measured at 16 CSS pixels in the
+ * 2026.2.3 JCEF DOM ledger (device-pixel ratio 1). This adds only the missing
+ * block spacing after an otherwise source-line-height H1 inline replacement.
+ * The 89-case acceptance remains separately fail-closed.
+ */
+internal object NativeHeadingParagraphGapRenderer : EditorCustomElementRenderer {
+    private const val BUNDLED_PREVIEW_HEADING_BOTTOM_GAP_PX = 16
+
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int = 1
+
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int = BUNDLED_PREVIEW_HEADING_BOTTOM_GAP_PX
+
+    override fun paint(
+        inlay: Inlay<*>,
+        g: Graphics,
+        targetRegion: Rectangle,
+        textAttributes: TextAttributes,
+    ) { /* Deliberately empty. Source heading text is rendered only inline. */ }
 }
 
 /**
