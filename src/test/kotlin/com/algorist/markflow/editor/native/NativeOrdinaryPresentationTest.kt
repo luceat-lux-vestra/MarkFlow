@@ -569,6 +569,58 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * Even a final Heading with one trailing source newline can conflict
+     * with an IDE-owned section fold that includes the document's last byte.
+     * The normal fold begins at the same offset but is just one byte longer
+     * than the renderer's parser-proven whole-line replacement span.
+     */
+    fun testSourceReplacingHeadingRejectsSameStartFoldIncludingFinalNewline() {
+        val source = "Tail\n\n# Heading\n"
+        myFixture.configureByText("heading-trailing-newline-parent.md", source)
+        val editor = myFixture.editor
+        val doc = editor.document
+        val caret = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(caret)
+        val stamp = doc.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        val heading = NativeHeadingProjectionPlanner.plan(plan).single()
+        val line = doc.getLineNumber(heading.sourceRange.startOffset)
+        assertEquals(line..line, NativeHeadingCustomFoldLinePlanner.plan(editor, heading))
+        val first = doc.getLineStartOffset(line)
+        val lastHeadingByte = doc.getLineEndOffset(line)
+        assertEquals(doc.textLength - 1, lastHeadingByte)
+        var parent: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            parent = editor.foldingModel.addFoldRegion(first, doc.textLength, "IDE heading EOF region")
+        }
+        val external = requireNotNull(parent)
+        assertTrue(external.isValid)
+        assertTrue(external.isExpanded)
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val ev = controller.evidenceSnapshot()
+            assertEquals(1, ev.models)
+            assertEquals(0, ev.ownedCustomFolds)
+            assertEquals(0, ev.ownedInlays)
+            assertTrue("IDE-owned EOF parent must survive a failed custom install", external.isValid)
+            assertTrue(external.isExpanded)
+            assertEquals(first, external.startOffset)
+            assertEquals(doc.textLength, external.endOffset)
+            assertEquals(caret, editor.caretModel.offset)
+            assertEquals(source, doc.text)
+            assertEquals(stamp, doc.modificationStamp)
+        } finally {
+            controller.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (external.isValid) editor.foldingModel.removeFoldRegion(external)
+            }
+        }
+        assertEquals(source, doc.text)
+        assertEquals(stamp, doc.modificationStamp)
+    }
+
+    /**
      * #350 real IDEA regression: Markdown can own an expanded section fold
      * starting at the same source byte as its heading and ending after the
      * entire section. IntelliJ disallows a nested CustomFoldRegion with the
