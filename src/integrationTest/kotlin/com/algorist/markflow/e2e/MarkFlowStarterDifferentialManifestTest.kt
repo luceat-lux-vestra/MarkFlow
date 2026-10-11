@@ -804,7 +804,7 @@ class MarkFlowStarterDifferentialManifestTest {
             (() => {
               const expected = '${label}';
               const candidates = Array.from(document.querySelectorAll('svg')).filter(svg => {
-                const text = (svg.textContent || '').replace(/\\s+/g, ' ').trim();
+                const text = (svg.textContent || '').replace(/\s+/g, ' ').trim();
                 const rect = svg.getBoundingClientRect();
                 return text.includes(expected) && rect.width > 40 && rect.height > 40;
               });
@@ -830,7 +830,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 'preview_window_inner_height_css=' + viewport.height,
                 'browser_device_pixel_ratio=' + fmt(window.devicePixelRatio),
                 'svg_viewbox=' + (svg.getAttribute('viewBox') || 'UNAVAILABLE')
-              ].join('\\n');
+              ].join('\n');
             })()
         """.trimIndent()
     }
