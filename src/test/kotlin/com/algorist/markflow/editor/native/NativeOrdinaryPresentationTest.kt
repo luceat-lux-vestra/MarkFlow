@@ -514,6 +514,78 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * #350 real IDEA regression: Markdown can own an expanded section fold
+     * starting at the same source byte as its heading and ending after the
+     * entire section. IntelliJ disallows a nested CustomFoldRegion with the
+     * same start offset as that enclosing ordinary fold. Never remove or
+     * shrink the platform-owned section merely to force rich presentation.
+     */
+    fun testSourceReplacingHeadingLeavesSameStartPlatformSectionFoldUntouched() {
+        val source = "# Robot Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-parent-section.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stamp = document.modificationStamp
+        val originalY = editor.offsetToXY(tailOffset).y
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        assertEquals(1, NativeHeadingProjectionPlanner.plan(plan).size)
+        var platformSection: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            platformSection = editor.foldingModel.addFoldRegion(
+                0, document.textLength, "platform expanded heading section",
+            )
+        }
+        val foreign = requireNotNull(platformSection) { "Expanded section fold unavailable" }
+        assertTrue(foreign.isValid)
+        assertTrue(foreign.isExpanded)
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            var evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedCustomFolds)
+            assertEquals(0, evidence.ownedFolds)
+            assertTrue(foreign.isValid)
+            assertTrue(foreign.isExpanded)
+            assertEquals(0, foreign.startOffset)
+            assertEquals(document.textLength, foreign.endOffset)
+            assertEquals(originalY, editor.offsetToXY(tailOffset).y)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+
+            // Repeated activity refreshes must not steal a platform fold.
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(0, controller.evidenceSnapshot().ownedCustomFolds)
+            assertTrue(foreign.isValid)
+            assertTrue(foreign.isExpanded)
+
+            // Isolate the exact same-start parent-fold constraint. Removing
+            // the foreign fold is allowed only inside this controlled test.
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                editor.foldingModel.removeFoldRegion(foreign)
+            }
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.ownedCustomFolds)
+            assertEquals(1, evidence.ownedFolds)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+        } finally {
+            controller.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (foreign.isValid) editor.foldingModel.removeFoldRegion(foreign)
+            }
+        }
+        assertEquals(originalY, editor.offsetToXY(tailOffset).y)
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+    }
+
+    /**
      * Integration pilot: real production heading controller with explicit
      * sourceLineReplacement=true (the shipping default stays false).
      * Tests ownership through the actual controller's click and refresh paths.
