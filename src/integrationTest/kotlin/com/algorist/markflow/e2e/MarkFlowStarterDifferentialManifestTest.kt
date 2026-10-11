@@ -439,6 +439,90 @@ class MarkFlowStarterDifferentialManifestTest {
                                 native.width + "x" + native.height + "\npreview_viewport=" +
                                 reference.width + "x" + reference.height + "\n" + nativeEnvironment)
                         diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
+                        // E11: keep the measured FIT_TO_VIEWPORT capture as A, then
+                        // measure the *same* production Editor with the existing
+                        // SHRINK_TO_FIT setting as B. This is a test-only A/B:
+                        // no new rendering implementation or relaxed acceptance.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val originalSource = source
+                            val originalStamp = stamp
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "SHRINK_TO_FIT"
+                                )
+                            }
+                            fun rasterRecord(geometry: String): Map<String, Int> {
+                                val rows = geometry.lineSequence()
+                                    .filter { it.startsWith("index=") }.toList()
+                                check(rows.size == 1) { "E11 requires one real native raster" }
+                                return rows.single().split('\t').associate { field ->
+                                    val values = field.split('=', limit = 2)
+                                    check(values.size == 2) { "E11 raster ledger malformed" }
+                                    values[0] to requireNotNull(values[1].toIntOrNull()) {
+                                        "E11 raster ledger value missing"
+                                    }
+                                }
+                            }
+                            val originalRaster = rasterRecord(nativeRasterGeometry)
+                            val expectedWidth = requireNotNull(originalRaster["intrinsic_width"])
+                            val expectedHeight = requireNotNull(originalRaster["intrinsic_height"])
+                            waitFor(
+                                message = "E11 real-IDE native SHRINK_TO_FIT settled",
+                                timeout = 50.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    val visualState = visual.visualEvidence(remoteEditor)
+                                    val raster = rasterRecord(
+                                        preview.nativeRasterGeometry(remoteEditor)
+                                    )
+                                    visualState.contains("derivedPending=0") &&
+                                        raster["displayed_width"] == expectedWidth &&
+                                        raster["displayed_height"] == expectedHeight
+                                } },
+                                checker = { it }
+                            )
+                            val shrinkEvidence = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeRasterGeometry(remoteEditor)
+                            }
+                            val shrinkRaster = rasterRecord(shrinkEvidence)
+                            check(shrinkRaster["intrinsic_width"] == expectedWidth &&
+                                shrinkRaster["intrinsic_height"] == expectedHeight)
+                            Files.writeString(
+                                dest.resolve("mermaid-shrink-native-raster-geometry.txt"),
+                                shrinkEvidence
+                            )
+                            robot.waitForIdle()
+                            check(ImageIO.write(robot.createScreenCapture(native), "png",
+                                dest.resolve("mermaid-shrink-native.png").toFile()))
+                            Files.writeString(
+                                dest.resolve("mermaid-fit-versus-shrink-diagnostic.tsv"),
+                                "schema=markflow-mermaid-real-ide-size-mode-ab/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_VISUAL_BASELINE\n" +
+                                    "case_id\tmode\tintrinsic_width_px\tintrinsic_height_px\t" +
+                                    "displayed_width_px\tdisplayed_height_px\n" +
+                                    listOf(entry.id, "FIT_TO_VIEWPORT",
+                                        expectedWidth, expectedHeight,
+                                        originalRaster.getValue("displayed_width"),
+                                        originalRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n" +
+                                    listOf(entry.id, "SHRINK_TO_FIT",
+                                        expectedWidth, expectedHeight,
+                                        shrinkRaster.getValue("displayed_width"),
+                                        shrinkRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n"
+                            )
+                            // Source authority, caret and mod stamp must survive
+                            // the size-mode change; restore the original mode so
+                            // subsequent cases are not coupled through settings.
+                            check(driver.withContext(OnDispatcher.EDT) {
+                                preview.sourceText(remoteEditor) == originalSource &&
+                                    preview.sourceStamp(remoteEditor) == originalStamp
+                            }) { "E11 mode A/B mutated the authoritative source" }
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "FIT_TO_VIEWPORT"
+                                )
+                            }
+                        }
                         markFlow.close(editor)
                         if (entry.id == "md-atx-headings-h1-h6") {
                             val abDest = output.resolve("heading-layout-ab")
@@ -1227,6 +1311,7 @@ class MarkFlowStarterDifferentialManifestTest {
 private interface DifferentialManifestVisualRemote {
     fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
+    fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
