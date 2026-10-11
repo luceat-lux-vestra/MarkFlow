@@ -485,6 +485,36 @@ internal class NativeHeadingInlayRenderer(
 }
 
 /**
+ * Fail-closed physical-line eligibility for a future custom heading fold.
+ * Never let a custom fold hide any unrelated source text: its region always
+ * covers whole editor lines, unlike the old subrange syntax folds.
+ */
+internal object NativeHeadingCustomFoldLinePlanner {
+    fun plan(editor: Editor, model: NativeHeadingModel): IntRange? {
+        if (editor.isDisposed) return null
+        val document = editor.document
+        val start = model.sourceRange.startOffset
+        val end = model.sourceRange.endOffset
+        if (start < 0 || end <= start || end > document.textLength) return null
+        val line = document.getLineNumber(start)
+        if (document.getLineNumber(end - 1) != line) return null
+        // Setext, nested/indented text and parser sub-line ranges are not
+        // eligible for whole-line replacement until separately reviewed.
+        if (start != document.getLineStartOffset(line) ||
+            end != document.getLineEndOffset(line)) return null
+
+        val nextLine = line + 1
+        val afterBlankLine = line + 2
+        if (afterBlankLine < document.lineCount &&
+            document.getLineStartOffset(nextLine) == document.getLineEndOffset(nextLine) &&
+            document.getLineStartOffset(afterBlankLine) < document.getLineEndOffset(afterBlankLine)) {
+            return line..nextLine
+        }
+        return line..line
+    }
+}
+
+/**
  * Actual #350 replacement-presentation renderer. Unlike an Editor block inlay,
  * CustomFoldRegion occupies source visual lines, so its declared height does
  * not get added *after* the original heading + blank-line height.
