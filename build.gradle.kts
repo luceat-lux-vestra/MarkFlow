@@ -3,8 +3,10 @@ import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.bundling.Zip
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
+import java.security.MessageDigest
 
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.io.File
@@ -51,10 +53,60 @@ kotlin {
     jvmToolchain(25)
 }
 
+// Research #375: in the exact-archive Starter CI consumer only, compile E2E tests
+// against the installed plugin binary, not a second build of the product source.
+// Default local/ordinary Gradle builds retain their original source-set graph.
+val starterPackagedPlugin = providers.gradleProperty("starterPackagedPlugin").orNull == "true"
+val starterPackageZip = layout.buildDirectory.file("e2e-package/plugin.zip")
+val starterExtractDir = layout.buildDirectory.dir("e2e-package/compiled-plugin")
+val starterCompiledJar = starterExtractDir.map { it.file("MarkFlow/lib/MarkFlow-0.0.0-dev.jar") }
+val verifyAndExtractStarterJar = tasks.register<Sync>("verifyAndExtractStarterJar") {
+    group = "verification"
+    description = "Verifies and extracts only the main jar from the exact Starter package"
+    from({ zipTree(starterPackageZip.get().asFile) }) {
+        include("MarkFlow/lib/MarkFlow-0.0.0-dev.jar")
+    }
+    into(starterExtractDir)
+    doFirst {
+        // Workflow independently verifies exact source, IDE version, archive SHA and
+        // distribution identity before entering Gradle. Re-check inside the consumer.
+        val archive = starterPackageZip.get().asFile
+        check(archive.isFile) { "Missing exact Starter package ZIP: $archive" }
+        val expected = providers.environmentVariable("E2E_PLUGIN_SHA256").orNull
+            ?: error("Missing pinned E2E_PLUGIN_SHA256 in Starter archive consumer")
+        check(Regex("[0-9a-f]{64}").matches(expected)) { "Invalid Starter package digest" }
+        val hasher = MessageDigest.getInstance("SHA-256")
+        archive.inputStream().use { input ->
+            val bytes = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(bytes)
+                if (n < 0) break
+                hasher.update(bytes, 0, n)
+            }
+        }
+        val actual = hasher.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        check(actual == expected) { "Exact Starter plugin ZIP digest changed" }
+        check(version == "0.0.0-dev") { "Unexpected release-version Starter archive consumer" }
+    }
+    doLast {
+        check(starterCompiledJar.get().asFile.isFile) {
+            "Exact Starter package lacks the expected compiled MarkFlow plugin jar"
+        }
+    }
+}
+val packagedStarterJarClasspath = files(starterCompiledJar).builtBy(verifyAndExtractStarterJar)
+
 sourceSets {
     create("integrationTest") {
-        compileClasspath += sourceSets.main.get().output
-        runtimeClasspath += sourceSets.main.get().output
+        if (starterPackagedPlugin) {
+            // All production E2E bridges run INSIDE the real IDEA process and are
+            // reached through @Remote. The test worker sees exact packaged classes.
+            compileClasspath += packagedStarterJarClasspath
+            runtimeClasspath += packagedStarterJarClasspath
+        } else {
+            compileClasspath += sourceSets.main.get().output
+            runtimeClasspath += sourceSets.main.get().output
+        }
     }
 }
 
@@ -375,6 +427,23 @@ tasks.named("buildPlugin") {
     dependsOn(buildWebview)
 }
 
+// The vendor's testIdeUi.archiveFile defaults to buildPlugin.archiveFile.
+// Redirect that *standard Gradle Zip* output provider only in the CI
+// consumer; do not call the vendor's @Incubating TestIdeUiTask archiveFile
+// API (Qodana UnstableApiUsage High). Real buildPlugin execution is prohibited
+// in consumer mode so it cannot overwrite the exact trusted package.
+if (starterPackagedPlugin) {
+    tasks.named<Zip>("buildPlugin") {
+        destinationDirectory.set(layout.buildDirectory.dir("e2e-package"))
+        archiveFileName.set("plugin.zip")
+        doFirst {
+            throw GradleException(
+                "Starter packaged-plugin consumer must not rebuild/overwrite the verified plugin ZIP"
+            )
+        }
+    }
+}
+
 tasks {
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
@@ -387,7 +456,20 @@ tasks {
 
 intellijPlatformTesting {
     val integrationTest by testIdeUi.registering {
+        if (starterPackagedPlugin) {
+            // The vendor's companion sandbox normally reads composedJar
+            // (and recompiles production). Supply the verified plugin's own jar.
+            prepareSandboxTask {
+                pluginJar.set(starterCompiledJar)
+                dependsOn(verifyAndExtractStarterJar)
+            }
+        }
         task {
+            if (starterPackagedPlugin) {
+                // testIdeUi uses the standard buildPlugin.archiveFile provider above.
+                // ZIP identity is verified again by our explicit prerequisite.
+                dependsOn(verifyAndExtractStarterJar)
+            }
             val integrationTestSourceSet = sourceSets.getByName("integrationTest")
             testClassesDirs = integrationTestSourceSet.output.classesDirs
             classpath = integrationTestSourceSet.runtimeClasspath
