@@ -885,33 +885,65 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             controller.applyPlan(plan, richPresentationEnabled = true)
             var evidence = controller.evidenceSnapshot()
             assertEquals(1, evidence.models)
-            assertEquals(0, evidence.ownedInlays)
+            // Under the expanded co-start section the new candidate owns one
+            // collapsed *ordinary* source fold plus one inline rich heading.
+            // Never conflate it with a CustomFold or additive block element.
+            assertEquals(1, evidence.ownedInlays)
             assertEquals(0, evidence.ownedCustomFolds)
-            assertEquals(0, evidence.ownedFolds)
+            assertEquals(1, evidence.ownedFolds)
+            assertEquals(1, evidence.fullyConcealed)
+            assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
+            assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlayRenderer })
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(0, foreign.startOffset)
             assertEquals(document.textLength, foreign.endOffset)
-            assertEquals(originalY, editor.offsetToXY(tailOffset).y)
+            val projectedY = editor.offsetToXY(tailOffset).y
+            assertTrue("Projected following paragraph must stay after H1", projectedY > 0)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
 
-            // Repeated activity refreshes must not steal a platform fold.
+            // Repeated activity refreshes must retain exactly one inlay and
+            // never delete, collapse, shorten or replace the foreign section.
             controller.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(1, controller.evidenceSnapshot().ownedInlays)
             assertEquals(0, controller.evidenceSnapshot().ownedCustomFolds)
+            assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
+            assertTrue(foreign.isValid)
+            assertTrue(foreign.isExpanded)
+
+            // Source reveal is mandatory: move caret into the H1 and remove
+            // the MarkFlow-owned fold+inlay without touching the foreign fold.
+            editor.caretModel.moveToOffset(source.indexOf("Robot Heading") + 2)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            evidence = controller.evidenceSnapshot()
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(originalY, editor.offsetToXY(tailOffset).y)
+            assertTrue(foreign.isValid)
+            assertTrue(foreign.isExpanded)
+            editor.caretModel.moveToOffset(tailOffset)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(1, controller.evidenceSnapshot().ownedInlays)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
 
             // Isolate the exact same-start parent-fold constraint. Removing
-            // the foreign fold is allowed only inside this controlled test.
+            // the synthetic foreign fold is allowed only inside this test;
+            // a fresh plan then installs the regular CustomFold path.
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
                 editor.foldingModel.removeFoldRegion(foreign)
             }
-            controller.refreshActivity(plan, richPresentationEnabled = true)
+            controller.applyPlan(plan, richPresentationEnabled = true)
             evidence = controller.evidenceSnapshot()
             assertEquals(1, evidence.ownedCustomFolds)
             assertEquals(1, evidence.ownedFolds)
             assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
         } finally {
