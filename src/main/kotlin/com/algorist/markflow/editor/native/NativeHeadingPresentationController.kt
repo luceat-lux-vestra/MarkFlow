@@ -232,13 +232,27 @@ internal class NativeHeadingPresentationController(
             event.consume()
             return true
         }
-        val renderer = event.inlay?.renderer as? NativeHeadingInlayRenderer ?: return false
-        val key = HeadingKey(renderer.sourceRange.startOffset, renderer.sourceRange.endOffset)
+        val renderer = event.inlay?.renderer ?: return false
+        val sourceRange: ProjectionRange
+        val contentOffset: Int
+        when (renderer) {
+            is NativeHeadingInlayRenderer -> {
+                sourceRange = renderer.sourceRange
+                contentOffset = renderer.contentOffset
+            }
+            is NativeHeadingInlineFoldRenderer -> {
+                sourceRange = renderer.sourceRange
+                contentOffset = renderer.contentOffset
+            }
+            else -> return false
+        }
+        val key = HeadingKey(sourceRange.startOffset, sourceRange.endOffset)
         val presentation = owned[key] ?: return false
         if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
+        if (currentPlanIdentity?.let(::matchesCurrentIdentity) != true) return false
         removeOwned(key)
         editor.selectionModel.removeSelection()
-        editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
+        editor.caretModel.primaryCaret.moveToOffset(contentOffset)
         mouseReveals += 1
         event.consume()
         return true
@@ -351,7 +365,17 @@ internal class NativeHeadingPresentationController(
                 NativeHeadingCustomFoldRenderer(editor, model),
             )
         }
-        val region = installed ?: return // fail-closed to exact source
+        if (installed == null) {
+            // In the explicit #353 source-line-replacement pilot ONLY:
+            // the Markdown provider may own an expanded section fold with the
+            // same start as document H1. IDEA rejects a CustomFoldRegion there.
+            // Try a small ordinary MarkFlow-owned source fold plus a SAME-LINE
+            // inline heading. Never remove/change the platform-owned region,
+            // and never fall back to the legacy additive block inlay.
+            installSameStartInlineFallback(identity, key, model, lineSpan)
+            return
+        }
+        val region = installed ?: return
         if (!region.isValid || region.isExpanded) {
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
                 if (region.isValid) editor.foldingModel.removeFoldRegion(region)
@@ -364,6 +388,64 @@ internal class NativeHeadingPresentationController(
         }
         check(editor.document.immutableCharSequence.toString() == sourceBefore) {
             "source-line replacement changed authoritative heading document bytes"
+        }
+    }
+
+    /**
+     * Isolated #353 H1 candidate, enabled only for sourceLineReplacement tests.
+     * The added InlineElement uses the existing heading source line rather
+     * than introducing a second block height. This is NOT release acceptance:
+     * the pinned full-IDE mouse/selection and baseline contracts remain gates.
+     */
+    private fun installSameStartInlineFallback(
+        identity: ProjectionSourceIdentity,
+        key: HeadingKey,
+        model: NativeHeadingModel,
+        lineSpan: IntRange,
+    ) {
+        if (!isCurrent(identity) || isActive(model) ||
+            model.level != 1 || model.sourceRange.startOffset != 0 ||
+            lineSpan.first != 0) return
+        val foreign = editor.foldingModel.allFoldRegions.any { fold ->
+            fold.isValid && fold.isExpanded &&
+                fold !is CustomFoldRegion &&
+                fold.startOffset == model.sourceRange.startOffset &&
+                fold.endOffset > model.sourceRange.endOffset
+        }
+        if (!foreign) return
+        val doc = editor.document
+        val originalText = doc.immutableCharSequence.toString()
+        val originalStamp = doc.modificationStamp
+        val foldStart = model.sourceRange.startOffset
+        val foldEnd = model.sourceRange.endOffset
+        // Only a parser-proven physical H1 line can be concealed; the following
+        // blank line/paragraph and other platform folds remain untouched.
+        if (foldEnd != doc.getLineEndOffset(0)) return
+        var ownedFold: FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            ownedFold = editor.foldingModel.addFoldRegion(
+                foldStart, foldEnd, ZERO_WIDTH_PLACEHOLDER
+            )
+            ownedFold?.isExpanded = false
+        }
+        val fold = ownedFold ?: return
+        if (!fold.isValid || fold.isExpanded) {
+            removeFolds(listOf(fold))
+            return
+        }
+        val renderer = NativeHeadingInlineFoldRenderer(editor, model)
+        val inline = editor.inlayModel.addInlineElement(foldEnd, true, renderer)
+        if (inline == null || !inline.isValid) {
+            inline?.takeIf { it.isValid }?.dispose()
+            removeFolds(listOf(fold))
+            return
+        }
+        owned[key] = OwnedHeadingPresentation(
+            folds = listOf(fold), coverageFolds = listOf(fold), inlay = inline,
+        )
+        check(doc.modificationStamp == originalStamp &&
+            doc.immutableCharSequence.toString() == originalText) {
+            "co-start H1 inline fallback mutated authoritative source"
         }
     }
 
@@ -575,6 +657,66 @@ internal class NativeHeadingInlayRenderer(
 
     companion object {
         private const val HORIZONTAL_PADDING = 4
+    }
+}
+
+/**
+ * Bounded source-line H1 pilot for IDEA's co-start platform section folding.
+ * Inline geometry participates in the SAME source line's vertical rhythm;
+ * there is no extra block element and no platform-fold ownership transfer.
+ */
+internal class NativeHeadingInlineFoldRenderer(
+    private val editor: Editor,
+    private val model: NativeHeadingModel,
+) : EditorCustomElementRenderer {
+    val sourceRange: ProjectionRange get() = model.sourceRange
+    val contentOffset: Int get() = model.contentRange.startOffset
+
+    private fun font(): Font = editor.contentComponent.font.deriveFont(
+        Font.BOLD, editor.contentComponent.font.size2D * nativeHeadingFontScale(model.level)
+    )
+
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+        val width = max(1, editor.contentComponent.getFontMetrics(font()).stringWidth(model.text) + 8)
+        val viewport = editor.scrollingModel.visibleArea.width
+        return if (editor.contentComponent.isShowing && viewport > 9) min(width, viewport - 8) else width
+    }
+
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int =
+        max(editor.lineHeight, editor.contentComponent.getFontMetrics(font()).height)
+
+    override fun paint(
+        inlay: Inlay<*>,
+        g: Graphics,
+        targetRegion: Rectangle,
+        textAttributes: TextAttributes,
+    ) {
+        val g2 = g as? Graphics2D ?: return
+        val font = font()
+        val metrics = g2.getFontMetrics(font)
+        val maxWidth = max(1, targetRegion.width - 8)
+        val ellipsis = "…"
+        var text = model.text
+        if (metrics.stringWidth(text) > maxWidth) {
+            val budget = max(0, maxWidth - metrics.stringWidth(ellipsis))
+            while (text.isNotEmpty() && metrics.stringWidth(text) > budget) text = text.dropLast(1)
+            text += ellipsis
+        }
+        val previousFont = g2.font
+        val previousColor = g2.color
+        val previousHint = g2.getRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING)
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            g2.font = font
+            g2.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            val baseline = targetRegion.y +
+                max(metrics.ascent, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
+            g2.drawString(text, targetRegion.x + 4, baseline)
+        } finally {
+            g2.font = previousFont
+            g2.color = previousColor
+            if (previousHint != null) g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, previousHint)
+        }
     }
 }
 
