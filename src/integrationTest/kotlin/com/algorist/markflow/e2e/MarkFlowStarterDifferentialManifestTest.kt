@@ -282,6 +282,72 @@ class MarkFlowStarterDifferentialManifestTest {
                             },
                             checker = { it }
                         )
+                        // E10: independently measure the genuine Preview Mermaid SVG.
+                        // Source-identifying text selects a real diagram rather than any
+                        // incidental IDE/browser icon. These are DIAGNOSTIC values until
+                        // a maintainer has reviewed a structural viewport contract.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val requiredLabel = if (entry.id == "mermaid-gantt") {
+                                "MarkFlow Example Schedule"
+                            } else {
+                                "Rendered correctly?"
+                            }
+                            val svgEvidence = driver.ui.jcef().callJs(
+                                mermaidReferenceSvgProbe(requiredLabel)
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-mermaid-svg-dom-geometry.txt"),
+                                svgEvidence + "\n", StandardCharsets.UTF_8
+                            )
+                            check(svgEvidence.startsWith(
+                                "schema=markflow-reference-mermaid-svg-dom-geometry/v1\n"
+                            )) {
+                                "E10 genuine bundled Mermaid SVG not source-identifiable; " +
+                                    "retained reference probe: " + svgEvidence.take(500)
+                            }
+                            val nativeRow = nativeRasterGeometry.lineSequence().single {
+                                it.startsWith("index=")
+                            }.split('\t').associate { property ->
+                                val fields = property.split('=', limit = 2)
+                                check(fields.size == 2) { "E10 native raster field malformed" }
+                                fields[0] to fields[1]
+                            }
+                            val svgRows = svgEvidence.lineSequence()
+                                .filter { '=' in it }.associate {
+                                    it.substringBefore('=') to it.substringAfter('=')
+                                }
+                            fun nativeDimension(name: String): Int =
+                                requireNotNull(nativeRow[name]?.toIntOrNull()) {
+                                    "E10 native raster missing " + name
+                                }
+                            fun svgDimension(name: String): Double =
+                                requireNotNull(svgRows[name]?.toDoubleOrNull()) {
+                                    "E10 reference SVG missing " + name
+                                }
+                            val nativeDisplayedWidth = nativeDimension("displayed_width")
+                            val nativeDisplayedHeight = nativeDimension("displayed_height")
+                            val svgCssWidth = svgDimension("svg_css_width")
+                            val svgCssHeight = svgDimension("svg_css_height")
+                            check(svgCssWidth.isFinite() && svgCssWidth > 0.0 &&
+                                svgCssHeight.isFinite() && svgCssHeight > 0.0)
+                            Files.writeString(
+                                dest.resolve("mermaid-native-reference-size-diagnostic.tsv"),
+                                "schema=markflow-mermaid-native-reference-size/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
+                                    "case_id\tartifact_width_px\tartifact_height_px\t" +
+                                    "native_width_px\tnative_height_px\t" +
+                                    "reference_svg_width_css_px\treference_svg_height_css_px\t" +
+                                    "native_to_reference_width_ratio\tnative_to_reference_height_ratio\n" +
+                                    listOf(entry.id,
+                                        nativeDimension("intrinsic_width"),
+                                        nativeDimension("intrinsic_height"),
+                                        nativeDisplayedWidth, nativeDisplayedHeight,
+                                        svgCssWidth, svgCssHeight,
+                                        nativeDisplayedWidth / svgCssWidth,
+                                        nativeDisplayedHeight / svgCssHeight
+                                    ).joinToString("\t") + "\n"
+                            )
+                        }
                         // Stage E2: real bundled JCEF DOM headings, identified by exact
                         // source text and ordered source lines, not screenshot offsets.
                         // Driver JCEF JS queries run against the loaded platform preview.
@@ -373,6 +439,103 @@ class MarkFlowStarterDifferentialManifestTest {
                                 native.width + "x" + native.height + "\npreview_viewport=" +
                                 reference.width + "x" + reference.height + "\n" + nativeEnvironment)
                         diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
+                        // E11: keep the measured FIT_TO_VIEWPORT capture as A, then
+                        // measure the *same* production Editor with the existing
+                        // SHRINK_TO_FIT setting as B. This is a test-only A/B:
+                        // no new rendering implementation or relaxed acceptance.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val originalSource = source
+                            val originalStamp = stamp
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "SHRINK_TO_FIT"
+                                )
+                            }
+                            fun rasterRecord(geometry: String): Map<String, Int> {
+                                val rows = geometry.lineSequence()
+                                    .filter { it.startsWith("index=") }.toList()
+                                check(rows.size == 1) { "E11 requires one real native raster" }
+                                return rows.single().split('\t').associate { field ->
+                                    val values = field.split('=', limit = 2)
+                                    check(values.size == 2) { "E11 raster ledger malformed" }
+                                    values[0] to requireNotNull(values[1].toIntOrNull()) {
+                                        "E11 raster ledger value missing"
+                                    }
+                                }
+                            }
+                            val originalRaster = rasterRecord(nativeRasterGeometry)
+                            // Mermaid's size mode also changes SVG useMaxWidth;
+                            // the renderer may legitimately generate a different
+                            // *intrinsic* PNG. Never assume FIT and SHRINK rasters
+                            // are byte-/dimension-identical. Compare each mode
+                            // against its own genuine decoded PNG instead.
+                            waitFor(
+                                message = "E11 real-IDE native SHRINK_TO_FIT settled",
+                                timeout = 50.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    runCatching {
+                                        val visualState = visual.visualEvidence(remoteEditor)
+                                        val raster = rasterRecord(
+                                            preview.nativeRasterGeometry(remoteEditor)
+                                        )
+                                        visualState.contains("derivedPending=0") &&
+                                            raster.getValue("displayed_width") in
+                                                1..raster.getValue("intrinsic_width") &&
+                                            raster.getValue("displayed_height") in
+                                                1..raster.getValue("intrinsic_height")
+                                    }.getOrDefault(false)
+                                } },
+                                checker = { it }
+                            )
+                            val shrinkEvidence = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeRasterGeometry(remoteEditor)
+                            }
+                            val shrinkRaster = rasterRecord(shrinkEvidence)
+                            check(shrinkRaster.getValue("displayed_width") in
+                                    1..shrinkRaster.getValue("intrinsic_width") &&
+                                shrinkRaster.getValue("displayed_height") in
+                                    1..shrinkRaster.getValue("intrinsic_height")) {
+                                "E11 SHRINK_TO_FIT enlarged or collapsed the rendered PNG"
+                            }
+                            Files.writeString(
+                                dest.resolve("mermaid-shrink-native-raster-geometry.txt"),
+                                shrinkEvidence
+                            )
+                            robot.waitForIdle()
+                            check(ImageIO.write(robot.createScreenCapture(native), "png",
+                                dest.resolve("mermaid-shrink-native.png").toFile()))
+                            Files.writeString(
+                                dest.resolve("mermaid-fit-versus-shrink-diagnostic.tsv"),
+                                "schema=markflow-mermaid-real-ide-size-mode-ab/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_VISUAL_BASELINE\n" +
+                                    "case_id\tmode\tintrinsic_width_px\tintrinsic_height_px\t" +
+                                    "displayed_width_px\tdisplayed_height_px\n" +
+                                    listOf(entry.id, "FIT_TO_VIEWPORT",
+                                        originalRaster.getValue("intrinsic_width"),
+                                        originalRaster.getValue("intrinsic_height"),
+                                        originalRaster.getValue("displayed_width"),
+                                        originalRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n" +
+                                    listOf(entry.id, "SHRINK_TO_FIT",
+                                        shrinkRaster.getValue("intrinsic_width"),
+                                        shrinkRaster.getValue("intrinsic_height"),
+                                        shrinkRaster.getValue("displayed_width"),
+                                        shrinkRaster.getValue("displayed_height"))
+                                        .joinToString("\t") + "\n"
+                            )
+                            // Source authority, caret and mod stamp must survive
+                            // the size-mode change; restore the original mode so
+                            // subsequent cases are not coupled through settings.
+                            check(driver.withContext(OnDispatcher.EDT) {
+                                preview.sourceText(remoteEditor) == originalSource &&
+                                    preview.sourceStamp(remoteEditor) == originalStamp
+                            }) { "E11 mode A/B mutated the authoritative source" }
+                            driver.withContext(OnDispatcher.EDT) {
+                                visual.setMermaidSizeModeForDifferential(
+                                    remoteEditor, "FIT_TO_VIEWPORT"
+                                )
+                            }
+                        }
                         markFlow.close(editor)
                         if (entry.id == "md-atx-headings-h1-h6") {
                             val abDest = output.resolve("heading-layout-ab")
@@ -729,6 +892,46 @@ class MarkFlowStarterDifferentialManifestTest {
      * is not an oracle. Relative bounding coordinates are invariant under a
      * shared browser scroll displacement (unlike viewport screenshot offsets).
      */
+    /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
+    private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
+        require(sourceLabel == "Rendered correctly?" ||
+            sourceLabel == "MarkFlow Example Schedule")
+        val label = sourceLabel // fixed in-repository fixture labels; no arbitrary JS input
+        return """
+            (() => {
+              const expected = '${label}';
+              const candidates = Array.from(document.querySelectorAll('svg')).filter(svg => {
+                const text = (svg.textContent || '').replace(/\s+/g, ' ').trim();
+                const rect = svg.getBoundingClientRect();
+                return text.includes(expected) && rect.width > 40 && rect.height > 40;
+              });
+              if (candidates.length !== 1) {
+                return 'FAIL: source-identifiable Mermaid SVG count=' + candidates.length +
+                    ';expected=' + expected + ';allSvg=' + document.querySelectorAll('svg').length;
+              }
+              const svg = candidates[0];
+              const bounds = svg.getBoundingClientRect();
+              const viewport = { width: window.innerWidth, height: window.innerHeight };
+              if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+                return 'FAIL: Mermaid SVG bounds nonfinite';
+              }
+              const fmt = n => Number(n).toFixed(3);
+              return [
+                'schema=markflow-reference-mermaid-svg-dom-geometry/v1',
+                'source_label=' + expected,
+                'svg_css_width=' + fmt(bounds.width),
+                'svg_css_height=' + fmt(bounds.height),
+                'svg_css_left=' + fmt(bounds.left),
+                'svg_css_top=' + fmt(bounds.top),
+                'preview_window_inner_width_css=' + viewport.width,
+                'preview_window_inner_height_css=' + viewport.height,
+                'browser_device_pixel_ratio=' + fmt(window.devicePixelRatio),
+                'svg_viewbox=' + (svg.getAttribute('viewBox') || 'UNAVAILABLE')
+              ].join('\n');
+            })()
+        """.trimIndent()
+    }
+
     private val headingReferenceDomProbe = """
         (() => {
           const rows = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
@@ -1121,6 +1324,7 @@ class MarkFlowStarterDifferentialManifestTest {
 private interface DifferentialManifestVisualRemote {
     fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
+    fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
