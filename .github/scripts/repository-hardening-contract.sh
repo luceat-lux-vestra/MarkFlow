@@ -320,8 +320,21 @@ grep -Fq 'CANDIDATE_GANTT_MAX_UPSCALE_X2' "$manifest_test" ||
   die "Stage E3 lost deterministic Gantt upscaling gate"
 grep -Fq 'candidate-structural-failures.tsv' "$manifest_test" ||
   die "Stage E3 lost retained failure ledger"
-grep -Fq 'check(structuralFailures.isEmpty())' "$manifest_test" ||
-  die "Stage E3 known defects cannot silently return successful test status"
+# Bounded capture may complete with a separately retained, unreviewed
+# source-baseline acceptance blocker, but genuine capture/structural defects
+# still fail. Full #353 release acceptance must remain independently strict.
+grep -Fq 'check(captureFailures.isEmpty())' "$manifest_test" ||
+  die "Stage D unexpected structural capture defects must remain fail-closed"
+grep -Fq 'if (contract == "acceptance")' "$manifest_test" ||
+  die "Full #353 acceptance contract selector is missing"
+grep -Fq 'check(structuralFailures.isEmpty() &&' "$manifest_test" ||
+  die "Full #353 acceptance must reject every unresolved structural finding"
+grep -Fq 'error("Full #353 visual/differential acceptance remains unimplemented")' "$manifest_test" ||
+  die "Unimplemented visual acceptance must remain fail-closed"
+grep -Fq '"full_differential_acceptance\\":false' "$manifest_test" ||
+  die "Incomplete Stage D capture cannot claim full visual acceptance"
+grep -Fq '"release_eligible\\":false' "$manifest_test" ||
+  die "Unreviewed Stage D capture cannot authorize release"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
