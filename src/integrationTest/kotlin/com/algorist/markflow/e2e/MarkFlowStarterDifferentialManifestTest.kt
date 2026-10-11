@@ -596,6 +596,20 @@ class MarkFlowStarterDifferentialManifestTest {
                     } catch (cause: Throwable) {
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
+                        // The first ATX heading has a platform-owned expanded
+                        // section fold with the SAME start offset. IDEA rejects
+                        // our nested CustomFoldRegion. This known, retained
+                        // structural FAIL must not prevent capturing the other
+                        // explicitly selected, independent Mermaid cases.
+                        // Do not suppress unexpected exceptions, or accept the
+                        // failing H1 case as CAPTURED_UNVERIFIED.
+                        if (entry.id == "md-atx-headings-h1-h6" &&
+                            cause is IllegalStateException &&
+                            cause.message?.startsWith(
+                                "E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE:"
+                            ) == true) {
+                            continue
+                        }
                         throw cause
                     }
                 }
@@ -633,7 +647,12 @@ class MarkFlowStarterDifferentialManifestTest {
             sandbox.toFile().deleteRecursively()
         }
         if (failure != null) throw failure
-        check(selected.all { states[it.id] == "CAPTURED_UNVERIFIED" })
+        val incomplete = selected.filter { states[it.id] != "CAPTURED_UNVERIFIED" }
+        check(incomplete.isEmpty()) {
+            "Stage E9 selected-case capture remains FAIL: " +
+                incomplete.joinToString { it.id + "=" + states.getValue(it.id) } +
+                "; retained structural failures: " + structuralFailures.joinToString("; ")
+        }
         check(structuralFailures.isEmpty()) {
             "Stage E3 deterministic known-defect repros exceeded candidate bounds: " +
                 structuralFailures.joinToString("; ") +
