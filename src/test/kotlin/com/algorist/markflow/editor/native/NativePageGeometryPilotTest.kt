@@ -90,7 +90,7 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
     fun testCodeFencesFailClosedWithoutTouchingEditorOrPlatformFold() {
         val source = "# Head\n\nParagraph.\n\n```kotlin\nval x = 1\n```\n"
         myFixture.configureByText("mixed-code-pilot.md", source)
-        val editor = myFixture.editor
+        val editor = myFixture.editor as EditorEx
         val scheme = editor.colorsScheme
         val border = editor.scrollPane.border
         val stamp = editor.document.modificationStamp
