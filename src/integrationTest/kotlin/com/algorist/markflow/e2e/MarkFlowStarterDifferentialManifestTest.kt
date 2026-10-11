@@ -282,6 +282,72 @@ class MarkFlowStarterDifferentialManifestTest {
                             },
                             checker = { it }
                         )
+                        // E10: independently measure the genuine Preview Mermaid SVG.
+                        // Source-identifying text selects a real diagram rather than any
+                        // incidental IDE/browser icon. These are DIAGNOSTIC values until
+                        // a maintainer has reviewed a structural viewport contract.
+                        if (entry.id == "mermaid-flowchart-minimal" || entry.id == "mermaid-gantt") {
+                            val requiredLabel = if (entry.id == "mermaid-gantt") {
+                                "MarkFlow Example Schedule"
+                            } else {
+                                "Rendered correctly?"
+                            }
+                            val svgEvidence = driver.ui.jcef().callJs(
+                                mermaidReferenceSvgProbe(requiredLabel)
+                            )
+                            Files.writeString(
+                                dest.resolve("intellij-mermaid-svg-dom-geometry.txt"),
+                                svgEvidence + "\n", StandardCharsets.UTF_8
+                            )
+                            check(svgEvidence.startsWith(
+                                "schema=markflow-reference-mermaid-svg-dom-geometry/v1\n"
+                            )) {
+                                "E10 genuine bundled Mermaid SVG not source-identifiable; " +
+                                    "retained reference probe: " + svgEvidence.take(500)
+                            }
+                            val nativeRow = nativeRasterGeometry.lineSequence().single {
+                                it.startsWith("index=")
+                            }.split('\t').associate { property ->
+                                val fields = property.split('=', limit = 2)
+                                check(fields.size == 2) { "E10 native raster field malformed" }
+                                fields[0] to fields[1]
+                            }
+                            val svgRows = svgEvidence.lineSequence()
+                                .filter { '=' in it }.associate {
+                                    it.substringBefore('=') to it.substringAfter('=')
+                                }
+                            fun nativeDimension(name: String): Int =
+                                requireNotNull(nativeRow[name]?.toIntOrNull()) {
+                                    "E10 native raster missing " + name
+                                }
+                            fun svgDimension(name: String): Double =
+                                requireNotNull(svgRows[name]?.toDoubleOrNull()) {
+                                    "E10 reference SVG missing " + name
+                                }
+                            val nativeDisplayedWidth = nativeDimension("displayed_width")
+                            val nativeDisplayedHeight = nativeDimension("displayed_height")
+                            val svgCssWidth = svgDimension("svg_css_width")
+                            val svgCssHeight = svgDimension("svg_css_height")
+                            check(svgCssWidth.isFinite() && svgCssWidth > 0.0 &&
+                                svgCssHeight.isFinite() && svgCssHeight > 0.0)
+                            Files.writeString(
+                                dest.resolve("mermaid-native-reference-size-diagnostic.tsv"),
+                                "schema=markflow-mermaid-native-reference-size/v1\n" +
+                                    "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
+                                    "case_id\tartifact_width_px\tartifact_height_px\t" +
+                                    "native_width_px\tnative_height_px\t" +
+                                    "reference_svg_width_css_px\treference_svg_height_css_px\t" +
+                                    "native_to_reference_width_ratio\tnative_to_reference_height_ratio\n" +
+                                    listOf(entry.id,
+                                        nativeDimension("intrinsic_width"),
+                                        nativeDimension("intrinsic_height"),
+                                        nativeDisplayedWidth, nativeDisplayedHeight,
+                                        svgCssWidth, svgCssHeight,
+                                        nativeDisplayedWidth / svgCssWidth,
+                                        nativeDisplayedHeight / svgCssHeight
+                                    ).joinToString("\t") + "\n"
+                            )
+                        }
                         // Stage E2: real bundled JCEF DOM headings, identified by exact
                         // source text and ordered source lines, not screenshot offsets.
                         // Driver JCEF JS queries run against the loaded platform preview.
@@ -729,6 +795,46 @@ class MarkFlowStarterDifferentialManifestTest {
      * is not an oracle. Relative bounding coordinates are invariant under a
      * shared browser scroll displacement (unlike viewport screenshot offsets).
      */
+    /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
+    private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
+        require(sourceLabel == "Rendered correctly?" ||
+            sourceLabel == "MarkFlow Example Schedule")
+        val label = sourceLabel // fixed in-repository fixture labels; no arbitrary JS input
+        return """
+            (() => {
+              const expected = '${label}';
+              const candidates = Array.from(document.querySelectorAll('svg')).filter(svg => {
+                const text = (svg.textContent || '').replace(/\\s+/g, ' ').trim();
+                const rect = svg.getBoundingClientRect();
+                return text.includes(expected) && rect.width > 40 && rect.height > 40;
+              });
+              if (candidates.length !== 1) {
+                return 'FAIL: source-identifiable Mermaid SVG count=' + candidates.length +
+                    ';expected=' + expected + ';allSvg=' + document.querySelectorAll('svg').length;
+              }
+              const svg = candidates[0];
+              const bounds = svg.getBoundingClientRect();
+              const viewport = { width: window.innerWidth, height: window.innerHeight };
+              if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+                return 'FAIL: Mermaid SVG bounds nonfinite';
+              }
+              const fmt = n => Number(n).toFixed(3);
+              return [
+                'schema=markflow-reference-mermaid-svg-dom-geometry/v1',
+                'source_label=' + expected,
+                'svg_css_width=' + fmt(bounds.width),
+                'svg_css_height=' + fmt(bounds.height),
+                'svg_css_left=' + fmt(bounds.left),
+                'svg_css_top=' + fmt(bounds.top),
+                'preview_window_inner_width_css=' + viewport.width,
+                'preview_window_inner_height_css=' + viewport.height,
+                'browser_device_pixel_ratio=' + fmt(window.devicePixelRatio),
+                'svg_viewbox=' + (svg.getAttribute('viewBox') || 'UNAVAILABLE')
+              ].join('\\n');
+            })()
+        """.trimIndent()
+    }
+
     private val headingReferenceDomProbe = """
         (() => {
           const rows = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
