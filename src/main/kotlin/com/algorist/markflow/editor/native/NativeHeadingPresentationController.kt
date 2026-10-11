@@ -498,13 +498,15 @@ internal class NativeHeadingInlayRenderer(
         val font = headingFont()
         val metrics = editor.contentComponent.getFontMetrics(font)
         val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
-        // IDEA caches renderer width as each fold/inlay is created. A Markdown
-        // editor can have zero viewport width during startup and only become
-        // visible later. Do not cache a one-pixel placeholder in that phase.
+        // IDEA caches geometry when each renderer is installed. A detached
+        // test editor (or a not-yet-displayed production editor) can report
+        // different transient, positive viewport sizes between installations.
+        // Only a visible, meaningfully laid-out viewport may clip the text.
+        // Otherwise both inlay and custom fold retain their intrinsic width.
         val viewportWidth = editor.scrollingModel.visibleArea.width
-            .takeIf { it > 0 } ?: editor.contentComponent.width
-        return if (viewportWidth > 0) {
-            min(naturalWidth, max(1, viewportWidth - HORIZONTAL_PADDING * 2))
+        return if (editor.contentComponent.isShowing &&
+            viewportWidth > HORIZONTAL_PADDING * 2 + 1) {
+            min(naturalWidth, viewportWidth - HORIZONTAL_PADDING * 2)
         } else {
             naturalWidth
         }
@@ -621,13 +623,15 @@ internal class NativeHeadingCustomFoldRenderer(
     override fun calcWidthInPixels(region: CustomFoldRegion): Int {
         val metrics = editor.contentComponent.getFontMetrics(headingFont())
         val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
-        // IDEA caches renderer width as each fold/inlay is created. A Markdown
-        // editor can have zero viewport width during startup and only become
-        // visible later. Do not cache a one-pixel placeholder in that phase.
+        // IDEA caches geometry when each renderer is installed. A detached
+        // test editor (or a not-yet-displayed production editor) can report
+        // different transient, positive viewport sizes between installations.
+        // Only a visible, meaningfully laid-out viewport may clip the text.
+        // Otherwise both inlay and custom fold retain their intrinsic width.
         val viewportWidth = editor.scrollingModel.visibleArea.width
-            .takeIf { it > 0 } ?: editor.contentComponent.width
-        return if (viewportWidth > 0) {
-            min(naturalWidth, max(1, viewportWidth - HORIZONTAL_PADDING * 2))
+        return if (editor.contentComponent.isShowing &&
+            viewportWidth > HORIZONTAL_PADDING * 2 + 1) {
+            min(naturalWidth, viewportWidth - HORIZONTAL_PADDING * 2)
         } else {
             naturalWidth
         }
