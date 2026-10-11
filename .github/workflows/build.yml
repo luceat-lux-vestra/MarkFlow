@@ -32,6 +32,8 @@ jobs:
     # Allow the metadata-only waiter to outlive full canonical evidence without increasing
     # GitHub API polling frequency; unknown/incomplete canonical evidence still fails closed.
     timeout-minutes: 65
+    outputs:
+      docs_only: ${{ steps.change-scope.outputs.docs_only }}
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -83,14 +85,6 @@ jobs:
           echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
           exit 1
 
-  build:
-    name: Build
-    needs: [ headEvidence ]
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    outputs:
-      docs_only: ${{ steps.change-scope.outputs.docs_only }}
-    steps:
       - name: Classify changed files
         id: change-scope
         shell: bash
@@ -138,8 +132,16 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "docs-only fast path: $docs_only"
 
+  build:
+    name: Build
+    needs: [ headEvidence ]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    outputs:
+      docs_only: ${{ needs.headEvidence.outputs.docs_only }}
+    steps:
       - name: Docs-only fast path
-        if: ${{ steps.change-scope.outputs.docs_only == 'true' }}
+        if: ${{ needs.headEvidence.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
       - name: Metadata-only event fast path
@@ -148,7 +150,7 @@ jobs:
 
       - name: Reuse exact-SHA Fast evidence
         id: fast-evidence
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -224,7 +226,7 @@ jobs:
 
 
       - name: Validate dispatched target
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
@@ -243,7 +245,7 @@ jobs:
           printf 'Validated main-history target: %s\n' "$TARGET_SHA"
 
       - name: Fetch Sources
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -251,14 +253,14 @@ jobs:
 
 
       - name: Record dispatched validation target
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && github.event_name == 'workflow_dispatch' }}
         env:
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           printf 'Validation target: %s\n' "$TARGET_SHA"
 
       - name: Setup Java
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
@@ -266,15 +268,15 @@ jobs:
 
 
       - name: Setup Gradle
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
       - name: Build plugin
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         run: ./gradlew buildPlugin
 
       - name: Enforce renderer bundle budget
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -347,7 +349,7 @@ jobs:
           PY
 
       - name: Prepare Plugin Artifact
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         id: artifact
         shell: bash
         run: |
@@ -364,7 +366,7 @@ jobs:
           printf 'filename=%s\n' "${filename%.zip}" >> "$GITHUB_OUTPUT"
 
       - name: Verify packaged webview is renderer-only
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -415,14 +417,14 @@ jobs:
           PY
 
       - name: Upload artifact
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.artifact.outputs.filename }}
           path: ./build/distributions/content/*/*
 
       - name: Upload renderer bundle budget
-        if: ${{ github.event.action != 'edited' && steps.change-scope.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: renderer-bundle-budget
@@ -431,7 +433,7 @@ jobs:
 
   test:
     name: Test
-    needs: [ build ]
+    needs: [ headEvidence ]
     runs-on: ubuntu-24.04-arm
     # Exact-head 96332952: ./gradlew check finished SUCCESSFUL in 29m29s,
     # but GitHub then cancelled the 30m job before mandatory webview source
@@ -441,7 +443,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Docs-only fast path
-        if: ${{ needs.build.outputs.docs_only == 'true' }}
+        if: ${{ needs.headEvidence.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
       - name: Metadata-only event fast path
@@ -450,7 +452,7 @@ jobs:
 
       - name: Reuse exact-SHA Fast evidence
         id: fast-evidence
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.action == 'ready_for_review' }}
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -526,14 +528,14 @@ jobs:
 
 
       - name: Fetch Sources
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
@@ -541,13 +543,13 @@ jobs:
 
 
       - name: Setup Gradle
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
 
       - name: Run Tests
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -573,7 +575,7 @@ jobs:
 
       # Native ARM64 hosted images lack Chromium; all 40 real browser cases remain mandatory.
       - name: Install native ARM64 Chromium for webview acceptance
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -583,20 +585,20 @@ jobs:
           /snap/bin/chromium --version
 
       - name: Run webview source tests
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         env:
           CHROME_BIN: /snap/bin/chromium
         run: ./gradlew testWebviewSource
 
       - name: Collect Tests Result
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') && failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tests-result
           path: ${{ github.workspace }}/build/reports/tests
 
       - name: Upload Kover Coverage Report
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kover-coverage
@@ -605,7 +607,7 @@ jobs:
 
   inspectCode:
     name: Inspect code
-    needs: [ build ]
+    needs: [ headEvidence ]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
@@ -614,7 +616,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Docs-only fast path
-        if: ${{ needs.build.outputs.docs_only == 'true' }}
+        if: ${{ needs.headEvidence.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
       - name: Metadata-only event fast path
@@ -623,7 +625,7 @@ jobs:
 
 
       - name: Fetch Sources
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
@@ -631,14 +633,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Qodana - Code Inspection
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f # v2026.2.2
         with:
           args: --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
@@ -648,7 +650,7 @@ jobs:
       # The Qodana annotation/check output is not the authoritative gate. Missing or
       # malformed SARIF, scanner failure, and High/Critical findings all fail this job.
       - name: Enforce Qodana High severity gate
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         env:
           QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
         run: |
@@ -667,12 +669,12 @@ jobs:
 
   verify:
     name: Verify plugin
-    needs: [ build ]
+    needs: [ headEvidence ]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - name: Docs-only fast path
-        if: ${{ needs.build.outputs.docs_only == 'true' }}
+        if: ${{ needs.headEvidence.outputs.docs_only == 'true' }}
         run: echo "Trusted-base changed-file classification proved this PR is documentation-only; heavy product validation is skipped."
 
       - name: Metadata-only event fast path
@@ -681,14 +683,14 @@ jobs:
 
 
       - name: Fetch Sources
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Java
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: zulu
@@ -696,17 +698,17 @@ jobs:
 
 
       - name: Setup Gradle
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
 
       - name: Run Plugin Verification tasks
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         run: ./gradlew verifyPlugin
 
       - name: Collect Plugin Verifier Result
-        if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pluginVerifier-result
