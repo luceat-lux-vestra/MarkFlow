@@ -129,6 +129,10 @@ internal object NativeHeadingProjectionPlanner {
  * H1-H6 typography. Active headings remove only MarkFlow-owned rich presentation so the original
  * Markdown is visible and directly editable.
  */
+// JetBrains CustomFoldRegion and addCustomLinesFolding are @ApiStatus.Experimental.
+// Deliberately constrained to the explicit opt-in #350 pilot on pinned 2026.2.x;
+// suppress locally instead of disabling Qodana High severity for the repository.
+@Suppress("UnstableApiUsage")
 internal class NativeHeadingPresentationController(
     private val editor: Editor,
     // Explicit integration pilot; no production call site enables it yet.
@@ -594,6 +598,10 @@ internal object NativeHeadingCustomFoldLinePlanner {
  * platform-owned syntax folds, real mouse hit testing, and source-reveal
  * lifecycle are verified together on the exact production path.
  */
+// JetBrains CustomFoldRegion and addCustomLinesFolding are @ApiStatus.Experimental.
+// Deliberately constrained to the explicit opt-in #350 pilot on pinned 2026.2.x;
+// suppress locally instead of disabling Qodana High severity for the repository.
+@Suppress("UnstableApiUsage")
 internal class NativeHeadingCustomFoldRenderer(
     private val editor: Editor,
     private val model: NativeHeadingModel,
