@@ -59,7 +59,7 @@ internal class NativePageGeometryPilot private constructor(
     override fun dispose() {
         if (disposed) return
         disposed = true
-        paragraphSpacing.asReversed().forEach { it.takeIf(Inlay<*>::isValid)?.dispose() }
+        paragraphSpacing.asReversed().forEach { it.takeIf { inlay -> inlay.isValid }?.dispose() }
         if (editor.isDisposed) return
         // Restore local formatting even when a test fails after installation.
         editor.setBorder(originalBorder)
@@ -84,7 +84,7 @@ internal class NativePageGeometryPilot private constructor(
             // Fail closed on mixed code: changing one editor-wide font to
             // proportional must not silently destroy monospaced code layout.
             val source = editor.document.immutableCharSequence.toString()
-            if (source.lineSequence().any {
+            if (source.contains('`') || source.lineSequence().any {
                 val line = it.trimStart()
                 line.startsWith("```") || line.startsWith("~~~") ||
                     it.startsWith("    ") || it.startsWith("\t")
@@ -136,7 +136,7 @@ internal class NativePageGeometryPilot private constructor(
                 check(foreignFolds.map { Triple(it.startOffset, it.endOffset, it.isExpanded) } == foreignStates)
                 return NativePageGeometryPilot(editor, originalScheme, originalBorder, paragraphSpacing)
             } catch (failure: Throwable) {
-                paragraphSpacing.asReversed().forEach { it.takeIf(Inlay<*>::isValid)?.dispose() }
+                paragraphSpacing.asReversed().forEach { it.takeIf { inlay -> inlay.isValid }?.dispose() }
                 if (!editor.isDisposed) {
                     editor.setBorder(originalBorder)
                     editor.setColorsScheme(originalScheme)
