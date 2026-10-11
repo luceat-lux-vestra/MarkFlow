@@ -1,0 +1,63 @@
+# Populate the shared Gradle User Home cache after a protected main merge.
+# Keep this separate from PR-required Build/Test/Qodana/Verifier: no duplicated
+# post-merge acceptance and no cache writes from untrusted pull-request refs.
+name: Gradle Cache Seed
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/gradle-cache-seed.yml'
+      - '.github/workflows/build.yml'
+      - '.nvmrc'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'src/**'
+      - 'webview/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gradle-cache-seed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  seed:
+    # The GitHub cache can be reused by PRs only when written in the
+    # default-branch scope. Never accept a PR-head or non-main cache writer.
+    if: github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main'
+    name: Gradle cache seed (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Fetch exact protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Verify exact protected checkout
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle (default-branch cache writer)
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: false
+
+      - name: Populate production plugin cache
+        run: ./gradlew buildPlugin
