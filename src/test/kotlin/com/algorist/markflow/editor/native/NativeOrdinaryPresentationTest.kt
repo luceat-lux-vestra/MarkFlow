@@ -393,11 +393,13 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             activeRenderer.dispose()
         }
         assertEquals(plainY, editor.offsetToXY(tailOffset).y)
+        val sourceLines = requireNotNull(NativeHeadingCustomFoldLinePlanner.plan(editor, model))
+        assertEquals(0..1, sourceLines)
         val customRenderer = NativeHeadingCustomFoldRenderer(editor, model)
         var region: CustomFoldRegion? = null
         try {
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-                region = editor.foldingModel.addCustomLinesFolding(0, 1, customRenderer)
+                region = editor.foldingModel.addCustomLinesFolding(sourceLines.first, sourceLines.last, customRenderer)
             }
             val custom = requireNotNull(region) { "Custom two-line region unavailable" }
             assertTrue(custom.isValid)
@@ -448,6 +450,28 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(source, document.text)
         assertEquals(stampBefore, document.modificationStamp)
         assertEquals(tailOffset, editor.caretModel.offset)
+    }
+
+    fun testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases() {
+        fun candidate(text: String, expected: IntRange?) {
+            myFixture.configureByText("heading-span-probe.md", text)
+            val editor = myFixture.editor
+            val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+            val model = NativeHeadingProjectionPlanner.plan(plan).single()
+            assertEquals(
+                "Unexpected whole-source-line replacement plan for: " + text.replace("\n", "\\n"),
+                expected,
+                NativeHeadingCustomFoldLinePlanner.plan(editor, model),
+            )
+        }
+        // Only a truly empty adjacent line followed by content may be folded.
+        candidate("## Heading\n\nTail\n", 0..1)
+        candidate("## Heading\nTail\n", 0..0)
+        candidate("## Heading\n \nTail\n", 0..0)
+        candidate("## Heading\n\n", 0..0)
+        // Setext consumes multiple physical lines: the current proposed
+        // single-line-rich renderer must not hide its underline or its source.
+        candidate("Heading\n=======\n\nTail\n", null)
     }
 
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
