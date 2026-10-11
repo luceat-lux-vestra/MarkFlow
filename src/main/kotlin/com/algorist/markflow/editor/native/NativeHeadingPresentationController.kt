@@ -3,6 +3,8 @@ package com.algorist.markflow.editor.native
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.CustomFoldRegion
+import com.intellij.openapi.editor.CustomFoldRegionRenderer
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
@@ -14,6 +16,7 @@ import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
+import java.awt.geom.Rectangle2D
 import java.awt.RenderingHints
 import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
@@ -450,6 +453,92 @@ internal class NativeHeadingInlayRenderer(
         g2.drawString(rendered, targetRegion.x + HORIZONTAL_PADDING, baseline)
         if (previousTextHint != null) {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, previousTextHint)
+        }
+    }
+
+    private fun headingFont(): Font {
+        val base = editor.contentComponent.font
+        return base.deriveFont(Font.BOLD, base.size2D * nativeHeadingFontScale(model.level))
+    }
+
+    private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
+        if (metrics.stringWidth(text) <= maxWidth) return text
+        val ellipsis = "…"
+        val target = max(0, maxWidth - metrics.stringWidth(ellipsis))
+        var end = text.length
+        while (end > 0 && metrics.stringWidth(text.substring(0, end)) > target) end -= 1
+        return text.substring(0, end) + ellipsis
+    }
+
+    private fun verticalPadding(level: Int): Int = when (level) {
+        1 -> 10
+        2 -> 8
+        3 -> 7
+        4 -> 6
+        5 -> 5
+        else -> 4
+    }
+
+    companion object {
+        private const val HORIZONTAL_PADDING = 4
+    }
+}
+
+/**
+ * Actual #350 replacement-presentation renderer. Unlike an Editor block inlay,
+ * CustomFoldRegion occupies source visual lines, so its declared height does
+ * not get added *after* the original heading + blank-line height.
+ *
+ * Kept separate from the active NativeHeadingPresentationController until
+ * platform-owned syntax folds, real mouse hit testing, and source-reveal
+ * lifecycle are verified together on the exact production path.
+ */
+internal class NativeHeadingCustomFoldRenderer(
+    private val editor: Editor,
+    private val model: NativeHeadingModel,
+) : CustomFoldRegionRenderer {
+    val sourceRange: ProjectionRange get() = model.sourceRange
+    val contentOffset: Int get() = model.contentRange.startOffset
+    val displayText: String get() = model.text
+
+    override fun calcWidthInPixels(region: CustomFoldRegion): Int {
+        val metrics = editor.contentComponent.getFontMetrics(headingFont())
+        val available = max(1, editor.scrollingModel.visibleArea.width - HORIZONTAL_PADDING * 2)
+        return min(available, max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2))
+    }
+
+    override fun calcHeightInPixels(region: CustomFoldRegion): Int {
+        val metrics = editor.contentComponent.getFontMetrics(headingFont())
+        // The editor itself clamps custom fold height to at least lineHeight.
+        return max(editor.lineHeight, metrics.height + verticalPadding(model.level) * 2)
+    }
+
+    override fun paint(
+        region: CustomFoldRegion,
+        g: Graphics2D,
+        targetRegion: Rectangle2D,
+        textAttributes: TextAttributes,
+    ) {
+        val font = headingFont()
+        val metrics = g.getFontMetrics(font)
+        val regionHeight = max(1, targetRegion.height.toInt())
+        val available = max(1, targetRegion.width.toInt() - HORIZONTAL_PADDING * 2)
+        val rendered = clip(model.text, metrics, available)
+        val baseline = targetRegion.y.toInt() +
+            max(metrics.ascent + verticalPadding(model.level), (regionHeight + metrics.ascent - metrics.descent) / 2)
+
+        val oldFont = g.font
+        val oldColor = g.color
+        val oldHint = g.getRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING)
+        try {
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            g.font = font
+            g.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            g.drawString(rendered, targetRegion.x.toInt() + HORIZONTAL_PADDING, baseline)
+        } finally {
+            g.font = oldFont
+            g.color = oldColor
+            if (oldHint != null) g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, oldHint)
         }
     }
 
