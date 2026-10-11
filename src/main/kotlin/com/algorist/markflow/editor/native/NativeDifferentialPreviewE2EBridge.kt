@@ -366,6 +366,12 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return editor.document.modificationStamp
     }
+    // Unlike JEditorUiComponent's locator-based accessor, the exact Editor
+    // reference remains authoritative when SHOW_PREVIEW hides its Swing view.
+    fun primaryCaretOffset(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return editor.caretModel.primaryCaret.offset
+    }
     fun sourceUnsaved(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return FileDocumentManager.getInstance().isDocumentUnsaved(editor.document)
