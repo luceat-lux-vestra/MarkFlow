@@ -415,3 +415,47 @@ rendered rich heading font geometry, platform-fold conflicts,
 caret interactions, and true Starter screenshot changes. A disabled or
 unsupported custom fold must leave exact source visible, not fabricate
 successful rich projection.
+
+
+### Stage E11 — production-capable custom heading renderer and fail-closed line planner
+
+PR #364 was rebased by the user onto `main`
+`8b228a50f451826a0fc7f9798ae6c31bbd437544`. Exact rebased
+HEAD `b2dacadde85219b05d41f62fa2be40fe6f7d59a0` had 71
+replayed commits, 0 behind, and preserved #366/#368/#370 optimizations.
+Hardening, CodeQL and eight native Evidence runs passed before the
+subsequent feature commits superseded/cancelled its remaining Build/Starter
+runs; their incomplete gates **must not be counted as PASS**.
+
+Rather than immediately switch the production heading controller and
+invalidate its existing IDE and evidence consumers, the next slice
+implements an actual `NativeHeadingCustomFoldRenderer` using the
+JetBrains `CustomFoldRegionRenderer` interface, drawing bold H1–H6
+glyphs at the established font scale and padding with ellipsis on narrow
+views. The isolated pinned-IDE test checks the existing H2 native
+block-inlay's width/height against the new custom region, verifies
+that nontransparent glyph pixels are painted, and proves the subsequent
+source line moves by `headingHeight - 2*editorLineHeight`
+when a verified adjacent blank line is included. Source bytes,
+modification stamp, caret and cleanup geometry must remain untouched.
+
+`NativeHeadingCustomFoldLinePlanner` denies unsafe whole-line
+replacement: multiline Setext headings, ranges that do not occupy
+exactly one physical source line, and nonblank or whitespace-only
+following lines never get hidden. A blank second line is included
+only if it is exactly empty **and** followed by a nonblank document line.
+Adversarial tests cover no blank, whitespace-only blank, trailing EOF
+blank and Setext multiline syntax. If no custom region can be installed
+because of platform folding overlap, the future controller must fail
+closed to exact editable Markdown source.
+
+**Important boundary:** the new actual renderer/planner are in
+production source but are **not yet installed** by
+`NativeHeadingPresentationController`. The shipping heading path
+continues to use the old native inlays. A follow-up integration must
+replace that path as one atomic lifecycle change, update
+`headingInlays`-based probe and E2E contracts, and add real IDE
+mouse-hit, source reveal, keyboard/caret, font geometry, native-vs-bundled
+Preview, undo/reopen and foreign-fold tests before accepting #350.
+The known `HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED` and 86
+not-yet-executed corpus cases continue to fail-close PR #364.
