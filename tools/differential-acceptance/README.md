@@ -81,7 +81,27 @@ This slice does not yet prove cumulative heading/source-anchor geometry,
 clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
 complete 88-row/89-expanded-case real coverage. Some corpus sources reference
 relative resources; preserve those paths before extending execution to them.
-All missing or unvalidated #353 criteria are **FAIL** for the release/merge gate.
+All missing or unvalidated #353 criteria are **FAIL** for full visual
+acceptance and release. Bounded Stage D capture CI is a separate deliverable:
+it must fail on missing captures, malformed source identity, dropped reference
+images, collapsed geometry, or *actual* structural defects. An unreviewed
+native-inlay-vs-JCEF-DOM box model is retained as a **review-required**
+acceptance blocker in `candidate-structural-failures.tsv`, but does not
+by itself negate successful source-identical image capture.
+
+Two explicitly named test contracts are available:
+- `-Dmarkflow.differential.contract=capture` (default): checks bounded
+  source-identical capture; emits `full_differential_acceptance=false` and
+  `release_eligible=false`, with all unexecuted/unknown cases retained.
+- `-Dmarkflow.differential.contract=acceptance`: **always fail closed** until
+  every expanded case is executed, structural issues reviewed and the final
+  visual acceptance implementation completed. This is not a production
+  release gate that can be turned green by selecting fewer cases.
+
+**Important:** finishing or merging the capture infrastructure does NOT
+authorize enabling the opt-in experimental Native heading layout by default,
+release eligibility, or closing #353. The release and post-main checks
+continue to require the full independently reviewed acceptance contract.
 
 ### Stage D geometry instrumentation — bounded
 
