@@ -81,14 +81,32 @@ internal object NativeProjectionE2EBridge {
     /** Read-only production-controller proof; never creates or clicks any fold. */
     fun headingRobotEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val state = requireController(editor).headingPilotEvidenceSnapshot()
+        val controller = requireController(editor)
+        val state = controller.headingPilotEvidenceSnapshot()
         val custom = editor.foldingModel.allFoldRegions
             .filterIsInstance<CustomFoldRegion>()
             .filter { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+        // Evidence-only diagnosis of real production fold eligibility. This path
+        // must never create, remove or expand any fold as part of a probe.
+        val heading = controller.currentPlan
+            ?.let(NativeHeadingProjectionPlanner::plan)
+            ?.singleOrNull()
+        val span = heading?.let { NativeHeadingCustomFoldLinePlanner.plan(editor, it) }
+        val candidateRange = heading?.sourceRange
+        val overlaps = editor.foldingModel.allFoldRegions.asSequence()
+            .filter { fold -> fold.isValid && candidateRange != null &&
+                fold.startOffset < candidateRange.endOffset &&
+                fold.endOffset > candidateRange.startOffset }
+            .joinToString(",") { fold ->
+                "${fold.startOffset}-${fold.endOffset}:${if (fold.isExpanded) "E" else "C"}"
+            }
         return "models=${state.models};inlays=${state.ownedInlays};folds=${state.ownedFolds};" +
             "custom=${state.ownedCustomFolds};reveals=${state.mouseReveals};" +
             "physicalCustom=${custom.size};showing=${editor.contentComponent.isShowing};" +
-            "caret=${editor.caretModel.offset};stamp=${editor.document.modificationStamp}"
+            "caret=${editor.caretModel.offset};stamp=${editor.document.modificationStamp};" +
+            "fallbacks=${state.accessibilityFallbacks};" +
+            "sourceRange=${candidateRange?.startOffset}-${candidateRange?.endOffset};" +
+            "lineSpan=${span?.first}..${span?.last};overlaps=$overlaps"
     }
 
     /** Screen coordinates for the genuine JDK Robot pointer path, not AWT dispatch. */
