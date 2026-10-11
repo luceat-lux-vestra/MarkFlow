@@ -456,10 +456,16 @@ internal class NativeHeadingPresentationController(
             return
         }
         val paragraphEnd = doc.getLineEndOffset(paragraphLine)
-        val paragraphGap = editor.inlayModel.addBlockElement(
+        // The source-neutral page pilot may already own this exact block
+        // boundary. A second 16px gap would double the measured P1 -> P2
+        // spacing. Do not dispose or re-own the pilot's inlay.
+        val pageOwnsGap = editor.inlayModel.getBlockElementsInRange(paragraphEnd, paragraphEnd)
+            .any { it.isValid && it.offset == paragraphEnd &&
+                it.renderer === NativePageParagraphSpacing }
+        val paragraphGap = if (pageOwnsGap) null else editor.inlayModel.addBlockElement(
             paragraphEnd, true, false, 0, NativeHeadingParagraphGapRenderer
         )
-        if (paragraphGap == null || !paragraphGap.isValid) {
+        if (!pageOwnsGap && (paragraphGap == null || !paragraphGap.isValid)) {
             paragraphGap?.takeIf { it.isValid }?.dispose()
             inline.dispose()
             removeFolds(listOf(fold))
