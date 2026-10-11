@@ -298,6 +298,14 @@ internal object NativeDifferentialPreviewE2EBridge {
                     ":expanded=" + it.isExpanded
             }
             val origin = installed?.let { editor.offsetToXY(it.startOffset) }
+            // Same declared native font as the opt-in heading renderer.
+            // Records paint inputs, NOT inferred ink boundaries.
+            val font = editor.contentComponent.font.deriveFont(
+                java.awt.Font.BOLD,
+                editor.contentComponent.font.size2D * nativeHeadingFontScale(index + 1)
+            )
+            val text = lineText(line).trimStart('#', ' ', '\t')
+            val fm = editor.contentComponent.getFontMetrics(font)
             listOf(
                 "level=" + (index + 1),
                 "source_line_zero_based=" + line,
@@ -316,6 +324,11 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "inline_pilot_height_px=" + (inlinePilot?.heightInPixels ?: "UNAVAILABLE"),
                 "inline_pilot_bounds_y_px=" + (inlinePilot?.bounds?.y ?: "UNAVAILABLE"),
                 "heading_y_document_px=" + headingY,
+                "native_paint_font_family=" + font.family,
+                "native_paint_font_size_px=" + "%.3f".format(java.util.Locale.ROOT, font.size2D),
+                "native_paint_font_weight=BOLD",
+                "native_paint_text_width_px=" + fm.stringWidth(text),
+                "native_paint_text_origin_x_document_px=" + ((origin?.x ?: editor.offsetToXY(start).x) + 4),
                 "following_line_zero_based=" + nextLine,
                 "following_offset=" + afterOffset,
                 "following_y_document_px=" + followingY,
@@ -336,6 +349,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "foreign_fold_count_including_pilot_owned_normal_fold=" + foreign.size,
             "editor_is_showing=" + editor.contentComponent.isShowing,
             "plain_line_height_px=" + editor.lineHeight,
+            "native_body_font_family=" + editor.contentComponent.font.family,
+            "native_body_font_size_px=" + editor.contentComponent.font.size2D,
         ).joinToString("\n", postfix = "\n") +
             rows.joinToString("\n", postfix = "\n")
     }

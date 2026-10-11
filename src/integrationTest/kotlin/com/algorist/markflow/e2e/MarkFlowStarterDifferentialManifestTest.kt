@@ -981,14 +981,29 @@ class MarkFlowStarterDifferentialManifestTest {
                 el.textContent.trim() !== 'Heading level ' + level)
               return 'FAIL: DOM/source heading mismatch at ' + level;
             const rect = el.getBoundingClientRect();
-            if (!(rect.height > 0) || !(rect.width > 0))
-              return 'FAIL: DOM collapsed heading ' + level;
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const textRect = range.getBoundingClientRect();
+            const css = getComputedStyle(el);
+            if (!(rect.height > 0) || !(rect.width > 0) ||
+                !(textRect.width > 0) || !(textRect.height > 0))
+              return 'FAIL: DOM collapsed heading or text range ' + level;
             lines.push('level=' + level +
               '\tsource_line_zero_based=' + (index * 4) +
               '\treference_y_relative_css_px=' + (rect.top - firstY).toFixed(3) +
               '\treference_height_css_px=' + rect.height.toFixed(3) +
-              '\tcomputed_margin_top_css_px=' + parseFloat(getComputedStyle(el).marginTop).toFixed(3) +
-              '\tcomputed_margin_bottom_css_px=' + parseFloat(getComputedStyle(el).marginBottom).toFixed(3));
+              '\tcomputed_margin_top_css_px=' + parseFloat(css.marginTop).toFixed(3) +
+              '\tcomputed_margin_bottom_css_px=' + parseFloat(css.marginBottom).toFixed(3) +
+              '\tcomputed_font_family=' + css.fontFamily.replace(/[\t\r\n]/g, ' ') +
+              '\tcomputed_font_size_css_px=' + css.fontSize +
+              '\tcomputed_font_weight=' + css.fontWeight +
+              '\tcomputed_line_height_css_px=' + css.lineHeight +
+              '\tcomputed_color=' + css.color +
+              '\tcomputed_letter_spacing=' + css.letterSpacing +
+              '\theading_box_left_css_px=' + rect.left.toFixed(3) +
+              '\theading_text_range_left_css_px=' + textRect.left.toFixed(3) +
+              '\theading_text_range_top_css_px=' + textRect.top.toFixed(3) +
+              '\theading_text_range_height_css_px=' + textRect.height.toFixed(3));
           }
           return lines.join('\n');
         })()
@@ -1020,6 +1035,7 @@ class MarkFlowStarterDifferentialManifestTest {
             range.selectNodeContents(p);
             const rect = range.getBoundingClientRect();
             const box = p.getBoundingClientRect();
+            const css = getComputedStyle(p);
             if (!(rect.height > 0 && rect.width > 0 &&
                   box.height > 0 && box.width > 0))
               return 'FAIL: collapsed paragraph range ' + (i + 1);
@@ -1031,7 +1047,13 @@ class MarkFlowStarterDifferentialManifestTest {
               '\tsource_line_zero_based=' + (4 * i + 2) +
               '\tpreview_text_range_top_relative_css_px=' + (rect.top - originY).toFixed(3) +
               '\tpreview_text_range_height_css_px=' + rect.height.toFixed(3) +
-              '\tpreview_p_box_top_relative_css_px=' + (box.top - originY).toFixed(3));
+              '\tpreview_p_box_top_relative_css_px=' + (box.top - originY).toFixed(3) +
+              '\tpreview_text_range_left_css_px=' + rect.left.toFixed(3) +
+              '\tcomputed_font_family=' + css.fontFamily.replace(/[\t\r\n]/g, ' ') +
+              '\tcomputed_font_size_css_px=' + css.fontSize +
+              '\tcomputed_font_weight=' + css.fontWeight +
+              '\tcomputed_line_height_css_px=' + css.lineHeight +
+              '\tcomputed_color=' + css.color);
           }
           return lines.join('\n');
         })()
