@@ -223,6 +223,93 @@ internal object NativeDifferentialPreviewE2EBridge {
             rows.joinToString(separator = "\n", postfix = "\n")
     }
 
+
+    /**
+     * #353 test-only actual IDEA CustomFoldRegion H1–H6 geometry ledger.
+     * Captures installed physical sizes, source offsets, paragraph Y anchors,
+     * and overlapping foreign folds without mutating any platform fold.
+     */
+    @Suppress("UnstableApiUsage")
+    fun nativeHeadingReplacementGeometry(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val doc = editor.document
+        fun lineText(line: Int): String = doc.getText(
+            com.intellij.openapi.util.TextRange(
+                doc.getLineStartOffset(line), doc.getLineEndOffset(line)
+            )
+        )
+        val folds = editor.foldingModel.allFoldRegions.filter { it.isValid }
+        val custom = folds.filterIsInstance<com.intellij.openapi.editor.CustomFoldRegion>()
+            .filter { !it.isExpanded && it.renderer is NativeHeadingCustomFoldRenderer }
+            .sortedBy { it.startOffset }
+        val inlays = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
+            .count { it.renderer is NativeHeadingInlayRenderer }
+        check(inlays == 0 && custom.size == 6) {
+            "E8 expects six installed replacement folds, no additive inlays; folds=" +
+                custom.size + ", inlays=" + inlays
+        }
+        val foreign = folds.filterNot {
+            it is com.intellij.openapi.editor.CustomFoldRegion &&
+                it.renderer is NativeHeadingCustomFoldRenderer
+        }
+        val headingPattern = Regex("^ {0,3}(#{1,6})(?:[ \\t]+|$)")
+        val rows = custom.mapIndexed { index, fold ->
+            val renderer = fold.renderer as NativeHeadingCustomFoldRenderer
+            val start = renderer.sourceRange.startOffset
+            val end = renderer.sourceRange.endOffset
+            val line = doc.getLineNumber(start)
+            val match = headingPattern.find(lineText(line))
+            check(match != null && match.range.first == 0 &&
+                match.groupValues[1].length == index + 1 && line == index * 4 &&
+                start == doc.getLineStartOffset(line) && end == doc.getLineEndOffset(line)) {
+                "E8 custom fold no longer matches H1–H6 source identity"
+            }
+            val next = (line + 1 until doc.lineCount)
+                .firstOrNull { lineText(it).isNotBlank() }
+                ?: error("E8 missing following text")
+            check(next == line + 2 && lineText(next) == "Paragraph after H" + (index + 1) + ".")
+            check(fold.widthInPixels > 0 && fold.heightInPixels > 0)
+            val origin = editor.offsetToXY(fold.startOffset)
+            val headingY = editor.logicalPositionToXY(
+                editor.offsetToLogicalPosition(start)
+            ).y
+            val followingOffset = doc.getLineStartOffset(next)
+            val followingY = editor.logicalPositionToXY(
+                editor.offsetToLogicalPosition(followingOffset)
+            ).y
+            check(followingY > headingY) { "E8 collapsed paragraph anchor" }
+            val overlaps = foreign.count {
+                it.startOffset < fold.endOffset && it.endOffset > fold.startOffset
+            }
+            listOf(
+                "level=" + (index + 1),
+                "source_line_zero_based=" + line,
+                "source_start_offset=" + start,
+                "source_end_offset=" + end,
+                "fold_start_offset=" + fold.startOffset,
+                "fold_end_offset=" + fold.endOffset,
+                "fold_origin_x_document_px=" + origin.x,
+                "fold_origin_y_document_px=" + origin.y,
+                "fold_width_px=" + fold.widthInPixels,
+                "fold_height_px=" + fold.heightInPixels,
+                "heading_y_document_px=" + headingY,
+                "following_line_zero_based=" + next,
+                "following_offset=" + followingOffset,
+                "following_y_document_px=" + followingY,
+                "foreign_fold_overlap_count=" + overlaps
+            ).joinToString("\t")
+        }
+        return listOf(
+            "schema=markflow-native-heading-customfold-geometry/v1",
+            "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
+            "measured_atx_heading_count=" + custom.size,
+            "legacy_heading_inlay_count=" + inlays,
+            "foreign_fold_count=" + foreign.size,
+            "plain_line_height_px=" + editor.lineHeight,
+        ).joinToString("\n", postfix = "\n") +
+            rows.joinToString("\n", postfix = "\n")
+    }
+
     // Negative controls for the source-span to actual-pixel excess calculation.
     // The large-drift fixture must not be confused with a plain-line baseline.
     private fun sourceSpanExcess(lineDistance: Int, pixelDistance: Int, baseHeight: Int): Long {
