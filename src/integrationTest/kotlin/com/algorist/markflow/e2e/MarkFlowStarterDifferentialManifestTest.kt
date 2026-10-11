@@ -512,17 +512,21 @@ class MarkFlowStarterDifferentialManifestTest {
                                 Files.writeString(abDest.resolve("preview-a-paragraph-dom.txt"),
                                     Files.readString(dest.resolve("intellij-following-paragraph-dom-geometry.txt")))
                                 Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
-                                check(markFlow.source(b) == source)
-                                check(markFlow.modificationStamp(b) == bStamp)
-                                check(markFlow.primaryCaretOffset(b) == bCaretBefore) {
+                                // SHOW_PREVIEW deliberately hides EditorComponentImpl.
+                                // Use the exact remote Editor captured before the switch,
+                                // not MarkFlowIdeDriver's visible UI locator.
+                                val hiddenIdentity = driver.withContext(OnDispatcher.EDT) {
+                                    listOf(
+                                        preview.sourceText(bEditor),
+                                        preview.sourceStamp(bEditor).toString(),
+                                        preview.primaryCaretOffset(bEditor).toString(),
+                                    )
+                                }
+                                check(hiddenIdentity[0] == source)
+                                check(hiddenIdentity[1] == bStamp.toString())
+                                check(hiddenIdentity[2] == bCaretBefore.toString()) {
                                     "B JCEF capture unexpectedly moved the native caret"
                                 }
-                                check(driver.withContext(OnDispatcher.EDT) {
-                                    preview.sourceText(bEditor)
-                                } == source)
-                                check(driver.withContext(OnDispatcher.EDT) {
-                                    preview.sourceStamp(bEditor)
-                                } == bStamp)
                                 check(!driver.withContext(OnDispatcher.EDT) {
                                     preview.sourceUnsaved(bEditor)
                                 })
@@ -536,7 +540,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "source_head=" + sourceHead + "\n" +
                                         "ide_version=" + version + "\n" +
                                         "caret_offset_before=" + bCaretBefore + "\n" +
-                                        "caret_offset_after=" + markFlow.primaryCaretOffset(b) + "\n" +
+                                        "caret_offset_after=" + hiddenIdentity[2] + "\n" +
                                         "native_a_environment=" + nativeEnvironment + "\n" +
                                         "native_b_environment=" + bEnv + "\n" +
                                         "production_default=sourceLineReplacement_false\n" +
@@ -1122,6 +1126,7 @@ private interface DifferentialManifestPreviewRemote {
     fun nativeHeadingGeometryNegativeControls(): Boolean
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long
+    fun primaryCaretOffset(editor: Editor): Int
     fun sourceUnsaved(editor: Editor): Boolean
     fun restoreNative(editor: Editor)
     fun nativeShowing(editor: Editor): Boolean
