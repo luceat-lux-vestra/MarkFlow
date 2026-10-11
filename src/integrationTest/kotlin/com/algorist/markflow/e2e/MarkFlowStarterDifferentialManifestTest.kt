@@ -72,6 +72,14 @@ class MarkFlowStarterDifferentialManifestTest {
         try {
             val base = root.resolve("src/integrationTest/resources/projects/markdown-smoke")
             check(base.toFile().copyRecursively(project.toFile(), overwrite = true))
+            // A and B are byte-identical but distinct file-editor lifecycles.
+            // Only this exact B filename is opted into source-line replacement.
+            val abHeading = selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }
+            if (abHeading != null) {
+                val bFixture = project.resolve("heading-layout-b.md")
+                check(!Files.exists(bFixture))
+                Files.write(bFixture, abHeading.bytes)
+            }
             selected.forEach { entry ->
                 val target = project.resolve(entry.id + ".md")
                 check(!Files.exists(target)) { "Capture fixture collision" }
@@ -99,6 +107,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
+                if (abHeading != null) {
+                    addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
+                }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
             }.runIdeWithDriver().useDriverAndCloseIde {
@@ -364,6 +375,147 @@ class MarkFlowStarterDifferentialManifestTest {
                         diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         markFlow.close(editor)
+                        if (entry.id == "md-atx-headings-h1-h6") {
+                            val abDest = output.resolve("heading-layout-ab")
+                            Files.createDirectories(abDest)
+                            val b = markFlow.openMarkdown("heading-layout-b.md")
+                            try {
+                                markFlow.assertProductionProjectionAttached(b)
+                                check(markFlow.source(b) == source)
+                                val bStamp = markFlow.modificationStamp(b)
+                                val bEditor = b.editor
+                                driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
+                                markFlow.resetToSingleCaret(b, source.length)
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showNativeAtSourceLine(bEditor, entry.line)
+                                }
+                                waitFor(
+                                    message = "CustomFold IDE lifecycle settled",
+                                    timeout = 50.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        visual.visualEvidence(bEditor)
+                                    } },
+                                    checker = { it.contains("derivedPending=0") }
+                                )
+                                val nativeB = driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeHeadingReplacementGeometry(bEditor)
+                                }
+                                val bEnv = driver.withContext(OnDispatcher.EDT) {
+                                    visual.environmentIdentity(bEditor)
+                                }
+                                val bBounds = driver.withContext(OnDispatcher.EDT) {
+                                    Rectangle(
+                                        visual.contentScreenX(bEditor), visual.contentScreenY(bEditor),
+                                        visual.contentWidth(bEditor), visual.contentHeight(bEditor)
+                                    )
+                                }
+                                check(bBounds.width == native.width && bBounds.height == native.height)
+                                robot.waitForIdle()
+                                check(ImageIO.write(robot.createScreenCapture(bBounds), "png",
+                                    abDest.resolve("native-b.png").toFile()))
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showReferenceAtSourceLine(bEditor, entry.line)
+                                }
+                                waitFor(
+                                    message = "B bundled Preview visible",
+                                    timeout = 30.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        preview.referenceShowing(bEditor)
+                                    } },
+                                    checker = { it }
+                                )
+                                val refBounds = driver.withContext(OnDispatcher.EDT) {
+                                    val p = preview.referenceBounds(bEditor).split(',').map(String::toInt)
+                                    check(p.size == 4)
+                                    Rectangle(p[0], p[1], p[2], p[3])
+                                }
+                                waitFor(
+                                    message = "B bundled JCEF rendered nonblank",
+                                    timeout = 60.seconds,
+                                    getter = {
+                                        robot.waitForIdle()
+                                        val img = robot.createScreenCapture(refBounds)
+                                        check(ImageIO.write(img, "png",
+                                            abDest.resolve("preview-b.png").toFile()))
+                                        diagnostics.referenceHasVisibleContent(img)
+                                    },
+                                    checker = { it }
+                                )
+                                val domB = driver.ui.jcef()
+                                val headingB = domB.callJs(headingReferenceDomProbe)
+                                val paragraphB = domB.callJs(followingParagraphDomProbe)
+                                check(headingB.startsWith(
+                                    "schema=markflow-reference-heading-dom-geometry/v1\n"
+                                ) && paragraphB.startsWith(
+                                    "schema=markflow-reference-paragraph-text-range/v1\n"
+                                )) { "Missing actual B source-aligned JCEF DOM evidence" }
+                                val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
+                                val driftA = Files.readString(
+                                    dest.resolve("source-following-text-line-drift.tsv"))
+                                fun tableRows(text: String): List<List<String>> =
+                                    text.lineSequence().filter {
+                                        it.firstOrNull() in '1'..'6' && it.contains('\t')
+                                    }.map { it.split('\t') }.toList()
+                                val rowsA = tableRows(driftA)
+                                val rowsB = tableRows(driftB)
+                                check(rowsA.size == 6 && rowsB.size == 6)
+                                val abRows = rowsA.zip(rowsB).mapIndexed { index, (a, bb) ->
+                                    check(a.size == 5 && bb.size == 5 &&
+                                        a[0] == (index + 1).toString() &&
+                                        bb[0] == a[0] &&
+                                        a[1] == (4 * index + 2).toString() &&
+                                        bb[1] == a[1]) { "A/B source identity mismatch" }
+                                    val ya = a[2].toInt()
+                                    val yb = bb[2].toInt()
+                                    check(a[3].toDouble().isFinite() && bb[3].toDouble().isFinite())
+                                    listOf(
+                                        a[0], a[1], ya.toString(), yb.toString(),
+                                        a[3], bb[3], (ya - yb).toString(),
+                                        a[4], bb[4]
+                                    ).joinToString("\t")
+                                }
+                                Files.writeString(abDest.resolve("ab-paragraph-deltas.tsv"),
+                                    "schema=markflow-heading-ab-relative-diagnostic/v1\n" +
+                                        "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
+                                        "level\tsource_line\tnative_a_px\tnative_b_px\tpreview_a_css_px\tpreview_b_css_px\tnative_a_minus_b_px\tdelta_a_px\tdelta_b_px\n" +
+                                        abRows.joinToString("\n", postfix = "\n"))
+                                Files.writeString(abDest.resolve("native-a-inlay.txt"),
+                                    Files.readString(dest.resolve("native-heading-source-geometry.txt")))
+                                Files.writeString(abDest.resolve("native-b-customfold.txt"), nativeB)
+                                Files.writeString(abDest.resolve("preview-a-heading-dom.txt"),
+                                    Files.readString(dest.resolve("intellij-heading-dom-geometry.txt")))
+                                Files.writeString(abDest.resolve("preview-b-heading-dom.txt"), headingB)
+                                Files.writeString(abDest.resolve("preview-a-paragraph-dom.txt"),
+                                    Files.readString(dest.resolve("intellij-following-paragraph-dom-geometry.txt")))
+                                Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
+                                check(markFlow.source(b) == source)
+                                check(markFlow.modificationStamp(b) == bStamp)
+                                check(driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceText(bEditor)
+                                } == source)
+                                check(driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceStamp(bEditor)
+                                } == bStamp)
+                                check(!driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceUnsaved(bEditor)
+                                })
+                                check(Files.readAllBytes(project.resolve("heading-layout-b.md"))
+                                    .contentEquals(entry.bytes))
+                                Files.writeString(abDest.resolve("identity.txt"),
+                                    "schema=markflow-heading-layout-ab/v1\n" +
+                                        "source_sha256_a=" + sha(entry.bytes) + "\n" +
+                                        "source_sha256_b=" + sha(Files.readAllBytes(
+                                            project.resolve("heading-layout-b.md"))) + "\n" +
+                                        "source_head=" + sourceHead + "\n" +
+                                        "ide_version=" + version + "\n" +
+                                        "native_a_environment=" + nativeEnvironment + "\n" +
+                                        "native_b_environment=" + bEnv + "\n" +
+                                        "production_default=sourceLineReplacement_false\n" +
+                                        "full_differential_acceptance=false\n")
+                            } finally {
+                                markFlow.close(b)
+                            }
+                        }
                     } catch (cause: Throwable) {
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
@@ -893,6 +1045,7 @@ private interface DifferentialManifestPreviewRemote {
     fun nativeRasterGeometry(editor: Editor): String
     fun rasterGeometryNegativeControls(): Boolean
     fun nativeHeadingSourceGeometry(editor: Editor): String
+    fun nativeHeadingReplacementGeometry(editor: Editor): String
     fun nativeHeadingGeometryNegativeControls(): Boolean
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long
