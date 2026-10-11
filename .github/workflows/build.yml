@@ -542,7 +542,27 @@ jobs:
 
       - name: Run Tests
         if: ${{ github.event.action != 'edited' && needs.build.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        run: ./gradlew check
+        shell: bash
+        run: |
+          set -euo pipefail
+          # IDEA BasePlatformTestCase's editor is detached from Swing by
+          # default. #350's actual EditorImpl AWT route test attaches it to
+          # a visible frame; never synthesize a passed click in headless mode.
+          command -v Xvfb
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-platform-unit-xvfb.log" 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+          export DISPLAY=:99
+          for attempt in {1..30}; do
+            test -S /tmp/.X11-unix/X99 && break
+            sleep 0.2
+          done
+          test -S /tmp/.X11-unix/X99 || {
+            echo "::error::Platform unit test Xvfb failed to start"
+            cat "$RUNNER_TEMP/markflow-platform-unit-xvfb.log"
+            exit 1
+          }
+          ./gradlew check
 
       # Native ARM64 hosted images lack Chromium; all 40 real browser cases remain mandatory.
       - name: Install native ARM64 Chromium for webview acceptance
