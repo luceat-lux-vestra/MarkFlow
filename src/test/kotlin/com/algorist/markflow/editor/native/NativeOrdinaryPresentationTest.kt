@@ -606,9 +606,31 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
                 System.currentTimeMillis(), 0,
                 x, y, 1, false, MouseEvent.BUTTON1,
             )
-            editor.contentComponent.dispatchEvent(click)
+            // Observe the *real* EditorImpl->EditorMouseListener route.
+            // This listener is a passive diagnostic and never fabricates a
+            // collapsed fold event or calls the controller directly.
+            val routed = mutableListOf<String>()
+            val observer = object : com.intellij.openapi.editor.event.EditorMouseListener {
+                override fun mouseClicked(event: EditorMouseEvent) {
+                    routed += "area=${event.area},fold=${event.collapsedFoldRegion?.javaClass?.simpleName}," +
+                        "same=${event.collapsedFoldRegion === fold},input=${event.mouseEvent.id}"
+                }
+            }
+            editor.addEditorMouseListener(observer)
+            try {
+                editor.contentComponent.dispatchEvent(click)
+            } finally {
+                editor.removeEditorMouseListener(observer)
+            }
 
-            assertTrue("EditorImpl did not route actual custom-fold hit-test to its owner", click.isConsumed)
+            assertTrue(
+                "EditorImpl actual click route is unverified: consumed=${click.isConsumed}," +
+                    " regionValid=${fold.isValid}, regionLocation=${fold.location}," +
+                    " point=(${click.x},${click.y}), showing=${editor.contentComponent.isShowing}," +
+                    " componentMouseListeners=${editor.contentComponent.mouseListeners.size}," +
+                    " routed=$routed",
+                click.isConsumed,
+            )
             assertFalse("Owned region still visible after real editor component click", fold.isValid)
             assertEquals(contentOffset, editor.caretModel.offset)
             assertEquals(1L, controller.evidenceSnapshot().mouseReveals)
