@@ -35,7 +35,9 @@ class MarkFlowStarterHeadingRobotTest {
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
         check(version == "2026.2.3")
-        // Isolate the OS-click positive pilot from an expanded platform section parent.\n        // The same-start platform fold collision is covered by a separate fail-closed test.\n        val source = "Tail\n\n# Robot Heading\n"
+        // Isolate the OS-click positive pilot from an expanded platform section parent.
+        // The same-start platform fold collision is covered by a separate fail-closed test.
+        val source = "Tail\n\n# Robot Heading\n"
         val tail = source.indexOf("Tail") + 1
         val headingContent = source.indexOf("Robot Heading")
         val sandbox = Files.createTempDirectory("markflow-350-heading-robot-")
