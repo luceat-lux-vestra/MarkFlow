@@ -243,13 +243,12 @@ internal class NativeHeadingPresentationController(
         removeOwned(key)
 
         if (sourceLineReplacement) {
-            val span = NativeHeadingCustomFoldLinePlanner.plan(editor, model)
-            if (span != null) {
-                installCustomIfCurrent(identity, key, model, span)
-                // Unsupported overlap must leave source visible, never
-                // silently add the old double-height block inlay.
-                return
-            }
+            // A custom fold can replace only a parser-proven whole source line.
+            // Unsafe Setext/multiline cases must remain exact, editable Markdown;
+            // never fall through to the legacy additive block inlay in this mode.
+            val span = NativeHeadingCustomFoldLinePlanner.plan(editor, model) ?: return
+            installCustomIfCurrent(identity, key, model, span)
+            return
         }
 
         val sourceBefore = editor.document.immutableCharSequence.toString()

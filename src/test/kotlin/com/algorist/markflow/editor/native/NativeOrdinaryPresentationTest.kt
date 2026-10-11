@@ -475,6 +475,45 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * #350 fail-closed boundary: multiline Setext headings are valid Markdown,
+     * but cannot be replaced by a whole-line custom fold in the current pilot.
+     * They must not regain the old double-height block inlay as a fallback.
+     */
+    fun testSourceReplacingHeadingRejectsMultilineSetextWithoutLegacyInlay() {
+        val source = "Heading\n=======\n\nTail\n"
+        myFixture.configureByText("heading-setext-unsafe-custom-fold.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val baselineY = editor.offsetToXY(tailOffset).y
+        val stamp = document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val heading = NativeHeadingProjectionPlanner.plan(plan).single()
+        assertNull(NativeHeadingCustomFoldLinePlanner.plan(editor, heading))
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.models)
+            assertEquals(0, evidence.ownedInlays)
+            assertEquals(0, evidence.ownedFolds)
+            assertEquals(0, evidence.ownedCustomFolds)
+            assertTrue(editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                .none { it.renderer is NativeHeadingInlayRenderer })
+            assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
+            assertEquals(tailOffset, editor.caretModel.offset)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+        assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+    }
+
+    /**
      * Integration pilot: real production heading controller with explicit
      * sourceLineReplacement=true (the shipping default stays false).
      * Tests ownership through the actual controller's click and refresh paths.
