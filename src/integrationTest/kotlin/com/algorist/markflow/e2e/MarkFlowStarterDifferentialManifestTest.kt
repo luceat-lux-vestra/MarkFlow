@@ -373,7 +373,6 @@ class MarkFlowStarterDifferentialManifestTest {
                                 native.width + "x" + native.height + "\npreview_viewport=" +
                                 reference.width + "x" + reference.height + "\n" + nativeEnvironment)
                         diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
-                        states[entry.id] = "CAPTURED_UNVERIFIED"
                         markFlow.close(editor)
                         if (entry.id == "md-atx-headings-h1-h6") {
                             val abDest = output.resolve("heading-layout-ab")
@@ -386,6 +385,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                 val bEditor = b.editor
                                 driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
                                 markFlow.resetToSingleCaret(b, source.length)
+                                val bCaretBefore = markFlow.primaryCaretOffset(b)
+                                check(bCaretBefore == source.length)
                                 driver.withContext(OnDispatcher.EDT) {
                                     preview.showNativeAtSourceLine(bEditor, entry.line)
                                 }
@@ -490,6 +491,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                 Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
                                 check(markFlow.source(b) == source)
                                 check(markFlow.modificationStamp(b) == bStamp)
+                                check(markFlow.primaryCaretOffset(b) == bCaretBefore) {
+                                    "B JCEF capture unexpectedly moved the native caret"
+                                }
                                 check(driver.withContext(OnDispatcher.EDT) {
                                     preview.sourceText(bEditor)
                                 } == source)
@@ -508,6 +512,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                             project.resolve("heading-layout-b.md"))) + "\n" +
                                         "source_head=" + sourceHead + "\n" +
                                         "ide_version=" + version + "\n" +
+                                        "caret_offset_before=" + bCaretBefore + "\n" +
+                                        "caret_offset_after=" + markFlow.primaryCaretOffset(b) + "\n" +
                                         "native_a_environment=" + nativeEnvironment + "\n" +
                                         "native_b_environment=" + bEnv + "\n" +
                                         "production_default=sourceLineReplacement_false\n" +
@@ -516,6 +522,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                 markFlow.close(b)
                             }
                         }
+                        // Do not report a successful capture if its mandatory
+                        // same-source A/B evidence failed earlier in this case.
+                        states[entry.id] = "CAPTURED_UNVERIFIED"
                     } catch (cause: Throwable) {
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
