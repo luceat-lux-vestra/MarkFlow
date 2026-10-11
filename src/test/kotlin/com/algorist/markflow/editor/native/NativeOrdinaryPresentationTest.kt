@@ -571,6 +571,63 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(stampBefore, document.modificationStamp)
     }
 
+    /**
+     * #350 production-path pilot: unlike constructed EditorMouseEvent tests,
+     * dispatch an AWT click to the actual IntelliJ editor component so
+     * EditorImpl.createEditorMouseEvent must hit-test the visible custom fold.
+     * This is in-process platform UI evidence, not a full Starter Robot run.
+     */
+    fun testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-editor-hit-test.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stamp = document.modificationStamp
+        val baselineY = editor.offsetToXY(tailOffset).y
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val contentOffset = NativeHeadingProjectionPlanner.plan(plan).single().contentRange.startOffset
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val fold = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>().single()
+            val loc = requireNotNull(fold.location) {
+                "Custom heading placeholder has no editor location: physical hit testing unverified"
+            }
+            assertTrue(fold.isValid)
+            assertTrue(fold.widthInPixels > 0)
+            assertTrue(fold.heightInPixels > 0)
+
+            val x = loc.x + minOf(4, fold.widthInPixels - 1)
+            val y = loc.y + fold.heightInPixels / 2
+            val click = MouseEvent(
+                editor.contentComponent, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0,
+                x, y, 1, false, MouseEvent.BUTTON1,
+            )
+            editor.contentComponent.dispatchEvent(click)
+
+            assertTrue("EditorImpl did not route actual custom-fold hit-test to its owner", click.isConsumed)
+            assertFalse("Owned region still visible after real editor component click", fold.isValid)
+            assertEquals(contentOffset, editor.caretModel.offset)
+            assertEquals(1L, controller.evidenceSnapshot().mouseReveals)
+            assertEquals(0, controller.evidenceSnapshot().ownedCustomFolds)
+            assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(1, controller.evidenceSnapshot().ownedCustomFolds)
+        } finally {
+            controller.dispose()
+        }
+        assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+    }
+
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
         val source = """# Heading
 
