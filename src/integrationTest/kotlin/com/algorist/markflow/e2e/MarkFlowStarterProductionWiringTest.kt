@@ -13,56 +13,23 @@ import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** Exact production-opening proof for the #153 cutover wiring. */
+@ExtendWith(SharedJcefStarterExtension::class)
 class MarkFlowStarterProductionWiringTest {
     @Test
     fun productionOpeningAutomaticallyWiresNativeHostDerivedAndRawHtmlConsumersWithoutOwningSource() {
-        val pluginPath = System.getProperty("path.to.build.plugin")
-            ?.takeIf(String::isNotBlank)
-            ?.let(Path::of)
-            ?: error("path.to.build.plugin is required by the Starter/Driver integration-test task")
-        val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
-            .toAbsolutePath()
-            .normalize()
-        val tempRoot = Files.createTempDirectory("markflow-starter-production-wiring-")
-        val projectPath = tempRoot.resolve("project")
-        check(fixtureProject.toFile().copyRecursively(projectPath.toFile(), overwrite = true)) {
-            "failed to copy deterministic Starter/Driver fixture project"
-        }
+        // Reuse only with the compatible real-IDE JCEF smoke test.
+        // Original JUnit class and its full source/dirty/lifecycle assertions remain authoritative.
+        val projectPath = SharedJcefStarterRun.project
         val fixturePath = projectPath.resolve("PRODUCTION.md")
         val expectedSource = Files.readString(fixturePath)
-        val platformVersion = System.getProperty("markflow.test.platformVersion")
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
-            ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
-        // Starter resolves stable release versions and EAP build numbers through different metadata fields.
-        val targetTestCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(projectPath)).let { testCase ->
-            if (isStarterEapBuildNumber(platformVersion)) {
-                testCase.useEAP(platformVersion)
-            } else {
-                testCase.useRelease(platformVersion)
-            }
-        }
-
-        try {
-            Starter.newContext(
-                testName = "markflow-starter-driver-production-wiring",
-                testCase = targetTestCase,
-            ).apply {
-                PluginConfigurator(this).installPluginFromPath(pluginPath)
-            }.applyVMOptionsPatch {
-                // This scenario proves the normal production derived-renderer path. The separate
-                // degraded-path Starter test owns JCEF-disabled ordinary source-editing acceptance.
-                addSystemProperty("ide.browser.jcef.enabled", true)
-                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                addSystemProperty("idea.trust.all.projects", true)
-                addSystemProperty("jb.consents.confirmation.enabled", false)
-            }.runIdeWithDriver().useDriverAndCloseIde {
+        SharedJcefStarterRun.driver.withContext {
                 waitForIndicators(5.minutes)
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
@@ -217,10 +184,10 @@ class MarkFlowStarterProductionWiringTest {
                 check(Files.readString(fixturePath) == expectedSource) {
                     "production host/derived/raw-HTML wiring changed fixture bytes"
                 }
+                // The next class is a separate JUnit test, not a separate IDEA process:
+                // close our editor so state cannot leak into its real Preview capture.
+                markFlow.close(editor)
             }
-        } finally {
-            tempRoot.toFile().deleteRecursively()
-        }
     }
 }
 
