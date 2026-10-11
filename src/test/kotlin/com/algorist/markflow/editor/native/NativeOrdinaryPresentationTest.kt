@@ -529,7 +529,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
      * production controller. Assert typography parity with the currently
      * shipping native heading inlay before modifying the source layout path.
      */
-    fun testHeadingCustomFoldRendererMatchesExistingH2TypographyAndPaintsPixels() {
+    fun testHeadingCustomFoldRendererMatchesPreviewH2TypographyAndPaintsPixels() {
         val source = "## Heading\n\nTail\n"
         myFixture.configureByText("heading-custom-renderer-typography.md", source)
         val editor = myFixture.editor
@@ -563,14 +563,33 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             }
             val custom = requireNotNull(region) { "Custom two-line region unavailable" }
             assertTrue(custom.isValid)
-            assertEquals("H2 width must match previous native typography", originalWidth, custom.widthInPixels)
+            // The shipping additive inlay intentionally uses legacy editor
+            // typography. The opt-in CustomFold uses measured 2026.2.3 JCEF
+            // H2 CSS (1.8 * 13px), so expecting equal widths/heights was
+            // invalid. Compute the exact CustomFold metrics instead.
+            assertTrue(originalWidth > 1 && originalHeight > 0)
+            assertEquals(1.8f, NativeHeadingPreviewTypographyPilot.scale(2))
+            val font = NativeHeadingPreviewTypographyPilot.font(editor, model.level)
+            assertEquals(java.awt.Font.BOLD, font.style)
+            assertEquals(editor.contentComponent.font.size2D * 1.8f, font.size2D)
+            val metrics = editor.contentComponent.getFontMetrics(font)
+            val naturalWidth = maxOf(1, metrics.stringWidth(model.text) + 8)
+            val viewportWidth = editor.scrollingModel.visibleArea.width
+            val expectedWidth = if (editor.contentComponent.isShowing && viewportWidth > 9) {
+                minOf(naturalWidth, viewportWidth - 8)
+            } else naturalWidth
+            val expectedHeight = maxOf(editor.lineHeight, metrics.height + 16)
+            assertEquals("Preview H2 font geometry must determine CustomFold width",
+                expectedWidth, custom.widthInPixels)
             assertTrue(
                 "Custom Heading must never cache a one-pixel ellipsis in an unlaid-out viewport",
                 custom.widthInPixels > 1,
             )
-            assertEquals("H2 height must match previous native typography", originalHeight, custom.heightInPixels)
+            assertEquals("Preview H2 font geometry must determine CustomFold height",
+                expectedHeight, custom.heightInPixels)
             assertEquals("Heading plus blank line must be REPLACED, not added",
-                originalHeight - editor.lineHeight * 2, editor.offsetToXY(tailOffset).y - plainY)
+                expectedHeight - editor.lineHeight * 2,
+                editor.offsetToXY(tailOffset).y - plainY)
             assertEquals("Heading", customRenderer.displayText)
             assertEquals(model.contentRange.startOffset, customRenderer.contentOffset)
 
