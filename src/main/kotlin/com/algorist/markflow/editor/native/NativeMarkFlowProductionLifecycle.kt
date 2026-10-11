@@ -62,8 +62,12 @@ internal object NativeMarkFlowProductionLifecycle {
                 // Explicit, fixture-scoped Starter IDEA opt-in only. Normal production stays
                 // on legacy headings until #350/#353 differential acceptance is complete.
                 headingSourceLineReplacement =
-                    System.getProperty("markflow.starter.headingRobotPilot") == "true" &&
-                        file.name == "heading-robot.md",
+                    (System.getProperty("markflow.starter.headingRobotPilot") == "true" &&
+                        file.name == "heading-robot.md") ||
+                    // Independently scoped to the exact byte-identical B fixture.
+                    // Product and every other Markdown file keep legacy headings.
+                    (System.getProperty("markflow.starter.headingLayoutAbPilot") == "true" &&
+                        file.name == "heading-layout-b.md"),
             )
             editor.putUserData(controllerKey, controller)
             true
