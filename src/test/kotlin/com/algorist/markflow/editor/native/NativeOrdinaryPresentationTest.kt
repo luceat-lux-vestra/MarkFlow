@@ -157,6 +157,66 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * #353 possible non-destructive fallback: only probe whether IDEA allows a
+     * conventional source-heading fold inside an expanded platform section
+     * with the *same start*. A successful CustomFold is explicitly NOT required
+     * here (see the separate failing-H1 contract), and no foreign fold may be
+     * changed to make this proof pass. It is intentionally a feasibility probe,
+     * not a claim that native heading presentation now matches the Preview.
+     */
+    fun testH1ConventionalSourceFoldCanNestInsideForeignSectionAtSameStart() {
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
+        myFixture.configureByText("heading-section-same-start-normal-fold.txt", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val stamp = document.modificationStamp
+        val tailOffset = source.indexOf("Paragraph after H2.") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        var sourceFold: com.intellij.openapi.editor.FoldRegion? = null
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(
+                    0, document.textLength - 1, "platform section"
+                )
+                requireNotNull(foreign).isExpanded = true
+            }
+            val platformFold = requireNotNull(foreign)
+            val h1End = document.getLineEndOffset(0)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                sourceFold = editor.foldingModel.addFoldRegion(0, h1End, "\u200B")
+                sourceFold?.isExpanded = false
+            }
+            val own = requireNotNull(sourceFold) {
+                "Same-start conventional source fold also rejected by pinned IDEA"
+            }
+            assertTrue(own.isValid)
+            assertFalse(own.isExpanded)
+            assertEquals(0, own.startOffset)
+            assertEquals(h1End, own.endOffset)
+            assertTrue(platformFold.isValid)
+            assertTrue(platformFold.isExpanded)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+            assertEquals(tailOffset, editor.caretModel.offset)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                sourceFold?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+            // The normal-fold owner must only dispose its own region.
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+        assertEquals(tailOffset, editor.caretModel.offset)
+    }
+
+    /**
      * #350 custom-fold compatibility with the bundled Markdown editor's own
      * collapsed heading-syntax fold. A custom line fold may coexist with a
      * foreign fold entirely inside that line; neither must be owned/removed
