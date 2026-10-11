@@ -555,6 +555,7 @@ jobs:
           export DISPLAY=:99
           for attempt in {1..30}; do
             test -S /tmp/.X11-unix/X99 && break
+            echo "Waiting for the test Xvfb socket (attempt ${attempt}/30)"
             sleep 0.2
           done
           test -S /tmp/.X11-unix/X99 || {
