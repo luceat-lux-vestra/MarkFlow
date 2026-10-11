@@ -869,6 +869,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         editor.caretModel.moveToOffset(tailOffset)
         val stamp = document.modificationStamp
         val originalY = editor.offsetToXY(tailOffset).y
+        val originalHeadingY = editor.offsetToXY(0).y
         val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
         assertEquals(1, NativeHeadingProjectionPlanner.plan(plan).size)
         var platformSection: com.intellij.openapi.editor.FoldRegion? = null
@@ -904,6 +905,8 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(0, foreign.startOffset)
             assertEquals(document.textLength, foreign.endOffset)
             val projectedY = editor.offsetToXY(tailOffset).y
+            assertEquals("H1 bottom spacing must NOT precede the title", originalHeadingY,
+                editor.offsetToXY(0).y)
             assertEquals("Co-start H1 must add only measured 16px Preview bottom spacing",
                 16, projectedY - originalY)
             assertEquals(source, document.text)

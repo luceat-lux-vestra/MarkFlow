@@ -446,7 +446,7 @@ internal class NativeHeadingPresentationController(
         // heading or its full typography height. This is limited to the
         // co-start test pilot; no global heading geometry is changed.
         val paragraphGap = editor.inlayModel.addBlockElement(
-            foldEnd, true, true, 0, NativeHeadingParagraphGapRenderer
+            foldEnd, true, false, 0, NativeHeadingParagraphGapRenderer
         )
         if (paragraphGap == null || !paragraphGap.isValid) {
             paragraphGap?.takeIf { it.isValid }?.dispose()

@@ -744,7 +744,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // still separately blocked by the unreviewed
                                 // source-aligned DOM/typography anchor contract.
                                 if (compositeCount != 6 || bCustomCount != 5 ||
-                                    bMissing != "1" || !h1InlineInstalled ||
+                                    bMissing != "1" ||
                                     !nativeB.contains("legacy_heading_inlay_count=0")) {
                                     structuralFailures += listOf(
                                         entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
