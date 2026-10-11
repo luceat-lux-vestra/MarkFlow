@@ -484,21 +484,31 @@ for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Revie
   grep -Fq "\"$component\"" <<<"$head_evidence_job" || die "head validation reuse does not require successful $component evidence"
 done
 grep -Fq '    needs: [ headEvidence ]' "$build_workflow" || die "Build component does not depend on head validation evidence"
-[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "2" ] || die "Build and Dependency Review must both depend on head validation evidence"
+[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "5" ] || die "Build/Test/Inspect/Verify/Dependency Review must each depend on head validation evidence"
 
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
-grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' "$build_workflow" || die "Build component does not expose docs-only classification"
-grep -q '^        id: change-scope$' "$build_workflow" || die "Build component is missing the changed-file classifier step"
+grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' <<<"$head_evidence_job" || die "head evidence does not export its trusted docs-only classification"
+grep -Fq 'docs_only: ${{ needs.headEvidence.outputs.docs_only }}' "$build_workflow" || die "Build component does not preserve the docs-only output contract"
+grep -q '^        id: change-scope$' <<<"$head_evidence_job" || die "classifier is not owned by head validation evidence"
+grep -q '^        id: change-scope$' "$build_workflow" || die "required head-evidence classifier step is missing"
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
 grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
 grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
-[ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify must depend on required Build"
+[ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "0" ] || die "independent validation jobs must not wait for Build"
+for job in build test inspectCode verify dependencyReview; do
+  dependency="$(awk -v wanted="$job" '
+    $0 == "  " wanted ":" { on=1; next }
+    on && /^  [A-Za-z]/ { exit }
+    on && /^    needs:/ { print; exit }
+  ' "$build_workflow")"
+  [ "$dependency" = '    needs: [ headEvidence ]' ] || die "$job bypasses or serializes the required head evidence"
+done
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a docs-only success path"
 [ "$(grep -Fc '      - name: Metadata-only event fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a metadata-only success path"
-[ "$(grep -Fc "steps.change-scope.outputs.docs_only == 'true'" "$build_workflow" || true)" = "1" ] || die "Build docs-only path must use its own classifier output"
-[ "$(grep -Fc "needs.build.outputs.docs_only == 'true'" "$build_workflow" || true)" = "3" ] || die "Test/Inspect/Verify docs-only paths must consume required Build output"
+[ "$(grep -Fc "needs.headEvidence.outputs.docs_only == 'true'" "$build_workflow" || true)" = "4" ] || die "all four product components must consume trusted head docs-only classification"
+[ "$(grep -Fc 'needs.build.outputs.docs_only' "$build_workflow" || true)" = "0" ] || die "product validation must not use the serial Build docs-only output"
 
 step_if() {
   local step_name="$1"
@@ -510,12 +520,12 @@ step_if() {
 }
 build_plugin_if="$(step_if "Build plugin")"
 [ -n "$build_plugin_if" ] || die "Build plugin has no step-level guard"
-grep -Fq "steps.change-scope.outputs.docs_only != 'true'" <<<"$build_plugin_if" || die "Build plugin is not guarded by Build-owned docs-only classification"
+grep -Fq "needs.headEvidence.outputs.docs_only != 'true'" <<<"$build_plugin_if" || die "Build plugin is not guarded by head-evidence docs-only classification"
 grep -Fq "github.event.action != 'edited'" <<<"$build_plugin_if" || die "Build plugin is not suppressed on metadata-only events"
 for heavy_step in "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
   heavy_if="$(step_if "$heavy_step")"
   [ -n "$heavy_if" ] || die "$heavy_step has no step-level guard"
-  grep -Fq "needs.build.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by Build component docs-only output"
+  grep -Fq "needs.headEvidence.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by trusted head-evidence docs-only output"
   grep -Fq "github.event.action != 'edited'" <<<"$heavy_if" || die "$heavy_step is not suppressed on metadata-only events"
 done
 
@@ -598,7 +608,7 @@ grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artif
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
 coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
-expected_coverage_if='if: ${{ github.event.action != '"'"'edited'"'"' && needs.build.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
+expected_coverage_if='if: ${{ github.event.action != '"'"'edited'"'"' && needs.headEvidence.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
 [ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact may only be suppressed by trusted docs-only scope or exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
