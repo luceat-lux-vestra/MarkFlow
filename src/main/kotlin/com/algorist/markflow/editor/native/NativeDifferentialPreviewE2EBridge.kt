@@ -225,86 +225,100 @@ internal object NativeDifferentialPreviewE2EBridge {
 
 
     /**
-     * #353 test-only actual IDEA CustomFoldRegion H1–H6 geometry ledger.
-     * Captures installed physical sizes, source offsets, paragraph Y anchors,
-     * and overlapping foreign folds without mutating any platform fold.
+     * #353 Stage E9: retain an *observational* six-heading ledger even when
+     * IDEA rejects a CustomFoldRegion due to platform-owned folding geometry.
+     * Never remove/expand another plugin's fold to manufacture success.
+     *
+     * A missing fold is measured as its actual source-line fallback, not as a
+     * fabricated CustomFold rectangle. The Starter caller classifies it as FAIL.
      */
     @Suppress("UnstableApiUsage")
     fun nativeHeadingReplacementGeometry(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val doc = editor.document
-        fun lineText(line: Int): String = doc.getText(
+        fun lineText(line: Int) = doc.getText(
             com.intellij.openapi.util.TextRange(
-                doc.getLineStartOffset(line), doc.getLineEndOffset(line)
-            )
+                doc.getLineStartOffset(line), doc.getLineEndOffset(line),
+            ),
         )
         val folds = editor.foldingModel.allFoldRegions.filter { it.isValid }
         val custom = folds.filterIsInstance<com.intellij.openapi.editor.CustomFoldRegion>()
             .filter { !it.isExpanded && it.renderer is NativeHeadingCustomFoldRenderer }
             .sortedBy { it.startOffset }
-        val inlays = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
-            .count { it.renderer is NativeHeadingInlayRenderer }
-        check(inlays == 0 && custom.size == 6) {
-            "E8 expects six installed replacement folds, no additive inlays; folds=" +
-                custom.size + ", inlays=" + inlays
-        }
         val foreign = folds.filterNot {
             it is com.intellij.openapi.editor.CustomFoldRegion &&
                 it.renderer is NativeHeadingCustomFoldRenderer
         }
+        val additiveInlays = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
+            .count { it.renderer is NativeHeadingInlayRenderer }
         val headingPattern = Regex("^ {0,3}(#{1,6})(?:[ \\t]+|$)")
-        val rows = custom.mapIndexed { index, fold ->
-            val renderer = fold.renderer as NativeHeadingCustomFoldRenderer
-            val start = renderer.sourceRange.startOffset
-            val end = renderer.sourceRange.endOffset
-            val line = doc.getLineNumber(start)
+        val rows = (0 until 6).map { index ->
+            val line = index * 4
+            val nextLine = line + 2
+            check(nextLine < doc.lineCount &&
+                lineText(nextLine) == "Paragraph after H" + (index + 1) + ".") {
+                "Stage E9 six-heading fixture source mismatch"
+            }
             val match = headingPattern.find(lineText(line))
             check(match != null && match.range.first == 0 &&
-                match.groupValues[1].length == index + 1 && line == index * 4 &&
-                start == doc.getLineStartOffset(line) && end == doc.getLineEndOffset(line)) {
-                "E8 custom fold no longer matches H1–H6 source identity"
+                match.groupValues[1].length == index + 1) {
+                "Stage E9 ATX H1–H6 fixture identity mismatch"
             }
-            val next = (line + 1 until doc.lineCount)
-                .firstOrNull { lineText(it).isNotBlank() }
-                ?: error("E8 missing following text")
-            check(next == line + 2 && lineText(next) == "Paragraph after H" + (index + 1) + ".")
-            check(fold.widthInPixels > 0 && fold.heightInPixels > 0)
-            val origin = editor.offsetToXY(fold.startOffset)
+            val start = doc.getLineStartOffset(line)
+            val end = doc.getLineEndOffset(line)
             val headingY = editor.logicalPositionToXY(
                 editor.offsetToLogicalPosition(start)
             ).y
-            val followingOffset = doc.getLineStartOffset(next)
+            val afterOffset = doc.getLineStartOffset(nextLine)
             val followingY = editor.logicalPositionToXY(
-                editor.offsetToLogicalPosition(followingOffset)
+                editor.offsetToLogicalPosition(afterOffset)
             ).y
-            check(followingY > headingY) { "E8 collapsed paragraph anchor" }
-            val overlaps = foreign.count {
-                it.startOffset < fold.endOffset && it.endOffset > fold.startOffset
+            val installed = custom.singleOrNull {
+                (it.renderer as NativeHeadingCustomFoldRenderer).sourceRange.startOffset == start
             }
+            val rendered = installed?.renderer as? NativeHeadingCustomFoldRenderer
+            if (rendered != null) {
+                check(rendered.sourceRange.endOffset == end) {
+                    "Installed CustomFold source end does not match expected H" + (index + 1)
+                }
+            }
+            val overlap = foreign.filter { it.startOffset < end && it.endOffset > start }
+            val foreignRecord = overlap.joinToString(",") {
+                it.javaClass.simpleName + ":" + it.startOffset + "-" + it.endOffset +
+                    ":expanded=" + it.isExpanded
+            }
+            val origin = installed?.let { editor.offsetToXY(it.startOffset) }
             listOf(
                 "level=" + (index + 1),
                 "source_line_zero_based=" + line,
                 "source_start_offset=" + start,
                 "source_end_offset=" + end,
-                "fold_start_offset=" + fold.startOffset,
-                "fold_end_offset=" + fold.endOffset,
-                "fold_origin_x_document_px=" + origin.x,
-                "fold_origin_y_document_px=" + origin.y,
-                "fold_width_px=" + fold.widthInPixels,
-                "fold_height_px=" + fold.heightInPixels,
+                "fold_status=" + (if (installed != null) "INSTALLED" else "MISSING"),
+                "fold_start_offset=" + (installed?.startOffset ?: "UNAVAILABLE"),
+                "fold_end_offset=" + (installed?.endOffset ?: "UNAVAILABLE"),
+                "fold_origin_x_document_px=" + (origin?.x ?: "UNAVAILABLE"),
+                "fold_origin_y_document_px=" + (origin?.y ?: "UNAVAILABLE"),
+                "fold_width_px=" + (installed?.widthInPixels ?: "UNAVAILABLE"),
+                "fold_height_px=" + (installed?.heightInPixels ?: "UNAVAILABLE"),
                 "heading_y_document_px=" + headingY,
-                "following_line_zero_based=" + next,
-                "following_offset=" + followingOffset,
+                "following_line_zero_based=" + nextLine,
+                "following_offset=" + afterOffset,
                 "following_y_document_px=" + followingY,
-                "foreign_fold_overlap_count=" + overlaps
+                "paragraph_after_heading=" + (followingY > headingY),
+                "foreign_fold_overlap_count=" + overlap.size,
+                "foreign_fold_overlaps=" + foreignRecord,
             ).joinToString("\t")
         }
+        val absent = rows.filter { it.contains("fold_status=MISSING") }
+            .map { it.substringAfter("level=").substringBefore('\t') }
         return listOf(
-            "schema=markflow-native-heading-customfold-geometry/v1",
+            "schema=markflow-native-heading-customfold-geometry/v2",
             "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
             "measured_atx_heading_count=" + custom.size,
-            "legacy_heading_inlay_count=" + inlays,
+            "missing_heading_levels=" + absent.joinToString(","),
+            "legacy_heading_inlay_count=" + additiveInlays,
             "foreign_fold_count=" + foreign.size,
+            "editor_is_showing=" + editor.contentComponent.isShowing,
             "plain_line_height_px=" + editor.lineHeight,
         ).joinToString("\n", postfix = "\n") +
             rows.joinToString("\n", postfix = "\n")
