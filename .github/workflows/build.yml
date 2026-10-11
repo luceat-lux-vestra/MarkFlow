@@ -28,9 +28,10 @@ jobs:
     name: Head validation evidence
     runs-on: ubuntu-24.04-arm
     # Metadata-only replays may begin while the canonical exact-head validation is still running.
-    # The full canonical graph routinely exceeds 15 minutes, so the waiter must outlive that
-    # observed duration without increasing GitHub API polling frequency.
-    timeout-minutes: 35
+    # The mandatory Test workload now has a 50-minute budget (Gradle check alone took 29m29s).
+    # Allow the metadata-only waiter to outlive full canonical evidence without increasing
+    # GitHub API polling frequency; unknown/incomplete canonical evidence still fails closed.
+    timeout-minutes: 65
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -43,7 +44,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 240); do
             runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
