@@ -233,6 +233,20 @@ jobs:
           bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
           bash .github/scripts/install-starter-jcef-apparmor.sh
 
+      # Both preview smoke and the split differential-manifest case require
+      # the same pinned sandboxed JCEF runtime on independent x64 IDE runners.
+      # Preserve the existing derived-content-only contract/step unchanged.
+      - name: Install pinned sandboxed JCEF AppArmor profile (derived-manifest only)
+        if: matrix.shard == 'derived-manifest'
+        shell: bash
+        env:
+          STARTER_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          [ "$RUNNER_ARCH" = X64 ] && [ "$(uname -m)" = x86_64 ]
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
       - name: Start virtual display
         shell: bash
         run: |
