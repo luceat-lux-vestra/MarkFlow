@@ -137,6 +137,28 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             )
             assertEquals(source.indexOf("## Heading level 2"), installed.single().startOffset)
             assertEquals(1, pilot.evidenceSnapshot().ownedCustomFolds)
+            // The new H1 candidate is a source-line inline inlay, NOT a
+            // duplicate-height block. The nested H2 stays a real CustomFold.
+            val inline = editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .filter { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid }
+            assertEquals("Co-start H1 must render through exactly one owned inline", 1, inline.size)
+            assertTrue(inline.single().heightInPixels >= editor.lineHeight)
+            assertEquals("Do not reintroduce additive H1 block presentation", 0,
+                editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                    .count { it.renderer is NativeHeadingInlayRenderer })
+            assertEquals(2, pilot.evidenceSnapshot().fullyConcealed)
+            // Reveal by moving the caret inside authoritative H1. The owner
+            // must remove only its own fold/inlay; JetBrains's section remains.
+            editor.caretModel.moveToOffset(source.indexOf("Heading level 1") + 2)
+            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(0, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
+            assertTrue(section.isValid)
+            assertTrue(section.isExpanded)
+            editor.caretModel.moveToOffset(caret)
+            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
             assertTrue("Never remove or replace the foreign section fold", section.isValid)
             assertTrue("Never change platform expansion state to force H1", section.isExpanded)
             assertEquals(stamp, document.modificationStamp)
