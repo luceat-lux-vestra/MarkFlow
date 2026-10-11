@@ -31,6 +31,8 @@ internal class NativePageGeometryPilot private constructor(
     private val editor: EditorEx,
     private val originalScheme: EditorColorsScheme,
     private val originalBorder: Border?,
+    private val localScheme: EditorColorsScheme,
+    private val pageBorder: Border,
     private val paragraphSpacing: List<Inlay<*>>,
 ) : Disposable {
     private var disposed = false
@@ -55,6 +57,37 @@ internal class NativePageGeometryPilot private constructor(
             insets.top,
             paragraphSpacing.count { it.isValid },
         )
+    }
+
+    /**
+     * The real Starter capture configures its global editor scheme and editor
+     * layout *after* EditorFactory.editorCreated. Re-assert this editor-local
+     * research styling only after those platform operations have completed.
+     * It never creates another spacer or touches the authoritative Document.
+     */
+    fun reapplyAfterEditorConfiguration() {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(!disposed && !editor.isDisposed)
+        val source = editor.document.immutableCharSequence.toString()
+        val stamp = editor.document.modificationStamp
+        val caretOffsets = editor.caretModel.allCarets.map { it.offset }
+        val foldStates = editor.foldingModel.allFoldRegions.map {
+            Triple(it.startOffset, it.endOffset, it.isExpanded)
+        }
+        editor.setColorsScheme(localScheme)
+        editor.setBorder(pageBorder)
+        check(editor.colorsScheme.editorFontSize == BUNDLED_PARAGRAPH_FONT_PX)
+        check(editor.colorsScheme.editorFontName == localScheme.editorFontName)
+        check(editor.insets.left == REFERENCE_LEFT_INSET_PX &&
+            editor.insets.top == EXPERIMENTAL_TOP_INSET_PX) {
+            "Research page geometry did not survive editor configuration: insets=${editor.insets}"
+        }
+        check(editor.document.immutableCharSequence.toString() == source &&
+            editor.document.modificationStamp == stamp)
+        check(editor.caretModel.allCarets.map { it.offset } == caretOffsets)
+        check(editor.foldingModel.allFoldRegions.map {
+            Triple(it.startOffset, it.endOffset, it.isExpanded)
+        } == foldStates)
     }
 
     override fun dispose() {
@@ -109,13 +142,15 @@ internal class NativePageGeometryPilot private constructor(
                 // Colors/attributes still delegate to the original scheme, while
                 // font preferences are copied before local changes.
                 val localScheme = EditorColorsSchemeImpl(originalScheme)
+                localScheme.name = originalScheme.name
                 localScheme.setFontPreferences(originalScheme.fontPreferences)
                 localScheme.editorFontName = bundledSansFamily()
                 localScheme.editorFontSize = BUNDLED_PARAGRAPH_FONT_PX
-                editor.setColorsScheme(localScheme)
-                editor.setBorder(BorderFactory.createEmptyBorder(
+                val pageBorder = BorderFactory.createEmptyBorder(
                     EXPERIMENTAL_TOP_INSET_PX, REFERENCE_LEFT_INSET_PX, 0, 0,
-                ))
+                )
+                editor.setColorsScheme(localScheme)
+                editor.setBorder(pageBorder)
 
                 // Narrow research-only block model based on the real
                 // Markdown AST, not hard-coded "Paragraph after H" text.
@@ -159,7 +194,9 @@ internal class NativePageGeometryPilot private constructor(
                 check(editor.caretModel.offset == originalCaret)
                 check(foreignFolds == editor.foldingModel.allFoldRegions.toList())
                 check(foreignFolds.map { Triple(it.startOffset, it.endOffset, it.isExpanded) } == foreignStates)
-                return NativePageGeometryPilot(editor, originalScheme, originalBorder, paragraphSpacing)
+                return NativePageGeometryPilot(
+                    editor, originalScheme, originalBorder, localScheme, pageBorder, paragraphSpacing
+                )
             } catch (failure: Throwable) {
                 paragraphSpacing.asReversed().forEach { it.takeIf { inlay -> inlay.isValid }?.dispose() }
                 if (!editor.isDisposed) {
