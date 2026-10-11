@@ -589,7 +589,26 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
         val contentOffset = NativeHeadingProjectionPlanner.plan(plan).single().contentRange.startOffset
         val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        // BasePlatformTestCase supplies an editor model without a visible Swing
+        // hierarchy. AWT dispatchEvent silently discards input to a hidden
+        // component, so the real EditorImpl mouse path must run in a visible
+        // component hosted by the CI Xvfb display. Do not substitute a
+        // manufactured EditorMouseEvent or directly invoke the controller.
+        assertFalse(
+            "Real EditorImpl mouse route requires a display-backed IDEA test worker",
+            java.awt.GraphicsEnvironment.isHeadless(),
+        )
+        val editorComponent = editor.component
+        val previousParent = editorComponent.parent
+        val displayFrame = javax.swing.JFrame("MarkFlow custom heading editor mouse contract")
         try {
+            displayFrame.setBounds(80, 80, 1000, 650)
+            displayFrame.contentPane.add(editorComponent, java.awt.BorderLayout.CENTER)
+            displayFrame.isVisible = true
+            assertTrue(
+                "Editor component failed to join a visible Swing hierarchy",
+                editor.contentComponent.isShowing,
+            )
             controller.applyPlan(plan, richPresentationEnabled = true)
             val fold = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>().single()
             val loc = requireNotNull(fold.location) {
@@ -644,6 +663,11 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(1, controller.evidenceSnapshot().ownedCustomFolds)
         } finally {
             controller.dispose()
+            displayFrame.contentPane.remove(editorComponent)
+            displayFrame.dispose()
+            // Restore the fixture's component ownership before teardown.
+            previousParent?.add(editorComponent)
+            previousParent?.revalidate()
         }
         assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
         assertEquals(source, document.text)
