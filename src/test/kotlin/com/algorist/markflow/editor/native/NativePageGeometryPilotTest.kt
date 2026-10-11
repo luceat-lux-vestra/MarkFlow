@@ -111,8 +111,8 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
         assertEquals(source, editor.document.text)
     }
     fun testH1SourceFoldAndPagePilotNeverDoubleOwnParagraphGap() {
-        val source = "# Heading level 1\\n\\nParagraph after H1.\\n\\n" +
-            "## Heading level 2\\n\\nParagraph after H2.\\n"
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
         myFixture.configureByText("heading-layout-b.md", source)
         val editor = myFixture.editor as EditorEx
         val doc = editor.document
@@ -169,8 +169,8 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
     }
 
     fun testPreexistingHeadingOwnedGapPreventsLatePageGapInstallation() {
-        val source = "# Heading level 1\\n\\nParagraph after H1.\\n\\n" +
-            "## Heading level 2\\n\\nParagraph after H2.\\n"
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
         myFixture.configureByText("heading-layout-b.md", source)
         val editor = myFixture.editor as EditorEx
         val doc = editor.document
