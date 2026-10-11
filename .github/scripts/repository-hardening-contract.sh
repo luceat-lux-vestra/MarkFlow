@@ -263,8 +263,8 @@ grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreserva
   die "Stage E10 lost owned custom heading click/reveal and foreign fold preservation proof"
 grep -Fq 'internal class NativeHeadingCustomFoldRenderer(' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
   die "Stage E11 lost custom heading production-capable renderer"
-grep -Fq 'testHeadingCustomFoldRendererMatchesExistingH2TypographyAndPaintsPixels' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E11 lost custom heading glyph-paint and typography parity test"
+grep -Fq 'testHeadingCustomFoldRendererMatchesPreviewH2TypographyAndPaintsPixels' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E11 lost CustomFold glyph-paint and preview-font metrics test"
 grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
   die "Stage E11 lost fail-closed full-line eligibility checks"
 grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
