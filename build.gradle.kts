@@ -3,6 +3,7 @@ import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.bundling.Zip
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
 import java.security.MessageDigest
@@ -432,7 +433,7 @@ tasks.named("buildPlugin") {
 // API (Qodana UnstableApiUsage High). Real buildPlugin execution is prohibited
 // in consumer mode so it cannot overwrite the exact trusted package.
 if (starterPackagedPlugin) {
-    tasks.named<org.gradle.api.tasks.bundling.Zip>("buildPlugin") {
+    tasks.named<Zip>("buildPlugin") {
         destinationDirectory.set(layout.buildDirectory.dir("e2e-package"))
         archiveFileName.set("plugin.zip")
         doFirst {
