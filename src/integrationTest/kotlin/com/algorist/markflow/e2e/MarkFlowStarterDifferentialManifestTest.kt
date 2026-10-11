@@ -378,11 +378,12 @@ class MarkFlowStarterDifferentialManifestTest {
                             val abDest = output.resolve("heading-layout-ab")
                             Files.createDirectories(abDest)
                             val b = markFlow.openMarkdown("heading-layout-b.md")
+                            val bEditor = b.editor
+                            var bFailure: Throwable? = null
                             try {
                                 markFlow.assertProductionProjectionAttached(b)
                                 check(markFlow.source(b) == source)
                                 val bStamp = markFlow.modificationStamp(b)
-                                val bEditor = b.editor
                                 driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
                                 markFlow.resetToSingleCaret(b, source.length)
                                 val bCaretBefore = markFlow.primaryCaretOffset(b)
@@ -540,16 +541,49 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "native_b_environment=" + bEnv + "\n" +
                                         "production_default=sourceLineReplacement_false\n" +
                                         "full_differential_acceptance=false\n")
-                                // The mixed native B positions are legitimate observations,
-                                // not full H1–H6 replacement geometry acceptance.
-                                check(bCustomCount == 6 && bMissing.isEmpty() &&
-                                    nativeB.contains("legacy_heading_inlay_count=0")) {
-                                    "E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE: " +
+                                // A real platform-owned 0..EOF section fold can share
+                                // H1's start. We must not mutate that external fold.
+                                // Keep the observed mixed-layout diagnostic, but do not
+                                // turn incomplete source-line replacement into PASS.
+                                if (bCustomCount != 6 || bMissing.isNotEmpty() ||
+                                    !nativeB.contains("legacy_heading_inlay_count=0")) {
+                                    structuralFailures += listOf(
+                                        entry.id, "CUSTOMFOLD_INSTALLATION_INCOMPLETE",
+                                        bCustomCount.toString() + "/6;missing=" + bMissing,
+                                        "6/6"
+                                    ).joinToString("\t")
+                                    error("E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE: " +
                                         bCustomCount + "/6; missing=" + bMissing +
-                                        "; foreign fold evidence retained"
+                                        "; foreign fold evidence retained")
                                 }
+                            } catch (cause: Throwable) {
+                                bFailure = cause
+                                throw cause
                             } finally {
-                                markFlow.close(b)
+                                // SHOW_PREVIEW hides EditorComponentImpl. The normal
+                                // Driver close() locates only a visible editor; restore
+                                // native first so cleanup cannot mask the authoritative
+                                // diagnostic error with a 15s UI locator timeout.
+                                val cleanup = runCatching {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        preview.restoreNative(bEditor)
+                                    }
+                                    waitFor(
+                                        message = "B native editor restored for safe close",
+                                        timeout = 20.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeShowing(bEditor)
+                                        } },
+                                        checker = { it }
+                                    )
+                                    markFlow.close(b)
+                                }
+                                val cleanupError = cleanup.exceptionOrNull()
+                                if (cleanupError != null) {
+                                    val originalError = bFailure
+                                    if (originalError == null) throw cleanupError
+                                    originalError.addSuppressed(cleanupError)
+                                }
                             }
                         }
                         // Do not report a successful capture if its mandatory
