@@ -723,7 +723,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             button: Int = MouseEvent.BUTTON1,
         ): EditorMouseEvent {
             val mouse = MouseEvent(
-                editor.contentComponent, MouseEvent.MOUSE_CLICKED,
+                editor.contentComponent, MouseEvent.MOUSE_PRESSED,
                 System.currentTimeMillis(), 0, 0, 0, 1, false, button,
             )
             return EditorMouseEvent(
@@ -842,11 +842,9 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
 
             val x = loc.x + minOf(4, fold.widthInPixels - 1)
             val y = loc.y + fold.heightInPixels / 2
-            // EditorImpl synthesizes its EditorMouseListener.mouseClicked
-            // notification from a short press/release pair, not from a
-            // stand-alone AWT MOUSE_CLICKED dispatched to its content pane.
-            // Preserve the actual EditorImpl hit-testing path: never call
-            // handleMouseReveal or manufacture EditorMouseEvent here.
+            // MarkFlow must consume a real custom-fold mousePressed event
+            // before the platform caret action invalidates its fold identity.
+            // Never manufacture an EditorMouseEvent or call the controller.
             val pressed = MouseEvent(
                 editor.contentComponent, MouseEvent.MOUSE_PRESSED,
                 System.currentTimeMillis(), java.awt.event.InputEvent.BUTTON1_DOWN_MASK,
@@ -879,13 +877,13 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             }
 
             assertTrue(
-                "EditorImpl actual press/release click route is unverified: releasedConsumed=${released.isConsumed}," +
+                "EditorImpl actual mousePressed reveal route is unverified: releasedConsumed=${released.isConsumed}," +
                     " pressedConsumed=${pressed.isConsumed}, regionValid=${fold.isValid}," +
                     " regionLocation=${fold.location}, point=(${released.x},${released.y})," +
                     " showing=${editor.contentComponent.isShowing}," +
                     " componentMouseListeners=${editor.contentComponent.mouseListeners.size}," +
                     " routed=$routed",
-                released.isConsumed,
+                pressed.isConsumed,
             )
             assertFalse("Owned region still visible after real editor component click", fold.isValid)
             assertEquals(contentOffset, editor.caretModel.offset)

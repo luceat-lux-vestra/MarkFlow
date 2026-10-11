@@ -147,8 +147,17 @@ internal class NativeHeadingPresentationController(
     private var disposed = false
 
     private val mouseListener = object : EditorMouseListener {
+        override fun mousePressed(event: EditorMouseEvent) {
+            // A custom Heading fold must reveal before IDEA's default mouse
+            // press moves the caret into source and invalidates the fold.
+            // The pinned platform's Markdown Heading renderer also handles
+            // custom-fold hit testing on mousePressed, not mouseClicked.
+            if (event.collapsedFoldRegion is CustomFoldRegion) handleMouseReveal(event)
+        }
+
         override fun mouseClicked(event: EditorMouseEvent) {
-            handleMouseReveal(event)
+            // Keep additive block-inlay clicks on the existing click phase.
+            if (event.inlay != null) handleMouseReveal(event)
         }
     }
 
@@ -207,7 +216,7 @@ internal class NativeHeadingPresentationController(
     )
 
     internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
-        if (disposed || editor.isDisposed) return false
+        if (disposed || editor.isDisposed || event.isConsumed) return false
         if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
         if (event.mouseEvent.button != MouseEvent.BUTTON1) return false
         val clickedFold = event.collapsedFoldRegion
