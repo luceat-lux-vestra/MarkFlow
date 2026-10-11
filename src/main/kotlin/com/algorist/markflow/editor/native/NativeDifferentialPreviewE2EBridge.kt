@@ -251,6 +251,8 @@ internal object NativeDifferentialPreviewE2EBridge {
         }
         val additiveInlays = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
             .count { it.renderer is NativeHeadingInlayRenderer }
+        val coStartInlines = editor.inlayModel.getInlineElementsInRange(0, doc.textLength)
+            .filter { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer }
         val headingPattern = Regex("^ {0,3}(#{1,6})(?:[ \\t]+|$)")
         val rows = (0 until 6).map { index ->
             val line = index * 4
@@ -276,6 +278,14 @@ internal object NativeDifferentialPreviewE2EBridge {
             val installed = custom.singleOrNull {
                 (it.renderer as NativeHeadingCustomFoldRenderer).sourceRange.startOffset == start
             }
+            val inlinePilot = coStartInlines.singleOrNull {
+                (it.renderer as NativeHeadingInlineFoldRenderer).sourceRange.startOffset == start
+            }
+            val pilotSourceFold = if (inlinePilot == null) null else folds.singleOrNull {
+                it !is com.intellij.openapi.editor.CustomFoldRegion &&
+                    it.isValid && !it.isExpanded &&
+                    it.startOffset == start && it.endOffset == end
+            }
             val rendered = installed?.renderer as? NativeHeadingCustomFoldRenderer
             if (rendered != null) {
                 check(rendered.sourceRange.endOffset == end) {
@@ -300,6 +310,11 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "fold_origin_y_document_px=" + (origin?.y ?: "UNAVAILABLE"),
                 "fold_width_px=" + (installed?.widthInPixels ?: "UNAVAILABLE"),
                 "fold_height_px=" + (installed?.heightInPixels ?: "UNAVAILABLE"),
+                "inline_pilot_status=" + (if (inlinePilot != null) "INSTALLED_UNREVIEWED" else "ABSENT"),
+                "inline_pilot_source_fold=" + (if (pilotSourceFold != null) "COLLAPSED_OWN_CANDIDATE" else "ABSENT"),
+                "inline_pilot_width_px=" + (inlinePilot?.widthInPixels ?: "UNAVAILABLE"),
+                "inline_pilot_height_px=" + (inlinePilot?.heightInPixels ?: "UNAVAILABLE"),
+                "inline_pilot_bounds_y_px=" + (inlinePilot?.bounds?.y ?: "UNAVAILABLE"),
                 "heading_y_document_px=" + headingY,
                 "following_line_zero_based=" + nextLine,
                 "following_offset=" + afterOffset,
@@ -317,7 +332,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "measured_atx_heading_count=" + custom.size,
             "missing_heading_levels=" + absent.joinToString(","),
             "legacy_heading_inlay_count=" + additiveInlays,
-            "foreign_fold_count=" + foreign.size,
+            "co_start_inline_pilot_count=" + coStartInlines.size,
+            "foreign_fold_count_including_pilot_owned_normal_fold=" + foreign.size,
             "editor_is_showing=" + editor.contentComponent.isShowing,
             "plain_line_height_px=" + editor.lineHeight,
         ).joinToString("\n", postfix = "\n") +
