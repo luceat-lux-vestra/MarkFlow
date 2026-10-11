@@ -69,6 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          touch "$RUNNER_TEMP/markflow-starter-cache-marker"
           ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
 
           mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
@@ -84,10 +85,33 @@ jobs:
 
           mkdir -p build/e2e-package
           cp "$artifact" build/e2e-package/plugin.zip
+
+          # Pilot: share only newly generated, hash-keyed Gradle task outputs
+          # from this exact package Job. No PR writes to the GitHub main cache.
+          cache_dir="${GRADLE_USER_HOME:-$HOME/.gradle}/caches/build-cache-1"
+          [ -d "$cache_dir" ] || { echo "::error::Local Gradle build cache missing"; exit 1; }
+          find "$cache_dir" -maxdepth 1 -type f \
+            -newer "$RUNNER_TEMP/markflow-starter-cache-marker" -printf '%f\n' |
+            grep -E '^[0-9a-f]{32,64}$' | LC_ALL=C sort \
+            > build/e2e-package/compile-cache-index.txt
+          entries="$(wc -l < build/e2e-package/compile-cache-index.txt | tr -d ' ')"
+          [ "$entries" -ge 1 ] && [ "$entries" -le 100 ] || {
+            echo "::error::New Gradle task-cache entries missing/excessive: $entries"; exit 1;
+          }
+          tar -C "$cache_dir" -czf build/e2e-package/compile-cache.tar.gz \
+            -T build/e2e-package/compile-cache-index.txt
+          bytes="$(stat -c '%s' build/e2e-package/compile-cache.tar.gz)"
+          [ "$bytes" -gt 0 ] && [ "$bytes" -le 67108864 ] || {
+            echo "::error::Build-cache archive violates pilot 64MiB limit: $bytes"; exit 1;
+          }
+          cache_sha256="$(sha256sum build/e2e-package/compile-cache.tar.gz | awk '{print $1}')"
+          echo "Exact-run build-cache bundle: entries=$entries bytes=$bytes checksum=$cache_sha256"
           {
             echo "source_sha=$STARTER_SOURCE_SHA"
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
+            echo "compile_cache_sha256=$cache_sha256"
+            echo "compile_cache_entries=$entries"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
             echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,derived-manifest,derived-heading"
           } | tee build/e2e-package/manifest.txt
@@ -101,6 +125,8 @@ jobs:
           path: |
             build/e2e-package/plugin.zip
             build/e2e-package/manifest.txt
+            build/e2e-package/compile-cache.tar.gz
+            build/e2e-package/compile-cache-index.txt
 
   shards:
     needs: [ package ]
@@ -222,6 +248,60 @@ jobs:
           cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
           echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Verify and import exact-run Gradle task cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=build/e2e-package/compile-cache.tar.gz
+          index=build/e2e-package/compile-cache-index.txt
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$archive" ] && [ -f "$index" ] || {
+            echo "::error::Exact-run compile-cache artifact missing"; exit 1;
+          }
+          expected="$(sed -n 's/^compile_cache_sha256=//p' "$manifest")"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Malformed compile-cache checksum"; exit 1;
+          }
+          [ "$(sha256sum "$archive" | awk '{print $1}')" = "$expected" ] || {
+            echo "::error::Exact-run compile-cache SHA256 mismatch"; exit 1;
+          }
+          python3 - <<'PY'
+          import os
+          import re
+          import shutil
+          import tarfile
+          from pathlib import Path
+
+          fields = Path("build/e2e-package/manifest.txt").read_text().splitlines()
+          count = int(next(x.split("=", 1)[1] for x in fields if x.startswith("compile_cache_entries=")))
+          names = Path("build/e2e-package/compile-cache-index.txt").read_text().splitlines()
+          if not names or len(names) != count or len(set(names)) != count:
+              raise SystemExit("Invalid compile-cache index/count")
+          if not all(re.fullmatch(r"[0-9a-f]{32,64}", name) for name in names):
+              raise SystemExit("Unsafe compile-cache path")
+          cache = Path(os.environ.get("GRADLE_USER_HOME", str(Path.home() / ".gradle"))) / "caches/build-cache-1"
+          with tarfile.open("build/e2e-package/compile-cache.tar.gz", "r:gz") as bundle:
+              members = bundle.getmembers()
+              if sorted(x.name for x in members) != sorted(names):
+                  raise SystemExit("Compile-cache archive/index mismatch")
+              if any(not x.isfile() for x in members):
+                  raise SystemExit("Unsafe non-file Gradle cache archive entry")
+              if sum(x.size for x in members) > 134217728:
+                  raise SystemExit("Gradle cache exceeds decompression limit")
+              cache.mkdir(parents=True, exist_ok=True)
+              copied = 0
+              for member in members:
+                  dest = cache / member.name
+                  if dest.exists():
+                      if not dest.is_file() or dest.is_symlink():
+                          raise SystemExit("Unsafe existing Gradle cache target")
+                      continue
+                  with bundle.extractfile(member) as src, dest.open("xb") as target:
+                      shutil.copyfileobj(src, target)
+                  copied += 1
+          print(f"Gradle local cache: checked={count}, imported={copied}")
+          PY
 
       - name: Install pinned sandboxed JCEF AppArmor profile (derived-content only)
         if: matrix.shard == 'derived-content'
