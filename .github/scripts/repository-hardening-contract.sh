@@ -271,6 +271,8 @@ grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "src
   die "Stage E11 lost source-line fold planner negative controls"
 grep -Fq 'testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
   die "Stage E12 lost guarded heading controller test"
+grep -Fq 'testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
+  die "Stage E13 lost real editor hit-test evidence"
 grep -Fq 'private val sourceLineReplacement: Boolean = false' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
   die "Stage E12 accidentally enabled unvalidated custom heading rendering by default"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
