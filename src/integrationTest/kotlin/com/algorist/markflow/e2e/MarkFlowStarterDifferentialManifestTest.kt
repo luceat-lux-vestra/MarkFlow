@@ -401,6 +401,28 @@ class MarkFlowStarterDifferentialManifestTest {
                                 val nativeB = driver.withContext(OnDispatcher.EDT) {
                                     preview.nativeHeadingReplacementGeometry(bEditor)
                                 }
+                                // Retain the actual five/six-fold observation BEFORE
+                                // any later screen or JCEF probe can fail.
+                                Files.writeString(
+                                    abDest.resolve("native-b-customfold.txt"), nativeB
+                                )
+                                val bCustomCount = nativeB.lineSequence().single {
+                                    it.startsWith("measured_atx_heading_count=")
+                                }.substringAfter('=').toInt()
+                                val bMissing = nativeB.lineSequence().single {
+                                    it.startsWith("missing_heading_levels=")
+                                }.substringAfter('=')
+                                val bShowing = nativeB.lineSequence().single {
+                                    it.startsWith("editor_is_showing=")
+                                }.substringAfter('=') == "true"
+                                Files.writeString(abDest.resolve("capture-status.txt"),
+                                    "candidate=UNVERIFIED\n" +
+                                        "installed_heading_folds=" + bCustomCount + "\n" +
+                                        "missing_heading_levels=" + bMissing + "\n" +
+                                        "editor_is_showing=" + bShowing + "\n")
+                                // A candidate screen obtained while the native Editor is
+                                // hidden is not comparable with the JCEF screenshot.
+                                check(bShowing) { "E9 B native editor is hidden; diagnostic retained" }
                                 val bEnv = driver.withContext(OnDispatcher.EDT) {
                                     visual.environmentIdentity(bEditor)
                                 }
@@ -518,6 +540,14 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "native_b_environment=" + bEnv + "\n" +
                                         "production_default=sourceLineReplacement_false\n" +
                                         "full_differential_acceptance=false\n")
+                                // The mixed native B positions are legitimate observations,
+                                // not full H1–H6 replacement geometry acceptance.
+                                check(bCustomCount == 6 && bMissing.isEmpty() &&
+                                    nativeB.contains("legacy_heading_inlay_count=0")) {
+                                    "E9 CUSTOMFOLD_INSTALLATION_INCOMPLETE: " +
+                                        bCustomCount + "/6; missing=" + bMissing +
+                                        "; foreign fold evidence retained"
+                                }
                             } finally {
                                 markFlow.close(b)
                             }
