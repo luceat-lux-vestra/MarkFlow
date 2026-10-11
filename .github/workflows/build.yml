@@ -432,7 +432,12 @@ jobs:
     name: Test
     needs: [ build ]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    # Exact-head 96332952: ./gradlew check finished SUCCESSFUL in 29m29s,
+    # but GitHub then cancelled the 30m job before mandatory webview source
+    # tests/coverage upload. This is a job deadline, not a failed test.
+    # Preserve ALL checks and fail-closed Merge Gate; allow the full observed
+    # workload to complete without adding runners or skipping webview tests.
+    timeout-minutes: 50
     steps:
       - name: Docs-only fast path
         if: ${{ needs.build.outputs.docs_only == 'true' }}
