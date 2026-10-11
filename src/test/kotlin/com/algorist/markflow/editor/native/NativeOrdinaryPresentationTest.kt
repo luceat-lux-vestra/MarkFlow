@@ -364,6 +364,92 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(stampBefore, document.modificationStamp)
     }
 
+    /**
+     * Renderer intended for #350 product migration, not yet wired into the
+     * production controller. Assert typography parity with the currently
+     * shipping native heading inlay before modifying the source layout path.
+     */
+    fun testHeadingCustomFoldRendererMatchesExistingH2TypographyAndPaintsPixels() {
+        val source = "## Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-renderer-typography.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = document.modificationStamp
+        val plainY = editor.offsetToXY(tailOffset).y
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
+        val activeRenderer = NativeHeadingPresentationController(editor)
+        val originalWidth: Int
+        val originalHeight: Int
+        try {
+            activeRenderer.applyPlan(plan, richPresentationEnabled = true)
+            val inlay = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                .single { it.renderer is NativeHeadingInlayRenderer }
+            originalWidth = inlay.widthInPixels
+            originalHeight = inlay.heightInPixels
+        } finally {
+            activeRenderer.dispose()
+        }
+        assertEquals(plainY, editor.offsetToXY(tailOffset).y)
+        val customRenderer = NativeHeadingCustomFoldRenderer(editor, model)
+        var region: CustomFoldRegion? = null
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region = editor.foldingModel.addCustomLinesFolding(0, 1, customRenderer)
+            }
+            val custom = requireNotNull(region) { "Custom two-line region unavailable" }
+            assertTrue(custom.isValid)
+            assertEquals("H2 width must match previous native typography", originalWidth, custom.widthInPixels)
+            assertEquals("H2 height must match previous native typography", originalHeight, custom.heightInPixels)
+            assertEquals("Heading plus blank line must be REPLACED, not added",
+                originalHeight - editor.lineHeight * 2, editor.offsetToXY(tailOffset).y - plainY)
+            assertEquals("Heading", customRenderer.displayText)
+            assertEquals(model.contentRange.startOffset, customRenderer.contentOffset)
+
+            // The real renderer must paint text, not merely return geometry.
+            val bitmap = java.awt.image.BufferedImage(
+                maxOf(1, custom.widthInPixels + 16),
+                maxOf(1, custom.heightInPixels + 16),
+                java.awt.image.BufferedImage.TYPE_INT_ARGB,
+            )
+            val graphics = bitmap.createGraphics()
+            try {
+                customRenderer.paint(
+                    custom,
+                    graphics,
+                    java.awt.geom.Rectangle2D.Double(
+                        0.0, 0.0,
+                        custom.widthInPixels.toDouble(),
+                        custom.heightInPixels.toDouble(),
+                    ),
+                    TextAttributes(),
+                )
+            } finally {
+                graphics.dispose()
+            }
+            var opaquePixels = 0
+            for (y in 0 until bitmap.height) {
+                for (x in 0 until bitmap.width) {
+                    if (bitmap.getRGB(x, y).ushr(24) != 0) opaquePixels++
+                }
+            }
+            assertTrue("Custom region renderer did not paint visible glyph pixels", opaquePixels > 0)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+            assertEquals(tailOffset, editor.caretModel.offset)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(plainY, editor.offsetToXY(tailOffset).y)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+        assertEquals(tailOffset, editor.caretModel.offset)
+    }
+
     fun testFallbackConcealsParserProvenSyntaxWithoutChangingSource() {
         val source = """# Heading
 
