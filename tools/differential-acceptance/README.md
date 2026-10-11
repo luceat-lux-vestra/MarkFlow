@@ -504,3 +504,40 @@ mouse-flow pilot before making this mode the default, updating all
 legacy `headingInlays`-based consumers, and solving the #350
 reference-anchored cumulative-layout contract. #353 full corpus
 remains 86 cases short and this PR must not be merged.
+
+
+### Stage E13 — EditorImpl-owned mouse hit-testing integration pilot
+
+At exact prior HEAD `b2ee1db4e33f4f90dd9c959e80081dc0b32ef4e5`
+the actual Gradle `check` and webview-source Test job completed
+**SUCCESS**: guarded custom-fold renderer, planner, synthetic
+mouse ownership and controller lifecycle tests passed. All eight
+Native Evidence, CodeQL and Hardening runs had also succeeded.
+The Starter canonical/core-editing and deterministic visual jobs
+were successful in that run; the remaining jobs were still running
+when subsequent commits superseded the HEAD, so a *complete*
+Starter gate was not claimed.
+
+The next in-process **real IntelliJ editor event routing** test
+`testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal`
+gets the custom region's actual editor coordinates through
+`CustomFoldRegion.getLocation()`, sends an AWT
+`MouseEvent.MOUSE_CLICKED` into `editor.contentComponent.dispatchEvent`,
+and requires the real `EditorImpl.createEditorMouseEvent` hit-testing
+path to resolve the owned fold. The production
+`NativeHeadingPresentationController` in explicit pilot mode must
+consume the click, remove only its own custom fold, move the caret to
+parser-proven heading content, preserve source bytes and modification
+stamp, and reinstall upon inactive refresh. An absent visible region
+location is a hard test failure, never silently replaced with a
+fabricated `EditorMouseEvent`.
+
+This test is **real EditorImpl mouse-event hit-testing within a
+BasePlatformTestCase UI**, not a full OS Robot / Starter Driver
+pointer-capture test. The shipping controller remains
+`sourceLineReplacement=false`. Passing it is necessary but not
+sufficient for enabling the production migration: the real Starter
+UI, existing E2E contracts and source-anchored six-heading Preview
+parity must still be verified against exact final HEAD, and all
+89 expanded manifest cases must satisfy reviewed acceptance before
+PR #364 can merge.
