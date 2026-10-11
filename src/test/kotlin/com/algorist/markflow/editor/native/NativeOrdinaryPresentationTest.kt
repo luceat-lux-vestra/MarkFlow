@@ -1925,6 +1925,15 @@ Tail
         assertEquals(1.0f, scales.last())
     }
 
+    fun testPreviewHeadingPilotUsesActualPinnedJcefCssTiersAndMutedH6() {
+        assertEquals(listOf(2.2f, 1.8f, 1.3f, 1.0f, 1.0f, 1.0f),
+            (1..6).map(NativeHeadingPreviewTypographyPilot::scale))
+        assertEquals(java.awt.Color(115, 118, 124),
+            NativeHeadingPreviewTypographyPilot.mutedH6LightColor)
+        assertTrue("H4-H6 are equal-sized CSS font tiers, not artificially descending",
+            (4..6).map(NativeHeadingPreviewTypographyPilot::scale).distinct().size == 1)
+    }
+
 
     fun testInactiveSimpleBlockQuoteUsesNativeQuoteBlockWithoutChangingSource() {
         val source = "> quoted text\n\nTail\n"

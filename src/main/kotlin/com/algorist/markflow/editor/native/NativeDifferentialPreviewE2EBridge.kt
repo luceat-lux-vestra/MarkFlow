@@ -300,10 +300,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             val origin = installed?.let { editor.offsetToXY(it.startOffset) }
             // Same declared native font as the opt-in heading renderer.
             // Records paint inputs, NOT inferred ink boundaries.
-            val font = editor.contentComponent.font.deriveFont(
-                java.awt.Font.BOLD,
-                editor.contentComponent.font.size2D * nativeHeadingFontScale(index + 1)
-            )
+            val font = NativeHeadingPreviewTypographyPilot.font(editor, index + 1)
             val text = lineText(line).trimStart('#', ' ', '\t')
             val fm = editor.contentComponent.getFontMetrics(font)
             listOf(

@@ -711,6 +711,51 @@ internal object NativeHeadingParagraphGapRenderer : EditorCustomElementRenderer 
 }
 
 /**
+ * Exact 2026.2.3 bundled JCEF Preview CSS typography, opt-in #353 pilot ONLY.
+ *
+ * Measured on an actual IDE/JCEF run, not invented font tiers:
+ * H1..H6 28.6, 23.4, 16.9, 13, 13, 13 CSS px; font-weight 700;
+ * computed-family Helvetica, Arial, freesans, sans-serif;
+ * H6 color rgb(115,118,124) in Islands Light.
+ *
+ * The shipping additive heading renderer deliberately retains its existing
+ * user-editor styling. This is a test-only controlled experiment until whole
+ * editor content geometry, fallback font and mouse/source lifecycle match.
+ */
+internal object NativeHeadingPreviewTypographyPilot {
+    private val pinnedScale = floatArrayOf(2.2f, 1.8f, 1.3f, 1.0f, 1.0f, 1.0f)
+    private val preferredCssFamilies = listOf(
+        "Helvetica", "Arial", "FreeSans", "Liberation Sans", "Arimo", "SansSerif"
+    )
+    private val resolvedFamily: String by lazy {
+        val installed = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+            .availableFontFamilyNames.toSet()
+        preferredCssFamilies.firstOrNull { it in installed } ?: "SansSerif"
+    }
+    internal val mutedH6LightColor = java.awt.Color(115, 118, 124)
+
+    fun scale(level: Int): Float {
+        require(level in 1..6)
+        return pinnedScale[level - 1]
+    }
+
+    fun font(editor: Editor, level: Int): Font {
+        val size = editor.contentComponent.font.size2D * scale(level)
+        return Font(resolvedFamily, Font.BOLD, 1).deriveFont(size)
+    }
+
+    fun foreground(editor: Editor, level: Int, fallback: java.awt.Color): java.awt.Color {
+        val background = editor.colorsScheme.defaultBackground
+        return if (level == 6 && (background.red * 299 +
+                background.green * 587 + background.blue * 114) / 1000 >= 128) {
+            mutedH6LightColor
+        } else {
+            fallback
+        }
+    }
+}
+
+/**
  * Bounded source-line H1 pilot for IDEA's co-start platform section folding.
  * Inline geometry participates in the SAME source line's vertical rhythm;
  * there is no extra block element and no platform-fold ownership transfer.
@@ -722,9 +767,7 @@ internal class NativeHeadingInlineFoldRenderer(
     val sourceRange: ProjectionRange get() = model.sourceRange
     val contentOffset: Int get() = model.contentRange.startOffset
 
-    private fun font(): Font = editor.contentComponent.font.deriveFont(
-        Font.BOLD, editor.contentComponent.font.size2D * nativeHeadingFontScale(model.level)
-    )
+    private fun font(): Font = NativeHeadingPreviewTypographyPilot.font(editor, model.level)
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val width = max(1, editor.contentComponent.getFontMetrics(font()).stringWidth(model.text) + 8)
@@ -758,7 +801,9 @@ internal class NativeHeadingInlineFoldRenderer(
         try {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g2.font = font
-            g2.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            g2.color = NativeHeadingPreviewTypographyPilot.foreground(
+                editor, model.level, textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            )
             val baseline = targetRegion.y +
                 max(metrics.ascent, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
             g2.drawString(text, targetRegion.x + 4, baseline)
@@ -864,7 +909,9 @@ internal class NativeHeadingCustomFoldRenderer(
         try {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g.font = font
-            g.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            g.color = NativeHeadingPreviewTypographyPilot.foreground(
+                editor, model.level, textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            )
             g.drawString(rendered, targetRegion.x.toInt() + HORIZONTAL_PADDING, baseline)
         } finally {
             g.font = oldFont
@@ -873,10 +920,8 @@ internal class NativeHeadingCustomFoldRenderer(
         }
     }
 
-    private fun headingFont(): Font {
-        val base = editor.contentComponent.font
-        return base.deriveFont(Font.BOLD, base.size2D * nativeHeadingFontScale(model.level))
-    }
+    private fun headingFont(): Font =
+        NativeHeadingPreviewTypographyPilot.font(editor, model.level)
 
     private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
         if (metrics.stringWidth(text) <= maxWidth) return text
