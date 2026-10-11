@@ -6,6 +6,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.editor.colors.impl.EditorColorsSchemeImpl
 import com.intellij.openapi.editor.markup.TextAttributes
 import java.awt.Graphics
 import java.awt.GraphicsEnvironment
@@ -102,11 +103,16 @@ internal class NativePageGeometryPilot private constructor(
             val foreignStates = foreignFolds.map { Triple(it.startOffset, it.endOffset, it.isExpanded) }
             val paragraphSpacing = mutableListOf<Inlay<*>>()
             try {
-                // Clone first, then alter ONLY the clone for this editor.
-                val clone = originalScheme.clone() as EditorColorsScheme
-                clone.editorFontName = bundledSansFamily()
-                clone.editorFontSize = BUNDLED_PARAGRAPH_FONT_PX
-                editor.setColorsScheme(clone)
+                // IDEA can install a transient/delegating editor scheme whose clone()
+                // returns null. Create an explicit editor-local child instead of
+                // assuming that clone() produces a valid EditorColorsScheme.
+                // Colors/attributes still delegate to the original scheme, while
+                // font preferences are copied before local changes.
+                val localScheme = EditorColorsSchemeImpl(originalScheme)
+                localScheme.setFontPreferences(originalScheme.fontPreferences)
+                localScheme.editorFontName = bundledSansFamily()
+                localScheme.editorFontSize = BUNDLED_PARAGRAPH_FONT_PX
+                editor.setColorsScheme(localScheme)
                 editor.setBorder(BorderFactory.createEmptyBorder(
                     EXPERIMENTAL_TOP_INSET_PX, REFERENCE_LEFT_INSET_PX, 0, 0,
                 ))
