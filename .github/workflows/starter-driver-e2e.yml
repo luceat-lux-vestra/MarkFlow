@@ -89,7 +89,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,derived-manifest,derived-heading,lifecycle,visual-acceptance"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact Starter plugin artifact
@@ -120,9 +120,17 @@ jobs:
           - shard: ordinary-markdown
             runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
+          # Research A/B: identical source and production ZIP; separate real IDE processes.
+          # Matrix fail-fast=false; a failed split shard still fails the original aggregate gate.
           - shard: derived-content
             runner: ubuntu-24.04
-            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
+            suites: com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest
+          - shard: derived-manifest
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          - shard: derived-heading
+            runner: ubuntu-24.04
+            suites: com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
           - shard: lifecycle
             runner: ubuntu-24.04-arm
             suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
