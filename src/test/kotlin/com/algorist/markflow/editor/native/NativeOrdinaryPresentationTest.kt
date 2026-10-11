@@ -518,6 +518,83 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
+     * #353 H1-H6 layout migration pilot: six actual Heading models must
+     * replace their own heading + verified blank source lines, never add an
+     * inlay on top of the old line height. This is intentionally independent
+     * of Preview CSS parity and keeps the shipping opt-in disabled.
+     *
+     * Preserve the native per-paragraph line-Y accounting exactly: every
+     * CustomFoldRegion contributes (physical height - replaced source height)
+     * once, whereas the old additive inlays contributed a second copy of
+     * the original heading line. A real platform section-fold collision has
+     * its own fail-closed regressions; never remove someone else's fold.
+     */
+    fun testSixSourceReplacingHeadingsHaveNonAdditiveCumulativeLineGeometry() {
+        val source = (1..6).joinToString("\n\n") { level ->
+            "${"#".repeat(level)} Heading level $level\n\nParagraph after H$level."
+        } + "\n"
+        myFixture.configureByText("six-heading-custom-layout-pilot.md", source)
+        val editor = myFixture.editor
+        val doc = editor.document
+        val paragraphOffsets = (1..6).map { level ->
+            source.indexOf("Paragraph after H$level.").also { assertTrue(it >= 0) }
+        }
+        val plainParagraphY = paragraphOffsets.map { offset -> editor.offsetToXY(offset).y }
+        val caretOutsideHeadings = paragraphOffsets.last() + 1
+        editor.caretModel.moveToOffset(caretOutsideHeadings)
+        val stamp = doc.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        val models = NativeHeadingProjectionPlanner.plan(plan)
+        assertEquals(6, models.size)
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val ev = controller.evidenceSnapshot()
+            assertEquals(6, ev.models)
+            assertEquals(6, ev.ownedCustomFolds)
+            assertEquals(6, ev.fullyConcealed)
+            assertEquals(0, ev.ownedInlays)
+
+            val custom = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>()
+                .filter { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+                .sortedBy { it.startOffset }
+            assertEquals(6, custom.size)
+            var cumulativeReplacementDelta = 0
+            for (i in 0 until 6) {
+                val headingLine = i * 4
+                val model = models[i]
+                assertEquals(headingLine..headingLine + 1,
+                    NativeHeadingCustomFoldLinePlanner.plan(editor, model))
+                val region = custom[i]
+                assertFalse(region.isExpanded)
+                assertEquals(doc.getLineStartOffset(headingLine), region.startOffset)
+                assertEquals(doc.getLineEndOffset(headingLine + 1), region.endOffset)
+                val replacedHeight = editor.lineHeight * 2
+                cumulativeReplacementDelta += region.heightInPixels - replacedHeight
+                assertEquals(
+                    "Heading H${i + 1} added source height rather than replacing its two lines",
+                    cumulativeReplacementDelta,
+                    editor.offsetToXY(paragraphOffsets[i]).y - plainParagraphY[i],
+                )
+                assertEquals(source, doc.text)
+                assertEquals(stamp, doc.modificationStamp)
+                assertEquals(caretOutsideHeadings, editor.caretModel.offset)
+            }
+        } finally {
+            controller.dispose()
+        }
+        assertEquals(0, editor.foldingModel.allFoldRegions.count { it is CustomFoldRegion && it.isValid })
+        paragraphOffsets.forEachIndexed { i, offset ->
+            assertEquals("Disposal must restore original H${i + 1} paragraph Y",
+                plainParagraphY[i], editor.offsetToXY(offset).y)
+        }
+        assertEquals(caretOutsideHeadings, editor.caretModel.offset)
+        assertEquals(source, doc.text)
+        assertEquals(stamp, doc.modificationStamp)
+    }
+
+    /**
      * An ordinary platform fold with exactly the same bounds as the last
      * Heading line can coexist with the custom replacement: the platform
      * explicitly allows identical normal/custom fold ranges and lets the
