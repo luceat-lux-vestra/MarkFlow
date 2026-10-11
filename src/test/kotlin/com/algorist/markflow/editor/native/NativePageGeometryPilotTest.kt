@@ -46,10 +46,18 @@ class NativePageGeometryPilotTest : BasePlatformTestCase() {
                     .stringWidth("MMMM") >
                     editor.contentComponent.getFontMetrics(editor.contentComponent.font)
                         .stringWidth("iiii"))
-            assertTrue("Source-neutral border must add at least left padding",
-                pilot.measurements().leftInsetPx >= originalInsets.left + 26)
-            assertTrue("Source-neutral border must add top padding",
-                pilot.measurements().topInsetPx >= originalInsets.top + 26)
+            // setBorder replaces the scrollpane border; it does not sum its
+            // insets with the previous border. Test the exact experiment.
+            assertEquals("JCEF B experiment left inset", 26, pilot.measurements().leftInsetPx)
+            assertEquals("Experimental top inset", 26, pilot.measurements().topInsetPx)
+            // Mirror the bundled IDE's late global scheme/layout normalization.
+            editor.setColorsScheme(originalScheme)
+            editor.setBorder(originalBorder)
+            pilot.reapplyAfterEditorConfiguration()
+            assertEquals(13, pilot.measurements().fontSizePx)
+            assertEquals(26, pilot.measurements().leftInsetPx)
+            assertEquals(26, pilot.measurements().topInsetPx)
+            assertNotSame(originalScheme, editor.colorsScheme)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(source, doc.text)
