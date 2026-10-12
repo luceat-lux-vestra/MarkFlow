@@ -116,6 +116,36 @@ internal object NativeDifferentialPreviewE2EBridge {
         return header + "\n" + records.joinToString(separator = "\n", postfix = "\n")
     }
 
+    /**
+     * Read-only reachability evidence from a real installed raster block.
+     * Caller scrolls to the top and bottom in separate EDT transactions so
+     * the Swing scrolling model can settle between observations.
+     */
+    fun nativeRasterScrollProbe(editor: Editor, edge: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(edge == "TOP" || edge == "BOTTOM")
+        val inlays = editor.inlayModel.getBlockElementsInRange(0, editor.document.textLength)
+            .filter { it.renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer") }
+        check(inlays.size == 1) { "Reachability probe requires exactly one raster inlay" }
+        val bounds = requireNotNull(inlays.single().bounds)
+        check(bounds.height > 0 && bounds.width > 0)
+        val visible = editor.scrollingModel.visibleArea
+        check(visible.height > 0)
+        val target = if (edge == "TOP") bounds.y else bounds.y + bounds.height - 1
+        editor.scrollingModel.scrollVertically((target - visible.height / 2).coerceAtLeast(0))
+        val after = editor.scrollingModel.visibleArea
+        val visibleEdge = target >= after.y && target < after.y + after.height
+        return listOf(
+            "schema=markflow-native-raster-scroll-probe/v1",
+            "edge=" + edge,
+            "target_y=" + target,
+            "viewport_top=" + after.y,
+            "viewport_height=" + after.height,
+            "edge_visible=" + visibleEdge,
+            "inlay_height=" + bounds.height,
+        ).joinToString("\n")
+    }
+
     private fun rasterAspectPreserved(iw: Int, ih: Int, dw: Int, dh: Int): Boolean {
         if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) return false
         if ((iw >= 16 && dw < 2) || (ih >= 16 && dh < 2)) return false
