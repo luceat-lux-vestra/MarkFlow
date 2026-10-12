@@ -16,6 +16,28 @@ assert_trusted_main_cache_seed() {
   grep -Fxq '    branches:' "$workflow" || die "seed push branch selector is missing"
   grep -Fxq '      - main' "$workflow" || die "seed must select main"
   grep -Fxq '  workflow_dispatch:' "$workflow" || die "seed manual recovery is missing"
+  # A protected-main cache write is only useful when the build's dependency or
+  # toolchain inputs change. On unchanged inputs, do not schedule an ARM64 runner
+  # just to rebuild product sources already checked by the PR Merge Gate.
+  grep -Fxq '    paths:' "$workflow" || die "seed push path filter is missing"
+  local actual_paths expected_paths
+  actual_paths="$(awk '
+    /^    paths:[[:space:]]*$/ { inside=1; next }
+    inside && /^  [^ ]/ { exit }
+    inside && /^      - / { print }
+  ' "$workflow" | LC_ALL=C sort)"
+  expected_paths="$(printf '%s\n' \
+    "      - '.github/workflows/gradle-cache-seed.yml'" \
+    "      - '.nvmrc'" \
+    "      - 'build.gradle.kts'" \
+    "      - 'settings.gradle.kts'" \
+    "      - 'gradle.properties'" \
+    "      - 'gradle/**'" \
+    "      - 'gradlew'" \
+    "      - 'webview/package.json'" \
+    "      - 'webview/package-lock.json'" | LC_ALL=C sort)"
+  [ "$actual_paths" = "$expected_paths" ] ||
+    die "cache-seed push paths drifted: source edits must not trigger ARM64 cache writes"
   if grep -Eq '^  (pull_request|pull_request_target|workflow_run|repository_dispatch):' "$workflow"; then
     die "seed must not run on untrusted PR/webhook events"
   fi
@@ -45,4 +67,20 @@ if ( assert_trusted_main_cache_seed "$fixtures/read-only.yml" ) 2>/dev/null; the
   die "read-only negative fixture was accepted"
 fi
 
-echo "trusted protected-main Gradle cache seed contract passed (2 negative controls)"
+# Regression: never restore a broad source glob to the post-merge seed trigger.
+sed "/^      - 'webview\\/package-lock.json'$/a\\      - 'src/**'" "$seed" > "$fixtures/broad-source.yml"
+if ( assert_trusted_main_cache_seed "$fixtures/broad-source.yml" ) 2>/dev/null; then
+  die "source-only pushes unexpectedly allowed to trigger cache seed"
+fi
+
+sed "/^      - 'webview\\/package-lock.json'$/d" "$seed" > "$fixtures/missing-lockfile.yml"
+if ( assert_trusted_main_cache_seed "$fixtures/missing-lockfile.yml" ) 2>/dev/null; then
+  die "dependency lockfile change no longer triggers cache seed"
+fi
+
+sed "s#webview/package.json#webview/**#" "$seed" > "$fixtures/broad-webview.yml"
+if ( assert_trusted_main_cache_seed "$fixtures/broad-webview.yml" ) 2>/dev/null; then
+  die "webview source-only pushes unexpectedly allowed to trigger cache seed"
+fi
+
+echo "trusted protected-main Gradle cache seed contract passed (5 negative controls)"
