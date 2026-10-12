@@ -1,4 +1,5 @@
-# Populate the shared Gradle User Home cache after a protected main merge.
+# Populate the shared Gradle User Home cache only when cache inputs change.
+# The trusted main producer is NOT a redundant post-merge product build.
 # Keep this separate from PR-required Build/Test/Qodana/Verifier: no duplicated
 # post-merge acceptance and no cache writes from untrusted pull-request refs.
 name: Gradle Cache Seed
@@ -8,17 +9,17 @@ on:
     branches:
       - main
     paths:
+      # Only dependency/toolchain/build-logic inputs need a new main cache.
+      # Product source and CI-only workflow edits do not change those inputs.
       - '.github/workflows/gradle-cache-seed.yml'
-      - '.github/workflows/build.yml'
       - '.nvmrc'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
       - 'gradle/**'
       - 'gradlew'
-      - 'gradlew.bat'
-      - 'src/**'
-      - 'webview/**'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
   workflow_dispatch:
 
 permissions:
