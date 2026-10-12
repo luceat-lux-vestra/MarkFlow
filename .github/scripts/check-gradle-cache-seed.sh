@@ -33,7 +33,6 @@ assert_trusted_main_cache_seed() {
     "      - 'settings.gradle.kts'" \
     "      - 'gradle.properties'" \
     "      - 'gradle/**'" \
-    "      - 'gradlew'" \
     "      - 'webview/package.json'" \
     "      - 'webview/package-lock.json'" | LC_ALL=C sort)"
   [ "$actual_paths" = "$expected_paths" ] ||
@@ -67,6 +66,13 @@ if ( assert_trusted_main_cache_seed "$fixtures/read-only.yml" ) 2>/dev/null; the
   die "read-only negative fixture was accepted"
 fi
 
+# Regression: the wrapper launcher is validated by PR CI but does not own
+# reusable Gradle User Home state. gradle/** already covers wrapper properties.
+sed "/^      - 'gradle\/\*\*'$/a\\      - 'gradlew'" "$seed" > "$fixtures/launcher-only.yml"
+if ( assert_trusted_main_cache_seed "$fixtures/launcher-only.yml" ) 2>/dev/null; then
+  die "launcher-only gradlew unexpectedly allowed to trigger cache seed"
+fi
+
 # Regression: never restore a broad source glob to the post-merge seed trigger.
 sed "/^      - 'webview\\/package-lock.json'$/a\\      - 'src/**'" "$seed" > "$fixtures/broad-source.yml"
 if ( assert_trusted_main_cache_seed "$fixtures/broad-source.yml" ) 2>/dev/null; then
@@ -83,4 +89,4 @@ if ( assert_trusted_main_cache_seed "$fixtures/broad-webview.yml" ) 2>/dev/null;
   die "webview source-only pushes unexpectedly allowed to trigger cache seed"
 fi
 
-echo "trusted protected-main Gradle cache seed contract passed (5 negative controls)"
+echo "trusted protected-main Gradle cache seed contract passed (6 negative controls)"
