@@ -234,6 +234,8 @@ grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
   die "Stage E1 lost deterministic heading source-span negative controls"
 grep -Fq 'md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt' "$manifest_test" ||
   die "Stage E2 no longer captures the #352 Gantt diagnostic in bounded CI"
+grep -Fq ',md-setext-headings,md-tight-loose-lists,mermaid-sequence' "$manifest_test" ||
+  die "Stage E17 lost Setext/list/sequence cases from the single-session differential cohort"
 grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
   die "Stage E1 dropped source-anchored heading geometry evidence"
 grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
