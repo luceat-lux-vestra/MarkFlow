@@ -116,6 +116,89 @@ internal object NativeDifferentialPreviewE2EBridge {
         return header + "\n" + records.joinToString(separator = "\n", postfix = "\n")
     }
 
+
+    /**
+     * E18: move the *actual* native editor scrollbar to each edge of an installed
+     * raster inlay. A viewport screenshot alone cannot prove whether a tall
+     * Mermaid diagram is cropped or reachable by scrolling.
+     *
+     * The inlay bounds and visibleArea share editor document coordinates; do
+     * not infer reachability from the raster's decoded height or reference DOM.
+     * This bridge never changes source, selection, inlay ownership or size mode.
+     */
+    fun nativeRasterScrollProbe(editor: Editor, index: Int, edge: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(edge == "TOP" || edge == "BOTTOM") { "Unknown raster scroll edge" }
+        val inlays = editor.inlayModel
+            .getBlockElementsInRange(0, editor.document.textLength)
+            .filter { it.renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer") }
+        require(index in inlays.indices) { "No native raster at index " + index }
+        val inlay = inlays[index]
+        val bounds = requireNotNull(inlay.bounds) { "E18 installed raster bounds unavailable" }
+        check(bounds.height > 0 && bounds.width > 0 && inlay.isValid) {
+            "E18 native raster is invalid or collapsed"
+        }
+        val before = editor.scrollingModel.visibleArea
+        check(before.height > 0 && before.width > 0) { "E18 native viewport is unavailable" }
+        val target = if (edge == "TOP") bounds.y.toLong()
+            else bounds.y.toLong() + bounds.height - before.height
+        editor.scrollingModel.scrollVertically(target.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
+        val after = editor.scrollingModel.visibleArea
+        val edgeVisible = rasterEdgeIsVisible(
+            bounds.y, bounds.height, after.y, after.height, edge
+        )
+        val line = editor.document.getLineNumber(
+            inlay.offset.coerceAtMost(editor.document.textLength)
+        )
+        return listOf(
+            "schema=markflow-native-raster-scroll-reachability/v1",
+            "geometry_scope=REAL_NATIVE_EDITOR_SCROLL_VIEWPORT",
+            "raster_index=" + index,
+            "source_line_zero_based=" + line,
+            "source_offset=" + inlay.offset,
+            "edge=" + edge,
+            "edge_visible=" + edgeVisible,
+            "bounds_y=" + bounds.y,
+            "bounds_height=" + bounds.height,
+            "viewport_y_before=" + before.y,
+            "viewport_y_after=" + after.y,
+            "viewport_height=" + after.height,
+            "requested_scroll_y=" + target,
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
+    fun nativeVerticalScrollOffset(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return editor.scrollingModel.verticalScrollOffset
+    }
+
+    fun restoreNativeVerticalScroll(editor: Editor, offset: Int) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(offset >= 0)
+        editor.scrollingModel.scrollVertically(offset)
+    }
+
+    /** Pure geometry controls: inclusive last painted raster pixel, exclusive viewport bottom. */
+    private fun rasterEdgeIsVisible(
+        rasterTop: Int, rasterHeight: Int, viewportTop: Int, viewportHeight: Int, edge: String
+    ): Boolean {
+        require(edge == "TOP" || edge == "BOTTOM")
+        if (rasterHeight <= 0 || viewportHeight <= 0) return false
+        val pixel = if (edge == "TOP") rasterTop.toLong()
+            else rasterTop.toLong() + rasterHeight - 1L
+        return pixel >= viewportTop.toLong() &&
+            pixel < viewportTop.toLong() + viewportHeight.toLong()
+    }
+
+    fun rasterScrollNegativeControls(): Boolean =
+        rasterEdgeIsVisible(40, 300, 40, 100, "TOP") &&
+            !rasterEdgeIsVisible(40, 300, 40, 100, "BOTTOM") &&
+            rasterEdgeIsVisible(40, 300, 240, 100, "BOTTOM") &&
+            !rasterEdgeIsVisible(40, 300, 240, 100, "TOP") &&
+            !rasterEdgeIsVisible(40, 300, 0, 100, "BOTTOM") &&
+            !rasterEdgeIsVisible(40, 0, 40, 100, "TOP") &&
+            !rasterEdgeIsVisible(40, 300, 240, 0, "BOTTOM")
+
     private fun rasterAspectPreserved(iw: Int, ih: Int, dw: Int, dh: Int): Boolean {
         if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) return false
         if ((iw >= 16 && dw < 2) || (ih >= 16 && dh < 2)) return false
