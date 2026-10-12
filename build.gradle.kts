@@ -3,6 +3,7 @@ import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
@@ -236,6 +237,17 @@ changelog {
     groups.empty()
     repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
     versionPrefix = ""
+}
+
+// BasePlatformTestCase native editor/projection unit tests must not start an unrelated
+// JCEF/Chromium server. On Linux ARM64 the platform's incidental cef_server can
+// survive IDE test teardown and block the Gradle :test worker (issue #384).
+// Scope this switch ONLY to the ordinary unit-test JVM. The isolated JCEF
+// renderer and real-IDE Starter/Driver evidence jobs keep JCEF enabled and
+// continue to validate production behavior independently.
+tasks.named<Test>("test") {
+    systemProperty("ide.browser.jcef.enabled", "false")
+    systemProperty("ide.browser.jcef.testMode.enabled", "true")
 }
 
 // Configure Kover coverage reporting.
