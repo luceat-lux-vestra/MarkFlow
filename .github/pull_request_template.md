@@ -84,6 +84,8 @@ Details / results:
 - [ ] Tests/evidence cover changed success, failure, recovery, lifecycle, compatibility, edge and adversarial contracts.
 - [ ] Documentation/issues match the accepted target and actual implementation state.
 - [ ] No unrelated dead code, workaround, compatibility shim or generated artifact is included.
+- [ ] **Pre-merge branch-history cleanup completed:** inspected merge-base..HEAD commit log and final diff, consolidated/dropped temporary experiments, checkpoints, fixups and superseded commits; or documented why already clean. GitHub Squash Merge does not count as this step.
+- [ ] Any rewritten HEAD received fresh exact-SHA CI, applicable real-runtime validation, review and unresolved-thread reconciliation.
 
 ## Final merge gate
 
