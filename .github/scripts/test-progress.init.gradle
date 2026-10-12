@@ -1,0 +1,12 @@
+import org.gradle.api.tasks.testing.Test
+
+gradle.beforeProject { project ->
+    project.tasks.withType(Test).configureEach { testTask ->
+        testTask.beforeTest { descriptor ->
+            println("MARKFLOW_TEST_START " + descriptor.className + "#" + descriptor.name)
+        }
+        testTask.afterTest { descriptor, result ->
+            println("MARKFLOW_TEST_END " + descriptor.className + "#" + descriptor.name + " " + result.resultType)
+        }
+    }
+}

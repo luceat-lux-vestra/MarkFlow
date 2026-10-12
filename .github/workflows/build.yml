@@ -571,7 +571,15 @@ jobs:
             cat "$RUNNER_TEMP/markflow-platform-unit-xvfb.log"
             exit 1
           }
-          ./gradlew check
+          bash .github/scripts/run-test-with-diagnostics.sh
+
+      - name: Upload stalled-test diagnostic evidence
+        if: ${{ always() && github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: arm64-test-hang-diagnostics
+          path: ${{ runner.temp }}/markflow-test-hang/evidence/
+          if-no-files-found: ignore
 
       # Native ARM64 hosted images lack Chromium; all 40 real browser cases remain mandatory.
       - name: Install native ARM64 Chromium for webview acceptance
