@@ -229,6 +229,20 @@ grep -Fq 'native-raster-geometry.txt' "$manifest_test" ||
   die "Stage D dropped intrinsic/display raster geometry artifact"
 grep -Fq 'fun nativeRasterGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "Stage D lost real inlay raster geometry bridge"
+# #353 E18: genuine native scrolling to both raster edges is a required
+# source-neutral Starter regression; prevent silently reverting to one screenshot.
+for edge in TOP BOTTOM; do
+  grep -Fq '"native-scroll-" + edge.lowercase() + ".txt"' "$manifest_test" ||
+    die "Stage E18 dropped native raster scroll evidence for $edge"
+  grep -Fq '"edge_visible=true"' "$manifest_test" ||
+    die "Stage E18 no longer gates actual raster edge reachability"
+done
+grep -Fq 'rasterScrollNegativeControls()' "$manifest_test" ||
+  die "Stage E18 scroll-edge geometry negative controls missing"
+grep -Fq 'fun nativeRasterScrollProbe(editor: Editor, index: Int, edge: String)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage E18 dropped real editor scroll-probe bridge"
+grep -Fq 'restoreNativeVerticalScroll(remoteEditor, beforeScroll)' "$manifest_test" ||
+  die "Stage E18 no longer restores source capture scroll position"
 # #353 Stage E1: preserve source-anchored heading instrumentation (not preview parity).
 grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
   die "Stage E1 lost deterministic heading source-span negative controls"

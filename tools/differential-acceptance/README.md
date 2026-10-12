@@ -124,6 +124,14 @@ heading/scroll drift, per-class Gantt legibility, and full corpus execution
 remain unverified and release blocking. The optional Gradle case selector
 does not alter the default bounded CI selection.
 
+### Stage E18 — actual raster scrolling (bounded structural gate)
+
+The same pinned IDEA 2026.2.3 Starter session now **scrolls the real MarkFlow editor** to the start and final pixel of each of the three selected Mermaid raster inlays (flowchart, Gantt, sequence), not just taking an initial viewport screenshot. For each source-identical case it retains `native-scroll-top.txt/png` and `native-scroll-bottom.txt/png` after testing whether the reported raster bounds intersect the live editor `visibleArea` at the requested edge. The inlay object is unchanged; its image dimensions are already recorded in `native-raster-geometry.txt`.
+
+A Mermaid raster whose **last rendered row cannot enter the viewport** is a genuine scroll/host-placement failure and fails this bounded capture CI. A raster extending past the first screenshot but reached by scrolling is not automatically classified as clipped. The probe uses actual `scrollVertically` actions with polling, checks both edges, restores the prior scroll offset, and asserts byte-identical source, modification stamp and caret identity. Pure negative controls reject a last pixel outside the viewport, a zero-height raster and a collapsed viewport. Guardrails in `repository-hardening-contract.sh` require continued real-IDE probe invocation and retained artifacts.
+
+This is a **reachability proof only**: the screen images still require agent visual review for *painted* content and semantics. A nonblank bitmap or overlap-free Gantt is **not** inferred from geometric reachability. The full #353 cohort is still 89 cases and remains acceptance-fail-closed; #350 shared text baseline and #352 legibility are separate unresolved product defects.
+
 ### Stage E1 — native heading source geometry (NOT reference parity)
 
 The bounded real-IDE manifest capture additionally writes

@@ -141,6 +141,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 check(driver.withContext(OnDispatcher.EDT) {
                     preview.nativeHeadingGeometryNegativeControls()
                 }) { "Stage E1 source-span geometry negative controls failed" }
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.rasterScrollNegativeControls()
+                }) { "Stage E18 scroll-reachability negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
                 for (entry in selected) {
                     val dest = output.resolve(entry.id)
@@ -270,6 +273,67 @@ class MarkFlowStarterDifferentialManifestTest {
                         robot.waitForIdle()
                         check(ImageIO.write(robot.createScreenCapture(native), "png",
                             dest.resolve("markflow.png").toFile()))
+                        // E18: physically scroll to each boundary of the same native
+                        // decoded inlay, then retain the observable viewport and
+                        // screenshots. Never infer true reachability from only the
+                        // first (1200x760) screenshot. The source/caret are immutable.
+                        if (entry.domain == "mermaid") {
+                            check(rasterCount == 1) {
+                                "E18 bounded Mermaid capture requires exactly one raster per selected case"
+                            }
+                            val beforeScroll = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeVerticalScrollOffset(remoteEditor)
+                            }
+                            val beforeCaret = driver.withContext(OnDispatcher.EDT) {
+                                preview.primaryCaretOffset(remoteEditor)
+                            }
+                            try {
+                                for (edge in listOf("TOP", "BOTTOM")) {
+                                    waitFor(
+                                        message = "E18 real inlay " + edge + " reachable: " + entry.id,
+                                        timeout = 15.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeRasterScrollProbe(remoteEditor, 0, edge)
+                                        } },
+                                        checker = { ledger -> ledger.lineSequence().any {
+                                            it == "edge_visible=true"
+                                        } }
+                                    )
+                                    val ledger = driver.withContext(OnDispatcher.EDT) {
+                                        preview.nativeRasterScrollProbe(remoteEditor, 0, edge)
+                                    }
+                                    check(ledger.lineSequence().any { it == "edge_visible=true" }) {
+                                        "E18 native raster " + edge + " never entered the viewport"
+                                    }
+                                    Files.writeString(
+                                        dest.resolve("native-scroll-" + edge.lowercase() + ".txt"),
+                                        ledger, StandardCharsets.UTF_8
+                                    )
+                                    robot.waitForIdle()
+                                    check(ImageIO.write(
+                                        robot.createScreenCapture(native), "png",
+                                        dest.resolve("native-scroll-" + edge.lowercase() + ".png").toFile()
+                                    ))
+                                }
+                            } finally {
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.restoreNativeVerticalScroll(remoteEditor, beforeScroll)
+                                }
+                                waitFor(
+                                    message = "E18 native scroll restored: " + entry.id,
+                                    timeout = 15.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        preview.nativeVerticalScrollOffset(remoteEditor)
+                                    } },
+                                    checker = { it == beforeScroll }
+                                )
+                            }
+                            check(driver.withContext(OnDispatcher.EDT) {
+                                preview.sourceText(remoteEditor) == source &&
+                                    preview.sourceStamp(remoteEditor) == stamp &&
+                                    preview.primaryCaretOffset(remoteEditor) == beforeCaret
+                            }) { "E18 scroll probe altered the authoritative source/caret" }
+                        }
                         val refIdentity = driver.withContext(OnDispatcher.EDT) {
                             preview.showReferenceAtSourceLine(remoteEditor, entry.line)
                         }
@@ -1584,6 +1648,10 @@ private interface DifferentialManifestPreviewRemote {
     fun jcefRuntimeEvidence(): String
     fun nativeRasterGeometry(editor: Editor): String
     fun rasterGeometryNegativeControls(): Boolean
+    fun nativeRasterScrollProbe(editor: Editor, index: Int, edge: String): String
+    fun nativeVerticalScrollOffset(editor: Editor): Int
+    fun restoreNativeVerticalScroll(editor: Editor, offset: Int)
+    fun rasterScrollNegativeControls(): Boolean
     fun nativeHeadingSourceGeometry(editor: Editor): String
     fun nativeHeadingReplacementGeometry(editor: Editor): String
     fun nativeHeadingGeometryNegativeControls(): Boolean
