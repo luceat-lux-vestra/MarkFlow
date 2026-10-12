@@ -50,13 +50,17 @@ class MarkFlowStarterDifferentialManifestTest {
         check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
         // Stage D capture completion and full #353 acceptance are separate
         // contracts. Never infer release approval from a successful bounded
-        // source-identical capture of only three out of 89 expanded cases.
+        // source-identical capture of only a bounded subset of 89 expanded cases.
         val contract = System.getProperty("markflow.differential.contract") ?: "capture"
         require(contract == "capture" || contract == "acceptance") {
             "Unknown differential contract: $contract"
         }
+        // Expand one sequential real-IDE session rather than adding CI shards.
+        // These six cases remain CAPTURED_UNVERIFIED, not release acceptance.
+        val defaultIds = "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt" +
+            ",md-setext-headings,md-tight-loose-lists,mermaid-sequence"
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
-            ?: "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt").split(',').map { it.trim() }
+            ?: defaultIds).split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
         val indexed = inventory.associateBy { it.id }
         val selected = selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
