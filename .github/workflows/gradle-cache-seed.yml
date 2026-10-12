@@ -17,7 +17,6 @@ on:
       - 'settings.gradle.kts'
       - 'gradle.properties'
       - 'gradle/**'
-      - 'gradlew'
       - 'webview/package.json'
       - 'webview/package-lock.json'
   workflow_dispatch:
