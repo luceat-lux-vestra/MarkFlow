@@ -48,6 +48,7 @@ class MarkFlowStarterDifferentialManifestTest {
         check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
+        check(headingInkVerticalNegativeControls()) { "Stage E19 heading raster Y negative controls failed" }
         // Stage D capture completion and full #353 acceptance are separate
         // contracts. Never infer release approval from a successful bounded
         // source-identical capture of only a bounded subset of 89 expanded cases.
@@ -705,6 +706,10 @@ class MarkFlowStarterDifferentialManifestTest {
                                     )
                                 }
                                 check(bBounds.width == native.width && bBounds.height == native.height)
+                                val nativeBScrollY = driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeVerticalScrollOffset(bEditor)
+                                }
+                                check(nativeBScrollY >= 0)
                                 robot.waitForIdle()
                                 check(ImageIO.write(robot.createScreenCapture(bBounds), "png",
                                     abDest.resolve("native-b.png").toFile()))
@@ -758,6 +763,12 @@ class MarkFlowStarterDifferentialManifestTest {
                                 Files.writeString(
                                     abDest.resolve("heading-ink-x-diagnostic.tsv"),
                                     headingInkXDiagnostic(nativeImage, previewImage, nativeB, headingB)
+                                )
+                                Files.writeString(
+                                    abDest.resolve("heading-ink-y-baseline-diagnostic.tsv"),
+                                    headingInkYBaselineDiagnostic(
+                                        nativeImage, previewImage, nativeB, headingB, nativeBScrollY
+                                    )
                                 )
                                 val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
                                 val driftA = Files.readString(
@@ -1145,6 +1156,180 @@ class MarkFlowStarterDifferentialManifestTest {
             runCatching { firstHeadingInkPixelX(image, 10, 25) }.isFailure
     }
 
+    /**
+     * Actual screenshot vertical ink pixels. Restrict the scan to columns
+     * eight pixels right of the previously detected heading leftmost ink so
+     * thin gutter/caret artifacts cannot masquerade as the heading glyph.
+     * RGB<205 is a pinned light-theme feature detector, NOT a parity tolerance.
+     */
+    private fun headingPaintedInkY(
+        image: BufferedImage, leftInkX: Int, top: Int, bottomExclusive: Int
+    ): IntRange? {
+        require(top >= 0 && bottomExclusive > top && bottomExclusive <= image.height)
+        val fromX = leftInkX + 8
+        val toX = minOf(image.width, leftInkX + 300)
+        require(leftInkX >= 0 && fromX < toX)
+        var first = -1
+        var last = -1
+        for (y in top until bottomExclusive) {
+            for (x in fromX until toX) {
+                val color = image.getRGB(x, y)
+                if (((color ushr 16) and 255) < 205 &&
+                    ((color ushr 8) and 255) < 205 &&
+                    (color and 255) < 205) {
+                    if (first < 0) first = y
+                    last = y
+                    break
+                }
+            }
+        }
+        return if (first < 0) null else first..last
+    }
+
+    private fun headingInkVerticalNegativeControls(): Boolean {
+        val image = BufferedImage(80, 30, BufferedImage.TYPE_INT_RGB)
+        val g = image.createGraphics()
+        try {
+            g.color = java.awt.Color.WHITE
+            g.fillRect(0, 0, 80, 30)
+            g.color = java.awt.Color.BLACK
+            g.fillRect(1, 2, 2, 24) // gutter-only ink
+            g.fillRect(15, 8, 10, 4) // actual heading text
+        } finally {
+            g.dispose()
+        }
+        return headingPaintedInkY(image, 1, 0, 25) == (8..11) &&
+            headingPaintedInkY(image, 1, 14, 26) == null &&
+            runCatching { headingPaintedInkY(image, 1, -1, 20) }.isFailure &&
+            runCatching { headingPaintedInkY(image, 1, 2, 31) }.isFailure &&
+            runCatching { headingPaintedInkY(image, 78, 0, 20) }.isFailure
+    }
+
+    /**
+     * Source-aligned H1-H6 paired B-pilot ink-Y and text baseline evidence.
+     * Native baseline is a renderer paint input; reference baseline is an
+     * actual JCEF DOM marker. Both are normalized to their own H1. This
+     * RESEARCH-only pilot does not establish production #350 visual parity.
+     */
+    private fun headingInkYBaselineDiagnostic(
+        native: BufferedImage, reference: BufferedImage,
+        nativeLedger: String, previewLedger: String, nativeScrollY: Int
+    ): String {
+        check(nativeLedger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n"))
+        check(previewLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n"))
+        require(nativeScrollY >= 0)
+        fun rows(text: String): List<Map<String, String>> =
+            text.lineSequence().filter { it.startsWith("level=") }.map { row ->
+                row.split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    require(pair.size == 2) { "E19 malformed heading geometry" }
+                    pair[0] to pair[1]
+                }
+            }.toList()
+        val nativeRows = rows(nativeLedger)
+        val referenceRows = rows(previewLedger)
+        check(nativeRows.size == 6 && referenceRows.size == 6)
+        val result = mutableListOf(
+            "schema=markflow-heading-painted-ink-y-baseline/v1",
+            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
+            "native_scope=RESEARCH_ONLY_B_HEADING_PAINT_NOT_PRODUCTION_DEFAULT",
+            "comparison=RELATIVE_TO_H1_WITHIN_INDEPENDENT_SCREENSHOT_CROPS",
+            "native_scroll_offset_px=" + nativeScrollY,
+            "level\tsource_line\tnative_ink_top_px\tpreview_ink_top_px" +
+                "\tnative_ink_height_px\tpreview_ink_height_px" +
+                "\tnative_paint_baseline_px\tpreview_dom_baseline_px" +
+                "\tnative_relative_ink_top_px\tpreview_relative_ink_top_px" +
+                "\trelative_ink_drift_px\tnative_relative_baseline_px" +
+                "\tpreview_relative_baseline_px\trelative_baseline_drift_px" +
+                "\tbaseline_beyond_native_allocated_bottom_px"
+        )
+        var firstNativeInk = 0
+        var firstPreviewInk = 0
+        var firstNativeBaseline = 0
+        var firstPreviewBaseline = 0.0
+        var priorNativeInk = -1
+        var priorPreviewInk = -1
+        nativeRows.zip(referenceRows).forEachIndexed { index, (n, p) ->
+            val level = index + 1
+            val sourceLine = index * 4
+            check(n.getValue("level") == level.toString() &&
+                p.getValue("level") == level.toString() &&
+                n.getValue("source_line_zero_based") == sourceLine.toString() &&
+                p.getValue("source_line_zero_based") == sourceLine.toString()) {
+                "E19 source identity mismatch"
+            }
+            val documentTop = if (level == 1) {
+                check(n.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED")
+                n.getValue("inline_pilot_bounds_y_px").toInt()
+            } else {
+                check(n.getValue("fold_status") == "INSTALLED")
+                n.getValue("fold_origin_y_document_px").toInt()
+            }
+            val height = if (level == 1) n.getValue("inline_pilot_height_px").toInt()
+                else n.getValue("fold_height_px").toInt()
+            val top = documentTop - nativeScrollY
+            val nominalBottom = top + height
+            val nativeBaseline = n.getValue("native_paint_baseline_document_px").toInt() -
+                nativeScrollY
+            val descent = n.getValue("native_paint_font_descent_px").toInt()
+            // H1's live B font can paint BELOW its pre-style inline
+            // allocation. The real #389 screenshot shows 22px allocated,
+            // but glyph ink persists through y=31. Do not silently crop
+            // diagnostic ink to that known-defective original allocation.
+            val bottom = if (level == 1)
+                maxOf(nominalBottom, nativeBaseline + descent + 1, top + 35)
+            else nominalBottom
+            val refTop = floor(p.getValue("heading_text_range_top_css_px").toDouble()).toInt()
+            val refBottom = ceil(
+                p.getValue("heading_text_range_top_css_px").toDouble() +
+                    p.getValue("heading_text_range_height_css_px").toDouble()
+            ).toInt()
+            val nativeLeft = requireNotNull(firstHeadingInkPixelX(native, top, bottom)) {
+                "E19 H" + level + " lacks native raster ink"
+            }
+            val previewLeft = requireNotNull(firstHeadingInkPixelX(
+                reference, refTop, refBottom
+            )) { "E19 H" + level + " lacks JCEF raster ink" }
+            val nativeInk = requireNotNull(headingPaintedInkY(native, nativeLeft, top, bottom)) {
+                "E19 native heading lacks text ink beyond gutter"
+            }
+            val previewInk = requireNotNull(headingPaintedInkY(
+                reference, previewLeft, refTop, refBottom
+            )) { "E19 preview heading lacks text ink beyond gutter" }
+            val previewBaseline = p.getValue("reference_baseline_marker_css_px").toDouble()
+            check(previewBaseline.isFinite() && nativeBaseline in top..bottom &&
+                previewBaseline >= refTop && previewBaseline <= refBottom + 10) {
+                "E19 declared paint baseline outside real text allocation"
+            }
+            check(index == 0 ||
+                (nativeInk.first > priorNativeInk && previewInk.first > priorPreviewInk)) {
+                "E19 painted glyph anchors collapsed"
+            }
+            if (index == 0) {
+                firstNativeInk = nativeInk.first
+                firstPreviewInk = previewInk.first
+                firstNativeBaseline = nativeBaseline
+                firstPreviewBaseline = previewBaseline
+            }
+            val nInk = nativeInk.first - firstNativeInk
+            val pInk = previewInk.first - firstPreviewInk
+            val nBase = nativeBaseline - firstNativeBaseline
+            val pBase = previewBaseline - firstPreviewBaseline
+            fun fmt(v: Double): String = "%.3f".format(java.util.Locale.ROOT, v)
+            result += listOf(
+                level, sourceLine, nativeInk.first, previewInk.first,
+                nativeInk.last - nativeInk.first + 1,
+                previewInk.last - previewInk.first + 1,
+                nativeBaseline, fmt(previewBaseline),
+                nInk, pInk, nInk - pInk, nBase, fmt(pBase), fmt(nBase - pBase),
+                maxOf(0, nativeBaseline - nominalBottom)
+            ).joinToString("\t")
+            priorNativeInk = nativeInk.first
+            priorPreviewInk = previewInk.first
+        }
+        return result.joinToString("\n", postfix = "\n")
+    }
+
     private fun headingInkXDiagnostic(
         nativeImage: BufferedImage,
         referenceImage: BufferedImage,
@@ -1237,6 +1422,19 @@ class MarkFlowStarterDifferentialManifestTest {
             range.selectNodeContents(el);
             const textRect = range.getBoundingClientRect();
             const css = getComputedStyle(el);
+            // Read the real JCEF inline baseline with a zero-sized marker.
+            // It is removed immediately; any layout shift fails closed.
+            const marker = document.createElement('span');
+            marker.style.cssText =
+              'display:inline-block;width:0;height:0;padding:0;margin:0;border:0;line-height:0;vertical-align:baseline';
+            el.appendChild(marker);
+            const baseline = marker.getBoundingClientRect().top;
+            marker.remove();
+            const restored = el.getBoundingClientRect();
+            if (!Number.isFinite(baseline) ||
+                Math.abs(restored.top - rect.top) > 0.05 ||
+                Math.abs(restored.height - rect.height) > 0.05)
+              return 'FAIL: JCEF baseline marker disturbed heading layout ' + level;
             if (!(rect.height > 0) || !(rect.width > 0) ||
                 !(textRect.width > 0) || !(textRect.height > 0))
               return 'FAIL: DOM collapsed heading or text range ' + level;
@@ -1255,7 +1453,8 @@ class MarkFlowStarterDifferentialManifestTest {
               '\theading_box_left_css_px=' + rect.left.toFixed(3) +
               '\theading_text_range_left_css_px=' + textRect.left.toFixed(3) +
               '\theading_text_range_top_css_px=' + textRect.top.toFixed(3) +
-              '\theading_text_range_height_css_px=' + textRect.height.toFixed(3));
+              '\theading_text_range_height_css_px=' + textRect.height.toFixed(3) +
+              '\treference_baseline_marker_css_px=' + baseline.toFixed(3));
           }
           return lines.join('\n');
         })()
