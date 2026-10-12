@@ -579,3 +579,20 @@ PR #364 can merge.
 The packaged IDEA 2026.2.3 source-identical **B research heading pilot** records `heading-layout-ab/heading-ink-y-baseline-diagnostic.tsv`: H1–H6 actual screenshot text ink top/height, the native renderer's declared font-metric paint baseline, and the bundled Markdown Preview JCEF inline baseline obtained through a temporary zero-size baseline marker. The marker is removed immediately and the DOM heading geometry must remain unchanged. Both baseline and ink top are normalized to H1 within separate screenshots; no artificial pixel-parity threshold is used. The first eight horizontal pixels after the detected text leftmost ink are excluded from Y scans to avoid gutter/caret contamination. Missing raster ink, malformed source identity, invalid bounds and unordered headings fail closed.
 
 **Scope limit:** B is disabled-by-default research, not the production A heading controller. Native paint inputs are not independently observed pixel baselines. These data guide a subsequent general #350 product heading/paragraph fix and cannot clear the 89-case `acceptance` gate or mark #353 visually accepted.
+
+### #350 native heading line-box hardening — source-first, not Preview pixel parity
+
+The candidate `NativeHeadingCustomFoldRenderer` now calculates a consistent font-metric
+line box for long headings in narrow editors, including grapheme-safe visual wrapping,
+a height owned once by the source-line replacement fold, and in-region painting.
+This removes the candidate's previous ellipsis truncation of a long heading **without
+mutating the Markdown source**. The regression checks actual installed IntelliJ
+fold width, complete wrapped text, final-row raster, successor source-Y delta,
+document stamp and caret restoration. Reference JCEF pixel alignment is not a
+gate for this intrinsic native line-box contract.
+
+This is a **bounded #350 product-renderer correction**, not general production enablement.
+The research-B pilot and the shipping additive path are still distinct. In particular,
+the co-start H1 inline allocation/paint overflow, source-exact Setext fallback and
+resize-driven fold reflow still require packaged real-IDE acceptance before switching
+the shipping default or closing #350; #353 full 89-case acceptance stays open.
