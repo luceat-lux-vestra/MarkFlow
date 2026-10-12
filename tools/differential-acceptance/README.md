@@ -573,3 +573,9 @@ UI, existing E2E contracts and source-anchored six-heading Preview
 parity must still be verified against exact final HEAD, and all
 89 expanded manifest cases must satisfy reviewed acceptance before
 PR #364 can merge.
+
+### Stage E19 — actual heading painted ink Y and baseline evidence (diagnostic only)
+
+The packaged IDEA 2026.2.3 source-identical **B research heading pilot** records `heading-layout-ab/heading-ink-y-baseline-diagnostic.tsv`: H1–H6 actual screenshot text ink top/height, the native renderer's declared font-metric paint baseline, and the bundled Markdown Preview JCEF inline baseline obtained through a temporary zero-size baseline marker. The marker is removed immediately and the DOM heading geometry must remain unchanged. Both baseline and ink top are normalized to H1 within separate screenshots; no artificial pixel-parity threshold is used. The first eight horizontal pixels after the detected text leftmost ink are excluded from Y scans to avoid gutter/caret contamination. Missing raster ink, malformed source identity, invalid bounds and unordered headings fail closed.
+
+**Scope limit:** B is disabled-by-default research, not the production A heading controller. Native paint inputs are not independently observed pixel baselines. These data guide a subsequent general #350 product heading/paragraph fix and cannot clear the 89-case `acceptance` gate or mark #353 visually accepted.

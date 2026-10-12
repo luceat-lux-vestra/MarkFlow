@@ -386,6 +386,30 @@ internal object NativeDifferentialPreviewE2EBridge {
             val font = NativeHeadingPreviewTypographyPilot.font(editor, index + 1)
             val text = lineText(line).trimStart('#', ' ', '\t')
             val fm = editor.contentComponent.getFontMetrics(font)
+            // Match the real B-pilot drawString baseline inputs for the
+            // installed CustomFold (H2-H6) or Inline (H1) renderer.
+            // Paint input is NOT an independently observed raster baseline.
+            val paintBaseline = if (installed != null) {
+                val pad = when (index + 1) {
+                    1 -> 10
+                    2 -> 8
+                    3 -> 7
+                    4 -> 6
+                    5 -> 5
+                    else -> 4
+                }
+                requireNotNull(origin).y + maxOf(
+                    fm.ascent + pad,
+                    (installed.heightInPixels + fm.ascent - fm.descent) / 2,
+                )
+            } else {
+                val inline = requireNotNull(inlinePilot) {
+                    "E19 H1 pilot is not installed for paint baseline evidence"
+                }
+                requireNotNull(inline.bounds).y + maxOf(
+                    fm.ascent, (inline.heightInPixels + fm.ascent - fm.descent) / 2,
+                )
+            }
             listOf(
                 "level=" + (index + 1),
                 "source_line_zero_based=" + line,
@@ -409,6 +433,9 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "native_paint_font_weight=BOLD",
                 "native_paint_text_width_px=" + fm.stringWidth(text),
                 "native_paint_text_origin_x_document_px=" + ((origin?.x ?: editor.offsetToXY(start).x) + 4),
+                "native_paint_font_ascent_px=" + fm.ascent,
+                "native_paint_font_descent_px=" + fm.descent,
+                "native_paint_baseline_document_px=" + paintBaseline,
                 "following_line_zero_based=" + nextLine,
                 "following_offset=" + afterOffset,
                 "following_y_document_px=" + followingY,
