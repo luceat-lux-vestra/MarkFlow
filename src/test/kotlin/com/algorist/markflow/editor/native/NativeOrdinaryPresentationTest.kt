@@ -637,6 +637,95 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(tailOffset, editor.caretModel.offset)
     }
 
+    /**
+     * #350 native layout contract: a long H2 is neither ellipsized nor added
+     * below the source line. The actual visible IntelliJ fold must reserve
+     * exactly the measured wrapped rows, even in a narrow editor.
+     */
+    fun testCustomHeadingLongTitleWrapsInsideOwnedFoldHeight() {
+        val heading = "Native heading with a long readable title and multilingual " +
+            "한글 paragraphs that must wrap instead of turning into an ellipsis ".repeat(6)
+        val source = "## $heading\n\nTail paragraph\n"
+        myFixture.configureByText("heading-narrow-width-layout.txt", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tail = source.indexOf("Tail paragraph") + 1
+        editor.caretModel.moveToOffset(tail)
+        val beforeY = editor.offsetToXY(tail).y
+        val beforeStamp = document.modificationStamp
+        val model = NativeHeadingProjectionPlanner.plan(
+            NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        ).single()
+        // Whole-line replacement must never depend on a Preview-JCEF DOM box.
+        val expectedText = model.text
+        val parent = editor.component.parent
+        val window = javax.swing.JFrame("MarkFlow native heading width contract")
+        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        try {
+            window.setBounds(80, 80, 360, 550)
+            window.contentPane.add(editor.component, java.awt.BorderLayout.CENTER)
+            window.isVisible = true
+            assertTrue(editor.contentComponent.isShowing)
+            val plan = NativeMarkdownProjectionPlanner.plan(
+                ProjectionSnapshot.capture(document, 0L)
+            )
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val fold = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>()
+                .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+            val renderer = fold.renderer as NativeHeadingCustomFoldRenderer
+            val font = NativeHeadingPreviewTypographyPilot.font(editor, 2)
+            val metrics = editor.contentComponent.getFontMetrics(font)
+            val width = maxOf(1, fold.widthInPixels - 8)
+            val lines = NativeHeadingMeasuredLines.wrap(expectedText, metrics, width)
+            assertTrue("Narrow title never wrapped", lines.size >= 3)
+            assertFalse("No visual ellipsis should replace hidden heading source",
+                lines.any { it.contains("…") })
+            fun words(value: String) = value.trim().split(Regex("\\s+")).joinToString(" ")
+            assertEquals(words(expectedText), words(lines.joinToString(" ")))
+            assertEquals("CustomFold must reserve the complete wrapped text box",
+                maxOf(editor.lineHeight, metrics.height * lines.size + 16),
+                fold.heightInPixels)
+            assertEquals("Every line's height must be owned once by the replacement",
+                fold.heightInPixels - editor.lineHeight * 2,
+                editor.offsetToXY(tail).y - beforeY)
+
+            val image = java.awt.image.BufferedImage(
+                fold.widthInPixels + 4, fold.heightInPixels + 4,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB,
+            )
+            val graphics = image.createGraphics()
+            try {
+                renderer.paint(fold, graphics, java.awt.geom.Rectangle2D.Double(
+                    0.0, 0.0, fold.widthInPixels.toDouble(), fold.heightInPixels.toDouble()
+                ), TextAttributes())
+            } finally {
+                graphics.dispose()
+            }
+            val finalLineTop = 8 + (lines.size - 1) * metrics.height
+            assertTrue("The final wrapped row was not visibly painted",
+                (finalLineTop until minOf(fold.heightInPixels, finalLineTop + metrics.height)).any { y ->
+                    (0 until fold.widthInPixels).any { x -> image.getRGB(x, y).ushr(24) != 0 }
+                })
+            assertTrue("The renderer painted outside its allocated native region",
+                (fold.heightInPixels until image.height).all { y ->
+                    (0 until image.width).all { x -> image.getRGB(x, y).ushr(24) == 0 }
+                })
+            assertEquals(source, document.text)
+            assertEquals(beforeStamp, document.modificationStamp)
+            assertEquals(tail, editor.caretModel.offset)
+        } finally {
+            controller.dispose()
+            window.contentPane.remove(editor.component)
+            window.dispose()
+            parent?.add(editor.component)
+            parent?.revalidate()
+        }
+        assertEquals(beforeY, editor.offsetToXY(tail).y)
+        assertEquals(source, document.text)
+        assertEquals(beforeStamp, document.modificationStamp)
+    }
+
     fun testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases() {
         fun candidate(text: String, expected: IntRange?) {
             myFixture.configureByText("heading-span-probe.md", text)
