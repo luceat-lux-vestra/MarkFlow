@@ -172,7 +172,11 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\nmanifest_sha256=" + sha(manifest) + "\n")
             }
             Starter.newContext(
-                testName = "markflow-353-bounded-manifest-real-pairs",
+                testName = if (contract == "acceptance") {
+                    "markflow-353-full-manifest-real-pairs"
+                } else {
+                    "markflow-353-bounded-manifest-real-pairs"
+                },
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(plugin)
@@ -188,7 +192,13 @@ class MarkFlowStarterDifferentialManifestTest {
                 }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
-            }.runIdeWithDriver().useDriverAndCloseIde {
+            }.runIdeWithDriver(
+                // IDEA Starter defaults the whole IDE process to 10 minutes. That is appropriate
+                // for the bounded PR capture, but the complete 89-case acceptance corpus cannot
+                // finish inside that process lifetime. Keep the ordinary contract bounded while
+                // leaving cleanup headroom under the workflow's 85-minute outer timeout.
+                runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes,
+            ).useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)

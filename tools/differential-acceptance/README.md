@@ -121,9 +121,12 @@ Two explicitly named test contracts are available:
   inventory in one Starter/IDE session. Manifest-declared supported cases retain
   source-identical IntelliJ Preview pairs; explicit degraded/unsupported cases
   are still executed and classified without inventing parity requirements.
-  This evidence-generation contract **still fails closed at the end** until the
-  retained full-corpus artifact has been reviewed and a source-bound acceptance
-  ledger is implemented in the following #353 slice.
+  The full contract explicitly gives Starter a **75-minute IDE process lifetime**
+  while the ordinary bounded capture remains at Starter's **10-minute** limit;
+  the workflow's outer command timeout remains 85 minutes so cleanup/artifact
+  retention still has headroom. This evidence-generation contract **still fails
+  closed at the end** until the retained full-corpus artifact has been reviewed
+  and a source-bound acceptance ledger is implemented in the following #353 slice.
 
 **Important:** finishing or merging the capture infrastructure does NOT
 authorize enabling the opt-in experimental Native heading layout by default,
