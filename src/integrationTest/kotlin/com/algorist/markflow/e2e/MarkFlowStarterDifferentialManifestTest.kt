@@ -64,7 +64,27 @@ class MarkFlowStarterDifferentialManifestTest {
             ?: defaultIds).split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
         val indexed = inventory.associateBy { it.id }
-        val selected = selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
+        // Review-only realistic document, deliberately NOT part of the fixed
+        // 88-parent/#353 acceptance corpus. Capture the SAME source at three
+        // scroll anchors (top, middle, bottom) to judge document typography
+        // in context, not only isolated Heading fixture rows.
+        val reviewFixture = "fixtures/visual-review/typical-markdown-document.md"
+        val reviewBytes = Files.readAllBytes(root.resolve(reviewFixture))
+        val reviewCases = if (contract == "capture" &&
+            System.getProperty("markflow.differential.caseIds") == null) {
+            listOf(
+                Case("md-general-document-start", "review-only-general-document",
+                    "markdown", "supported", reviewFixture, reviewBytes, 0, null, true),
+                Case("md-general-document-middle", "review-only-general-document",
+                    "markdown", "supported", reviewFixture, reviewBytes, 30, null, true),
+                Case("md-general-document-end", "review-only-general-document",
+                    "markdown", "supported", reviewFixture, reviewBytes, 60, null, true),
+            )
+        } else emptyList()
+        check(reviewCases.map { it.id }.toSet().size == reviewCases.size &&
+            reviewCases.none { it.id in indexed })
+        val selected = reviewCases +
+            selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
         check(selected.all { it.comparable && it.classification == "supported" })
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let {
@@ -95,6 +115,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 val bFixture = project.resolve("heading-layout-b.md")
                 check(!Files.exists(bFixture))
                 Files.write(bFixture, abHeading.bytes)
+                val productFixture = project.resolve("heading-layout-product.md")
+                check(!Files.exists(productFixture))
+                Files.write(productFixture, abHeading.bytes)
             }
             selected.forEach { entry ->
                 val target = project.resolve(entry.id + ".md")
@@ -125,6 +148,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
                     addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
+                    addSystemProperty("markflow.starter.headingLegacyBaselinePilot", "true")
                 }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
@@ -350,6 +374,29 @@ class MarkFlowStarterDifferentialManifestTest {
                             val xywh = preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
                             check(xywh.size == 4)
                             Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
+                        }
+                        if (entry.parent == "review-only-general-document") {
+                            // JetBrains scrollToLine() invoked immediately after
+                            // SHOW_PREVIEW can be lost before JCEF finishes layout.
+                            // For this non-golden design review only, locate an
+                            // ACTUAL DOM block by identifying its source text,
+                            // scroll it into view and require a visible viewport
+                            // anchor before taking the real browser screenshot.
+                            waitFor(
+                                message = "Preview shows SAME general-document section: " + entry.id,
+                                timeout = 35.seconds,
+                                getter = { driver.ui.jcef().callJs(
+                                    generalDocumentPreviewScrollProbe(entry.line)
+                                ) },
+                                checker = { it.contains("target_visible=true") &&
+                                    it.startsWith("schema=markflow-real-jcef-review-scroll/v1") }
+                            )
+                            Files.writeString(
+                                dest.resolve("preview-real-scroll-position.txt"),
+                                driver.ui.jcef().callJs(
+                                    generalDocumentPreviewScrollProbe(entry.line)
+                                ) + "\n"
+                            )
                         }
                         waitFor(
                             message = "Bundled JCEF paints nonblank source: " + entry.id,
@@ -618,6 +665,156 @@ class MarkFlowStarterDifferentialManifestTest {
                         }
                         markFlow.close(editor)
                         if (entry.id == "md-atx-headings-h1-h6") {
+                            // C is the actual product default; A is the frozen
+                            // legacy baseline, B the pinned JCEF typography probe.
+                            // The same authoritative source bytes drive all three.
+                            val cDest = output.resolve("heading-layout-product")
+                            Files.createDirectories(cDest)
+                            val candidate = markFlow.openMarkdown("heading-layout-product.md")
+                            val cEditor = candidate.editor
+                            var candidateFailure: Throwable? = null
+                            try {
+                                markFlow.assertProductionProjectionAttached(candidate)
+                                check(markFlow.source(candidate) == source)
+                                val cStamp = markFlow.modificationStamp(candidate)
+                                driver.withContext(OnDispatcher.EDT) { visual.prepare(cEditor) }
+                                markFlow.resetToSingleCaret(candidate, source.length)
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showNativeAtSourceLine(cEditor, entry.line)
+                                }
+                                waitFor(
+                                    message = "Real product Heading line box settled",
+                                    timeout = 50.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        visual.visualEvidence(cEditor)
+                                    } },
+                                    checker = { it.contains("derivedPending=0") }
+                                )
+                                val cLedger = driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeHeadingReplacementGeometry(cEditor)
+                                }
+                                Files.writeString(cDest.resolve("native-product-heading-geometry.txt"),
+                                    cLedger)
+                                check(cLedger.contains("legacy_heading_inlay_count=0")) {
+                                    "Product Heading unexpectedly contains an additive block inlay"
+                                }
+                                check(cLedger.contains("co_start_inline_pilot_count=1")) {
+                                    "H1 co-start foreign section fallback is missing"
+                                }
+                                val customs = cLedger.lineSequence().single {
+                                    it.startsWith("measured_atx_heading_count=")
+                                }.substringAfter('=').toInt()
+                                check(customs == 5) {
+                                    "Product Heading H2-H6 replacement count is $customs, not 5"
+                                }
+                                val area = driver.withContext(OnDispatcher.EDT) {
+                                    Rectangle(
+                                        visual.contentScreenX(cEditor), visual.contentScreenY(cEditor),
+                                        visual.contentWidth(cEditor), visual.contentHeight(cEditor)
+                                    )
+                                }
+                                check(area.width == 1200 && area.height == 760)
+                                robot.waitForIdle()
+                                check(ImageIO.write(robot.createScreenCapture(area), "png",
+                                    cDest.resolve("markflow-production.png").toFile()))
+                                check(markFlow.source(candidate) == source &&
+                                    markFlow.modificationStamp(candidate) == cStamp &&
+                                    Files.readAllBytes(project.resolve("heading-layout-product.md"))
+                                        .contentEquals(entry.bytes))
+                                Files.writeString(cDest.resolve("identity.txt"),
+                                    "schema=markflow-heading-product-evidence/v1\n" +
+                                        "source_head=" + sourceHead + "\n" +
+                                        "source_sha256=" + sha(entry.bytes) + "\n" +
+                                        "mode=DEFAULT_PRODUCT_NATIVE\n" +
+                                        "visual_acceptance=UNVERIFIED\n")
+                                // Validate actual live IDE source-owner dimensions
+                                // at each font setting, not only em-policy math.
+                                // Per-editor scheme is restored in finally and the
+                                // authoritative Markdown source/stamp never changes.
+                                val observed = mutableListOf<Pair<Int, Int>>()
+                                var fontProbeFailure: Throwable? = null
+                                try {
+                                    for (fontPx in listOf(11, 13, 16, 20)) {
+                                        val applied = driver.withContext(OnDispatcher.EDT) {
+                                            preview.setNativeEditorFontSize(cEditor, fontPx)
+                                        }
+                                        val geometry = driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeHeadingReplacementGeometry(cEditor)
+                                        }
+                                        Files.writeString(
+                                            cDest.resolve("font-$fontPx-native-geometry.txt"),
+                                            applied + geometry
+                                        )
+                                        val actualPx = applied.lineSequence().single {
+                                            it.startsWith("actual_native_font_px=")
+                                        }.substringAfter('=').toFloat()
+                                        check(kotlin.math.abs(actualPx - fontPx) <= 1.0f) {
+                                            "Editor font changed to unexpected size: $actualPx vs $fontPx"
+                                        }
+                                        check(geometry.contains("legacy_heading_inlay_count=0") &&
+                                            geometry.contains("co_start_inline_pilot_count=1")) {
+                                            "Product Heading owner topology changed during font reflow"
+                                        }
+                                        val h2 = geometry.lineSequence().single {
+                                            it.startsWith("level=2\t")
+                                        }
+                                        val heightPx = requireNotNull(
+                                            Regex("fold_height_px=(\\d+)").find(h2)
+                                        ) {
+                                            "H2 custom fold height absent at $fontPx editor px"
+                                        }.groupValues[1].toInt()
+                                        check(heightPx > 0)
+                                        observed += fontPx to heightPx
+                                        robot.waitForIdle()
+                                        check(ImageIO.write(
+                                            robot.createScreenCapture(area), "png",
+                                            cDest.resolve("font-$fontPx-product.png").toFile()
+                                        ))
+                                        check(markFlow.source(candidate) == source &&
+                                            markFlow.modificationStamp(candidate) == cStamp)
+                                    }
+                                    check(observed.zipWithNext().all { (smaller, larger) ->
+                                        smaller.first < larger.first &&
+                                            smaller.second < larger.second
+                                    }) {
+                                        "CustomFold did not reflow proportionally with actual IDE font size: $observed"
+                                    }
+                                    Files.writeString(
+                                        cDest.resolve("font-size-reflow.txt"),
+                                        "schema=markflow-heading-real-ide-reflow/v1\n" +
+                                            "source_head=$sourceHead\n" +
+                                            "observed_h2_fold_heights=" +
+                                            observed.joinToString(",") { (f, h) -> "$f:$h" } + "\n"
+                                    )
+                                } catch (cause: Throwable) {
+                                    fontProbeFailure = cause
+                                    throw cause
+                                } finally {
+                                    val restored = runCatching {
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.restoreNativeEditorFontSize(cEditor)
+                                        }
+                                    }
+                                    val restoreError = restored.exceptionOrNull()
+                                    if (restoreError != null) {
+                                        if (fontProbeFailure == null) throw restoreError
+                                        fontProbeFailure.addSuppressed(restoreError)
+                                    }
+                                }
+                                check(markFlow.source(candidate) == source &&
+                                    markFlow.modificationStamp(candidate) == cStamp)
+
+                            } catch (cause: Throwable) {
+                                candidateFailure = cause
+                                throw cause
+                            } finally {
+                                val cleanup = runCatching { markFlow.close(candidate) }
+                                val cleanupError = cleanup.exceptionOrNull()
+                                if (cleanupError != null) {
+                                    if (candidateFailure == null) throw cleanupError
+                                    candidateFailure.addSuppressed(cleanupError)
+                                }
+                            }
                             val abDest = output.resolve("heading-layout-ab")
                             Files.createDirectories(abDest)
                             val b = markFlow.openMarkdown("heading-layout-b.md")
@@ -840,7 +1037,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "caret_offset_after=" + hiddenIdentity[2] + "\n" +
                                         "native_a_environment=" + nativeEnvironment + "\n" +
                                         "native_b_environment=" + bEnv + "\n" +
-                                        "production_default=sourceLineReplacement_false\n" +
+                                        "legacy_a_fixture=sourceLineReplacement_false\n" +
+                                         "production_default=sourceLineReplacement_true\n" +
                                         "full_differential_acceptance=false\n")
                                 // The candidate contract is six *owned heading
                                 // replacements*, not six instances of the same
@@ -940,9 +1138,11 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\"manifest_sha256\":\"" + sha(manifest) + "\",\n" +
                     "\"manifest_cases\":88,\n\"expanded_cases\":" + inventory.size + ",\n" +
                     "\"selected_cases\":" + selected.size + ",\n" +
+                    "\"review_only_cases\":" + reviewCases.size + ",\n" +
                     "\"captured_unverified\":" + captured + ",\n" +
                     "\"capture_failed\":" + failed + ",\n" +
-                    "\"not_executed\":" + (inventory.size - captured - failed) + ",\n" +
+                    "\"not_executed\":" +
+                        inventory.count { states[it.id] == "NOT_EXECUTED" } + ",\n" +
                     "\"geometry_gate\":\"" +
                         (if (captureFailures.isEmpty()) "PENDING_REVIEW_AND_FULL_CORPUS"
                          else "FAIL_KNOWN_DEFECT_CANDIDATE_BOUNDS") + "\",\n" +
@@ -1399,6 +1599,42 @@ class MarkFlowStarterDifferentialManifestTest {
         return values.joinToString("\n", postfix = "\n")
     }
 
+    /**
+     * Review-only JCEF location probe; does not modify Markdown source or
+     * platform CSS. The target text, not a guessed pixel scroll offset, owns
+     * the Preview scroll anchor. Produces a verifiable DOM viewport ledger.
+     */
+    private fun generalDocumentPreviewScrollProbe(sourceLine: Int): String {
+        val (tag, marker) = when (sourceLine) {
+            0 -> "h1" to "Reliable Release Checklist"
+            30 -> "pre" to "./gradlew buildPlugin"
+            60 -> "h2" to "4. Publish and monitor"
+            else -> error("Unsupported full-document review anchor: $sourceLine")
+        }
+        return """
+            (() => {
+              const matched = Array.from(document.querySelectorAll('$tag'))
+                .filter(el => (el.textContent || '').includes('$marker'));
+              if (matched.length !== 1) return 'FAIL: expected one $tag containing $marker, found ' + matched.length;
+              const target = matched[0];
+              target.scrollIntoView({block: 'start', inline: 'nearest', behavior: 'instant'});
+              const box = target.getBoundingClientRect();
+              const visible = box.height > 0 && box.bottom > 0 &&
+                box.top < window.innerHeight;
+              const origin = document.scrollingElement;
+              return [
+                'schema=markflow-real-jcef-review-scroll/v1',
+                'source_line_zero_based=$sourceLine',
+                'tag=' + target.tagName,
+                'target_visible=' + visible,
+                'target_top_css_px=' + box.top.toFixed(2),
+                'viewport_height_css_px=' + window.innerHeight,
+                'document_scroll_top=' + (origin ? origin.scrollTop : -1),
+              ].join('\\n');
+            })()
+        """.trimIndent()
+    }
+
     private val headingReferenceDomProbe = """
         (() => {
           const rows = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
@@ -1853,6 +2089,8 @@ private interface DifferentialManifestPreviewRemote {
     fun rasterScrollNegativeControls(): Boolean
     fun nativeHeadingSourceGeometry(editor: Editor): String
     fun nativeHeadingReplacementGeometry(editor: Editor): String
+    fun setNativeEditorFontSize(editor: Editor, fontPx: Int): String
+    fun restoreNativeEditorFontSize(editor: Editor): String
     fun nativeHeadingGeometryNegativeControls(): Boolean
     fun sourceText(editor: Editor): String
     fun sourceStamp(editor: Editor): Long

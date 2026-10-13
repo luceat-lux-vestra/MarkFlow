@@ -153,8 +153,10 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(2, pilot.evidenceSnapshot().fullyConcealed)
             assertEquals("H1 following paragraph must keep its source anchor",
                 firstParagraphY, editor.offsetToXY(firstParagraphOffset).y)
-            assertEquals("16px gap must appear after first paragraph, before H2",
-                secondHeadingY + 16, editor.offsetToXY(secondHeadingOffset).y)
+            assertEquals("Font-relative paragraph gap must appear before H2",
+                secondHeadingY + NativeHeadingLayoutMetrics.followingSectionGap(
+                    editor.colorsScheme.editorFontSize2D
+                ), editor.offsetToXY(secondHeadingOffset).y)
             // Reveal by moving the caret inside authoritative H1. The owner
             // must remove only its own fold/inlay; JetBrains's section remains.
             editor.caretModel.moveToOffset(source.indexOf("Heading level 1") + 2)
@@ -573,14 +575,17 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(1.8f, NativeHeadingPreviewTypographyPilot.scale(2))
             val font = NativeHeadingPreviewTypographyPilot.font(editor, model.level)
             assertEquals(java.awt.Font.BOLD, font.style)
-            assertEquals(editor.contentComponent.font.size2D * 1.8f, font.size2D)
+            assertEquals(editor.colorsScheme.editorFontSize2D * 1.8f, font.size2D)
             val metrics = editor.contentComponent.getFontMetrics(font)
             val naturalWidth = maxOf(1, metrics.stringWidth(model.text) + 8)
             val viewportWidth = editor.scrollingModel.visibleArea.width
             val expectedWidth = if (editor.contentComponent.isShowing && viewportWidth > 9) {
                 minOf(naturalWidth, viewportWidth - 8)
             } else naturalWidth
-            val expectedHeight = maxOf(editor.lineHeight, metrics.height + 16)
+            val expectedHeight = maxOf(editor.lineHeight, metrics.height +
+                2 * NativeHeadingLayoutMetrics.verticalPadding(
+                    2, editor.colorsScheme.editorFontSize2D
+                ))
             assertEquals("Preview H2 font geometry must determine CustomFold width",
                 expectedWidth, custom.widthInPixels)
             assertTrue(
@@ -642,57 +647,160 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
      * below the source line. The actual visible IntelliJ fold must reserve
      * exactly the measured wrapped rows, even in a narrow editor.
      */
-    fun testCustomHeadingLongTitleWrapsInsideOwnedFoldHeight() {
-        val heading = "Native heading with a long readable title and multilingual " +
-            "한글 paragraphs that must wrap instead of turning into an ellipsis ".repeat(6)
-        val source = "## $heading\n\nTail paragraph\n"
-        myFixture.configureByText("heading-narrow-width-layout.txt", source)
-        val editor = myFixture.editor
+    /**
+     * #350 must derive Heading vertical rhythm from the effective editor font,
+     * not a hardcoded 13px/16px layout. This contract applies before any
+     * visually reviewed IDE font-size / HiDPI E2E acceptance.
+     */
+    /**
+     * Real IntelliJ EditorEx font switching, not just a dimensionless policy
+     * arithmetic test. CustomFold owns the same source rows once at every
+     * font size and must reflow without duplicating the source line height.
+     */
+    fun testCustomFoldReflowsWhenActualEditorFontChanges() {
+        val source = "## Heading native font reflow\n\nTail paragraph\n"
+        myFixture.configureByText("heading-font-reflow-real-editor.md", source)
+        val editor = myFixture.editor as com.intellij.openapi.editor.impl.EditorImpl
+        val originalFontSize = editor.colorsScheme.editorFontSize2D
+        val originalParent = editor.component.parent
+        val testWindow = javax.swing.JFrame("MarkFlow native EditorImpl font resize")
+        testWindow.setBounds(80, 80, 380, 520)
+        testWindow.contentPane.add(editor.component, java.awt.BorderLayout.CENTER)
+        testWindow.isVisible = true
+        assertTrue("Font reflow must be tested in an attached showing editor",
+            editor.contentComponent.isShowing)
         val document = editor.document
+        val stamp = document.modificationStamp
+        val tailOffset = source.indexOf("Tail paragraph") + 1
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
+        val firstHeightByFont = linkedMapOf<Int, Int>()
+        val controller = NativeHeadingPresentationController(
+            editor, sourceLineReplacement = true,
+            nativeEditorTypography = false, previewPilotParagraphGap = false
+        )
+        try {
+            for (size in listOf(11, 13, 16, 20)) {
+                editor.setFontSize(size.toFloat())
+                editor.caretModel.moveToOffset(tailOffset)
+                val unfoldedY = editor.offsetToXY(tailOffset).y
+                controller.applyPlan(plan, richPresentationEnabled = true)
+                val custom = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>()
+                    .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+                val font = NativeHeadingPreviewTypographyPilot.font(editor, model.level)
+                val metrics = editor.contentComponent.getFontMetrics(font)
+                val expected = maxOf(
+                    editor.lineHeight,
+                    metrics.height + 2 * NativeHeadingLayoutMetrics.verticalPadding(
+                        model.level, editor.colorsScheme.editorFontSize2D
+                    )
+                )
+                assertEquals("Measured font $size must determine owned fold height",
+                    expected, custom.heightInPixels)
+                assertEquals("Following paragraph must see replacement, not additive height",
+                    expected - editor.lineHeight * 2,
+                    editor.offsetToXY(tailOffset).y - unfoldedY)
+                assertEquals(source, document.text)
+                assertEquals(stamp, document.modificationStamp)
+                assertEquals(tailOffset, editor.caretModel.offset)
+                firstHeightByFont[size] = custom.heightInPixels
+                controller.clearPresentation()
+                assertEquals(unfoldedY, editor.offsetToXY(tailOffset).y)
+            }
+            val heights = firstHeightByFont.values.toList()
+            assertEquals(4, heights.size)
+            assertTrue("Actual showing editor fold heights failed to scale: $firstHeightByFont",
+                heights.zipWithNext().all { (a, b) -> b > a })
+        } finally {
+            controller.dispose()
+            editor.setFontSize(originalFontSize)
+            testWindow.contentPane.remove(editor.component)
+            testWindow.dispose()
+            originalParent?.add(editor.component)
+            originalParent?.revalidate()
+        }
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+    }
+
+    fun testNativeHeadingEmMetricsScaleAcrossEditorFontSizes() {
+        for (fontPx in listOf(11f, 13f, 16f, 20f)) {
+            assertTrue(NativeHeadingLayoutMetrics.followingSectionGap(fontPx) > 0)
+            for (level in 1..6) {
+                assertTrue(NativeHeadingLayoutMetrics.verticalPadding(level, fontPx) >= 0)
+            }
+        }
+        assertEquals(16, NativeHeadingLayoutMetrics.followingSectionGap(13f))
+        assertEquals(25, NativeHeadingLayoutMetrics.followingSectionGap(20f))
+        assertEquals(8, NativeHeadingLayoutMetrics.verticalPadding(2, 13f))
+        assertEquals(12, NativeHeadingLayoutMetrics.verticalPadding(2, 20f))
+        assertEquals(4, NativeHeadingLayoutMetrics.verticalPadding(6, 13f))
+        assertEquals(6, NativeHeadingLayoutMetrics.verticalPadding(6, 20f))
+        assertTrue(NativeHeadingLayoutMetrics.fitsVerifiedBlankRow(33, 22))
+        assertFalse(NativeHeadingLayoutMetrics.fitsVerifiedBlankRow(45, 22))
+    }
+
+    fun testH1InlineFallbackDoesNotDownsizeItsNativeHeadingFont() {
+        val source = "# Native Heading\n\nBody\n"
+        myFixture.configureByText("native-full-size-h1.txt", source)
+        val editor = myFixture.editor
+        val doc = editor.document
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
+        val fullSize = editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(1)
+        val renderer = NativeHeadingInlineFoldRenderer(editor, model, nativeEditorTypography = true)
+        assertEquals(fullSize, renderer.presentationFont().size2D)
+        assertTrue(fullSize > editor.colorsScheme.editorFontSize2D)
+        assertEquals(source, doc.text)
+    }
+
+    fun testNarrowNativeHeadingEllipsizesOneLineWithoutAddingSourceHeight() {
+        val title = ("A very long Heading with 한글 and more words ").repeat(10)
+        val source = "## $title\n\nTail paragraph\n"
+        myFixture.configureByText("native-heading-single-line-ellipsis.txt", source)
+        val editor = myFixture.editor
+        val doc = editor.document
         val tail = source.indexOf("Tail paragraph") + 1
         editor.caretModel.moveToOffset(tail)
-        val beforeY = editor.offsetToXY(tail).y
-        val beforeStamp = document.modificationStamp
-        val model = NativeHeadingProjectionPlanner.plan(
-            NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
-        ).single()
-        // Whole-line replacement must never depend on a Preview-JCEF DOM box.
-        val expectedText = model.text
+        val plainY = editor.offsetToXY(tail).y
+        val stamp = doc.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        val model = NativeHeadingProjectionPlanner.plan(plan).single()
         val parent = editor.component.parent
-        val window = javax.swing.JFrame("MarkFlow native heading width contract")
-        val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
+        val window = javax.swing.JFrame("MarkFlow single-line native Heading")
+        val controller = NativeHeadingPresentationController(
+            editor, sourceLineReplacement = true,
+            nativeEditorTypography = true, previewPilotParagraphGap = false
+        )
         try {
             window.setBounds(80, 80, 360, 550)
             window.contentPane.add(editor.component, java.awt.BorderLayout.CENTER)
             window.isVisible = true
             assertTrue(editor.contentComponent.isShowing)
-            val plan = NativeMarkdownProjectionPlanner.plan(
-                ProjectionSnapshot.capture(document, 0L)
-            )
             controller.applyPlan(plan, richPresentationEnabled = true)
-            val fold = editor.foldingModel.allFoldRegions
-                .filterIsInstance<CustomFoldRegion>()
+            val fold = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>()
                 .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
             val renderer = fold.renderer as NativeHeadingCustomFoldRenderer
-            val font = NativeHeadingPreviewTypographyPilot.font(editor, 2)
-            val metrics = editor.contentComponent.getFontMetrics(font)
-            val width = maxOf(1, fold.widthInPixels - 8)
-            val lines = NativeHeadingMeasuredLines.wrap(expectedText, metrics, width)
-            assertTrue("Narrow title never wrapped", lines.size >= 3)
-            assertFalse("No visual ellipsis should replace hidden heading source",
-                lines.any { it.contains("…") })
-            fun words(value: String) = value.trim().split(Regex("\\s+")).joinToString(" ")
-            assertEquals(words(expectedText), words(lines.joinToString(" ")))
-            assertEquals("CustomFold must reserve the complete wrapped text box",
-                maxOf(editor.lineHeight, metrics.height * lines.size + 16),
-                fold.heightInPixels)
-            assertEquals("Every line's height must be owned once by the replacement",
+            val baseFont = editor.contentComponent.font
+            val nativeFont = baseFont.deriveFont(Font.BOLD,
+                editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(2))
+            val metrics = editor.contentComponent.getFontMetrics(nativeFont)
+            val available = maxOf(1, fold.widthInPixels - 8)
+            val displayed = NativeHeadingEllipsis.rendered(model.text, metrics, available)
+            assertTrue("Long Heading must end in ellipsis", displayed.endsWith("…"))
+            assertTrue(displayed.length < model.text.length)
+            assertTrue(metrics.stringWidth(displayed) <= available)
+            assertEquals("Heading must own only a single font-scaled line box",
+                maxOf(editor.lineHeight, metrics.height +
+                    2 * NativeHeadingLayoutMetrics.verticalPadding(
+                        2, editor.colorsScheme.editorFontSize2D
+                    )), fold.heightInPixels)
+            assertEquals("No extra block inlay on top of the original source line",
                 fold.heightInPixels - editor.lineHeight * 2,
-                editor.offsetToXY(tail).y - beforeY)
-
+                editor.offsetToXY(tail).y - plainY)
             val image = java.awt.image.BufferedImage(
                 fold.widthInPixels + 4, fold.heightInPixels + 4,
-                java.awt.image.BufferedImage.TYPE_INT_ARGB,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB
             )
             val graphics = image.createGraphics()
             try {
@@ -702,17 +810,16 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             } finally {
                 graphics.dispose()
             }
-            val finalLineTop = 8 + (lines.size - 1) * metrics.height
-            assertTrue("The final wrapped row was not visibly painted",
-                (finalLineTop until minOf(fold.heightInPixels, finalLineTop + metrics.height)).any { y ->
+            assertTrue("No native Heading ink painted",
+                (0 until fold.heightInPixels).any { y ->
                     (0 until fold.widthInPixels).any { x -> image.getRGB(x, y).ushr(24) != 0 }
                 })
-            assertTrue("The renderer painted outside its allocated native region",
+            assertTrue("Heading ink must not overpaint following source",
                 (fold.heightInPixels until image.height).all { y ->
                     (0 until image.width).all { x -> image.getRGB(x, y).ushr(24) == 0 }
                 })
-            assertEquals(source, document.text)
-            assertEquals(beforeStamp, document.modificationStamp)
+            assertEquals(source, doc.text)
+            assertEquals(stamp, doc.modificationStamp)
             assertEquals(tail, editor.caretModel.offset)
         } finally {
             controller.dispose()
@@ -721,9 +828,55 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             parent?.add(editor.component)
             parent?.revalidate()
         }
-        assertEquals(beforeY, editor.offsetToXY(tail).y)
-        assertEquals(source, document.text)
-        assertEquals(beforeStamp, document.modificationStamp)
+        assertEquals(plainY, editor.offsetToXY(tail).y)
+        assertEquals(source, doc.text)
+        assertEquals(stamp, doc.modificationStamp)
+    }
+
+    /** No JCEF-calibrated post-paragraph spacer may ship in native H1 fallback. */
+    fun testProductionH1SameStartFallbackKeepsForeignFoldAndNoPreviewGap() {
+        val source = "# Heading\n\nFirst paragraph\n\n## Second\n\nSecond paragraph\n"
+        myFixture.configureByText("heading-native-no-preview-gap.txt", source)
+        val editor = myFixture.editor
+        val doc = editor.document
+        val stamp = doc.modificationStamp
+        val second = source.indexOf("Second paragraph") + 1
+        editor.caretModel.moveToOffset(second)
+        val plainY = editor.offsetToXY(second).y
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(doc, 0L))
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            foreign = editor.foldingModel.addFoldRegion(0, doc.textLength, "foreign heading section")
+        }
+        val platform = requireNotNull(foreign)
+        assertTrue(platform.isValid && platform.isExpanded)
+        val controller = NativeHeadingPresentationController(
+            editor, sourceLineReplacement = true,
+            nativeEditorTypography = true, previewPilotParagraphGap = false
+        )
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            assertTrue(platform.isValid && platform.isExpanded)
+            assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
+                .count { it.isValid && (it.renderer === NativeHeadingParagraphGapRenderer ||
+                    it.renderer is NativeHeadingInlayRenderer) })
+            assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, doc.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
+            assertEquals(1, editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>()
+                .count { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer })
+            assertTrue(editor.offsetToXY(second).y < plainY +
+                2 * editor.lineHeight + 100)
+            assertEquals(source, doc.text)
+            assertEquals(stamp, doc.modificationStamp)
+            assertEquals(second, editor.caretModel.offset)
+        } finally {
+            controller.dispose()
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                if (platform.isValid) editor.foldingModel.removeFoldRegion(platform)
+            }
+        }
+        assertEquals(plainY, editor.offsetToXY(second).y)
+        assertEquals(source, doc.text)
     }
 
     fun testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases() {
@@ -745,7 +898,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         candidate("## Heading\n\n", 0..0)
         // Setext consumes multiple physical lines: the current proposed
         // single-line-rich renderer must not hide its underline or its source.
-        candidate("Heading\n=======\n\nTail\n", null)
+        candidate("Heading\n=======\n\nTail\n", 0..2)
     }
 
     /**
@@ -753,39 +906,45 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
      * but cannot be replaced by a whole-line custom fold in the current pilot.
      * They must not regain the old double-height block inlay as a fallback.
      */
-    fun testSourceReplacingHeadingRejectsMultilineSetextWithoutLegacyInlay() {
-        val source = "Heading\n=======\n\nTail\n"
-        myFixture.configureByText("heading-setext-unsafe-custom-fold.md", source)
+    fun testSourceReplacingSetextPreservesRichHeadingWithoutAdditiveInlay() {
+        val source = "Prelude\n\nHeading\n=======\n\nTail\n"
+        myFixture.configureByText("heading-setext-native-fold.md", source)
         val editor = myFixture.editor
         val document = editor.document
         val tailOffset = source.indexOf("Tail") + 1
         editor.caretModel.moveToOffset(tailOffset)
-        val baselineY = editor.offsetToXY(tailOffset).y
         val stamp = document.modificationStamp
         val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(document, 0L))
         val heading = NativeHeadingProjectionPlanner.plan(plan).single()
-        assertNull(NativeHeadingCustomFoldLinePlanner.plan(editor, heading))
+        assertEquals(2..4, NativeHeadingCustomFoldLinePlanner.plan(editor, heading))
         val controller = NativeHeadingPresentationController(editor, sourceLineReplacement = true)
         try {
             controller.applyPlan(plan, richPresentationEnabled = true)
             val evidence = controller.evidenceSnapshot()
             assertEquals(1, evidence.models)
             assertEquals(0, evidence.ownedInlays)
-            assertEquals(0, evidence.ownedFolds)
-            assertEquals(0, evidence.ownedCustomFolds)
+            assertEquals(1, evidence.ownedCustomFolds)
+            val fold = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>()
+                .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+            assertEquals(document.getLineStartOffset(2), fold.startOffset)
+            assertTrue(fold.heightInPixels > editor.lineHeight)
             assertTrue(editor.inlayModel.getBlockElementsInRange(0, document.textLength)
                 .none { it.renderer is NativeHeadingInlayRenderer })
-            assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
             assertEquals(tailOffset, editor.caretModel.offset)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(0, controller.evidenceSnapshot().ownedCustomFolds)
+            assertEquals(source, document.text)
         } finally {
             controller.dispose()
         }
-        assertEquals(baselineY, editor.offsetToXY(tailOffset).y)
         assertEquals(source, document.text)
         assertEquals(stamp, document.modificationStamp)
     }
+
 
     /**
      * #353 H1-H6 layout migration pilot: six actual Heading models must

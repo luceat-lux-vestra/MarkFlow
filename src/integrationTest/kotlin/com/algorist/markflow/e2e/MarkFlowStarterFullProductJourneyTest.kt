@@ -92,15 +92,15 @@ class MarkFlowStarterFullProductJourneyTest {
                     timeout = 10.seconds,
                     getter = {
                         OrdinaryState(
-                            headingInlays = driver.withContext(OnDispatcher.EDT) {
-                                bridge.headingOwnedInlays(readme.editor)
+                            headingFolds = driver.withContext(OnDispatcher.EDT) {
+                                bridge.headingOwnedFolds(readme.editor)
                             },
                             listInlays = markFlow.listOwnedInlays(readme),
                             tableInlays = markFlow.tableOwnedInlays(readme),
                         )
                     },
                     checker = { state ->
-                        state.headingInlays >= 1 && state.listInlays >= 1 && state.tableInlays >= 1
+                        state.headingFolds >= 1 && state.listInlays >= 1 && state.tableInlays >= 1
                     },
                 )
 
@@ -402,7 +402,7 @@ class MarkFlowStarterFullProductJourneyTest {
     }
 
     private data class OrdinaryState(
-        val headingInlays: Int,
+        val headingFolds: Int,
         val listInlays: Int,
         val tableInlays: Int,
     )
@@ -422,7 +422,7 @@ class MarkFlowStarterFullProductJourneyTest {
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface FullProductProjectionBridgeRemote {
-    fun headingOwnedInlays(editor: Editor): Int
+    fun headingOwnedFolds(editor: Editor): Int
     fun hostLocalImages(editor: Editor): Int
     fun hostExternalLinks(editor: Editor): Int
     fun derivedFragments(editor: Editor): Int

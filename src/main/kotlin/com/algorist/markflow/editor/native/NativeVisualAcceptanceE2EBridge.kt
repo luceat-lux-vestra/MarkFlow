@@ -323,6 +323,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         return listOf(
             "headingModels=${ordinary.headingModels}",
             "headingInlays=${ordinary.headingInlays}",
+            "headingFolds=${ordinary.headingFolds}",
             "inlineHighlighters=${ordinary.inlineOwnedHighlighters}",
             "blockquoteInlays=${ordinary.blockQuoteInlays}",
             "fencedInlays=${ordinary.fencedCodeInlays}",

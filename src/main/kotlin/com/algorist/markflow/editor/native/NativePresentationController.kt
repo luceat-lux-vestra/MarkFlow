@@ -85,8 +85,12 @@ internal class NativePresentationController(
     private val tablePresentation: NativeTablePresentationController =
         NativeTablePresentationController(editor, richPresentationEnabled),
     headingSourceLineReplacement: Boolean = false,
+    headingNativeEditorTypography: Boolean = false,
+    headingPreviewPilotGap: Boolean = true,
 ) : Disposable {
-    private val ordinaryPresentation = NativeOrdinaryPresentationController(editor, headingSourceLineReplacement)
+    private val ordinaryPresentation = NativeOrdinaryPresentationController(
+        editor, headingSourceLineReplacement, headingNativeEditorTypography, headingPreviewPilotGap,
+    )
     private var disposed = false
     private var refreshRequestGeneration = 0L
     private var refreshesApplied = 0L

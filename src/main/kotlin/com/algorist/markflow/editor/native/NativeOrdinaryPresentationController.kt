@@ -81,10 +81,16 @@ internal data class NativeOrdinaryPresentationEvidence(
 internal class NativeOrdinaryPresentationController(
     private val editor: Editor,
     headingSourceLineReplacement: Boolean = false,
+    headingNativeEditorTypography: Boolean = false,
+    headingPreviewPilotGap: Boolean = true,
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
-    private val headings = NativeHeadingPresentationController(editor, sourceLineReplacement = headingSourceLineReplacement)
+    private val headings = NativeHeadingPresentationController(
+        editor, sourceLineReplacement = headingSourceLineReplacement,
+        nativeEditorTypography = headingNativeEditorTypography,
+        previewPilotParagraphGap = headingPreviewPilotGap,
+    )
     private val blockQuotes = NativeBlockQuotePresentationController(editor)
     private val fencedCodes = NativeFencedCodePresentationController(editor)
     private val indentedCodes = NativeIndentedCodePresentationController(editor)
