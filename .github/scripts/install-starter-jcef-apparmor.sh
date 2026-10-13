@@ -29,7 +29,11 @@ if [[ "${1:-}" == --self-test ]]; then
   echo 'Pinned IDEA executable AppArmor template self-test PASS'
   exit 0
 fi
-[[ "${1:-}" == "" && "${STARTER_SHARD:-}" == derived-content ]] || exit 1
+[[ "${1:-}" == "" ]] || exit 1
+case "${STARTER_SHARD:-}" in
+  derived-content|full-differential-acceptance) ;;
+  *) exit 1 ;;
+esac
 [[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] || exit 1
 [[ "${STARTER_PLATFORM_VERSION:-}" == 2026.2.3 ]] || exit 1
 [[ -f /sys/module/apparmor/parameters/enabled ]] &&

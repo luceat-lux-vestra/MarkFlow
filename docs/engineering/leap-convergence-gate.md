@@ -44,7 +44,7 @@ Goldens are repository-versioned SVG wrappers around the exact expected PNG so t
 
 The visual oracle is deliberately separate from the semantic Starter aggregate gate. A visual PASS does not prove source bytes, edit locality, Undo/Redo, renderer state, or lifecycle; those remain owned by their maintained proof layers. The deleted Robot Server infrastructure stays deleted.
 
-For the final #309 convergence/release-candidate gate, an explicit workflow-dispatch control runs the canonical journey a second time in a **separate fresh job/IDE process** against the same exact packaged artifact. That second run is repeatability evidence, never a flaky retry: the first canonical run must already be PASS, and a failed repeat remains deterministic FAIL until classified and fixed.
+For the final #309 convergence/release-candidate gate, the canonical journey must run a second time in a **separate fresh job/IDE process** against the same exact packaged artifact. The current pre-#348 implementation exposes that repeat through `workflow_dispatch.release_candidate_repeat`; #348 owns replacing the human dispatch with a trusted automatic follow-up pinned to the triggering post-main `workflow_run.head_sha` before the new final #309 candidate is established. The second run is repeatability evidence, never a flaky retry: the first canonical run must already be PASS, and a failed repeat remains deterministic FAIL until classified and fixed.
 
 ## Quantitative regression tripwires
 

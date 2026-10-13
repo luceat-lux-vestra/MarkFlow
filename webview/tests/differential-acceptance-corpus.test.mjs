@@ -9,6 +9,7 @@ const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDirectory, "../..");
 const corpusRoot = resolve(repositoryRoot, "fixtures/differential-acceptance");
 const manifestPath = resolve(corpusRoot, "corpus.tsv");
+const markdownAnchorPath = resolve(corpusRoot, "markdown-anchors.tsv");
 const packagePath = resolve(repositoryRoot, "webview/package.json");
 
 const manifestColumns = ["case_id", "domain", "feature", "classification", "fixture_state", "fixture_path", "source_fidelity_expectation", "visual_reference_expectation", "intellij_preview", "interaction", "mermaid_detector", "categories"];
@@ -28,6 +29,8 @@ const knownGapIds = new Set([]);
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
 const reviewedManifestGitBlobSha = "334cc91357825fa9f29f97656ec1e88b04f59c2c";
 const reviewedManifestRows = 88;
+const reviewedMarkdownAnchorGitBlobSha = "cefb6ca6770559a0b606eb988af9ff114594ee13";
+const reviewedMarkdownAnchorRows = 49;
 
 const mermaidDetectorPrefix = new Map([
   ["eventmodeling", /^eventmodeling\b/],
@@ -180,6 +183,48 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
 
   const mermaidDetectors = new Set(entries.filter((entry) => entry.domain === "mermaid").map((entry) => entry.mermaid_detector));
   assert.deepEqual([...mermaidDetectors].sort(), [...expectedMermaidDetectors].sort(), "Mermaid detector inventory drifted");
+});
+
+test("49 Markdown visual anchors are explicit, source-identical and reviewed", () => {
+  const source = readFileSync(markdownAnchorPath, "utf8");
+  assert.equal(source.includes("\r"), false, "Markdown anchor ledger must use LF separators");
+  assert.equal(source.endsWith("\n"), true, "Markdown anchor ledger must end with a newline");
+  assert.equal(
+    manifestGitBlobSha(source),
+    reviewedMarkdownAnchorGitBlobSha,
+    "markdown-anchors.tsv changed: audit every source anchor and deliberately rebaseline the Git blob SHA"
+  );
+
+  const [header, ...lines] = source.trimEnd().split("\n");
+  assert.equal(header, "case_id\tsource_line_zero_based\tanchor_text");
+  assert.equal(lines.length, reviewedMarkdownAnchorRows, "reviewed Markdown anchor count changed");
+  const anchors = new Map();
+  for (const row of lines) {
+    const fields = row.split("\t");
+    assert.equal(fields.length, 3, "Markdown anchor row must have exactly three columns");
+    const [caseId, lineRaw, anchorText] = fields;
+    assert.match(caseId, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.match(lineRaw, /^(0|[1-9][0-9]*)$/);
+    assert.ok(anchorText.length > 0, caseId + ": anchor text must be non-empty");
+    assert.equal(anchors.has(caseId), false, caseId + ": duplicate Markdown anchor");
+    anchors.set(caseId, {line: Number(lineRaw), text: anchorText});
+  }
+
+  const markdown = parseManifest().filter((entry) => entry.domain === "markdown");
+  assert.deepEqual(
+    [...anchors.keys()].sort(),
+    markdown.map((entry) => entry.case_id).sort(),
+    "Markdown anchor ledger must cover exactly the 49 manifest Markdown rows"
+  );
+  for (const entry of markdown) {
+    const anchor = anchors.get(entry.case_id);
+    const fixtureLines = readFileSync(repositoryPath(entry.fixture_path), "utf8").split("\n");
+    assert.equal(
+      fixtureLines[anchor.line],
+      anchor.text,
+      entry.case_id + ": reviewed source anchor drifted from exact fixture bytes"
+    );
+  }
 });
 
 test("Mermaid 12.1.0 accepted detector surface stays classified and example files stay declared", () => {
