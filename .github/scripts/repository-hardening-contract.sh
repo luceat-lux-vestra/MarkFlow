@@ -212,6 +212,7 @@ grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"
 grep -Fq 'markdown-anchors.tsv' "$manifest_test" ||
@@ -394,6 +395,20 @@ grep -Fq 'NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
   die "Manifest-declared non-Preview cases lost explicit disposition"
 grep -Fq 'error("Full #353 reviewed acceptance ledger remains unimplemented")' "$manifest_test" ||
   die "Full-corpus evidence generation must remain fail-closed before reviewed acceptance"
+grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes' "$manifest_test" ||
+  die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 10-minute limit"
+grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
+  die "Full #353 Starter launch lost its distinct diagnostic identity"
+grep -Fq 'timeout --signal=TERM --kill-after=30s 85m' "$starter_workflow" ||
+  die "Full #353 workflow no longer leaves cleanup headroom beyond the 75-minute Starter lifetime"
+grep -Fq 'val hasDerivedPresentation =' "$visual_bridge" ||
+  die "#353 visual bridge lost its derived-presentation refresh discriminator"
+grep -Fq '(controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0' "$visual_bridge" ||
+  die "#353 visual bridge no longer derives refresh suppression from the real native plan"
+grep -Fq 'if (!hasDerivedPresentation) {' "$visual_bridge" ||
+  die "#353 visual bridge no longer suppresses layout refresh for derived rendering"
+grep -Fq 'NativeMarkFlowProductionLifecycle.refreshAll()' "$visual_bridge" ||
+  die "#353 visual bridge lost required ordinary layout refresh after viewport normalization"
 grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
   die "Starter workflow lost the opt-in full differential evidence dispatch"
 grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow" ||
@@ -495,7 +510,6 @@ grep -Fq 'CAPTURE_WIDTH = 1200' "$visual_test" || die "visual acceptance fixed c
 grep -Fq 'CAPTURE_HEIGHT = 760' "$visual_test" || die "visual acceptance fixed capture height drifted"
 grep -Fq 'comparatorRejectsMeaningfulPerturbation' "$visual_test" || die "visual comparator negative control is missing"
 grep -Fq 'candidate.svg' "$visual_test" || die "visual acceptance does not retain reviewable baseline candidates"
-visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
 grep -Fq 'private const val TARGET_VIEWPORT_WIDTH = 1200' "$visual_bridge" || die "visual acceptance viewport width drifted"
 grep -Fq 'private const val TARGET_VIEWPORT_HEIGHT = 760' "$visual_bridge" || die "visual acceptance viewport height drifted"
 grep -Fq '"viewport=${editor.scrollingModel.visibleArea.width}x${editor.scrollingModel.visibleArea.height}"' "$visual_bridge" || die "visual environment identity no longer records the editor viewport"

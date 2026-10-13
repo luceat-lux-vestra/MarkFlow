@@ -163,7 +163,19 @@ internal object NativeVisualAcceptanceE2EBridge {
                 "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
                 "actual=${viewport.width}x${viewport.height}"
         }
-        NativeMarkFlowProductionLifecycle.refreshAll()
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+            "production native MarkFlow controller is not attached"
+        }
+        val hasDerivedPresentation =
+            (controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0
+        if (!hasDerivedPresentation) {
+            // SHOW_EDITOR/window normalization changes the available editor width after native
+            // presentation may already have been installed. Ordinary block/code/resource inlays
+            // must be recomputed for the pinned viewport. Derived projections are deliberately
+            // excluded: cancelling their just-started JCEF request and immediately reissuing it
+            // created the #353 readiness race observed at mermaid-state.
+            NativeMarkFlowProductionLifecycle.refreshAll()
+        }
         return environmentIdentity(editor)
     }
 
@@ -194,7 +206,8 @@ internal object NativeVisualAcceptanceE2EBridge {
         val stamp = editor.document.modificationStamp
         val settings = MarkFlowSettingsService.getInstance()
         settings.updateFromUi(settings.state.copy(mermaidSizeMode = mode))
-        NativeMarkFlowProductionLifecycle.refreshAll()
+        // updateFromUi synchronously notifies native presentation when the mode changes. If the
+        // requested mode is already active, refreshing the same source/config again is redundant.
         check(settings.runtimeSettings().mermaidSizeMode == mode) {
             "E11 sizing mode was not applied to genuine runtime settings"
         }
