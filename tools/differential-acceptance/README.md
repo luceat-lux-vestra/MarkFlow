@@ -57,24 +57,27 @@ source bytes in MarkFlow's native editor and IDEA **2026.2.3** bundled Markdown
 Preview. It retains per-case `source.md`, `identity.txt`, `markflow.png`,
 `intellij-preview.png`, `side-by-side.png`, `diff.png`, `metrics.json` and
 JCEF runtime evidence. `differential-manifest/summary.json` keeps **all**
-expanded cases, including those not run. The current bounded CI slice attempts **six real source-identical pairs in one
+expanded cases, including those not run. The current bounded CI slice attempts **ten real source-identical pairs in one
 Starter IDE session**, with no additional runners or shards:
 `md-atx-headings-h1-h6`, `mermaid-flowchart-minimal`, `mermaid-gantt`,
-`md-setext-headings`, `md-tight-loose-lists`, and `mermaid-sequence`.
-The new cases extend cross-feature coverage (Setext heading, list spacing and
-Mermaid sequence) but remain **CAPTURED_UNVERIFIED**. The Gantt case stays
-diagnostic until its legibility gate has been independently reviewed.
+`md-setext-headings`, `md-tight-loose-lists`, `mermaid-sequence`,
+`mermaid-class`, `mermaid-state`, and both independently expanded blocks of
+`mermaid-flowchart-large`.
+The added #352 layout cohort supplies retained real-IDE geometry, aspect-ratio and
+scroll-edge evidence for class/state plus wide/tall large-flowchart shapes while
+keeping the same IDE process and shard. Cases remain **CAPTURED_UNVERIFIED** for
+the broader #353 contract until their retained images are independently reviewed.
 
 To select additional *supported and platform-comparable* cases in a separately
 authorized Starter run:
 
 ```sh
 ./gradlew integrationTest -x buildPlugin -PplatformVersion=2026.2.3 \
-  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt,md-setext-headings,md-tight-loose-lists,mermaid-sequence \
+  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt,md-setext-headings,md-tight-loose-lists,mermaid-sequence,mermaid-class,mermaid-state,mermaid-flowchart-large--block-01,mermaid-flowchart-large--block-02 \
   --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
 ```
 
-The regular CI intentionally remains bounded to six cases (not 89). Its statuses are
+The regular CI intentionally remains bounded to ten cases (not 89). Its statuses are
 `CAPTURED_UNVERIFIED`, `CAPTURE_FAILED` and `NOT_EXECUTED`, with
 `full_differential_acceptance=false` **even when the capture suite passes**.
 The original manifest's `supported`/`degraded`/`unsupported` classifications
@@ -209,8 +212,12 @@ PNG's intrinsic width and height**. This is deliberately bounded at UI scale
 1 to prevent low-resolution PNG pixels from being magnified arbitrarily when
 the editor is much wider than the rendered diagram. The 284×196 Gantt case
 that previously reached 1176×812 now computes **568×392** in the host. Wide
-diagrams still shrink to available width; `ACTUAL_SIZE_SCROLL` and
-`SHRINK_TO_FIT` keep their existing contracts. The sizing unit test retains
+diagrams still shrink to available width in the overview modes. #352 additionally
+pins `ACTUAL_SIZE_SCROLL` to the decoded Mermaid raster dimensions (plus explicit
+user zoom): the generic 1024px block-height guard no longer silently shrinks tall
+actual-size diagrams. The real-IDE layout cohort proves LEFT/RIGHT/TOP/BOTTOM
+reachability for both large-flowchart blocks. `SHRINK_TO_FIT` keeps its existing
+contract. The sizing unit test retains
 the original FIT=400×200 example, exercises the actual Gantt dimensions,
 wide diagrams, other modes, and explicit zoom.
 

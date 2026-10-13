@@ -621,6 +621,13 @@ internal fun calculateNativeRasterDimensions(
     val maxHeight = if (kind.block) 1024 else boundedLineHeight
     val scaledWidth = max(1, (imageWidth * baseScale).roundToInt())
     val scaledHeight = max(1, (imageHeight * baseScale).roundToInt())
+    // #352: ACTUAL_SIZE_SCROLL is the explicit detail-preserving mode. Do not
+    // silently shrink a tall Mermaid raster to the generic block-height guard;
+    // the editor's real scroll model owns reachability for oversized content.
+    if (kind == NativeDerivedProjectionKind.MERMAID &&
+        mermaidSizeMode == "ACTUAL_SIZE_SCROLL") {
+        return scaledWidth to scaledHeight
+    }
     if (scaledHeight <= maxHeight) return scaledWidth to scaledHeight
     val heightScale = maxHeight.toDouble() / scaledHeight.toDouble()
     return max(1, (scaledWidth * heightScale).roundToInt()) to maxHeight

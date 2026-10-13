@@ -176,12 +176,16 @@ internal object NativeVisualAcceptanceE2EBridge {
     fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(mode == MermaidSizeMode.SHRINK_TO_FIT.name ||
-            mode == MermaidSizeMode.FIT_TO_VIEWPORT.name) {
-            "E11 sizing pilot permits only pre-existing FIT/SHRINK modes"
+            mode == MermaidSizeMode.FIT_TO_VIEWPORT.name ||
+            mode == MermaidSizeMode.ACTUAL_SIZE_SCROLL.name) {
+            "#352 sizing pilot permits only existing Mermaid size modes"
         }
         val filename = FileDocumentManager.getInstance().getFile(editor.document)?.name
-        check(filename == "mermaid-flowchart-minimal.md" || filename == "mermaid-gantt.md") {
-            "E11 sizing pilot must not change unrelated native editors: " + filename
+        check(filename == "mermaid-flowchart-minimal.md" ||
+            filename == "mermaid-gantt.md" ||
+            filename == "mermaid-flowchart-large--block-01.md" ||
+            filename == "mermaid-flowchart-large--block-02.md") {
+            "#352 sizing pilot must not change unrelated native editors: " + filename
         }
         check(editor.contentComponent.isShowing) {
             "E11 native editor must remain visible during sizing pilot"

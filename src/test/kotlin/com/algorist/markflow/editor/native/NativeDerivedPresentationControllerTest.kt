@@ -239,6 +239,20 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
                 mermaidZoomPercent = 50,
             )
         )
+        // #352 real large-flowchart block-02 intrinsic raster. ACTUAL_SIZE_SCROLL
+        // must remain actual instead of being reduced by the generic 1024px block cap.
+        assertEquals(
+            1523 to 2390,
+            calculateNativeRasterDimensions(
+                kind = NativeDerivedProjectionKind.MERMAID,
+                imageWidth = 1523,
+                imageHeight = 2390,
+                viewportWidth = 1176,
+                lineHeight = 22,
+                mermaidSizeMode = "ACTUAL_SIZE_SCROLL",
+                mermaidZoomPercent = 100,
+            )
+        )
         assertEquals(
             40 to 20,
             calculateNativeRasterDimensions(
