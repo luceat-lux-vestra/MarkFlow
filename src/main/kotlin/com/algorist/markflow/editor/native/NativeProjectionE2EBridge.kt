@@ -283,6 +283,23 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).derivedEvidenceSnapshot()?.ownedInlays ?: 0
     }
 
+    fun derivedMouseReveals(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.mouseReveals ?: 0L
+    }
+
+    fun derivedInlayCenterX(editor: Editor, sourceEndOffset: Int): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val bounds = requireDerivedRasterInlay(editor, sourceEndOffset).bounds ?: return -1
+        return bounds.x + bounds.width / 2
+    }
+
+    fun derivedInlayCenterY(editor: Editor, sourceEndOffset: Int): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val bounds = requireDerivedRasterInlay(editor, sourceEndOffset).bounds ?: return -1
+        return bounds.y + bounds.height / 2
+    }
+
     fun derivedOwnedFolds(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return requireController(editor).derivedEvidenceSnapshot()?.ownedFolds ?: 0
@@ -346,6 +363,19 @@ internal object NativeProjectionE2EBridge {
             .getBlockElementsInRange(0, editor.document.textLength)
             .singleOrNull { inlay -> inlay.renderer is NativeTableInlayRenderer }
             ?: error("expected exactly one visible MarkFlow table inlay")
+
+    private fun requireDerivedRasterInlay(editor: Editor, sourceEndOffset: Int): com.intellij.openapi.editor.Inlay<*> {
+        require(sourceEndOffset in 0..editor.document.textLength) { "invalid derived source end offset" }
+        val candidates = buildList {
+            addAll(editor.inlayModel.getBlockElementsInRange(0, editor.document.textLength))
+            addAll(editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength))
+        }
+        return candidates.singleOrNull { inlay ->
+            inlay.isValid &&
+                inlay.offset == sourceEndOffset &&
+                inlay.renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer")
+        } ?: error("expected exactly one visible MarkFlow derived raster at source end $sourceEndOffset")
+    }
 
     private fun requireController(editor: Editor): NativePresentationController =
         checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {

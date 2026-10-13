@@ -15,12 +15,17 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.accessibility.ScreenReader
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
 import java.awt.RenderingHints
+import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.util.Base64
@@ -44,6 +49,7 @@ internal data class NativeDerivedPresentationEvidence(
     val rendererFailures: Long,
     val missingArtifacts: Long,
     val accessibilityFallbacks: Long,
+    val mouseReveals: Long,
 )
 
 /**
@@ -77,6 +83,28 @@ internal class NativeDerivedPresentationController(
     private var rendererFailures = 0L
     private var missingArtifacts = 0L
     private var accessibilityFallbacks = 0L
+    private var mouseReveals = 0L
+
+    private val mouseListener = object : EditorMouseListener {
+        override fun mousePressed(event: EditorMouseEvent) {
+            // IDEA moves the caret during the default press handling for inline inlays. Reveal
+            // inline KaTeX first, while EditorMouseEvent still owns the exact clicked inlay.
+            val renderer = event.inlay?.renderer as? NativeRasterInlayRenderer ?: return
+            if (!renderer.projection.block) handleMouseReveal(event)
+        }
+
+        override fun mouseClicked(event: EditorMouseEvent) {
+            // Block Mermaid/display-KaTeX inlays retain the normal click phase; unlike inline
+            // inlays their source fold remains stable across the preceding mouse press.
+            val renderer = event.inlay?.renderer as? NativeRasterInlayRenderer ?: return
+            if (renderer.projection.block) handleMouseReveal(event)
+        }
+    }
+
+    init {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        editor.addEditorMouseListener(mouseListener)
+    }
 
     fun applyPlan(plan: NativeProjectionPlan) {
         requireAlive()
@@ -142,7 +170,51 @@ internal class NativeDerivedPresentationController(
         rendererFailures = rendererFailures,
         missingArtifacts = missingArtifacts,
         accessibilityFallbacks = accessibilityFallbacks,
+        mouseReveals = mouseReveals,
     )
+
+    /**
+     * Direct product interaction for #351. IntelliJ resolves the clicked inlay before dispatch,
+     * so accept only a currently owned native derived raster and never infer ownership from pixels.
+     * Revealing expands the exact source fold without mutating the Document, then places the
+     * primary caret at the renderer-input boundary so normal editor typing can start immediately.
+     */
+    internal fun revealDerivedAt(event: EditorMouseEvent): Boolean {
+        if (disposed || editor.isDisposed || event.isConsumed) return false
+        if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
+        if (event.mouseEvent.button != MouseEvent.BUTTON1) return false
+        if (currentPlanIdentity?.let(::matchesCurrentIdentity) != true) return false
+        val renderer = event.inlay?.renderer as? NativeRasterInlayRenderer ?: return false
+        val projection = renderer.projection
+        val key = ProjectionKey.of(projection)
+        val inlay = ownedInlays[key] ?: return false
+        val fold = reservedFolds[key] ?: return false
+        if (!inlay.isValid || inlay.renderer !== renderer || !fold.isValid) return false
+
+        val sourceBefore = editor.document.immutableCharSequence.toString()
+        val stampBefore = editor.document.modificationStamp
+        revealOwned(key)
+        if (!fold.isValid || !fold.isExpanded) return false
+
+        editor.selectionModel.removeSelection()
+        editor.caretModel.primaryCaret.moveToOffset(projection.contentRange.startOffset)
+        editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
+        mouseReveals += 1
+
+        check(editor.document.modificationStamp == stampBefore) {
+            "derived inlay source reveal changed the authoritative Document modification stamp"
+        }
+        check(editor.document.immutableCharSequence.toString() == sourceBefore) {
+            "derived inlay source reveal changed the authoritative Markdown source"
+        }
+        return true
+    }
+
+    internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
+        val revealed = revealDerivedAt(event)
+        if (revealed) event.consume()
+        return revealed
+    }
 
     private fun request(
         selectedRuntime: DerivedRendererRuntime,
@@ -451,6 +523,7 @@ internal class NativeDerivedPresentationController(
             application.invokeAndWait { dispose() }
             return
         }
+        editor.removeEditorMouseListener(mouseListener)
         cancelPending()
         clearOwnedPresentation()
         clearErrorPresentation()
@@ -555,7 +628,7 @@ internal fun calculateNativeRasterDimensions(
 
 private class NativeRasterInlayRenderer(
     private val editor: Editor,
-    private val projection: NativeDerivedProjection,
+    val projection: NativeDerivedProjection,
     private val image: BufferedImage,
     private val settingsProvider: () -> MarkFlowRuntimeSettings,
 ) : EditorCustomElementRenderer {

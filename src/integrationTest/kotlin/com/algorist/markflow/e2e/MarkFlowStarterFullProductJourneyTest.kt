@@ -394,6 +394,151 @@ class MarkFlowStarterFullProductJourneyTest {
                 check(markFlow.modificationStamp(production) == productionStamp)
                 check(!markFlow.isDirty(production))
                 check(Files.readString(productionPath) == productionSource)
+
+                // #351: a normal left click on each rendered derived inlay must reveal the exact
+                // authoritative source and put the caret at the renderer-input boundary. Exercise
+                // a full Mermaid edit/Undo/Redo/re-render cycle, then prove both KaTeX variants use
+                // the same direct-entry contract without source mutation on reveal.
+                val mermaidBlock = """```mermaid
+graph TD
+    A --> B
+```"""
+                val mermaidStart = productionSource.indexOf(mermaidBlock)
+                check(mermaidStart >= 0)
+                val mermaidEnd = mermaidStart + mermaidBlock.length
+                val mermaidContentStart = productionSource.indexOf("graph TD", mermaidStart)
+                check(mermaidContentStart > mermaidStart)
+                val revealSourceBefore = markFlow.source(production)
+                val revealStampBefore = markFlow.modificationStamp(production)
+                val mermaidRevealsBefore = markFlow.derivedMouseReveals(production)
+                markFlow.clickNativeDerivedInlay(production, mermaidEnd)
+                waitFor(
+                    message = "canonical Mermaid inlay click reveals exact editable source",
+                    timeout = 10.seconds,
+                    getter = {
+                        Triple(
+                            markFlow.derivedMouseReveals(production),
+                            markFlow.primaryCaretOffset(production),
+                            driver.withContext(OnDispatcher.EDT) {
+                                bridge.derivedOwnedInlays(production.editor)
+                            },
+                        )
+                    },
+                    checker = { (reveals, caret, inlays) ->
+                        reveals == mermaidRevealsBefore + 1 &&
+                            caret == mermaidContentStart &&
+                            inlays == 2
+                    },
+                )
+                check(markFlow.source(production) == revealSourceBefore)
+                check(markFlow.modificationStamp(production) == revealStampBefore)
+
+                val editedProduction = productionSource.replaceRange(
+                    mermaidContentStart,
+                    mermaidContentStart,
+                    " ",
+                )
+                markFlow.typeText(production, " ")
+                waitFor(
+                    message = "canonical Mermaid source accepts normal editor input after inlay reveal",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(production) },
+                    checker = { it == editedProduction },
+                )
+                markFlow.undo(production)
+                waitFor(
+                    message = "canonical Mermaid edit Undo restores exact source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(production) },
+                    checker = { it == productionSource },
+                )
+                markFlow.redo(production)
+                waitFor(
+                    message = "canonical Mermaid edit Redo restores exact local mutation",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(production) },
+                    checker = { it == editedProduction },
+                )
+                markFlow.undo(production)
+                waitFor(
+                    message = "canonical Mermaid cleanup restores exact fixture",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(production) },
+                    checker = { it == productionSource },
+                )
+                markFlow.resetToSingleCaret(production, inactiveRichAnchor)
+                waitFor(
+                    message = "canonical Mermaid source re-renders exactly one owned inlay after moving away",
+                    timeout = 30.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            bridge.derivedOwnedInlays(production.editor)
+                        }
+                    },
+                    checker = { it == 3 },
+                )
+
+                val inlineMath = "\$a^2 + b^2 = c^2\$"
+                val inlineStart = productionSource.indexOf(inlineMath)
+                check(inlineStart >= 0)
+                val inlineEnd = inlineStart + inlineMath.length
+                val inlineStampBefore = markFlow.modificationStamp(production)
+                val inlineRevealsBefore = markFlow.derivedMouseReveals(production)
+                markFlow.clickNativeDerivedInlay(production, inlineEnd)
+                waitFor(
+                    message = "canonical inline KaTeX inlay click reveals exact source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.derivedMouseReveals(production) to markFlow.primaryCaretOffset(production) },
+                    checker = { (reveals, caret) ->
+                        reveals == inlineRevealsBefore + 1 && caret == inlineStart + 1
+                    },
+                )
+                check(markFlow.source(production) == productionSource)
+                check(markFlow.modificationStamp(production) == inlineStampBefore)
+                markFlow.resetToSingleCaret(production, inactiveRichAnchor)
+                waitFor(
+                    message = "canonical inline KaTeX re-renders after moving away",
+                    timeout = 30.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            bridge.derivedOwnedInlays(production.editor)
+                        }
+                    },
+                    checker = { it == 3 },
+                )
+
+                val displayStart = productionSource.indexOf("\$\$")
+                check(displayStart >= 0)
+                val displayClosing = productionSource.indexOf("\$\$", displayStart + 2)
+                check(displayClosing > displayStart)
+                val displayEnd = displayClosing + 2
+                val displayStampBefore = markFlow.modificationStamp(production)
+                val displayRevealsBefore = markFlow.derivedMouseReveals(production)
+                markFlow.clickNativeDerivedInlay(production, displayEnd)
+                waitFor(
+                    message = "canonical display KaTeX inlay click reveals exact source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.derivedMouseReveals(production) to markFlow.primaryCaretOffset(production) },
+                    checker = { (reveals, caret) ->
+                        reveals == displayRevealsBefore + 1 && caret == displayStart + 2
+                    },
+                )
+                check(markFlow.source(production) == productionSource)
+                check(markFlow.modificationStamp(production) == displayStampBefore)
+                markFlow.resetToSingleCaret(production, inactiveRichAnchor)
+                waitFor(
+                    message = "canonical display KaTeX re-renders without duplicate or stale inlays",
+                    timeout = 30.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            bridge.derivedOwnedInlays(production.editor)
+                        }
+                    },
+                    checker = { it == 3 },
+                )
+                check(markFlow.source(production) == productionSource)
+                markFlow.save(production)
+                check(Files.readString(productionPath) == productionSource)
                 markFlow.close(production)
             }
         } finally {
