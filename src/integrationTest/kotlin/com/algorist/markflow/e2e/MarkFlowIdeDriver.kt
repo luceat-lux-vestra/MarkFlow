@@ -374,6 +374,26 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         editor.click(Point(x, y))
     }
 
+    fun derivedMouseReveals(editor: JEditorUiComponent): Long {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.withContext(OnDispatcher.EDT) { bridge.derivedMouseReveals(editor.editor) }
+    }
+
+    fun clickNativeDerivedInlay(editor: JEditorUiComponent, sourceEndOffset: Int) {
+        val bridge = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        val x = driver.withContext(OnDispatcher.EDT) {
+            bridge.derivedInlayCenterX(editor.editor, sourceEndOffset)
+        }
+        val y = driver.withContext(OnDispatcher.EDT) {
+            bridge.derivedInlayCenterY(editor.editor, sourceEndOffset)
+        }
+        check(x >= 0 && y >= 0) {
+            "native derived inlay is not visible for source end $sourceEndOffset"
+        }
+        editor.setFocus()
+        editor.click(Point(x, y))
+    }
+
     fun isFoldCollapsed(editor: JEditorUiComponent, startOffset: Int, endOffset: Int): Boolean =
         driver.withContext(OnDispatcher.EDT) {
             val remoteEditor = driver.cast(editor.editor, FoldingEditorRemote::class)
@@ -445,6 +465,9 @@ private interface NativeProjectionE2EBridgeRemote {
     fun tableMouseReveals(editor: Editor): Long
     fun tableInlayCenterX(editor: Editor): Int
     fun tableInlayCenterY(editor: Editor): Int
+    fun derivedMouseReveals(editor: Editor): Long
+    fun derivedInlayCenterX(editor: Editor, sourceEndOffset: Int): Int
+    fun derivedInlayCenterY(editor: Editor, sourceEndOffset: Int): Int
 }
 
 @Remote("com.intellij.openapi.editor.Editor")
