@@ -3,6 +3,14 @@ name: CodeQL
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Manually scan an exact reviewed, current main SHA before any release is created.
+  # A successful run is evidence only: it does not prevent manual GitHub Release creation.
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Exact 40-character main HEAD SHA for release-candidate security preflight'
+        required: true
+        type: string
   # Default-branch alerts are refreshed by the weekly scan, not per merge.
   schedule:
     - cron: '41 3 * * 3'
@@ -10,7 +18,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  group: codeql-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,8 +43,21 @@ jobs:
           - language: java-kotlin
             build-mode: manual
     env:
-      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Validate dispatch candidate before checkout
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Candidate must be an exact immutable commit SHA"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Dispatch must originate from protected main"; exit 1; }
+          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ] || { echo "::error::Dispatch event SHA must match selected candidate"; exit 1; }
+          remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [ "$remote_main" = "$EXPECTED_SHA" ] || { echo "::error::Stale candidate: current protected main does not match"; exit 1; }
+          echo "Release candidate source verified: $EXPECTED_SHA"
+
       - name: Fetch exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,6 +94,34 @@ jobs:
         run: ./gradlew --no-daemon --no-build-cache --rerun-tasks compileKotlin compileTestKotlin -Dorg.gradle.jvmargs=-Xmx3g
 
       - name: Analyze
+        id: analyze
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: "/language:${{ matrix.language }}"
+          # Candidate scans are retained as evidence, never re-attributed to main alerts.
+          upload: ${{ github.event_name == 'workflow_dispatch' && 'never' || 'always' }}
+          output: ${{ runner.temp }}/release-codeql-${{ matrix.language }}
+
+      - name: Retain exact candidate SARIF
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-codeql-${{ env.EXPECTED_SHA }}-${{ matrix.language }}
+          path: ${{ steps.analyze.outputs.sarif-output }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce candidate security verdict
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SARIF_DIR: ${{ steps.analyze.outputs.sarif-output }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release-codeql-verdict.py \
+            --sarif-dir "$SARIF_DIR" \
+            --language "${{ matrix.language }}" \
+            --candidate-sha "$EXPECTED_SHA"
+          # A moving main invalidates this workflow's freshness claim.
+          remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [ "$remote_main" = "$EXPECTED_SHA" ] || { echo "::error::main moved during candidate scan; evidence is stale"; exit 1; }
