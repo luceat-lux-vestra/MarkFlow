@@ -22,6 +22,36 @@ import java.nio.file.Path
 internal object NativeDifferentialPreviewE2EBridge {
     private const val MARKDOWN_SPLIT = "org.intellij.plugins.markdown.ui.preview.MarkdownEditorWithPreview"
     private const val MARKDOWN_PREVIEW = "org.intellij.plugins.markdown.ui.preview.MarkdownPreviewFileEditor"
+    private val fontOriginals =
+        java.util.WeakHashMap<Editor, Float>()
+
+    /**
+     * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
+     * Exercises the editor's own font-size setter and restores its original
+     * size; never edits the Markdown Document or JCEF Preview CSS reference.
+     */
+    fun setNativeEditorFontSize(editor: Editor, fontPx: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(fontPx in 8..40)
+        val ex = editor as? com.intellij.openapi.editor.impl.EditorImpl
+            ?: error("Real native Heading editor is not EditorImpl")
+        fontOriginals.getOrPut(editor) { ex.colorsScheme.editorFontSize2D }
+        ex.setFontSize(fontPx.toFloat())
+        return "requested_font_px=" + fontPx + "\n" +
+            "actual_native_font_px=" + editor.colorsScheme.editorFontSize2D + "\n" +
+            "actual_native_line_height_px=" + editor.lineHeight + "\n"
+    }
+
+    /** Restore only the source editor's previously owned editor scheme. */
+    fun restoreNativeEditorFontSize(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val original = fontOriginals.remove(editor)
+            ?: error("No prior font-size probe to restore")
+        val ex = editor as? com.intellij.openapi.editor.impl.EditorImpl
+            ?: error("Real native Heading editor is not EditorImpl")
+        ex.setFontSize(original)
+        return "restored_native_font_px=" + editor.colorsScheme.editorFontSize2D + "\n"
+    }
 
     private fun editors(editor: Editor): Pair<TextEditorWithPreview, FileEditor> {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -457,7 +487,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             "editor_is_showing=" + editor.contentComponent.isShowing,
             "plain_line_height_px=" + editor.lineHeight,
             "native_body_font_family=" + editor.contentComponent.font.family,
-            "native_body_font_size_px=" + editor.contentComponent.font.size2D,
+            "native_body_font_size_px=" + editor.colorsScheme.editorFontSize2D,
         ).joinToString("\n", postfix = "\n") +
             rows.joinToString("\n", postfix = "\n")
     }

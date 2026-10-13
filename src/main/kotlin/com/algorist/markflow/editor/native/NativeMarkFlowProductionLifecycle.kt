@@ -59,15 +59,19 @@ internal object NativeMarkFlowProductionLifecycle {
                 derivedPresentation = derivedPresentation,
                 hostResources = hostResources,
                 rawHtmlPresentation = rawHtmlPresentation,
-                // Explicit, fixture-scoped Starter IDEA opt-in only. Normal production stays
-                // on legacy headings until #350/#353 differential acceptance is complete.
-                headingSourceLineReplacement =
-                    (System.getProperty("markflow.starter.headingRobotPilot") == "true" &&
-                        file.name == "heading-robot.md") ||
-                    // Independently scoped to the exact byte-identical B fixture.
-                    // Product and every other Markdown file keep legacy headings.
-                    (System.getProperty("markflow.starter.headingLayoutAbPilot") == "true" &&
-                        file.name == "heading-layout-b.md"),
+                // Product now replaces parser-proven Heading source lines instead
+                // of adding a second block-inlay height. The old additive A
+                // baseline is limited to a named IDE evidence-only fixture.
+                headingSourceLineReplacement = !(
+                    System.getProperty("markflow.starter.headingLegacyBaselinePilot") == "true" &&
+                        file.name == "md-atx-headings-h1-h6.md"
+                ),
+                // Reuse the actual B layout typography as the product 13px
+                // Preview baseline. Text scales with editor font size; the
+                // section gap and fold padding are editor-relative em tokens.
+                // Normal product does NOT downsize H1 to the 22px base line.
+                headingNativeEditorTypography = false,
+                headingPreviewPilotGap = true,
             )
             editor.putUserData(controllerKey, controller)
             true

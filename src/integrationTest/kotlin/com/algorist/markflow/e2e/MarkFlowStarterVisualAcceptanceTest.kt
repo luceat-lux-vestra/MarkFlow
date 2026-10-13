@@ -326,8 +326,13 @@ class MarkFlowStarterVisualAcceptanceTest {
 
         private val VISUAL_CASES = listOf(
             VisualCase("typography", "VISUAL-TYPOGRAPHY.md") { evidence ->
-                evidence.getValue("headingModels") >= 8 &&
-                    evidence.getValue("headingInlays") >= 8 &&
+                // Six ATX plus two parser-proven simple Setext headings:
+                // all eight now own non-additive native CustomFold line boxes.
+                // This is structural readiness only; pixel goldens still fail
+                // closed until independently reviewed and re-baselined.
+                evidence.getValue("headingModels") == 8 &&
+                    evidence.getValue("headingFolds") == 8 &&
+                    evidence.getValue("headingInlays") == 0 &&
                     evidence.getValue("inlineHighlighters") >= 5
             },
             VisualCase("structure", "VISUAL-STRUCTURE.md") { evidence ->
