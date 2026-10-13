@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Fail-closed release candidate CodeQL SARIF verdict. No publishing capability.
+
+A manual CodeQL run analyzes an exact protected-main SHA and retains the
+unaltered SARIF as evidence. This gate rejects corrupt reports, missing security
+severity, and any High/Critical finding; it does not grant release authorization.
+"""
+import argparse
+import hashlib
+import json
+import math
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+LANGUAGES = {"actions", "javascript-typescript", "java-kotlin"}
+COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def check(directory: Path, language: str, candidate_sha: str) -> dict:
+    if language not in LANGUAGES:
+        raise ValueError("unexpected language")
+    if not COMMIT.fullmatch(candidate_sha):
+        raise ValueError("candidate must be an exact immutable SHA")
+    files = sorted(directory.rglob("*.sarif"))
+    if len(files) != 1:
+        raise ValueError(f"expected exactly one SARIF file, got {len(files)}")
+    path = files[0]
+    if not path.is_file() or not path.stat().st_size:
+        raise ValueError("empty or unreadable SARIF")
+    raw = path.read_bytes()
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("version") != "2.1.0":
+        raise ValueError("not SARIF version 2.1.0")
+    runs = data.get("runs")
+    if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
+        raise ValueError("expected exactly one CodeQL SARIF run")
+    run = runs[0]
+    driver = run.get("tool", {}).get("driver", {})
+    if not isinstance(driver, dict) or driver.get("name") != "CodeQL":
+        raise ValueError("not CodeQL output")
+    automation_id = run.get("automationDetails", {}).get("id")
+    if not isinstance(automation_id, str) or not automation_id.endswith("/language:" + language):
+        raise ValueError("SARIF category does not match scanned language")
+    invocations = run.get("invocations", [])
+    if not isinstance(invocations, list) or any(
+        not isinstance(x, dict) or x.get("executionSuccessful") is False for x in invocations
+    ):
+        raise ValueError("CodeQL analysis reports an unsuccessful invocation")
+    rules = driver.get("rules")
+    if not isinstance(rules, list) or len(rules) == 0:
+        raise ValueError("no CodeQL rule metadata")
+    by_id = {}
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("id"), str) or not rule["id"]:
+            raise ValueError("malformed CodeQL rule")
+        if rule["id"] in by_id:
+            raise ValueError("duplicate CodeQL rule ID")
+        by_id[rule["id"]] = rule
+    results = run.get("results")
+    if not isinstance(results, list):
+        raise ValueError("missing or malformed result set")
+    high = []
+    for result in results:
+        if not isinstance(result, dict) or not isinstance(result.get("ruleId"), str):
+            raise ValueError("result missing rule ID")
+        rule_id = result["ruleId"]
+        rule = by_id.get(rule_id)
+        if rule is None:
+            raise ValueError(f"result references unknown rule: {rule_id}")
+        properties = rule.get("properties", {})
+        if not isinstance(properties, dict):
+            raise ValueError("rule properties are malformed")
+        result_properties = result.get("properties", {})
+        if not isinstance(result_properties, dict):
+            raise ValueError("result properties are malformed")
+        tags = properties.get("tags", [])
+        if not isinstance(tags, list):
+            raise ValueError("rule tags are malformed")
+        security = "security" in tags or any(
+            isinstance(t, str) and (t.startswith("external/cwe/") or t.startswith("cwe/"))
+            for t in tags
+        )
+        # SARIF CodeQL security-severity can be stored at rule level; any explicit
+        # result-level override must also be validated rather than silently ignored.
+        scores = [item.get("security-severity") for item in (properties, result_properties)
+                  if "security-severity" in item]
+        if security and not scores:
+            raise ValueError(f"security finding has no severity: {rule_id}")
+        for score in scores:
+            try:
+                val = float(score)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"unparseable security severity: {rule_id}") from exc
+            if not math.isfinite(val) or not 0 <= val <= 10:
+                raise ValueError(f"out-of-range security severity: {rule_id}")
+            if val >= 7.0:
+                high.append((rule_id, val))
+    if high:
+        findings = ", ".join(f"{rid}({score:g})" for rid, score in high[:8])
+        raise ValueError(f"High/Critical CodeQL findings ({len(high)}): {findings}")
+    return {"candidate_sha": candidate_sha, "language": language,
+            "sarif_sha256": hashlib.sha256(raw).hexdigest(), "results": len(results),
+            "rules": len(rules), "high_or_critical": 0}
+
+
+def self_test() -> None:
+    sha = "a" * 40
+    def fixture(language="java-kotlin", score="5.0", results=True, security=True):
+        rule = {"id": "java/test", "properties": {
+            "tags": ["security"] if security else ["correctness"]}}
+        if score is not None:
+            rule["properties"]["security-severity"] = score
+        return {"version": "2.1.0", "runs": [{
+            "tool": {"driver": {"name": "CodeQL", "rules": [rule]}},
+            "automationDetails": {"id": "/language:" + language},
+            "invocations": [{"executionSuccessful": True}],
+            "results": [{"ruleId": "java/test"}] if results else []}]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "result.sarif"
+        def probe(doc, expected_failure=None, language="java-kotlin", current_sha=sha):
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            try:
+                verdict = check(Path(tmp), language, current_sha)
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+                if expected_failure is None or expected_failure not in str(error):
+                    raise AssertionError(f"unexpected verdict: {error}") from error
+            else:
+                if expected_failure is not None:
+                    raise AssertionError(f"failure not detected: {expected_failure}")
+                assert verdict["high_or_critical"] == 0
+
+        probe(fixture())
+        probe(fixture(results=False))
+        probe(fixture(score="7.0"), "High/Critical")
+        probe(fixture(score="9.8"), "High/Critical")
+        probe(fixture(score=None), "no severity")
+        probe(fixture(score="NaN"), "out-of-range")
+        probe(fixture(score="-1"), "out-of-range")
+        probe(fixture(score="not-a-number"), "unparseable")
+        probe(fixture(security=False, score=None))
+        probe(fixture(), "candidate must be", current_sha="main")
+        probe(fixture(), "category does not match", language="actions")
+        bad = fixture()
+        bad["runs"][0]["invocations"][0]["executionSuccessful"] = False
+        probe(bad, "unsuccessful invocation")
+        bad = fixture()
+        bad["runs"][0]["results"][0]["ruleId"] = "missing"
+        probe(bad, "unknown rule")
+        bad = fixture()
+        bad["runs"][0]["tool"]["driver"]["rules"] = []
+        probe(bad, "no CodeQL rule")
+        bad = fixture()
+        bad["runs"][0].pop("results")
+        probe(bad, "missing or malformed result")
+        path.write_text("{bad", encoding="utf-8")
+        try:
+            check(Path(tmp), "java-kotlin", sha)
+        except json.JSONDecodeError:
+            pass
+        else:
+            raise AssertionError("malformed SARIF accepted")
+        path.unlink()
+        try:
+            check(Path(tmp), "java-kotlin", sha)
+        except ValueError as error:
+            assert "exactly one" in str(error)
+        else:
+            raise AssertionError("missing SARIF accepted")
+        print("release CodeQL SARIF negative controls passed")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--sarif-dir", type=Path)
+    parser.add_argument("--language")
+    parser.add_argument("--candidate-sha")
+    args = parser.parse_args()
+    if args.self_test:
+        self_test()
+        return
+    if not args.sarif_dir or not args.language or not args.candidate_sha:
+        parser.error("--sarif-dir, --language and --candidate-sha are required")
+    try:
+        verdict = check(args.sarif_dir, args.language, args.candidate_sha)
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        print(f"::error::Release CodeQL evidence rejected: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+    print("Release CodeQL evidence accepted: " + json.dumps(verdict, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

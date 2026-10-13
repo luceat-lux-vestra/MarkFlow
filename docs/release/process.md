@@ -22,6 +22,7 @@ Before publication, record and verify:
 1. exact `main` commit SHA selected for release;
 2. changelog/release notes accurately describing user-visible changes and known limitations;
 3. clean build/test/static-analysis results for that commit;
+   - run **CodeQL → Run workflow** on protected `main`, with `candidate_sha` set to the current exact main SHA; verify all three matrix jobs succeed, including the SARIF High/Critical gate. Retain the run URL, selected SHA and per-language SARIF artifacts as the release-candidate evidence. A different/stale SHA requires a new scan. This manual preflight does not create a release;
 4. plugin packaging and IntelliJ Plugin Verifier results for the supported compatibility envelope, including any maintained forward-compatibility probes;
 5. Starter/Driver acceptance on the authoritative IntelliJ IDEA 2026.2.3 full-product runtime: one exact candidate ZIP packaged once, one recorded SHA-256, all required parallel shards, and the canonical whole-product journey consuming that same artifact;
 6. deterministic #339 visual acceptance on IDEA 2026.2.3 must pass against reviewed versioned goldens and the exact recorded visual-environment identity, using the same exact packaged plugin artifact; baseline changes are never auto-accepted by CI;
@@ -33,6 +34,8 @@ Before publication, record and verify:
 12. rollback/withdrawal plan understood.
 
 The release-blocking full-product Starter/Driver runtime is IntelliJ IDEA 2026.2.3. Forward compatibility remains independently covered by Plugin Verifier and any explicitly scoped informational probes; an unreleased EAP full-product run is not a prerequisite for Marketplace publication. A workflow rerun never converts a deterministic red Starter shard or canonical journey into acceptable evidence.
+
+**Important authorization limitation:** GitHub tag rules currently protect `v*` tags against update/deletion but do **not** require a successful preflight before initial tag or public Release creation. Even a successful CodeQL dispatch does not enforce public-release creation; repository maintainers must review the exact-SHA results before publishing. The existing Marketplace job runs **after** a public Release event. Therefore no routine PR CodeQL reduction is permitted solely because this evidence-only workflow is available; issue #404 remains open until a non-bypassable publication boundary has been proven.
 
 Automatic Marketplace publication is triggered only by a stable GitHub Release (`released`). Publication tags use stable `vMAJOR.MINOR.PATCH` identity and the JetBrains plugin version is the same SemVer with the leading `v` removed. The production release job is bound to the `jetbrains-marketplace` GitHub Environment; environment protection/ref policy and the four publication/signing secret names are live administrative prerequisites rather than repository-source claims.
 
