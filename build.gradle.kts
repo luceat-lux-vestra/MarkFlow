@@ -494,9 +494,9 @@ intellijPlatformTesting {
             providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
                 systemProperty("markflow.differential.caseIds", ids)
             }
-            // Explicitly distinguish the bounded Stage D capture contract
-            // from unfinished #353 release acceptance. Unknown modes are
-            // rejected inside the test; no implicit acceptance path exists.
+            // Explicitly distinguish bounded Stage D capture from the opt-in
+            // full-corpus #353 evidence contract. The latter still fails closed
+            // until exact retained artifacts receive an explicit reviewed ledger.
             systemProperty(
                 "markflow.differential.contract",
                 providers.gradleProperty("differentialContract").orNull ?: "capture",

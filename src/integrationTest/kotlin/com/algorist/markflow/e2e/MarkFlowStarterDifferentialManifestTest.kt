@@ -33,7 +33,7 @@ class MarkFlowStarterDifferentialManifestTest {
     private class Case(
         val id: String, val parent: String, val domain: String, val classification: String,
         val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
-        val comparable: Boolean
+        val visualExpectation: String, val comparable: Boolean
     )
 
     @Test
@@ -64,10 +64,17 @@ class MarkFlowStarterDifferentialManifestTest {
             ",md-setext-headings,md-tight-loose-lists,mermaid-sequence" +
             ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
             ",mermaid-flowchart-large--block-02"
-        val selectedIds = (System.getProperty("markflow.differential.caseIds")
-            ?: defaultIds).split(',').map { it.trim() }
+        val explicitCaseIds = System.getProperty("markflow.differential.caseIds")
+        val selectedIds = if (contract == "acceptance") {
+            check(explicitCaseIds == null) {
+                "Full #353 acceptance cannot be reduced with differentialCaseIds"
+            }
+            inventory.map { it.id }
+        } else {
+            (explicitCaseIds ?: defaultIds).split(',').map { it.trim() }
+        }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
-        if (System.getProperty("markflow.differential.caseIds") == null) {
+        if (contract == "capture" && explicitCaseIds == null) {
             val mermaidLayoutCohort = setOf(
                 "mermaid-gantt",
                 "mermaid-sequence",
@@ -81,28 +88,31 @@ class MarkFlowStarterDifferentialManifestTest {
             }
         }
         val indexed = inventory.associateBy { it.id }
-        // Review-only realistic document, deliberately NOT part of the fixed
-        // 88-parent/#353 acceptance corpus. Capture the SAME source at three
-        // scroll anchors (top, middle, bottom) to judge document typography
-        // in context, not only isolated Heading fixture rows.
         val reviewFixture = "fixtures/visual-review/typical-markdown-document.md"
         val reviewBytes = Files.readAllBytes(root.resolve(reviewFixture))
-        val reviewCases = if (contract == "capture" &&
-            System.getProperty("markflow.differential.caseIds") == null) {
+        val reviewCases = if (contract == "capture" && explicitCaseIds == null) {
             listOf(
                 Case("md-general-document-start", "review-only-general-document",
-                    "markdown", "supported", reviewFixture, reviewBytes, 0, null, true),
+                    "markdown", "supported", reviewFixture, reviewBytes, 0, null,
+                    "source-anchored-geometry", true),
                 Case("md-general-document-middle", "review-only-general-document",
-                    "markdown", "supported", reviewFixture, reviewBytes, 30, null, true),
+                    "markdown", "supported", reviewFixture, reviewBytes, 30, null,
+                    "source-anchored-geometry", true),
                 Case("md-general-document-end", "review-only-general-document",
-                    "markdown", "supported", reviewFixture, reviewBytes, 60, null, true),
+                    "markdown", "supported", reviewFixture, reviewBytes, 60, null,
+                    "source-anchored-geometry", true),
             )
         } else emptyList()
         check(reviewCases.map { it.id }.toSet().size == reviewCases.size &&
             reviewCases.none { it.id in indexed })
         val selected = reviewCases +
             selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
-        check(selected.all { it.comparable && it.classification == "supported" })
+        if (contract == "capture") {
+            check(selected.all { it.comparable && it.classification == "supported" })
+        } else {
+            check(reviewCases.isEmpty() && selected.size == inventory.size)
+            check(selected.map { it.id }.toSet() == inventory.map { it.id }.toSet())
+        }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let {
                 val actual = it.inputStream.bufferedReader().readText().trim()
@@ -125,6 +135,12 @@ class MarkFlowStarterDifferentialManifestTest {
         try {
             val base = root.resolve("src/integrationTest/resources/projects/markdown-smoke")
             check(base.toFile().copyRecursively(project.toFile(), overwrite = true))
+            // Full-corpus fixtures intentionally keep source bytes unchanged while
+            // resolving their reviewed relative local-image references inside the
+            // sandbox. Host-resource behavior must not degrade merely because the
+            // original fixture lived in a different repository directory.
+            writeDeterministicLocalImage(project.resolve("visual-proof.png"))
+            writeDeterministicLocalImage(project.resolve("images/example.png"))
             // A and B are byte-identical but distinct file-editor lifecycles.
             // Only this exact B filename is opted into source-line replacement.
             val abHeading = selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }
@@ -145,7 +161,10 @@ class MarkFlowStarterDifferentialManifestTest {
                 Files.write(dest.resolve("source.md"), entry.bytes)
                 Files.writeString(dest.resolve("identity.txt"),
                     "case_id=" + entry.id + "\nmanifest_id=" + entry.parent +
-                    "\nclassification=" + entry.classification + "\nfixture=" + entry.path +
+                    "\nclassification=" + entry.classification +
+                    "\nvisual_reference_expectation=" + entry.visualExpectation +
+                    "\nintellij_preview=" + (if (entry.comparable) "yes" else "no") +
+                    "\nfixture=" + entry.path +
                     "\nsource_sha256=" + sha(entry.bytes) +
                     "\nblock_sha256=" + (entry.blockHash ?: "none") +
                     "\nsource_line_zero_based=" + entry.line +
@@ -408,56 +427,69 @@ class MarkFlowStarterDifferentialManifestTest {
                                     preview.primaryCaretOffset(remoteEditor) == beforeCaret
                             }) { "E18 scroll probe altered the authoritative source/caret" }
                         }
-                        val refIdentity = driver.withContext(OnDispatcher.EDT) {
-                            preview.showReferenceAtSourceLine(remoteEditor, entry.line)
-                        }
-                        waitFor(
-                            message = "Bundled preview visible: " + entry.id,
-                            timeout = 30.seconds,
-                            getter = { driver.withContext(OnDispatcher.EDT) {
-                                preview.referenceShowing(remoteEditor)
-                            } },
-                            checker = { it }
-                        )
-                        val reference = driver.withContext(OnDispatcher.EDT) {
-                            val xywh = preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
-                            check(xywh.size == 4)
-                            Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
-                        }
-                        if (entry.parent == "review-only-general-document") {
-                            // JetBrains scrollToLine() invoked immediately after
-                            // SHOW_PREVIEW can be lost before JCEF finishes layout.
-                            // For this non-golden design review only, locate an
-                            // ACTUAL DOM block by identifying its source text,
-                            // scroll it into view and require a visible viewport
-                            // anchor before taking the real browser screenshot.
+                        var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
+                        var reference: Rectangle? = null
+                        if (entry.comparable) {
+                            refIdentity = driver.withContext(OnDispatcher.EDT) {
+                                preview.showReferenceAtSourceLine(remoteEditor, entry.line)
+                            }
                             waitFor(
-                                message = "Preview shows SAME general-document section: " + entry.id,
-                                timeout = 35.seconds,
-                                getter = { driver.ui.jcef().callJs(
-                                    generalDocumentPreviewScrollProbe(entry.line)
-                                ) },
-                                checker = { it.contains("target_visible=true") &&
-                                    it.startsWith("schema=markflow-real-jcef-review-scroll/v1") }
+                                message = "Bundled preview visible: " + entry.id,
+                                timeout = 30.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    preview.referenceShowing(remoteEditor)
+                                } },
+                                checker = { it }
                             )
+                            reference = driver.withContext(OnDispatcher.EDT) {
+                                val xywh = preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
+                                check(xywh.size == 4)
+                                Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
+                            }
+                            if (entry.parent == "review-only-general-document") {
+                                waitFor(
+                                    message = "Preview shows SAME general-document section: " + entry.id,
+                                    timeout = 35.seconds,
+                                    getter = { driver.ui.jcef().callJs(
+                                        generalDocumentPreviewScrollProbe(entry.line)
+                                    ) },
+                                    checker = { it.contains("target_visible=true") &&
+                                        it.startsWith("schema=markflow-real-jcef-review-scroll/v1") }
+                                )
+                                Files.writeString(
+                                    dest.resolve("preview-real-scroll-position.txt"),
+                                    driver.ui.jcef().callJs(
+                                        generalDocumentPreviewScrollProbe(entry.line)
+                                    ) + "\n"
+                                )
+                            }
+                            waitFor(
+                                message = "Bundled JCEF paints nonblank source: " + entry.id,
+                                timeout = 60.seconds,
+                                getter = {
+                                    robot.waitForIdle()
+                                    val image = robot.createScreenCapture(requireNotNull(reference))
+                                    check(ImageIO.write(
+                                        image, "png", dest.resolve("intellij-preview.png").toFile()
+                                    ))
+                                    diagnostics.referenceHasVisibleContent(image)
+                                },
+                                checker = { it }
+                            )
+                        } else {
+                            check(entry.classification == "degraded" &&
+                                entry.visualExpectation == "diagnostic-only") {
+                                "Only manifest-declared diagnostic cases may omit IntelliJ Preview"
+                            }
                             Files.writeString(
-                                dest.resolve("preview-real-scroll-position.txt"),
-                                driver.ui.jcef().callJs(
-                                    generalDocumentPreviewScrollProbe(entry.line)
-                                ) + "\n"
+                                dest.resolve("reference-disposition.txt"),
+                                "schema=markflow-differential-reference-disposition/v1\n" +
+                                    "case_id=" + entry.id + "\n" +
+                                    "intellij_preview=NOT_APPLICABLE_BY_MANIFEST\n" +
+                                    "visual_reference_expectation=" + entry.visualExpectation + "\n" +
+                                    "classification=" + entry.classification + "\n"
                             )
                         }
-                        waitFor(
-                            message = "Bundled JCEF paints nonblank source: " + entry.id,
-                            timeout = 60.seconds,
-                            getter = {
-                                robot.waitForIdle()
-                                val image = robot.createScreenCapture(reference)
-                                check(ImageIO.write(image, "png", dest.resolve("intellij-preview.png").toFile()))
-                                diagnostics.referenceHasVisibleContent(image)
-                            },
-                            checker = { it }
-                        )
                         // E10: independently measure the genuine Preview Mermaid SVG.
                         // Source-identifying text selects a real diagram rather than any
                         // incidental IDE/browser icon. These are DIAGNOSTIC values until
@@ -579,16 +611,13 @@ class MarkFlowStarterDifferentialManifestTest {
                                 dest.resolve("source-following-text-line-drift.tsv"),
                                 paragraphDelta, StandardCharsets.UTF_8
                             )
-                            // Neither native inlay block nor HTML heading DOM box
-                            // defines an agreed shared text/baseline anchor yet.
-                            // Thus no arbitrary box delta is certified as parity.
-                            // Keep the work intentionally fail-closed, not falsely
-                            // FAIL_KNOWN_DEFECT on a dimensionally invalid comparison.
-                            structuralFailures += listOf(
-                                entry.id, "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED",
-                                "NATIVE_INLAY_BOX_VS_PREVIEW_DOM_HEADING_BOX",
-                                "REVIEW_SHARED_TEXT_BASELINE_AND_BOX_MODEL"
-                            ).joinToString("\t")
+                            Files.writeString(
+                                dest.resolve("heading-layout-reference-policy.txt"),
+                                "schema=markflow-heading-reference-policy/v1\n" +
+                                    "policy=PREVIEW_DIAGNOSTIC_ONLY_MARKFLOW_FIRST\n" +
+                                    "markflow_heading_contract=OWNED_SOURCE_GEOMETRY_AND_REVIEWED_GOLDEN\n" +
+                                    "preview_pixel_or_y_parity=NOT_REQUIRED\n"
+                            )
                         }
                         check(driver.withContext(OnDispatcher.EDT) {
                             preview.sourceText(remoteEditor)
@@ -599,22 +628,31 @@ class MarkFlowStarterDifferentialManifestTest {
                         check(!driver.withContext(OnDispatcher.EDT) {
                             preview.sourceUnsaved(remoteEditor)
                         })
-                        driver.withContext(OnDispatcher.EDT) { preview.restoreNative(remoteEditor) }
-                        waitFor(
-                            message = "Native restored: " + entry.id, timeout = 20.seconds,
-                            getter = { driver.withContext(OnDispatcher.EDT) {
+                        if (entry.comparable) {
+                            driver.withContext(OnDispatcher.EDT) { preview.restoreNative(remoteEditor) }
+                            waitFor(
+                                message = "Native restored: " + entry.id, timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeShowing(remoteEditor)
+                                } },
+                                checker = { it }
+                            )
+                        } else {
+                            check(driver.withContext(OnDispatcher.EDT) {
                                 preview.nativeShowing(remoteEditor)
-                            } },
-                            checker = { it }
-                        )
+                            }) { "Native editor disappeared without opening a reference surface" }
+                        }
                         check(markFlow.source(editor) == source)
                         check(Files.readAllBytes(project.resolve(entry.id + ".md")).contentEquals(entry.bytes))
                         Files.writeString(dest.resolve("identity.txt"),
                             Files.readString(dest.resolve("identity.txt")) +
                                 "reference=" + refIdentity + "\nnative_viewport=" +
                                 native.width + "x" + native.height + "\npreview_viewport=" +
-                                reference.width + "x" + reference.height + "\n" + nativeEnvironment)
-                        diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
+                                (reference?.let { it.width.toString() + "x" + it.height }
+                                    ?: "NOT_APPLICABLE") + "\n" + nativeEnvironment)
+                        if (entry.comparable) {
+                            diagnostics.writeDiagnosticPair(dest, sha(entry.bytes), entry.line)
+                        }
                         // E11: keep the measured FIT_TO_VIEWPORT capture as A, then
                         // measure the *same* production Editor with the existing
                         // SHRINK_TO_FIT setting as B. This is a test-only A/B:
@@ -1322,13 +1360,10 @@ class MarkFlowStarterDifferentialManifestTest {
             }
             val captured = states.values.count { it == "CAPTURED_UNVERIFIED" }
             val failed = states.values.count { it == "CAPTURE_FAILED" }
-            // The unreviewed common Heading box/baseline is genuine
-            // acceptance-blocking evidence, but is NOT a failed attempt to
-            // capture the paired images. Retain it in the original structural
-            // ledger; do not quietly erase it or call visual parity PASS.
-            val captureFailures = structuralFailures.filterNot {
-                it.split('\t').getOrNull(1) == "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED"
-            }
+            // Every retained structural finding is now a MarkFlow-owned failure.
+            // Preview-only geometry differences stay diagnostic and never enter
+            // this failure ledger.
+            val captureFailures = structuralFailures.toList()
             Files.writeString(
                 output.resolve("candidate-structural-failures.tsv"),
                 "case_id\tcandidate_gate\tobserved\tlimit\n" +
@@ -1368,9 +1403,7 @@ class MarkFlowStarterDifferentialManifestTest {
         // Capture CI remains strict about missing/invalid captures and
         // unexpected real structural defects. It must NOT claim that reviewed
         // box-model parity, or all 89 manifest cases, passed.
-        val captureFailures = structuralFailures.filterNot {
-            it.split('\t').getOrNull(1) == "HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED"
-        }
+        val captureFailures = structuralFailures.toList()
         check(captureFailures.isEmpty()) {
             "Stage D actual structural capture failures: " +
                 captureFailures.joinToString("; ")
@@ -1384,17 +1417,70 @@ class MarkFlowStarterDifferentialManifestTest {
                     " source cases not captured, " + structuralFailures.size +
                     " unresolved structural/review findings. No threshold bypass permitted."
             }
-            // Even complete capture and zero known failures are not proof of
-            // reviewed perceptual, scroll and baseline parity. A dedicated
-            // reviewed acceptance implementation must replace this guard.
-            error("Full #353 visual/differential acceptance remains unimplemented")
+            // Complete execution is only the evidence-generation milestone.
+            // A following #353 slice binds explicit review decisions to these
+            // exact source identities and retained artifacts.
+            error("Full #353 reviewed acceptance ledger remains unimplemented")
         }
+    }
+
+    private fun writeDeterministicLocalImage(path: Path) {
+        Files.createDirectories(requireNotNull(path.parent))
+        val image = BufferedImage(240, 96, BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.color = java.awt.Color(248, 249, 250)
+            graphics.fillRect(0, 0, image.width, image.height)
+            graphics.color = java.awt.Color(32, 95, 180)
+            graphics.fillRect(16, 16, 64, 64)
+            graphics.color = java.awt.Color(37, 150, 120)
+            graphics.fillRect(88, 16, 64, 64)
+            graphics.color = java.awt.Color(203, 83, 73)
+            graphics.fillRect(160, 16, 64, 64)
+        } finally {
+            graphics.dispose()
+        }
+        check(ImageIO.write(image, "png", path.toFile())) { "PNG writer unavailable" }
+    }
+
+    private data class MarkdownAnchor(val line: Int, val text: String)
+
+    private fun markdownAnchors(root: Path): Map<String, MarkdownAnchor> {
+        val path = root.resolve("fixtures/differential-acceptance/markdown-anchors.tsv")
+        val raw = Files.readString(path, StandardCharsets.UTF_8)
+        check(raw.endsWith("\n") && !raw.contains('\r')) {
+            "Markdown anchor ledger must use complete LF lines"
+        }
+        val rows = raw.trimEnd('\n').split('\n')
+        check(rows.first() == "case_id\tsource_line_zero_based\tanchor_text") {
+            "Markdown anchor ledger schema changed"
+        }
+        val result = linkedMapOf<String, MarkdownAnchor>()
+        for (row in rows.drop(1)) {
+            val fields = row.split('\t', limit = 3)
+            check(fields.size == 3 && fields[2].isNotEmpty()) {
+                "Malformed Markdown anchor ledger row"
+            }
+            val caseId = fields[0]
+            check(caseId.matches(Regex("[a-z0-9]+(?:-[a-z0-9]+)*"))) {
+                "Unsafe Markdown anchor case ID"
+            }
+            val line = fields[1].toIntOrNull()
+            check(line != null && line >= 0) { "Invalid Markdown anchor line: " + caseId }
+            check(result.put(caseId, MarkdownAnchor(line, fields[2])) == null) {
+                "Duplicate Markdown anchor: " + caseId
+            }
+        }
+        check(result.size == 49) { "Reviewed Markdown anchor coverage changed" }
+        return result
     }
 
     private fun inventory(root: Path, manifest: String): List<Case> {
         check(manifest.endsWith("\n") && !manifest.contains('\r'))
         val rows = manifest.trimEnd('\n').split('\n')
         check(rows.first().split('\t').size == 12)
+        val anchors = markdownAnchors(root)
+        val markdownIds = mutableSetOf<String>()
         val items = mutableListOf<Case>()
         val ids = mutableSetOf<String>()
         for (row in rows.drop(1)) {
@@ -1406,6 +1492,11 @@ class MarkFlowStarterDifferentialManifestTest {
             check(domain == "markdown" || domain == "mermaid")
             val classification = parts[3]
             check(classification in setOf("supported", "degraded", "unsupported"))
+            val visualExpectation = parts[7]
+            check(visualExpectation in setOf(
+                "source-anchored-geometry", "diagram-semantic-perceptual",
+                "diagnostic-only", "no-parity-expected"
+            ))
             check(parts[4] == "covered" && parts[6] == "exact-source")
             val path = parts[5]
             check(path.matches(Regex("[A-Za-z0-9._/-]+")) &&
@@ -1419,7 +1510,19 @@ class MarkFlowStarterDifferentialManifestTest {
             check(parts[8] == "yes" || parts[8] == "no")
             val comparable = parts[8] == "yes"
             if (domain == "markdown") {
-                items += Case(id, id, domain, classification, path, bytes, 0, null, comparable)
+                check(markdownIds.add(id))
+                val anchor = requireNotNull(anchors[id]) {
+                    "Missing reviewed Markdown source anchor: " + id
+                }
+                val sourceLines = source.split('\n')
+                check(sourceLines.getOrNull(anchor.line) == anchor.text) {
+                    "Reviewed Markdown source anchor drifted: " + id +
+                        " line=" + anchor.line
+                }
+                items += Case(
+                    id, id, domain, classification, path, bytes, anchor.line, null,
+                    visualExpectation, comparable
+                )
             } else {
                 val lines = source.split('\n')
                 val blocks = mutableListOf<Pair<Int, String>>()
@@ -1447,9 +1550,12 @@ class MarkFlowStarterDifferentialManifestTest {
                     val caseId = if (blocks.size == 1) id else
                         id + "--block-" + (index + 1).toString().padStart(2, '0')
                     items += Case(caseId, id, domain, classification, path,
-                        bytes, block.first, block.second, comparable)
+                        bytes, block.first, block.second, visualExpectation, comparable)
                 }
             }
+        }
+        check(anchors.keys == markdownIds) {
+            "Markdown anchor ledger must cover exactly the manifest Markdown cases"
         }
         return items
     }

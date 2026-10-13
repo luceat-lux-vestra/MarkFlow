@@ -212,6 +212,15 @@ grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
+[ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"
+grep -Fq 'markdown-anchors.tsv' "$manifest_test" ||
+  die "Full differential harness no longer consumes reviewed Markdown source anchors"
+grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
+  die "Markdown source anchors no longer fail closed on fixture drift"
+grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
+  die "Markdown source-anchor ledger lost its reviewed snapshot pin"
+
 [ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
   die "Starter workflow silently dropped Stage D manifest capture"
@@ -352,8 +361,11 @@ grep -Fq 'RESEARCH_ONLY_B_HEADING_PAINT_NOT_PRODUCTION_DEFAULT' "$manifest_test"
 # Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
 # Source positions remain diagnostic, while native inlay boxes and Preview DOM
 # boxes have their own independently measured, source-joined ledger.
-grep -Fq 'HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED' "$manifest_test" ||
-  die "Stage E5 must fail closed on an unreviewed shared heading anchor contract"
+grep -Fq 'PREVIEW_DIAGNOSTIC_ONLY_MARKFLOW_FIRST' "$manifest_test" ||
+  die "Stage E5 lost the MarkFlow-first Preview-reference policy"
+if grep -Fq 'HEADING_LAYOUT_ANCHOR_CONTRACT_UNREVIEWED' "$manifest_test"; then
+  die "Reviewed #350 Heading geometry must not be re-blocked on non-normative Preview coordinates"
+fi
 grep -Fq 'source-heading-rendered-box-drift.tsv' "$manifest_test" ||
   die "Stage E5 dropped installed native-inlay vs bundled DOM box evidence"
 grep -Fq 'renderedHeadingBoxNegativeControls()' "$manifest_test" ||
@@ -374,8 +386,22 @@ grep -Fq 'if (contract == "acceptance")' "$manifest_test" ||
   die "Full #353 acceptance contract selector is missing"
 grep -Fq 'check(structuralFailures.isEmpty() &&' "$manifest_test" ||
   die "Full #353 acceptance must reject every unresolved structural finding"
-grep -Fq 'error("Full #353 visual/differential acceptance remains unimplemented")' "$manifest_test" ||
-  die "Unimplemented visual acceptance must remain fail-closed"
+grep -Fq 'Full #353 acceptance cannot be reduced with differentialCaseIds' "$manifest_test" ||
+  die "Full #353 acceptance must reject partial case selection"
+grep -Fq 'inventory.map { it.id }' "$manifest_test" ||
+  die "Full #353 acceptance must execute the entire expanded inventory"
+grep -Fq 'NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
+  die "Manifest-declared non-Preview cases lost explicit disposition"
+grep -Fq 'error("Full #353 reviewed acceptance ledger remains unimplemented")' "$manifest_test" ||
+  die "Full-corpus evidence generation must remain fail-closed before reviewed acceptance"
+grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
+  die "Starter workflow lost the opt-in full differential evidence dispatch"
+grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow" ||
+  die "Starter workflow lost the full differential evidence job"
+grep -Fq -- '-PdifferentialContract=acceptance' "$starter_workflow" ||
+  die "Full differential job no longer invokes the acceptance contract"
+grep -Fq 'starter-driver-full-differential-' "$starter_workflow" ||
+  die "Full differential evidence artifact is no longer retained"
 grep -Fq '\"full_differential_acceptance\":false' "$manifest_test" ||
   die "Incomplete Stage D capture cannot claim full visual acceptance"
 grep -Fq '\"release_eligible\":false' "$manifest_test" ||
@@ -398,7 +424,11 @@ grep -Fq 'Install pinned sandboxed JCEF AppArmor profile (derived-content only)'
 grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workflow" ||
   die "Starter no longer installs its pinned JBR profile"
 grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
-  die "JCEF profile installer must be restricted to derived-content"
+  die "Matrix JCEF profile installer must remain restricted to derived-content"
+grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$starter_workflow" ||
+  die "Full differential JCEF setup lost its explicit scoped shard identity"
+grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" ||
+  die "JCEF profile installer scope allowlist drifted"
 grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
   die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
 grep -Fq 'userns,' "$jcef_profile_script" ||

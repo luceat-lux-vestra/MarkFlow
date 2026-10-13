@@ -1,0 +1,50 @@
+case_id	source_line_zero_based	anchor_text
+md-atx-headings-h1-h6	0	# Heading level 1
+md-setext-headings	3	Setext level one
+md-paragraph	21	MarkFlow should preserve normal paragraphs, line breaks, and emphasis.
+md-soft-break	2	This paragraph has multiple   internal spaces.
+md-hard-break	3	The next line uses an explicit hard-break marker.\
+md-thematic-break	4	---
+md-blockquote	50	> Blockquote level 1
+md-unordered-list	2	- dash item
+md-ordered-list	6	1. dot ordered item
+md-nested-list	11	- outer item
+md-tight-loose-lists	2	## Tight unordered list
+md-task-list	46	- [x] Completed task
+md-fenced-backtick	4	```text
+md-fenced-tilde	8	~~~~text
+md-fence-length-info	12	````text
+md-indented-code	16	    indented code line one
+md-table-basic	63	| Column A | Column B | Column C |
+md-table-alignment	2	| left | center | right |
+md-table-escaped-pipe	4	| plain | escaped \| pipe | *emphasis* |
+md-raw-html-safe	2	Inline <span data-kind="safe">HTML content</span> remains source text.
+md-raw-html-hostile	2	<script>window.markflowHostile = true;</script>
+md-local-image	2	Local image: ![deterministic local visual](visual-proof.png)
+md-emphasis	9	*single asterisk emphasis* and _single underscore emphasis_.
+md-strong	11	**double asterisk strong** and __double underscore strong__.
+md-combined-emphasis	23	This is a paragraph with **bold**, *italic*, ***bold italic***, and `inline code`.
+md-strikethrough	0	Plain ~~removed~~ text.
+md-inline-code	2	Inline `code span` sample.
+md-inline-link	2	An [inline link](https://example.com/docs "Example docs") and an inline image:
+md-reference-link	5	A [reference link][guide] and a collapsed [reference link][].
+md-autolink	296	<https://example.com>
+md-image-syntax	3	![A small image](images/example.png "Example image").
+md-escaped-punctuation	27	\* literal asterisk \*
+md-entity-reference	2	Character references: &amp; &lt; &#35; &#x3A;.
+md-inline-raw-html	2	Inline <span data-kind="safe">HTML content</span> remains source text.
+md-katex-inline	2	Inline math: $a^2 + b^2 = c^2$.
+md-katex-display	4	$$
+md-mermaid-block	2	```mermaid
+md-footnote-extension	2	Footnote-like syntax remains an explicit unsupported-extension fixture.[^note]
+md-tabs-indentation	2	- Parent
+md-blank-lines-whitespace	6	There are two blank lines before this paragraph.
+md-closing-atx	1	## ATX heading with closing markers ##
+md-list-marker-variants	2	- dash item
+md-code-span-delimiter-edge	4	Code span containing a backtick: ``code ` tick``.
+md-inline-link-title	2	An [inline link](https://example.com/docs "Example docs") and an inline image:
+md-inline-image-title	3	![A small image](images/example.png "Example image").
+md-reference-definition	7	[guide]: https://example.com/guide "Guide"
+md-reference-image	6	Reference image: ![Reference image][logo].
+md-autolink-email	8	Email autolink: <user@example.com>.
+md-gfm-autolink-literal	4	https://example.com/bare

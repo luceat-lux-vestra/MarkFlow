@@ -1,5 +1,16 @@
 # #353 Differential capture plan — Stage A
 
+## Current authority — 2026-10-13
+
+This file intentionally retains the chronological Stage A–E research/proof history below. Statements in older stages that describe #350 or #352 as unresolved are historical, not current blockers.
+
+Current protected-main baseline before PR #400 is `4c0e3b830dfcd3fcabf5d48a3dc61e4f4727d7d3`: #354 corpus classification, #350 Heading geometry/typography, #351 derived-inlay source entry, and #352 Mermaid layout/reachability are completed. #353 remains open because **full reviewed 89-expanded-case acceptance is not complete**. The normal bounded cohort must continue to report `full_differential_acceptance=false`; the opt-in acceptance run executes/classifies the complete corpus and remains fail-closed until its retained evidence is bound to an explicit reviewed acceptance ledger.
+
+IntelliJ Markdown Preview remains a diagnostic/reference surface only. Different fonts, global insets, source-Y coordinates, scroll offsets, or pixels are not failures by themselves; fail only on MarkFlow-owned semantic, structural, source, interaction, reachability, clipping/overlap, or approved visual-baseline contracts.
+
+Current release-gate order is `#353 -> #348 -> #309 final exact candidate -> #156 -> #84 -> #52`.
+
+
 This is a **manifest-driven execution inventory**, not a substitute for real IDE
 paired capture. Generate it from the exact checked-out source commit:
 
@@ -11,9 +22,11 @@ The output retains each of the 88 reviewed corpus case IDs, exact source file
 SHA-256, manifest SHA-256, classification, preview expectation and interaction
 contract. Mermaid entries expand **all** fenced blocks with independently
 identified source-line anchors and block hashes (including both blocks of
-`examples/mermaid-large-flowchart.md`). It never guesses Markdown
-visual anchors from filenames. Unsupported/degraded cases stay in the plan,
-rather than silently disappearing.
+`examples/mermaid-large-flowchart.md`). It never guesses Markdown visual anchors from filenames. Full real-IDE
+execution instead consumes the separately reviewed 49-row
+`markdown-anchors.tsv` source-line ledger; every anchor is tied to exact
+fixture line text and snapshot-pinned by the web contract test. Unsupported/
+degraded cases stay in the plan rather than silently disappearing.
 
 `capture_status=not-captured` and `execution_status=not-captured`
 are mandatory Stage A outputs. A generated plan must never be reported as
@@ -86,24 +99,31 @@ in `metrics.json` is an **unregistered diagnostic**, not a quality score.
 
 This slice does not yet prove cumulative heading/source-anchor geometry,
 clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
-complete 88-row/89-expanded-case real coverage. Some corpus sources reference
-relative resources; preserve those paths before extending execution to them.
+complete 88-row/89-expanded-case real coverage. Some corpus sources reference relative local images. Full-corpus execution
+creates deterministic sandbox resources at the referenced paths while preserving
+the manifest source bytes exactly; missing resource setup is a harness defect,
+not permission to reclassify or rewrite those fixtures.
 All missing or unvalidated #353 criteria are **FAIL** for full visual
 acceptance and release. Bounded Stage D capture CI is a separate deliverable:
 it must fail on missing captures, malformed source identity, dropped reference
-images, collapsed geometry, or *actual* structural defects. An unreviewed
-native-inlay-vs-JCEF-DOM box model is retained as a **review-required**
-acceptance blocker in `candidate-structural-failures.tsv`, but does not
-by itself negate successful source-identical image capture.
+images, collapsed geometry, or *actual* structural defects. Preview/native box and baseline measurements remain retained diagnostics.
+After #350, differences between those distinct coordinate models are not
+themselves acceptance blockers; only MarkFlow-owned source, geometry,
+reachability and reviewed visual defects enter
+`candidate-structural-failures.tsv`.
 
 Two explicitly named test contracts are available:
 - `-PdifferentialContract=capture` (default): checks bounded
   source-identical capture; emits `full_differential_acceptance=false` and
   `release_eligible=false`, with all unexecuted/unknown cases retained.
-- `-PdifferentialContract=acceptance`: **always fail closed** until
-  every expanded case is executed, structural issues reviewed and the final
-  visual acceptance implementation completed. This is not a production
-  release gate that can be turned green by selecting fewer cases.
+- `-PdifferentialContract=acceptance`: ignores the bounded default cohort,
+  rejects any explicit case selector, and executes the complete 89-expanded-case
+  inventory in one Starter/IDE session. Manifest-declared supported cases retain
+  source-identical IntelliJ Preview pairs; explicit degraded/unsupported cases
+  are still executed and classified without inventing parity requirements.
+  This evidence-generation contract **still fails closed at the end** until the
+  retained full-corpus artifact has been reviewed and a source-bound acceptance
+  ledger is implemented in the following #353 slice.
 
 **Important:** finishing or merging the capture infrastructure does NOT
 authorize enabling the opt-in experimental Native heading layout by default,
@@ -129,11 +149,11 @@ does not alter the default bounded CI selection.
 
 ### Stage E18 — actual raster scrolling (bounded structural gate)
 
-The same pinned IDEA 2026.2.3 Starter session now **scrolls the real MarkFlow editor** to the start and final pixel of each of the three selected Mermaid raster inlays (flowchart, Gantt, sequence), not just taking an initial viewport screenshot. For each source-identical case it retains `native-scroll-top.txt/png` and `native-scroll-bottom.txt/png` after testing whether the reported raster bounds intersect the live editor `visibleArea` at the requested edge. The inlay object is unchanged; its image dimensions are already recorded in `native-raster-geometry.txt`.
+The same pinned IDEA 2026.2.3 Starter session now **scrolls the real MarkFlow editor** to the start and final pixel of each selected Mermaid raster inlay, not just taking an initial viewport screenshot. For each source-identical case it retains `native-scroll-top.txt/png` and `native-scroll-bottom.txt/png` after testing whether the reported raster bounds intersect the live editor `visibleArea` at the requested edge. The inlay object is unchanged; its image dimensions are already recorded in `native-raster-geometry.txt`.
 
 A Mermaid raster whose **last rendered row cannot enter the viewport** is a genuine scroll/host-placement failure and fails this bounded capture CI. A raster extending past the first screenshot but reached by scrolling is not automatically classified as clipped. The probe uses actual `scrollVertically` actions with polling, checks both edges, restores the prior scroll offset, and asserts byte-identical source, modification stamp and caret identity. Pure negative controls reject a last pixel outside the viewport, a zero-height raster and a collapsed viewport. Guardrails in `repository-hardening-contract.sh` require continued real-IDE probe invocation and retained artifacts.
 
-This is a **reachability proof only**: the screen images still require agent visual review for *painted* content and semantics. A nonblank bitmap or overlap-free Gantt is **not** inferred from geometric reachability. The full #353 cohort is still 89 cases and remains acceptance-fail-closed; #350 shared text baseline and #352 legibility are separate unresolved product defects.
+This is a **reachability proof only**: the screen images still require agent visual review for *painted* content and semantics. A nonblank bitmap or overlap-free Gantt is **not** inferred from geometric reachability. The full #353 cohort is still 89 cases and remains acceptance-fail-closed; #350 and #352 are closed, so Preview-coordinate differences remain diagnostic unless a new independent MarkFlow defect is reproduced.
 
 ### Stage E1 — native heading source geometry (NOT reference parity)
 
