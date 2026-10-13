@@ -31,6 +31,9 @@ jobs:
             build-mode: none
           - language: actions
             build-mode: none
+          # Kotlin 2.4.20 is supported in CodeQL CLI 2.27.1+.
+          - language: java-kotlin
+            build-mode: manual
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -43,13 +46,33 @@ jobs:
       - name: Verify exact checkout
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
+      - name: Setup Java for Kotlin CodeQL
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: zulu
+          java-version: '25'
+
+      - name: Setup Gradle for Kotlin CodeQL
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
+      - name: Compile Kotlin for CodeQL
+        if: matrix.language == 'java-kotlin'
+        # CodeQL manual extraction requires an actual traced Kotlin compiler process.
+        # A restored Gradle build-cache output can make the scanner appear green
+        # without extracting production Kotlin; force both compilation tasks.
+        run: ./gradlew --no-daemon --no-build-cache --rerun-tasks compileKotlin compileTestKotlin -Dorg.gradle.jvmargs=-Xmx3g
+
       - name: Analyze
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: "/language:${{ matrix.language }}"
