@@ -57,12 +57,29 @@ class MarkFlowStarterDifferentialManifestTest {
             "Unknown differential contract: $contract"
         }
         // Expand one sequential real-IDE session rather than adding CI shards.
-        // These six cases remain CAPTURED_UNVERIFIED, not release acceptance.
+        // These ten cases remain CAPTURED_UNVERIFIED, not full #353 release acceptance.
+        // #352's retained subset covers Gantt + sequence + class/state plus both large-flowchart
+        // blocks so actual native geometry/scroll evidence includes normal, wide and tall diagrams.
         val defaultIds = "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt" +
-            ",md-setext-headings,md-tight-loose-lists,mermaid-sequence"
+            ",md-setext-headings,md-tight-loose-lists,mermaid-sequence" +
+            ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
+            ",mermaid-flowchart-large--block-02"
         val selectedIds = (System.getProperty("markflow.differential.caseIds")
             ?: defaultIds).split(',').map { it.trim() }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
+        if (System.getProperty("markflow.differential.caseIds") == null) {
+            val mermaidLayoutCohort = setOf(
+                "mermaid-gantt",
+                "mermaid-sequence",
+                "mermaid-class",
+                "mermaid-state",
+                "mermaid-flowchart-large--block-01",
+                "mermaid-flowchart-large--block-02",
+            )
+            check(mermaidLayoutCohort.all(selectedIds::contains)) {
+                "#352 default layout cohort was silently reduced"
+            }
+        }
         val indexed = inventory.associateBy { it.id }
         // Review-only realistic document, deliberately NOT part of the fixed
         // 88-parent/#353 acceptance corpus. Capture the SAME source at three
@@ -244,25 +261,52 @@ class MarkFlowStarterDifferentialManifestTest {
                             .firstOrNull { it.startsWith("raster_count=") }
                             ?.substringAfter('=')?.toIntOrNull()
                             ?: error("Stage D native raster geometry is not parseable")
-                        if (entry.domain == "mermaid") {
+                        val rasterRecords = nativeRasterGeometry.lineSequence()
+                            .filter { it.startsWith("index=") }
+                            .map { row ->
+                                row.split('\t').associate { field ->
+                                    val parts = field.split('=', limit = 2)
+                                    check(parts.size == 2) { "Malformed native raster geometry" }
+                                    parts[0] to parts[1]
+                                }
+                            }.toList()
+                        check(rasterRecords.size == rasterCount) {
+                            "Stage D raster count does not match measured records"
+                        }
+                        val targetRasterRecord = if (entry.domain == "mermaid") {
                             check(rasterCount >= 1) {
                                 "Stage D Mermaid case has no measured native raster inlays"
                             }
-                        }
+                            // A manifest case identifies one Mermaid fence even when its Markdown
+                            // file contains multiple fences. Native raster inlays are installed at
+                            // each projection's source end, so resolve the exact target by that
+                            // fence's closing source line instead of assuming one raster per file.
+                            val sourceLines = source.split('\n')
+                            val opening = Regex("^ {0,3}(`{3,}|~{3,})mermaid[ \\t]*$")
+                                .matchEntire(sourceLines.getOrElse(entry.line) { "" })
+                                ?: error("#352 selected Mermaid case does not point at its opening fence")
+                            val fence = opening.groupValues[1]
+                            val closingLine = (entry.line + 1 until sourceLines.size).firstOrNull { line ->
+                                val closing = sourceLines[line].trim()
+                                closing.length >= fence.length && closing.all { it == fence[0] }
+                            } ?: error("#352 selected Mermaid case has no closing fence")
+                            val matches = rasterRecords.filter { record ->
+                                record["source_line_zero_based"]?.toIntOrNull() == closingLine
+                            }
+                            check(matches.size == 1) {
+                                "#352 target Mermaid block has no unique installed raster: " +
+                                    entry.id + " closingLine=" + closingLine +
+                                    " rasterLines=" + rasterRecords.map { it["source_line_zero_based"] }
+                            }
+                            matches.single()
+                        } else null
                         Files.writeString(
                             dest.resolve("native-raster-geometry.txt"),
                             nativeRasterGeometry, StandardCharsets.UTF_8
                         )
                         if (entry.id == "mermaid-gantt") {
                             check(rasterCount == 1) { "Gantt must own exactly one measured native raster" }
-                            val row = nativeRasterGeometry.lineSequence().single {
-                                it.startsWith("index=")
-                            }
-                            val fields = row.split('\t').associate { field ->
-                                val parts = field.split('=', limit = 2)
-                                check(parts.size == 2) { "Malformed Gantt raster dimension" }
-                                parts[0] to parts[1]
-                            }
+                            val fields = requireNotNull(targetRasterRecord)
                             fun size(name: String): Int =
                                 requireNotNull(fields[name]?.toIntOrNull()) { "Missing Gantt " + name }
                             val iw = size("intrinsic_width")
@@ -303,9 +347,10 @@ class MarkFlowStarterDifferentialManifestTest {
                         // screenshots. Never infer true reachability from only the
                         // first (1200x760) screenshot. The source/caret are immutable.
                         if (entry.domain == "mermaid") {
-                            check(rasterCount == 1) {
-                                "E18 bounded Mermaid capture requires exactly one raster per selected case"
-                            }
+                            val targetRasterIndex = requireNotNull(
+                                targetRasterRecord?.get("index")?.toIntOrNull()
+                            ) { "#352 target Mermaid raster index is unavailable" }
+                            check(targetRasterIndex in 0 until rasterCount)
                             val beforeScroll = driver.withContext(OnDispatcher.EDT) {
                                 preview.nativeVerticalScrollOffset(remoteEditor)
                             }
@@ -318,14 +363,18 @@ class MarkFlowStarterDifferentialManifestTest {
                                         message = "E18 real inlay " + edge + " reachable: " + entry.id,
                                         timeout = 15.seconds,
                                         getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.nativeRasterScrollProbe(remoteEditor, 0, edge)
+                                            preview.nativeRasterScrollProbe(
+                                                remoteEditor, targetRasterIndex, edge
+                                            )
                                         } },
                                         checker = { ledger -> ledger.lineSequence().any {
                                             it == "edge_visible=true"
                                         } }
                                     )
                                     val ledger = driver.withContext(OnDispatcher.EDT) {
-                                        preview.nativeRasterScrollProbe(remoteEditor, 0, edge)
+                                        preview.nativeRasterScrollProbe(
+                                            remoteEditor, targetRasterIndex, edge
+                                        )
                                     }
                                     check(ledger.lineSequence().any { it == "edge_visible=true" }) {
                                         "E18 native raster " + edge + " never entered the viewport"
@@ -661,6 +710,159 @@ class MarkFlowStarterDifferentialManifestTest {
                                 visual.setMermaidSizeModeForDifferential(
                                     remoteEditor, "FIT_TO_VIEWPORT"
                                 )
+                            }
+                        }
+
+                        // #352: FIT_TO_VIEWPORT is intentionally the overview mode. For the
+                        // representative wide/tall large-flowchart blocks, prove the documented
+                        // detail mode really preserves the decoded raster size and that every
+                        // oversized edge is reachable in the actual IntelliJ editor.
+                        if (entry.id == "mermaid-flowchart-large--block-01" ||
+                            entry.id == "mermaid-flowchart-large--block-02") {
+                            val originalSource = source
+                            val originalStamp = stamp
+                            val targetSourceLine = requireNotNull(
+                                targetRasterRecord?.get("source_line_zero_based")?.toIntOrNull()
+                            ) { "#352 target source line unavailable before ACTUAL_SIZE_SCROLL" }
+                            val beforeVertical = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeVerticalScrollOffset(remoteEditor)
+                            }
+                            val beforeHorizontal = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeHorizontalScrollOffset(remoteEditor)
+                            }
+                            var actualFailure: Throwable? = null
+                            try {
+                                driver.withContext(OnDispatcher.EDT) {
+                                    visual.setMermaidSizeModeForDifferential(
+                                        remoteEditor, "ACTUAL_SIZE_SCROLL"
+                                    )
+                                }
+                                fun actualRecords(geometry: String): List<Map<String, String>> =
+                                    geometry.lineSequence().filter { it.startsWith("index=") }
+                                        .map { row ->
+                                            row.split('\t').associate { field ->
+                                                val values = field.split('=', limit = 2)
+                                                check(values.size == 2) {
+                                                    "#352 ACTUAL raster ledger malformed"
+                                                }
+                                                values[0] to values[1]
+                                            }
+                                        }.toList()
+                                waitFor(
+                                    message = "#352 ACTUAL_SIZE_SCROLL preserves intrinsic raster: " + entry.id,
+                                    timeout = 50.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        runCatching {
+                                            val state = visual.visualEvidence(remoteEditor)
+                                            val rows = actualRecords(
+                                                preview.nativeRasterGeometry(remoteEditor)
+                                            )
+                                            val target = rows.single {
+                                                it["source_line_zero_based"]?.toIntOrNull() ==
+                                                    targetSourceLine
+                                            }
+                                            state.contains("derivedPending=0") &&
+                                                target["displayed_width"] == target["intrinsic_width"] &&
+                                                target["displayed_height"] == target["intrinsic_height"]
+                                        }.getOrDefault(false)
+                                    } },
+                                    checker = { it }
+                                )
+                                val actualGeometry = driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeRasterGeometry(remoteEditor)
+                                }
+                                val actualRows = actualRecords(actualGeometry)
+                                val actualTarget = actualRows.single {
+                                    it["source_line_zero_based"]?.toIntOrNull() == targetSourceLine
+                                }
+                                val actualIndex = requireNotNull(
+                                    actualTarget["index"]?.toIntOrNull()
+                                )
+                                check(actualTarget["displayed_width"] == actualTarget["intrinsic_width"] &&
+                                    actualTarget["displayed_height"] == actualTarget["intrinsic_height"]) {
+                                    "#352 ACTUAL_SIZE_SCROLL did not retain exact decoded raster dimensions"
+                                }
+                                Files.writeString(
+                                    dest.resolve("mermaid-actual-native-raster-geometry.txt"),
+                                    actualGeometry, StandardCharsets.UTF_8
+                                )
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.restoreNativeVerticalScroll(remoteEditor, beforeVertical)
+                                    preview.restoreNativeHorizontalScroll(remoteEditor, beforeHorizontal)
+                                }
+                                robot.waitForIdle()
+                                check(ImageIO.write(
+                                    robot.createScreenCapture(native), "png",
+                                    dest.resolve("mermaid-actual-native.png").toFile()
+                                ))
+                                for (edge in listOf("TOP", "BOTTOM")) {
+                                    val ledger = waitFor(
+                                        message = "#352 ACTUAL vertical edge reachable: " +
+                                            entry.id + " " + edge,
+                                        timeout = 20.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeRasterScrollProbe(
+                                                remoteEditor, actualIndex, edge
+                                            )
+                                        } },
+                                        checker = { it.lineSequence().any { row ->
+                                            row == "edge_visible=true"
+                                        } }
+                                    )
+                                    Files.writeString(
+                                        dest.resolve(
+                                            "mermaid-actual-scroll-" + edge.lowercase() + ".txt"
+                                        ),
+                                        ledger, StandardCharsets.UTF_8
+                                    )
+                                }
+                                for (edge in listOf("LEFT", "RIGHT")) {
+                                    val ledger = waitFor(
+                                        message = "#352 ACTUAL horizontal edge reachable: " +
+                                            entry.id + " " + edge,
+                                        timeout = 20.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeRasterHorizontalScrollProbe(
+                                                remoteEditor, actualIndex, edge
+                                            )
+                                        } },
+                                        checker = { it.lineSequence().any { row ->
+                                            row == "edge_visible=true"
+                                        } }
+                                    )
+                                    Files.writeString(
+                                        dest.resolve(
+                                            "mermaid-actual-scroll-" + edge.lowercase() + ".txt"
+                                        ),
+                                        ledger, StandardCharsets.UTF_8
+                                    )
+                                }
+                                check(driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceText(remoteEditor) == originalSource &&
+                                        preview.sourceStamp(remoteEditor) == originalStamp
+                                }) { "#352 ACTUAL size/scroll probes mutated authoritative source" }
+                            } catch (cause: Throwable) {
+                                actualFailure = cause
+                                throw cause
+                            } finally {
+                                val cleanup = runCatching {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        preview.restoreNativeVerticalScroll(
+                                            remoteEditor, beforeVertical
+                                        )
+                                        preview.restoreNativeHorizontalScroll(
+                                            remoteEditor, beforeHorizontal
+                                        )
+                                        visual.setMermaidSizeModeForDifferential(
+                                            remoteEditor, "FIT_TO_VIEWPORT"
+                                        )
+                                    }
+                                }
+                                val cleanupError = cleanup.exceptionOrNull()
+                                if (cleanupError != null) {
+                                    if (actualFailure == null) throw cleanupError
+                                    actualFailure.addSuppressed(cleanupError)
+                                }
                             }
                         }
                         markFlow.close(editor)
@@ -2084,8 +2286,11 @@ private interface DifferentialManifestPreviewRemote {
     fun nativeRasterGeometry(editor: Editor): String
     fun rasterGeometryNegativeControls(): Boolean
     fun nativeRasterScrollProbe(editor: Editor, index: Int, edge: String): String
+    fun nativeRasterHorizontalScrollProbe(editor: Editor, index: Int, edge: String): String
     fun nativeVerticalScrollOffset(editor: Editor): Int
+    fun nativeHorizontalScrollOffset(editor: Editor): Int
     fun restoreNativeVerticalScroll(editor: Editor, offset: Int)
+    fun restoreNativeHorizontalScroll(editor: Editor, offset: Int)
     fun rasterScrollNegativeControls(): Boolean
     fun nativeHeadingSourceGeometry(editor: Editor): String
     fun nativeHeadingReplacementGeometry(editor: Editor): String

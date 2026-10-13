@@ -250,6 +250,24 @@ grep -Fq 'md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt' "$manif
   die "Stage E2 no longer captures the #352 Gantt diagnostic in bounded CI"
 grep -Fq ',md-setext-headings,md-tight-loose-lists,mermaid-sequence' "$manifest_test" ||
   die "Stage E17 lost Setext/list/sequence cases from the single-session differential cohort"
+grep -Fq ',mermaid-class,mermaid-state,mermaid-flowchart-large--block-01' "$manifest_test" ||
+  die "#352 lost class/state/wide Mermaid layout cases from the single-session cohort"
+grep -Fq ',mermaid-flowchart-large--block-02' "$manifest_test" ||
+  die "#352 lost the tall/second large-flowchart Mermaid layout case"
+grep -Fq '#352 default layout cohort was silently reduced' "$manifest_test" ||
+  die "#352 runtime default-cohort guard is missing"
+grep -Fq 'mermaidSizeMode == "ACTUAL_SIZE_SCROLL"' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationController.kt" ||
+  die "#352 ACTUAL_SIZE_SCROLL no longer preserves explicit detail mode"
+grep -Fq '1523 to 2390' "src/test/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationControllerTest.kt" ||
+  die "#352 lost tall ACTUAL_SIZE_SCROLL dimension regression"
+grep -Fq 'nativeRasterHorizontalScrollProbe' "$manifest_test" ||
+  die "#352 lost real wide-raster horizontal reachability probe"
+grep -Fq 'mermaid-actual-native-raster-geometry.txt' "$manifest_test" ||
+  die "#352 lost real ACTUAL_SIZE_SCROLL geometry evidence"
+grep -Fq '#352 target Mermaid block has no unique installed raster' "$manifest_test" ||
+  die "#352 multi-block Mermaid cases lost source-owned raster selection"
+grep -Fq 'targetRasterIndex' "$manifest_test" ||
+  die "#352 scroll probe reverted to a file-level single-raster assumption"
 grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
   die "Stage E1 dropped source-anchored heading geometry evidence"
 grep -Fq 'measuredHeadings == 6' "$manifest_test" ||

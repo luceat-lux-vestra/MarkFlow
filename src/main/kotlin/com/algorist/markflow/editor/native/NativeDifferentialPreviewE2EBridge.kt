@@ -197,15 +197,72 @@ internal object NativeDifferentialPreviewE2EBridge {
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
+    /**
+     * #352: prove a wide native Mermaid raster is reachable in the real editor,
+     * not merely present outside the first screenshot. This mirrors E18's
+     * vertical probe but operates on the installed inlay's horizontal bounds.
+     */
+    fun nativeRasterHorizontalScrollProbe(editor: Editor, index: Int, edge: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(edge == "LEFT" || edge == "RIGHT") { "Unknown raster horizontal scroll edge" }
+        val inlays = editor.inlayModel
+            .getBlockElementsInRange(0, editor.document.textLength)
+            .filter { it.renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer") }
+        require(index in inlays.indices) { "No native raster at index " + index }
+        val inlay = inlays[index]
+        val bounds = requireNotNull(inlay.bounds) { "#352 installed raster bounds unavailable" }
+        check(bounds.height > 0 && bounds.width > 0 && inlay.isValid) {
+            "#352 native raster is invalid or collapsed"
+        }
+        val before = editor.scrollingModel.visibleArea
+        check(before.height > 0 && before.width > 0) { "#352 native viewport is unavailable" }
+        val target = if (edge == "LEFT") bounds.x.toLong()
+            else bounds.x.toLong() + bounds.width - before.width
+        editor.scrollingModel.scrollHorizontally(target.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
+        val after = editor.scrollingModel.visibleArea
+        val edgeVisible = rasterHorizontalEdgeIsVisible(
+            bounds.x, bounds.width, after.x, after.width, edge
+        )
+        val line = editor.document.getLineNumber(
+            inlay.offset.coerceAtMost(editor.document.textLength)
+        )
+        return listOf(
+            "schema=markflow-native-raster-horizontal-scroll-reachability/v1",
+            "geometry_scope=REAL_NATIVE_EDITOR_SCROLL_VIEWPORT",
+            "raster_index=" + index,
+            "source_line_zero_based=" + line,
+            "source_offset=" + inlay.offset,
+            "edge=" + edge,
+            "edge_visible=" + edgeVisible,
+            "bounds_x=" + bounds.x,
+            "bounds_width=" + bounds.width,
+            "viewport_x_before=" + before.x,
+            "viewport_x_after=" + after.x,
+            "viewport_width=" + after.width,
+            "requested_scroll_x=" + target,
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
     fun nativeVerticalScrollOffset(editor: Editor): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return editor.scrollingModel.verticalScrollOffset
+    }
+
+    fun nativeHorizontalScrollOffset(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return editor.scrollingModel.horizontalScrollOffset
     }
 
     fun restoreNativeVerticalScroll(editor: Editor, offset: Int) {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(offset >= 0)
         editor.scrollingModel.scrollVertically(offset)
+    }
+
+    fun restoreNativeHorizontalScroll(editor: Editor, offset: Int) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(offset >= 0)
+        editor.scrollingModel.scrollHorizontally(offset)
     }
 
     /** Pure geometry controls: inclusive last painted raster pixel, exclusive viewport bottom. */
@@ -220,6 +277,17 @@ internal object NativeDifferentialPreviewE2EBridge {
             pixel < viewportTop.toLong() + viewportHeight.toLong()
     }
 
+    private fun rasterHorizontalEdgeIsVisible(
+        rasterLeft: Int, rasterWidth: Int, viewportLeft: Int, viewportWidth: Int, edge: String
+    ): Boolean {
+        require(edge == "LEFT" || edge == "RIGHT")
+        if (rasterWidth <= 0 || viewportWidth <= 0) return false
+        val pixel = if (edge == "LEFT") rasterLeft.toLong()
+            else rasterLeft.toLong() + rasterWidth - 1L
+        return pixel >= viewportLeft.toLong() &&
+            pixel < viewportLeft.toLong() + viewportWidth.toLong()
+    }
+
     fun rasterScrollNegativeControls(): Boolean =
         rasterEdgeIsVisible(40, 300, 40, 100, "TOP") &&
             !rasterEdgeIsVisible(40, 300, 40, 100, "BOTTOM") &&
@@ -227,7 +295,12 @@ internal object NativeDifferentialPreviewE2EBridge {
             !rasterEdgeIsVisible(40, 300, 240, 100, "TOP") &&
             !rasterEdgeIsVisible(40, 300, 0, 100, "BOTTOM") &&
             !rasterEdgeIsVisible(40, 0, 40, 100, "TOP") &&
-            !rasterEdgeIsVisible(40, 300, 240, 0, "BOTTOM")
+            !rasterEdgeIsVisible(40, 300, 240, 0, "BOTTOM") &&
+            rasterHorizontalEdgeIsVisible(40, 300, 40, 100, "LEFT") &&
+            !rasterHorizontalEdgeIsVisible(40, 300, 40, 100, "RIGHT") &&
+            rasterHorizontalEdgeIsVisible(40, 300, 240, 100, "RIGHT") &&
+            !rasterHorizontalEdgeIsVisible(40, 300, 240, 100, "LEFT") &&
+            !rasterHorizontalEdgeIsVisible(40, 0, 40, 100, "LEFT")
 
     private fun rasterAspectPreserved(iw: Int, ih: Int, dw: Int, dh: Int): Boolean {
         if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) return false
