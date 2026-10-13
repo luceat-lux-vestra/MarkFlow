@@ -50,6 +50,10 @@
     {
       "context": "CodeQL (actions)",
       "reason": "Advisory PR and weekly default-branch security analysis, not a required Merge Gate input; Qodana remains the required code-inspection authority. PR CodeQL does not immediately update default-branch alerts; scheduled scans normally refresh them weekly, but missed or failed runs can extend staleness. Promotion to required needs an explicit policy decision and suitable trigger coverage."
+    },
+    {
+      "context": "CodeQL (java-kotlin)",
+      "reason": "Advisory Kotlin/Java CodeQL scan with manual traced Gradle compilation. Restored using CodeQL CLI 2.27.2; validated 23,331 extracted Kotlin LOC and SARIF upload on PR #403 at SHA d3becf6f96ab6484b843063449f2d86baa26bd87. Retain weekly and PR scanning pending separate pre-release CodeQL gate and cadence policy decision. Required Qodana remains independent."
     }
   ],
   "release_only": [
@@ -104,15 +108,7 @@
       "when": "after an unprivileged fork PR proves Hardening audit execution and a separate reviewed policy decision explicitly chooses whether to aggregate or require that control"
     }
   ],
-  "security_analysis_exceptions": [
-    {
-      "surface": "java-kotlin CodeQL",
-      "disposition": "temporarily unavailable",
-      "evidence": "CodeQL v4.38.1 / CLI 2.27.0 reports Kotlin version too new for the repository's maintained Kotlin 2.4 toolchain; autobuild also fails before extraction.",
-      "retained_authority": "Required Qodana Inspect code plus Build/Test/Plugin Verifier remain the Kotlin/JVM validation authority.",
-      "reassessment_trigger": "A CodeQL release explicitly supporting the maintained Kotlin toolchain."
-    }
-  ],
+  "security_analysis_exceptions": [],
   "security_settings": {
     "visibility": "public",
     "dependency_graph": "enabled",
@@ -128,7 +124,8 @@
       "workflow": ".github/workflows/codeql.yml",
       "languages": [
         "actions",
-        "javascript-typescript"
+        "javascript-typescript",
+        "java-kotlin"
       ],
       "default_setup_state": "not-configured"
     }
