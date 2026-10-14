@@ -11,8 +11,8 @@ import java.net.URI
 import java.net.URL
 import java.net.URLConnection
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarFile
 
@@ -302,17 +302,7 @@ internal object MarkFlowWebviewResourceManager {
             val root = Files.createTempDirectory("markflow-renderer-")
             tempRoot = root
             JarFile(pluginJarPath.toFile()).use { jar ->
-                val entries = jar.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
-
-                    val target = root.resolve(entry.name.removePrefix("webview/"))
-                    target.parent?.let(Files::createDirectories)
-                    jar.getInputStream(entry).use { input ->
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-                    }
-                }
+                extractWebviewJarEntries(jar, root)
             }
             extractedWebviewRoot = root
             extractedWebviewRootIsTemp = true
@@ -325,6 +315,53 @@ internal object MarkFlowWebviewResourceManager {
             }
             LOG.error("MARKFLOW_UI failed to extract renderer resources: ${ex.message}", ex)
             null
+        }
+    }
+
+    /**
+     * JAR entry names are untrusted paths even when the JAR is part of a plugin bundle.
+     * Validate containment before creating directories or copying any bytes. Failures
+     * propagate to the owning extraction transaction, which deletes its temp root.
+     */
+    internal fun extractWebviewJarEntries(jar: JarFile, root: Path) {
+        val extractionRoot = root.toRealPath()
+        val entries = jar.entries()
+        while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
+
+            val name = entry.name.removePrefix("webview/")
+            val relative = Path.of(name)
+            if (name.isEmpty() || relative.isAbsolute || relative.any { it.toString() == ".." }) {
+                throw IllegalArgumentException("Invalid renderer archive entry path")
+            }
+            val target = extractionRoot.resolve(relative).normalize()
+            // Explicit containment guard is recognized by CodeQL's Zip Slip model.
+            if (!target.startsWith(extractionRoot) || target == extractionRoot) {
+                throw IllegalArgumentException("Renderer archive entry escapes extraction root")
+            }
+            val parent = target.parent ?: throw IOException("Renderer archive entry has no parent")
+            // Validate each parent segment before creation: createDirectories on a
+            // symlinked parent could mutate outside files before any final check.
+            var directory = extractionRoot
+            for (segment in extractionRoot.relativize(parent)) {
+                directory = directory.resolve(segment)
+                if (Files.isSymbolicLink(directory)) {
+                    throw IllegalArgumentException("Renderer archive entry traverses a symbolic link")
+                }
+                if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+                    Files.createDirectory(directory)
+                }
+                if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+                    throw IOException("Renderer archive parent is not a directory")
+                }
+            }
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                throw IllegalArgumentException("Duplicate or pre-existing renderer archive entry")
+            }
+            jar.getInputStream(entry).use { input ->
+                Files.copy(input, target)
+            }
         }
     }
 
