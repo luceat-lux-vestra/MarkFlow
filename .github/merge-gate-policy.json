@@ -29,16 +29,14 @@
       "covers": "Fail-closed aggregation of Build, Test, Inspect code, Verify plugin, PR Metadata Safety, and Dependency Review. The job runs with always() and succeeds only when every authoritative component result is exactly success."
     }
   ],
-  "staged_required": [
+  "staged_required": [],
+  "advisory": [
     {
       "context": "Hardening audit",
       "workflow": ".github/workflows/hardening-audit.yml",
       "job": "audit",
-      "covers": "Policy/producer integrity, workflow security checks, static analysis, and fail-closed fixtures",
-      "promotion": "Same-repository PR and merged-main reliability are proven. Promote only after an unprivileged fork PR proves this exact context is emitted and passes without privileged state, then re-read live administration state and update this policy and the live main ruleset atomically."
-    }
-  ],
-  "advisory": [
+      "reason": "Credential-less repository hardening and workflow-policy audit. Pull-request execution is intentionally path-scoped to hardening-sensitive inputs; scheduled/manual runs retain full drift coverage. Because the context legitimately does not exist on ordinary product-only PRs, it is advisory and must not be promoted into the always-present main ruleset."
+    },
     {
       "context": "Qodana Community for JVM",
       "reason": "Posted by Qodana itself and not stable across linter editions; Inspect code is the authoritative required job."
@@ -69,7 +67,7 @@
       "gate checks are offline and run in the staged Hardening audit job on PR/push/schedule/manual events.",
       "report checks require authoritative live GitHub readback and are run only from an explicit admin-controlled audit path.",
       "The optional in-Actions live-readback job is disabled by default and requires an explicit repository-variable opt-in plus scoped credential.",
-      "The Hardening audit context itself remains staged_required until fork execution evidence and an atomic live promotion are both proven."
+      "The Hardening audit context is advisory and path-scoped on pull requests; scheduled/manual full audits retain repository drift coverage."
     ],
     "policy_shape": "gate",
     "policy_producers": "gate",
@@ -100,12 +98,6 @@
       "blocked_by": "Release-tag protection is verified by privileged live readback and is not a pull-request merge context.",
       "promote_to": "report",
       "when": "during explicit release-provenance or hardening exit audits"
-    },
-    {
-      "check": "required_context_promotion",
-      "blocked_by": "Hardening audit remains staged separately from the single Merge Gate until unprivileged fork execution is proven.",
-      "promote_to": "ruleset",
-      "when": "after an unprivileged fork PR proves Hardening audit execution and a separate reviewed policy decision explicitly chooses whether to aggregate or require that control"
     }
   ],
   "security_analysis_exceptions": [],
