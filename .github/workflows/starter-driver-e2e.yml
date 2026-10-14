@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       full_differential_acceptance:
-        description: 'Generate the complete 89-case #353 differential evidence set; stays fail-closed until reviewed acceptance is implemented'
+        description: 'Generate all 89 #353 evidence cases and require the source-bound reviewed acceptance ledger'
         required: false
         type: boolean
         default: false

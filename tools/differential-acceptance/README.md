@@ -4,7 +4,7 @@
 
 This file intentionally retains the chronological Stage A–E research/proof history below. Statements in older stages that describe #350 or #352 as unresolved are historical, not current blockers.
 
-Current protected-main baseline before PR #400 is `4c0e3b830dfcd3fcabf5d48a3dc61e4f4727d7d3`: #354 corpus classification, #350 Heading geometry/typography, #351 derived-inlay source entry, and #352 Mermaid layout/reachability are completed. #353 remains open because **full reviewed 89-expanded-case acceptance is not complete**. The normal bounded cohort must continue to report `full_differential_acceptance=false`; the opt-in acceptance run executes/classifies the complete corpus and remains fail-closed until its retained evidence is bound to an explicit reviewed acceptance ledger.
+Current protected-main baseline at the start of the reviewed-ledger slice is `fe5a39d16264e02c34221e9b22468213f1728ed5`: #354 corpus classification, #350 Heading geometry/typography, #351 derived-inlay source entry, #352 Mermaid layout/reachability, and the #400/#401 full-corpus execution harness are completed. #353 remains open because **full reviewed 89-expanded-case acceptance is not complete**. The normal bounded cohort must continue to report `full_differential_acceptance=false`; the opt-in acceptance run executes/classifies the complete corpus and remains fail-closed unless the repository-owned reviewed ledger covers every expanded identity and matches its exact source/manifest contract.
 
 IntelliJ Markdown Preview remains a diagnostic/reference surface only. Different fonts, global insets, source-Y coordinates, scroll offsets, or pixels are not failures by themselves; fail only on MarkFlow-owned semantic, structural, source, interaction, reachability, clipping/overlap, or approved visual-baseline contracts.
 
@@ -132,6 +132,27 @@ Two explicitly named test contracts are available:
 authorize enabling the opt-in experimental Native heading layout by default,
 release eligibility, or closing #353. The release and post-main checks
 continue to require the full independently reviewed acceptance contract.
+
+## Stage E20 — source-bound reviewed acceptance ledger
+
+`fixtures/differential-acceptance/acceptance-ledger.tsv` is the explicit review
+boundary for the complete acceptance contract. It is intentionally **header-only**
+until a complete 89-expanded-case artifact from one workflow run has been inspected.
+
+Each future review row must bind the expanded case ID to its manifest parent,
+exact fixture SHA-256, Mermaid block SHA-256 where applicable, classification,
+visual-reference contract, explicit `ACCEPT`/`REJECT` decision, and the exact
+evidence workflow run/source HEAD used for review. The parser rejects missing,
+duplicate, stale-source, stale-block, reclassified, malformed, mixed-run or
+mixed-evidence-HEAD ledgers.
+
+A complete real-IDE capture is therefore necessary but insufficient. Only after
+all 89 runtime cases capture without structural failures **and** the reviewed
+ledger covers those same exact source identities with no `REJECT` rows does
+the test emit `acceptance.json` with `full_differential_acceptance=true`.
+That verdict deliberately keeps `release_eligible=false`; #348 and #309 plus
+the remaining release chain are separate gates. Bounded PR capture does not
+consume or require this ledger.
 
 ### Stage D geometry instrumentation — bounded
 
