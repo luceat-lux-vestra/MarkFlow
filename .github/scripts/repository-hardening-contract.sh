@@ -758,6 +758,25 @@ grep -q 'check-squash-message-safety.py --self-test' "$hardening_workflow" || di
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$hardening_workflow" || die "hardening audit does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$hardening_workflow" "hardening audit"
 
+for hardening_path in \
+  ".github/**" \
+  "gradle/**" \
+  "gradle.properties" \
+  "build.gradle.kts" \
+  "settings.gradle.kts" \
+  ".nvmrc" \
+  "webview/package.json" \
+  "webview/package-lock.json" \
+  ".run/**" \
+  "GOVERNANCE.md" \
+  "docs/architecture/**" \
+  "docs/release/**"; do
+  grep -Fq -- "- '$hardening_path'" "$hardening_workflow" || die "hardening audit PR scope is missing $hardening_path"
+done
+if grep -Fq -- "- 'src/**'" "$hardening_workflow"; then
+  die "hardening audit must not return to every product-source PR"
+fi
+
 test_job="$(awk '
   /^  test:$/ { on=1 }
   on && /^  inspectCode:$/ { exit }
@@ -812,8 +831,8 @@ for level in minor patch; do
   grep -Fq -- "- \"$level\"" <<<"$actions_block" || die "GitHub Actions group is missing $level update type"
 done
 
-jq -e '.staged_required[] | select(.context == "Hardening audit") | .promotion | contains("fork PR")' \
-  .github/merge-gate-policy.json >/dev/null || die "Hardening audit staged rationale is missing fork-PR re-evaluation"
+jq -e '.advisory[] | select(.context == "Hardening audit") | (.workflow == ".github/workflows/hardening-audit.yml" and .job == "audit" and (.reason | contains("path-scoped")))' \
+  .github/merge-gate-policy.json >/dev/null || die "Hardening audit advisory path-scope rationale is missing"
 
 if grep -q 'MarkFlow-private' docs/release/recovery.md; then
   die "release recovery still references the retired private repository name"

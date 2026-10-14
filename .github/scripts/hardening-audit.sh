@@ -117,16 +117,22 @@ check_policy_shape() {
     [ "$jobname" = "$context" ] || { finding policy_shape "Merge Gate component '$context' does not match job '$job' name '$jobname'"; clean=0; }
   done < <(jq -r '.merge_gate_components[] | [.context, .workflow, .job] | @tsv' "$POLICY")
 
-  staged_count="$(jq '.staged_required | map(select(.context == "Hardening audit")) | length' "$POLICY")"
-  [ "$staged_count" -eq 1 ] || { finding policy_shape "Hardening audit must remain exactly one staged_required context"; clean=0; }
-  while IFS=$'\t' read -r context workflow job; do
-    [ -n "$context" ] || continue
-    wf="$ROOT/$workflow"
-    if [ ! -f "$wf" ]; then finding policy_shape "staged context '$context' names missing workflow '$workflow'"; clean=0; continue; fi
-    if ! job_exists "$wf" "$job"; then finding policy_shape "staged context '$context' names missing job '$job'"; clean=0; continue; fi
-    jobname="$(unquote "$(job_field "$wf" "$job" name)")"
-    [ "$jobname" = "$context" ] || { finding policy_shape "staged context '$context' does not match job name '$jobname'"; clean=0; }
-  done < <(jq -r '.staged_required[] | [.context, .workflow, .job] | @tsv' "$POLICY")
+  hardening_advisory_count="$(jq '.advisory | map(select(.context == "Hardening audit" and .workflow == ".github/workflows/hardening-audit.yml" and .job == "audit")) | length' "$POLICY")"
+  [ "$hardening_advisory_count" -eq 1 ] || { finding policy_shape "Hardening audit must remain exactly one advisory producer"; clean=0; }
+  if jq -e '.staged_required[]? | select(.context == "Hardening audit")' "$POLICY" >/dev/null; then
+    finding policy_shape "path-scoped Hardening audit must not remain staged_required"; clean=0
+  fi
+  hardening_workflow="$(jq -r '.advisory[] | select(.context == "Hardening audit") | .workflow' "$POLICY")"
+  hardening_job="$(jq -r '.advisory[] | select(.context == "Hardening audit") | .job' "$POLICY")"
+  wf="$ROOT/$hardening_workflow"
+  if [ ! -f "$wf" ]; then
+    finding policy_shape "Hardening audit advisory producer names missing workflow '$hardening_workflow'"; clean=0
+  elif ! job_exists "$wf" "$hardening_job"; then
+    finding policy_shape "Hardening audit advisory producer names missing job '$hardening_job'"; clean=0
+  else
+    jobname="$(unquote "$(job_field "$wf" "$hardening_job" name)")"
+    [ "$jobname" = "Hardening audit" ] || { finding policy_shape "Hardening audit advisory producer does not emit the canonical context"; clean=0; }
+  fi
 
   if ! jq -e '
     .security_settings

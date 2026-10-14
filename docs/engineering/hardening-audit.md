@@ -2,9 +2,9 @@
 
 The `Hardening audit` workflow has two trust modes. The `audit` job performs
 static, producer, workflow-security, and fixture checks without an
-administration credential on pull requests, pushes, schedules, and manual
-runs. Its `Hardening audit` context is staged and is not a required `main`
-context.
+administration credential on hardening-sensitive pull requests, schedules, and
+manual runs. Its `Hardening audit` context is advisory and is not a required
+`main` context. Product-only pull requests intentionally do not emit it.
 
 That credential-less job is the default scheduled drift detector. A successful
 run proves only repository-owned policy/workflow invariants that the job can
@@ -23,8 +23,8 @@ repository prerequisite. It is disabled by default. It runs only when the
 repository variable `HARDENING_LIVE_READBACK_ENABLED` is explicitly set to
 `true`, the event is a schedule or default-branch `workflow_dispatch`, and the
 scoped `HARDENING_AUDIT_TOKEN` secret is separately provisioned. MarkFlow does
-not require either the variable or the secret for normal PR, push, scheduled,
-or manual hardening audits.
+not require either the variable or the secret for scoped PR, scheduled, or
+manual hardening audits.
 
 When authoritative live readback is performed, it checks the live
 `main protection` ruleset, the `publication tags` ruleset, repository Actions
@@ -58,6 +58,18 @@ components—`Build`, `Test`, `Inspect code`, `Verify plugin`,
 workflow dependency graph. The aggregate job uses `always()` and fails unless
 every component result is exactly `success`; a failed, cancelled, skipped, or
 missing component is therefore not treated as PASS.
+
+
+## Pull-request scope
+
+The full audit is intentionally triggered only by repository-hardening inputs:
+GitHub workflows/scripts/policy, Gradle and Node toolchain/dependency inputs,
+shared run configurations, governance, and maintained architecture/release
+contracts. Ordinary Kotlin/editor/product-source changes do not launch this
+separate audit; their authoritative merge protection remains the required
+`Merge Gate` graph.
+
+The weekly schedule and `workflow_dispatch` remain unfiltered full audits.
 
 ## Staged-context re-evaluation — 2026-09-07
 
@@ -150,8 +162,8 @@ New controls are deliberately classified before promotion:
   exception, not a false green. Required Qodana `Inspect code`, Build/Test and
   Plugin Verifier remain the Kotlin/JVM authority. Revisit when CodeQL explicitly
   supports the maintained Kotlin version.
-- the existing `Hardening audit` remains staged for its already documented
-  reason: unprivileged fork-PR execution evidence is still missing. This
+- the existing `Hardening audit` is advisory and path-scoped on pull requests;
+  schedule/manual execution retains complete repository drift coverage. This
   reassessment does not weaken or bypass that proof obligation.
 
 Live repository/security-feature state remains an authoritative exit-audit
@@ -194,7 +206,7 @@ or live rulesets.
 An authoritative live pass means that a designated admin-capable readback
 successfully read the live state and every expected comparison passed. Static
 workflow analysis and fixture validation are supporting evidence; they are not
-substitutes for live GitHub administration evidence. Promotion of `Hardening audit` remains a separate reviewed
-policy-and-ruleset decision; any future promotion must explicitly decide
-whether that control becomes another live requirement or is incorporated into
+substitutes for live GitHub administration evidence. `Hardening audit` is not a ruleset-promotion candidate while
+its pull-request trigger is intentionally path-scoped. Any future architecture
+change that makes it always-present would require a new reviewed decision before it could be incorporated into
 the single `Merge Gate` graph.

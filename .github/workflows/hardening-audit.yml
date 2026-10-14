@@ -1,7 +1,6 @@
-# Repository hardening checks. Same-repository PR/main reliability is proven; the
-# required-context candidate stays staged until an unprivileged fork PR proves this
-# exact context cannot wedge external contribution. Scheduled/manual audit is
-# credential-less by default. Privileged live GitHub administration readback remains
+# Repository hardening checks. Pull-request execution is deliberately scoped to
+# hardening-sensitive repository inputs; scheduled/manual runs remain the complete
+# credential-less drift audit. Privileged live GitHub administration readback remains
 # an explicit opt-in boundary and is never inferred from a successful offline audit.
 
 name: Hardening audit
@@ -9,6 +8,21 @@ name: Hardening audit
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/**'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.nvmrc'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
+      - '.run/**'
+      - 'GOVERNANCE.md'
+      - 'docs/architecture/**'
+      - 'docs/release/**'
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
