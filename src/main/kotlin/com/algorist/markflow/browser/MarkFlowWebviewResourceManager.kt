@@ -11,8 +11,8 @@ import java.net.URI
 import java.net.URL
 import java.net.URLConnection
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarFile
 
@@ -332,23 +332,35 @@ internal object MarkFlowWebviewResourceManager {
 
             val name = entry.name.removePrefix("webview/")
             val relative = Path.of(name)
-            require(name.isNotEmpty() && !relative.isAbsolute) {
-                "Invalid renderer archive entry path"
+            if (name.isEmpty() || relative.isAbsolute || relative.any { it.toString() == ".." }) {
+                throw IllegalArgumentException("Invalid renderer archive entry path")
             }
             val target = extractionRoot.resolve(relative).normalize()
-            require(target != extractionRoot && target.startsWith(extractionRoot)) {
-                "Renderer archive entry escapes extraction root"
+            // Explicit containment guard is recognized by CodeQL's Zip Slip model.
+            if (!target.startsWith(extractionRoot) || target == extractionRoot) {
+                throw IllegalArgumentException("Renderer archive entry escapes extraction root")
             }
             val parent = target.parent ?: throw IOException("Renderer archive entry has no parent")
-            Files.createDirectories(parent)
-            require(parent.toRealPath().startsWith(extractionRoot)) {
-                "Renderer archive entry traverses a symbolic link outside extraction root"
+            // Validate each parent segment before creation: createDirectories on a
+            // symlinked parent could mutate outside files before any final check.
+            var directory = extractionRoot
+            for (segment in extractionRoot.relativize(parent)) {
+                directory = directory.resolve(segment)
+                if (Files.isSymbolicLink(directory)) {
+                    throw IllegalArgumentException("Renderer archive entry traverses a symbolic link")
+                }
+                if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+                    Files.createDirectory(directory)
+                }
+                if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+                    throw IOException("Renderer archive parent is not a directory")
+                }
             }
-            require(!Files.isSymbolicLink(target)) {
-                "Renderer archive entry targets a symbolic link"
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                throw IllegalArgumentException("Duplicate or pre-existing renderer archive entry")
             }
             jar.getInputStream(entry).use { input ->
-                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+                Files.copy(input, target)
             }
         }
     }
