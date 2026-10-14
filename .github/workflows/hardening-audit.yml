@@ -137,6 +137,9 @@ jobs:
       - name: Verify protected-main Gradle cache seed guards
         run: bash .github/scripts/check-gradle-cache-seed.sh
 
+      - name: Verify dependency submission cutover guards
+        run: bash .github/scripts/check-dependency-submission.sh
+
       - name: Run release preflight fixtures
         run: bash .github/scripts/release-preflight-test.sh
 
