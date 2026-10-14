@@ -3,6 +3,7 @@ package com.algorist.markflow.e2e
 import com.intellij.driver.client.Remote
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
+import com.intellij.driver.sdk.WaitForException
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
 import com.intellij.driver.sdk.ui.ui
@@ -235,7 +236,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 // for the bounded PR capture, but the complete 89-case acceptance corpus cannot
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
                 // leaving cleanup headroom under the workflow's 85-minute outer timeout.
-                runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes,
+                runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes,
             ).useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 heartbeat("ide-ready")
@@ -513,19 +514,123 @@ class MarkFlowStarterDifferentialManifestTest {
                                     ) + "\n"
                                 )
                             }
-                            waitFor(
-                                message = "Bundled JCEF paints nonblank source: " + entry.id,
-                                timeout = 60.seconds,
-                                getter = {
-                                    robot.waitForIdle()
-                                    val image = robot.createScreenCapture(requireNotNull(reference))
-                                    check(ImageIO.write(
-                                        image, "png", dest.resolve("intellij-preview.png").toFile()
-                                    ))
-                                    diagnostics.referenceHasVisibleContent(image)
-                                },
-                                checker = { it }
-                            )
+                            fun captureReferencePaint(): Boolean {
+                                robot.waitForIdle()
+                                val image = robot.createScreenCapture(requireNotNull(reference))
+                                check(ImageIO.write(
+                                    image, "png", dest.resolve("intellij-preview.png").toFile()
+                                ))
+                                return diagnostics.referenceHasVisibleContent(image)
+                            }
+                            if (contract == "acceptance") {
+                                // FULL_CORPUS_REFERENCE_BLANK_RECOVERY_ONCE:
+                                // after many sequential document switches the bundled JCEF
+                                // Preview can remain visibly blank while its Swing surface is
+                                // still showing. One source-preserving native->preview cycle is
+                                // allowed before failing closed. This is reference-side recovery,
+                                // never acceptance relaxation or a MarkFlow renderer retry.
+                                when (val firstPaintFailure = runCatching {
+                                    waitFor(
+                                        message = "Bundled JCEF first paint: " + entry.id,
+                                        timeout = 20.seconds,
+                                        getter = ::captureReferencePaint,
+                                        checker = { it }
+                                    )
+                                }.exceptionOrNull()) {
+                                    null -> Unit
+                                    is WaitForException -> {
+                                        val beforeRecoveryCaret = driver.withContext(OnDispatcher.EDT) {
+                                            preview.primaryCaretOffset(remoteEditor)
+                                        }
+                                        val firstCapture = dest.resolve("intellij-preview.png")
+                                        if (Files.exists(firstCapture)) {
+                                            Files.write(
+                                                dest.resolve("intellij-preview-before-recovery.png"),
+                                                Files.readAllBytes(firstCapture)
+                                            )
+                                        }
+                                        Files.writeString(
+                                            dest.resolve("reference-recovery.txt"),
+                                            "schema=markflow-reference-blank-recovery/v1\n" +
+                                                "case_id=" + entry.id + "\n" +
+                                                "initial_result=BLANK_AFTER_20S\n" +
+                                                "recovery_attempts=1\n",
+                                            StandardCharsets.UTF_8
+                                        )
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.restoreNative(remoteEditor)
+                                        }
+                                        waitFor(
+                                            message = "Native restored for Preview recovery: " +
+                                                entry.id,
+                                            timeout = 20.seconds,
+                                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                                preview.nativeShowing(remoteEditor)
+                                            } },
+                                            checker = { it }
+                                        )
+                                        check(driver.withContext(OnDispatcher.EDT) {
+                                            preview.sourceText(remoteEditor) == source &&
+                                                preview.sourceStamp(remoteEditor) == stamp &&
+                                                preview.primaryCaretOffset(remoteEditor) ==
+                                                    beforeRecoveryCaret &&
+                                                !preview.sourceUnsaved(remoteEditor)
+                                        }) {
+                                            "Bundled Preview recovery altered authoritative source state: " +
+                                                entry.id
+                                        }
+                                        refIdentity = driver.withContext(OnDispatcher.EDT) {
+                                            preview.showReferenceAtSourceLine(remoteEditor, entry.line)
+                                        }
+                                        waitFor(
+                                            message = "Bundled preview visible after recovery: " +
+                                                entry.id,
+                                            timeout = 30.seconds,
+                                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                                preview.referenceShowing(remoteEditor)
+                                            } },
+                                            checker = { it }
+                                        )
+                                        reference = driver.withContext(OnDispatcher.EDT) {
+                                            val xywh = preview.referenceBounds(remoteEditor)
+                                                .split(',').map(String::toInt)
+                                            check(xywh.size == 4)
+                                            Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
+                                        }
+                                        waitFor(
+                                            message = "Bundled JCEF paints after single recovery: " +
+                                                entry.id,
+                                            timeout = 60.seconds,
+                                            getter = ::captureReferencePaint,
+                                            checker = { it }
+                                        )
+                                        check(driver.withContext(OnDispatcher.EDT) {
+                                            preview.sourceText(remoteEditor) == source &&
+                                                preview.sourceStamp(remoteEditor) == stamp &&
+                                                preview.primaryCaretOffset(remoteEditor) ==
+                                                    beforeRecoveryCaret &&
+                                                !preview.sourceUnsaved(remoteEditor)
+                                        }) {
+                                            "Bundled Preview recovery changed authoritative source state: " +
+                                                entry.id
+                                        }
+                                        Files.writeString(
+                                            dest.resolve("reference-recovery.txt"),
+                                            "recovery_result=PAINTED\n",
+                                            StandardCharsets.UTF_8,
+                                            java.nio.file.StandardOpenOption.APPEND
+                                        )
+                                    }
+                                    else -> throw firstPaintFailure
+                                }
+                            } else {
+                                waitFor(
+                                    message = "Bundled JCEF paints nonblank source: " + entry.id,
+                                    timeout = 60.seconds,
+                                    getter = ::captureReferencePaint,
+                                    checker = { it }
+                                )
+                            }
                         } else {
                             check(entry.classification == "degraded" &&
                                 entry.visualExpectation == "diagnostic-only") {

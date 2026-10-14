@@ -166,6 +166,36 @@ The 75-minute Starter lifetime and 85-minute outer deadline are absolute upper b
 
 On a stall the watchdog records the last heartbeat plus a process snapshot, sends TERM to the entire process group, escalates to KILL after ten seconds, and exits 124 so artifact upload can still retain the partial corpus, progress.tsv and watchdog.txt. The GTK/AT-SPI accessibility-bus warning seen under Xvfb is not itself a failure criterion; the watchdog targets the actual defect class observed in full-corpus runs, where a Driver/IDE operation can be cancelled while Gradle/Java remain alive.
 
+## Stage E23 — bounded bundled-Preview blank recovery
+
+Exact post-main run `38601944208` on `61ddb21253551a2c6ca29b5259bbe17a0165833c`
+proved the liveness watchdog/cleanup path but stopped at expanded case 25,
+`md-combined-emphasis`. Cases 1–24 captured successfully with zero candidate
+structural failures; the failing case retained a completely blank bundled
+IntelliJ Markdown Preview screenshot while MarkFlow native evidence existed.
+The failure was `WaitForException: Bundled JCEF paints nonblank source`, not
+an AT-SPI failure and not a reviewed MarkFlow visual rejection.
+
+For the full `acceptance` contract only, a blank bundled Preview now gets one
+bounded recovery attempt: retain the initial blank screenshot, restore the
+authoritative native editor, assert source bytes/modification stamp/caret and
+unsaved state are unchanged, reopen the bundled Preview at the same source
+line, recompute its real bounds, and require a genuine nonblank paint. The
+first wait is 20 seconds and the single recovery wait is 60 seconds. A second
+blank result remains a hard failure. Ordinary bounded PR capture keeps its
+existing single 60-second wait and is unchanged.
+
+## Stage E24 — bounded cohort Starter lifetime margin
+
+PR #428's first exact candidate run reached the existing bounded manifest
+cohort but hit Starter's 10-minute IDE process lifetime during
+`mermaid-state`: ten selected/review cases had already captured, candidate
+structural failures remained zero, and the failure was
+`ExecTimeoutException`, not a visual rejection. The bounded process lifetime
+is therefore raised to 12 minutes while the cohort, per-operation waits and
+the shard's 24-minute outer timeout remain unchanged. This is cleanup margin,
+not broader acceptance or a reason to add more PR cases.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each

@@ -271,6 +271,18 @@ grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
   die "#353 full differential test no longer marks case progress before blocking Driver calls"
 grep -Fq 'heartbeat("case-complete", entry.id)' "$manifest_test" ||
   die "#353 full differential test no longer marks successful case completion"
+grep -Fq 'FULL_CORPUS_REFERENCE_BLANK_RECOVERY_ONCE' "$manifest_test" ||
+  die "#353 full differential lost bounded blank Preview recovery"
+grep -Fq 'initial_result=BLANK_AFTER_20S' "$manifest_test" ||
+  die "#353 Preview recovery no longer retains the first blank observation"
+grep -Fq 'recovery_attempts=1' "$manifest_test" ||
+  die "#353 Preview recovery must remain single-attempt and fail closed"
+grep -Fq 'preview.restoreNative(remoteEditor)' "$manifest_test" ||
+  die "#353 Preview recovery no longer cycles through the authoritative native editor"
+grep -Fq 'Bundled Preview recovery altered authoritative source state' "$manifest_test" ||
+  die "#353 Preview recovery lost source/stamp/caret/unsaved invariants"
+grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
+  die "#353 Preview recovery no longer requires a genuine nonblank second paint"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"
@@ -474,8 +486,8 @@ grep -Fq 'output.resolve("acceptance.json")' "$manifest_test" ||
   die "Full #353 acceptance no longer emits a distinct final reviewed verdict"
 grep -Fq '\"full_differential_acceptance\":true' "$manifest_test" ||
   die "Full #353 final verdict cannot signal reviewed full-corpus acceptance"
-grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes' "$manifest_test" ||
-  die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 10-minute limit"
+grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes' "$manifest_test" ||
+  die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
   die "Full #353 Starter launch lost its distinct diagnostic identity"
 grep -Fq 'timeout --signal=TERM --kill-after=30s 85m' "$starter_workflow" ||
