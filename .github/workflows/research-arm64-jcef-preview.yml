@@ -1,0 +1,139 @@
+name: Research ARM64 JCEF Preview
+
+on:
+  push:
+    branches:
+      - research/353-arm64-jcef-preview-probe
+
+permissions:
+  contents: read
+
+env:
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_SOURCE_SHA: ${{ github.sha }}
+
+jobs:
+  arm64-jcef-preview:
+    name: ARM64 genuine Markdown Preview probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Fetch exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source and ARM64 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(uname -m)" = "aarch64" ]
+          [ "$RUNNER_ARCH" = "ARM64" ]
+          mkdir -p build/arm64-jcef-probe
+          {
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "uname=$(uname -m)"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+          } | tee build/arm64-jcef-probe/environment.txt
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 EGL and record font provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1 | tee -a build/arm64-jcef-probe/environment.txt
+          for family in Inter Arial sans-serif serif monospace; do
+            printf 'fontconfig[%s]=' "$family" | tee -a build/arm64-jcef-probe/environment.txt
+            fc-match -f '%{family};%{style};%{file}\n' "$family" | tee -a build/arm64-jcef-probe/environment.txt
+          done
+
+      - name: Build exact packaged plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          [ "${#archives[@]}" -eq 1 ] || {
+            echo "::error::Expected one packaged plugin, found ${#archives[@]}"
+            printf '%s\n' "${archives[@]}"
+            exit 1
+          }
+          artifact="${archives[0]}"
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          echo "E2E_PLUGIN_PATH=$artifact" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$digest" >> "$GITHUB_ENV"
+          printf 'plugin_sha256=%s\n' "$digest" | tee -a build/arm64-jcef-probe/environment.txt
+
+      - name: Install scoped sandboxed JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: derived-content
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+          sudo -n cat /sys/kernel/security/apparmor/profiles |
+            grep -F '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea' |
+            tee build/arm64-jcef-probe/apparmor-profile.txt
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-arm64-jcef-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run bounded real Preview pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/test-results/integrationTest build/reports/tests/integrationTest             build/e2e-evidence/derived-content/differential-manifest
+
+          set +e
+          timeout --signal=TERM --kill-after=30s 20m             ./gradlew integrationTest -x buildPlugin               -PplatformVersion="$STARTER_PLATFORM_VERSION"               -PstarterPackagedPlugin=true               --stacktrace               --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest               --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ]
+
+          if grep -RFiq 'Embedded Browser is suspended' out/ide-tests build/idea-sandbox .intellijPlatform/sandbox 2>/dev/null; then
+            echo "::error::ARM64 still fell back to the suspended-browser stub"
+            grep -RFi 'Embedded Browser is suspended' out/ide-tests build/idea-sandbox .intellijPlatform/sandbox 2>/dev/null || true
+            exit 86
+          fi
+
+          [ "$status" -eq 0 ] || exit "$status"
+
+      - name: Upload ARM64 JCEF evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: research-arm64-jcef-preview-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/arm64-jcef-probe/**
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
+            out/ide-tests/**/screenshots/**
+            build/idea-sandbox/**/log/**
+            .intellijPlatform/sandbox/**/log/**
+            ${{ runner.temp }}/markflow-arm64-jcef-xvfb.log

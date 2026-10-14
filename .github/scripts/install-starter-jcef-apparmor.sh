@@ -34,7 +34,11 @@ case "${STARTER_SHARD:-}" in
   derived-content|full-differential-acceptance) ;;
   *) exit 1 ;;
 esac
-[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] || exit 1
+[[ "${RUNNER_OS:-}" == Linux ]] || exit 1
+case "${RUNNER_ARCH:-}" in
+  X64|ARM64) ;;
+  *) exit 1 ;;
+esac
 [[ "${STARTER_PLATFORM_VERSION:-}" == 2026.2.3 ]] || exit 1
 [[ -f /sys/module/apparmor/parameters/enabled ]] &&
   [[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] || {
@@ -60,4 +64,4 @@ sudo -n cat "$profiles" |
   grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea' || {
     echo 'Pinned JBR AppArmor profile not confirmed in kernel inventory' >&2; exit 1
   }
-echo 'Confirmed IDEA executable-only userns AppArmor profile is loaded (JCEF sandbox still enabled)'
+echo "Confirmed IDEA executable-only userns AppArmor profile is loaded for ${RUNNER_ARCH} (JCEF sandbox still enabled)"
