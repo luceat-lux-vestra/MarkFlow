@@ -35,7 +35,7 @@ def metadata_ok(run, workflow, jobs, artifacts, repo, sha, now):
     identity = (
         run.get("workflow_id") == workflow["id"]
         and run.get("path") == ".github/workflows/codeql.yml"
-        and run.get("event") == "workflow_dispatch"
+        and run.get("event") in ("workflow_dispatch", "schedule")
         and run.get("head_repository", {}).get("full_name") == repo
         and run.get("head_branch") == "main"
         and run.get("head_sha") == sha
@@ -106,12 +106,18 @@ def verify_live(repo, sha, script):
         reject("missing GitHub API credential")
     check_repo_sha(repo, sha)
     workflow = api(repo, "actions/workflows/codeql.yml")
-    found = api(repo, f"actions/workflows/codeql.yml/runs?event=workflow_dispatch&head_sha={sha}&per_page=100")
-    if not isinstance(found.get("workflow_runs"), list):
-        reject("CodeQL scan discovery returned no runs array")
+    # Scheduled and manual runs share exact-SHA evidence semantics. PR results
+    # are deliberately ineligible even if their GitHub check concludes success.
+    candidates = []
+    for event in ("workflow_dispatch", "schedule"):
+        found = api(repo, f"actions/workflows/codeql.yml/runs?event={event}&head_sha={sha}&per_page=100")
+        if not isinstance(found.get("workflow_runs"), list):
+            reject(f"CodeQL {event} discovery returned no runs array")
+        candidates.extend(found["workflow_runs"])
+    candidates.sort(key=lambda r: r.get("created_at", "") if isinstance(r, dict) else "", reverse=True)
     now = dt.datetime.now(dt.timezone.utc)
     reasons = []
-    for candidate in found["workflow_runs"]:
+    for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
         run_id = candidate.get("id")
@@ -135,7 +141,7 @@ def verify_live(repo, sha, script):
             # Catch a moved main after the scan, download and verdict readback.
             check_repo_sha(repo, sha)
             print(f"Exact-SHA Marketplace security gate passed: {repo}@{sha}, "
-                  f"trusted CodeQL run {run_id}, all three SARIF verdicts accepted")
+                  f"trusted {run['event']} CodeQL run {run_id}, all three SARIF verdicts accepted")
             return
         except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError) as exc:
             reasons.append(f"{run_id}: {exc}")
@@ -173,8 +179,11 @@ def self_test():
                 raise AssertionError(f"fail-open condition: {expected_error}")
             assert accepted == 5
     probe()
-    probe("mismatched", lambda r, w, j, a: r.update(head_sha="b" * 40))
+    probe(None, lambda r, w, j, a: r.update(event="schedule"))
+    probe("mismatched", lambda r, w, j, a: r.update(event="push"))
     probe("mismatched", lambda r, w, j, a: r.update(event="pull_request"))
+    probe("mismatched", lambda r, w, j, a: r.update(head_branch="feature"))
+    probe("mismatched", lambda r, w, j, a: r.update(head_sha="b" * 40))
     probe("mismatched", lambda r, w, j, a: r.update(conclusion="cancelled"))
     probe("mismatched", lambda r, w, j, a: r.update(path=".github/workflows/unsafe.yml"))
     probe("mismatched", lambda r, w, j, a: r.update(workflow_id=4))
