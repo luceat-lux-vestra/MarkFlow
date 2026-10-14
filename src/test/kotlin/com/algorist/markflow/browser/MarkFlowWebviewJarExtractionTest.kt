@@ -68,7 +68,7 @@ class MarkFlowWebviewJarExtractionTest : BasePlatformTestCase() {
             } catch (_: java.nio.file.FileSystemException) {
                 return // Current runner does not permit symbolic links.
             }
-            val jar = createJar(sandbox.resolve("bundle.jar"), listOf("webview/assets/escape.txt" to "pwned"))
+            val jar = createJar(sandbox.resolve("bundle.jar"), listOf("webview/assets/newdir/escape.txt" to "pwned"))
             JarFile(jar.toFile()).use {
                 try {
                     MarkFlowWebviewResourceManager.extractWebviewJarEntries(it, root)
@@ -77,7 +77,30 @@ class MarkFlowWebviewJarExtractionTest : BasePlatformTestCase() {
                     // Directory symlink resolved outside the owned temp root.
                 }
             }
+            assertFalse(Files.exists(outside.resolve("newdir")))
             assertFalse(Files.exists(outside.resolve("escape.txt")))
+        } finally {
+            sandbox.toFile().deleteRecursively()
+        }
+    }
+
+    fun testRejectsNormalizedDuplicateWithoutOverwritingFirstAsset() {
+        val sandbox = Files.createTempDirectory("markflow-jar-duplicate-test-")
+        try {
+            val root = Files.createDirectory(sandbox.resolve("renderer"))
+            val jar = createJar(sandbox.resolve("bundle.jar"), listOf(
+                "webview/derived-renderer.html" to "first",
+                "webview/./derived-renderer.html" to "second",
+            ))
+            JarFile(jar.toFile()).use {
+                try {
+                    MarkFlowWebviewResourceManager.extractWebviewJarEntries(it, root)
+                    fail("Normalized duplicate entry was accepted")
+                } catch (_: IllegalArgumentException) {
+                    // An existing target must never be overwritten.
+                }
+            }
+            assertEquals("first", Files.readString(root.resolve("derived-renderer.html")))
         } finally {
             sandbox.toFile().deleteRecursively()
         }
