@@ -171,6 +171,8 @@ grep -Eq '^  push:([[:space:]]|$)' "$post_main_full_differential" || die "#353 p
 grep -Fq 'branches: [main]' "$post_main_full_differential" || die "#353 post-main proof must be scoped to protected main"
 grep -Fq ".github/workflows/full-differential-acceptance-post-main.yml" "$post_main_full_differential" || die "#353 post-main proof must self-trigger when its contract changes"
 grep -Fq "fixtures/differential-acceptance/acceptance-ledger.tsv" "$post_main_full_differential" || die "#353 post-main proof must run when the reviewed ledger changes"
+grep -Fq ".github/scripts/run-full-differential-with-watchdog.sh" "$post_main_full_differential" || die "#353 post-main proof must run when the watchdog contract changes"
+grep -Fq "MarkFlowStarterDifferentialManifestTest.kt" "$post_main_full_differential" || die "#353 post-main proof must run when the heartbeat producer changes"
 if grep -Eq '^  (pull_request|pull_request_target|workflow_dispatch):([[:space:]]|$)' "$post_main_full_differential"; then
   die "#353 post-main proof must stay a narrow push-only exact-SHA control"
 fi
@@ -178,7 +180,16 @@ grep -Fq 'STARTER_SOURCE_SHA: ${{ github.sha }}' "$post_main_full_differential" 
 [ "$(grep -Fc 'ref: ${{ env.STARTER_SOURCE_SHA }}' "$post_main_full_differential" || true)" = "2" ] || die "#353 post-main package and acceptance jobs must both checkout the exact push SHA"
 grep -Fq 'cache-read-only: true' "$post_main_full_differential" || die "#353 post-main proof must not write Gradle cache state"
 grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$post_main_full_differential" || die "#353 post-main proof lost the bounded JCEF AppArmor identity"
-grep -Fq 'timeout --signal=TERM --kill-after=30s 85m' "$post_main_full_differential" || die "#353 post-main proof lost cleanup headroom beyond the 75-minute Starter lifetime"
+full_differential_watchdog=".github/scripts/run-full-differential-with-watchdog.sh"
+[ -x "$full_differential_watchdog" ] || die "#353 full differential watchdog is missing or not executable"
+bash "$full_differential_watchdog" --self-test >/dev/null || die "#353 full differential watchdog self-test failed"
+grep -Fq 'MARKFLOW_WATCHDOG_IDLE_SECONDS:-360' "$full_differential_watchdog" || die "#353 watchdog lost the six-minute inactivity bound"
+grep -Fq 'MARKFLOW_WATCHDOG_STARTUP_SECONDS:-900' "$full_differential_watchdog" || die "#353 watchdog lost the fifteen-minute startup bound"
+grep -Fq 'MARKFLOW_WATCHDOG_TOTAL_SECONDS:-5100' "$full_differential_watchdog" || die "#353 watchdog lost the 85-minute absolute bound"
+grep -Fq 'kill -TERM -- "-$child_pid"' "$full_differential_watchdog" || die "#353 watchdog no longer terminates the whole Gradle/IDE process group"
+grep -Fq 'kill -KILL -- "-$child_pid"' "$full_differential_watchdog" || die "#353 watchdog no longer escalates stuck process cleanup"
+grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"' "$post_main_full_differential" || die "#353 post-main proof no longer exports heartbeat location"
+grep -Fq 'run-full-differential-with-watchdog.sh' "$post_main_full_differential" || die "#353 post-main proof bypasses the fail-fast watchdog"
 grep -Fq -- '-PdifferentialContract=acceptance' "$post_main_full_differential" || die "#353 post-main proof no longer executes the full acceptance contract"
 if grep -Fq -- '-PdifferentialCaseIds=' "$post_main_full_differential"; then
   die "#353 post-main proof must never reduce the 89-case inventory"
@@ -254,6 +265,12 @@ grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE' "$manifest_test" ||
+  die "#353 full differential test lost workflow-visible heartbeat output"
+grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
+  die "#353 full differential test no longer marks case progress before blocking Driver calls"
+grep -Fq 'heartbeat("case-complete", entry.id)' "$manifest_test" ||
+  die "#353 full differential test no longer marks successful case completion"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"

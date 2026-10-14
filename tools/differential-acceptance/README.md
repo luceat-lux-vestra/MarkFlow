@@ -160,6 +160,12 @@ consume or require this ledger.
 
 The workflow packages the plugin once from the exact push SHA, runs the full 89-expanded-case acceptance contract in one IDEA 2026.2.3 Starter session, retains evidence even when review is intentionally fail-closed, and verifies that any successful acceptance.json is bound to the same push SHA. The first post-main run with the header-only ledger is expected to remain red after complete evidence generation; its artifact is the input for independent case review. Filling the ledger later triggers a second exact-SHA post-main run. Only that second run may turn green after all runtime and review contracts pass.
 
+## Stage E22 — fail-fast full-corpus liveness watchdog
+
+The 75-minute Starter lifetime and 85-minute outer deadline are absolute upper bounds, not failure-detection timers. The full-corpus test now writes a workflow-visible heartbeat before Starter launch, after IDE readiness, and at every case start/completion/failure. The post-main runner wraps the complete Gradle/IDE process tree in a separate process group and fails after six minutes without heartbeat progress, with a fifteen-minute startup allowance.
+
+On a stall the watchdog records the last heartbeat plus a process snapshot, sends TERM to the entire process group, escalates to KILL after ten seconds, and exits 124 so artifact upload can still retain the partial corpus, progress.tsv and watchdog.txt. The GTK/AT-SPI accessibility-bus warning seen under Xvfb is not itself a failure criterion; the watchdog targets the actual defect class observed in full-corpus runs, where a Driver/IDE operation can be cancelled while Gradle/Java remain alive.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each
