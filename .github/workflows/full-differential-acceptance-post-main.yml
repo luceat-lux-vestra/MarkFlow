@@ -5,7 +5,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/full-differential-acceptance-post-main.yml'
+      - '.github/scripts/run-full-differential-with-watchdog.sh'
       - 'fixtures/differential-acceptance/acceptance-ledger.tsv'
+      - 'src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt'
 
 permissions:
   contents: read
@@ -170,15 +172,20 @@ jobs:
         run: |
           set -euo pipefail
           pass_dir="build/e2e-evidence/derived-content/differential-manifest"
+          progress_file="$pass_dir/progress.tsv"
+          watchdog_file="$pass_dir/watchdog.txt"
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
 
           test_status=0
           set +e
-          timeout --signal=TERM --kill-after=30s 85m \
-            ./gradlew integrationTest -x buildPlugin \
-              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
-              -PdifferentialContract=acceptance --stacktrace \
-              --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
+            bash .github/scripts/run-full-differential-with-watchdog.sh \
+              "$progress_file" "$watchdog_file" -- \
+              ./gradlew integrationTest -x buildPlugin \
+                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                -PdifferentialContract=acceptance --stacktrace \
+                --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
           test_status=$?
           set -e
 

@@ -148,6 +148,22 @@ class MarkFlowStarterDifferentialManifestTest {
         check(version == "2026.2.3")
         val output = root.resolve("build/e2e-evidence/derived-content/differential-manifest")
         Files.createDirectories(output)
+        val progressFile = System.getenv("MARKFLOW_DIFFERENTIAL_PROGRESS_FILE")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { raw ->
+                val candidate = Path.of(raw)
+                if (candidate.isAbsolute) candidate.normalize() else root.resolve(candidate).normalize()
+            }
+        fun heartbeat(phase: String, caseId: String = "-") {
+            val target = progressFile ?: return
+            target.parent?.let { parent -> Files.createDirectories(parent) }
+            Files.writeString(
+                target,
+                System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId + "\n",
+                StandardCharsets.UTF_8,
+            )
+        }
+        heartbeat("test-start")
         val states = inventory.associate { it.id to "NOT_EXECUTED" }.toMutableMap()
         val structuralFailures = mutableListOf<String>()
         val sandbox = Files.createTempDirectory("markflow-353-manifest-")
@@ -192,6 +208,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\nsource_head=" + sourceHead +
                     "\nmanifest_sha256=" + sha(manifest) + "\n")
             }
+            heartbeat("starter-launch")
             Starter.newContext(
                 testName = if (contract == "acceptance") {
                     "markflow-353-full-manifest-real-pairs"
@@ -221,6 +238,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes,
             ).useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
+                heartbeat("ide-ready")
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialManifestVisualRemote::class)
@@ -240,6 +258,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 for (entry in selected) {
                     val dest = output.resolve(entry.id)
                     states[entry.id] = "CAPTURE_FAILED"
+                    heartbeat("case-start", entry.id)
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
                         markFlow.assertProductionProjectionAttached(editor)
@@ -1363,7 +1382,9 @@ class MarkFlowStarterDifferentialManifestTest {
                         // Do not report a successful capture if its mandatory
                         // same-source A/B evidence failed earlier in this case.
                         states[entry.id] = "CAPTURED_UNVERIFIED"
+                        heartbeat("case-complete", entry.id)
                     } catch (cause: Throwable) {
+                        heartbeat("case-failed", entry.id)
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
                         // A missing H1 replacement (whether CustomFold or the
@@ -1380,6 +1401,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         throw cause
                     }
                 }
+                heartbeat("case-loop-complete")
             }
         } catch (cause: Throwable) {
             failure = cause
