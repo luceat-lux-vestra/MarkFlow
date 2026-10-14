@@ -45,7 +45,7 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
         raise ValueError("SARIF category does not match scanned language")
     invocations = run.get("invocations", [])
     if not isinstance(invocations, list) or len(invocations) == 0 or any(
-        not isinstance(x, dict) or x.get("executionSuccessful") is False for x in invocations
+        not isinstance(x, dict) or x.get("executionSuccessful") is not True for x in invocations
     ):
         raise ValueError("CodeQL analysis reports an unsuccessful invocation")
     # CodeQL SARIF puts query rules in tool.extensions[].rules, not in
@@ -179,9 +179,16 @@ def self_test() -> None:
         bad = fixture()
         bad["runs"][0]["results"][0]["rule"]["toolComponent"]["index"] = 5
         probe(bad, "outside verified CodeQL query pack")
-        bad = fixture()
-        bad["runs"][0]["invocations"][0]["executionSuccessful"] = False
-        probe(bad, "unsuccessful invocation")
+        for label, mutate in [
+            ("missing", lambda invocation: invocation.pop("executionSuccessful")),
+            ("null", lambda invocation: invocation.update(executionSuccessful=None)),
+            ("zero", lambda invocation: invocation.update(executionSuccessful=0)),
+            ("string false", lambda invocation: invocation.update(executionSuccessful="false")),
+            ("false", lambda invocation: invocation.update(executionSuccessful=False)),
+        ]:
+            bad = fixture()
+            mutate(bad["runs"][0]["invocations"][0])
+            probe(bad, "unsuccessful invocation")
         bad = fixture()
         bad["runs"][0]["results"][0]["ruleId"] = "missing"
         probe(bad, "unknown rule")
