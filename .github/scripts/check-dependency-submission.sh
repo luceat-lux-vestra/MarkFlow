@@ -32,7 +32,6 @@ assert_contract() {
     "      - 'gradle/**'" | LC_ALL=C sort)"
   [ "$actual_paths" = "$expected_paths" ] || die "publisher dependency-input paths drifted"
   grep -Fxq 'permissions: {}' "$workflow" || die "workflow default permissions must remain empty"
-  grep -Fq "vars.MARKFLOW_ADS_CUTOVER_DONE == 'true'" "$workflow" || die "cutover activation guard is missing"
   grep -Fq "github.ref == 'refs/heads/main'" "$workflow" || die "main-only job guard is missing"
   grep -Fxq '    runs-on: ubuntu-24.04-arm' "$workflow" || die "publisher must use ARM64"
   grep -Fxq '      contents: write' "$workflow" || die "submission job lacks contents: write"
@@ -50,8 +49,6 @@ assert_contract "$workflow"
 fixtures="$(mktemp -d)"
 trap 'rm -rf "$fixtures"' EXIT
 
-sed "s/MARKFLOW_ADS_CUTOVER_DONE == 'true'/MARKFLOW_ADS_CUTOVER_DONE == 'false'/" "$workflow" > "$fixtures/no-activation.yml"
-if ( assert_contract "$fixtures/no-activation.yml" ) 2>/dev/null; then die "activation fixture accepted"; fi
 sed 's/cache-read-only: true/cache-read-only: false/' "$workflow" > "$fixtures/cache-writer.yml"
 if ( assert_contract "$fixtures/cache-writer.yml" ) 2>/dev/null; then die "cache-writer fixture accepted"; fi
 sed 's/generate-and-submit/generate-and-upload/' "$workflow" > "$fixtures/no-submit.yml"
@@ -59,4 +56,4 @@ if ( assert_contract "$fixtures/no-submit.yml" ) 2>/dev/null; then die "no-submi
 sed '/gradle\/\*\*/d' "$workflow" > "$fixtures/missing-gradle-input.yml"
 if ( assert_contract "$fixtures/missing-gradle-input.yml" ) 2>/dev/null; then die "missing-input fixture accepted"; fi
 
-echo "custom Gradle dependency submission contract passed (4 negative controls)"
+echo "custom Gradle dependency submission contract passed (3 negative controls)"

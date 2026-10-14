@@ -1,6 +1,5 @@
-# Staged replacement for GitHub-managed Automatic Dependency Submission (Gradle).
-# Keep fail-closed until the repository administrator disables managed ADS and
-# sets MARKFLOW_ADS_CUTOVER_DONE=true.
+# Repository-owned replacement for GitHub-managed Automatic Dependency Submission (Gradle).
+# Managed Automatic Dependency Submission must remain disabled while this publisher is active.
 name: Gradle Dependency Submission
 
 on:
@@ -23,7 +22,7 @@ concurrency:
 jobs:
   submitGraph:
     name: Submit Gradle dependency graph
-    if: ${{ github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main' && vars.MARKFLOW_ADS_CUTOVER_DONE == 'true' }}
+    if: ${{ github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
