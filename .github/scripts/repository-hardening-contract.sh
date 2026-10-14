@@ -165,6 +165,30 @@ if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle
 fi
 
 starter_workflow=".github/workflows/starter-driver-e2e.yml"
+post_main_full_differential=".github/workflows/full-differential-acceptance-post-main.yml"
+[ -f "$post_main_full_differential" ] || die "#353 post-main full differential workflow is missing"
+grep -Eq '^  push:([[:space:]]|$)' "$post_main_full_differential" || die "#353 post-main proof must be triggered by exact main pushes"
+grep -Fq 'branches: [main]' "$post_main_full_differential" || die "#353 post-main proof must be scoped to protected main"
+grep -Fq ".github/workflows/full-differential-acceptance-post-main.yml" "$post_main_full_differential" || die "#353 post-main proof must self-trigger when its contract changes"
+grep -Fq "fixtures/differential-acceptance/acceptance-ledger.tsv" "$post_main_full_differential" || die "#353 post-main proof must run when the reviewed ledger changes"
+if grep -Eq '^  (pull_request|pull_request_target|workflow_dispatch):([[:space:]]|$)' "$post_main_full_differential"; then
+  die "#353 post-main proof must stay a narrow push-only exact-SHA control"
+fi
+grep -Fq 'STARTER_SOURCE_SHA: ${{ github.sha }}' "$post_main_full_differential" || die "#353 post-main proof lost exact push-SHA identity"
+[ "$(grep -Fc 'ref: ${{ env.STARTER_SOURCE_SHA }}' "$post_main_full_differential" || true)" = "2" ] || die "#353 post-main package and acceptance jobs must both checkout the exact push SHA"
+grep -Fq 'cache-read-only: true' "$post_main_full_differential" || die "#353 post-main proof must not write Gradle cache state"
+grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$post_main_full_differential" || die "#353 post-main proof lost the bounded JCEF AppArmor identity"
+grep -Fq 'timeout --signal=TERM --kill-after=30s 85m' "$post_main_full_differential" || die "#353 post-main proof lost cleanup headroom beyond the 75-minute Starter lifetime"
+grep -Fq -- '-PdifferentialContract=acceptance' "$post_main_full_differential" || die "#353 post-main proof no longer executes the full acceptance contract"
+if grep -Fq -- '-PdifferentialCaseIds=' "$post_main_full_differential"; then
+  die "#353 post-main proof must never reduce the 89-case inventory"
+fi
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$post_main_full_differential" || die "#353 post-main proof no longer executes the differential manifest suite"
+grep -Fq '.captured_unverified == 89' "$post_main_full_differential" || die "#353 post-main failure diagnostics no longer distinguish complete capture from review failure"
+grep -Fq '.full_differential_acceptance == true' "$post_main_full_differential" || die "#353 post-main proof no longer requires the reviewed final verdict"
+grep -Fq '.release_eligible == false' "$post_main_full_differential" || die "#353 post-main proof must not bypass #348/#309 release gates"
+grep -Fq 'if: ${{ always() }}' "$post_main_full_differential" || die "#353 post-main proof must retain artifacts even on fail-closed review runs"
+
 starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
 [ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
 python3 "$starter_diagnostics" --self-test >/dev/null || die "Starter/Driver diagnostics self-test failed"

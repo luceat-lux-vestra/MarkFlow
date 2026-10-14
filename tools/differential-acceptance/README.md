@@ -154,6 +154,12 @@ That verdict deliberately keeps `release_eligible=false`; #348 and #309 plus
 the remaining release chain are separate gates. Bounded PR capture does not
 consume or require this ledger.
 
+## Stage E21 — exact-SHA post-main full-corpus proof
+
+.github/workflows/full-differential-acceptance-post-main.yml is a narrow campaign workflow for #353. It runs only on protected main pushes that change either the workflow itself or the reviewed acceptance ledger. It does not add the 89-case corpus to ordinary PR CI and it is distinct from #348's later release-candidate repeat automation.
+
+The workflow packages the plugin once from the exact push SHA, runs the full 89-expanded-case acceptance contract in one IDEA 2026.2.3 Starter session, retains evidence even when review is intentionally fail-closed, and verifies that any successful acceptance.json is bound to the same push SHA. The first post-main run with the header-only ledger is expected to remain red after complete evidence generation; its artifact is the input for independent case review. Filling the ledger later triggers a second exact-SHA post-main run. Only that second run may turn green after all runtime and review contracts pass.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each
