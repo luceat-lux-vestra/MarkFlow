@@ -41,23 +41,39 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
     if not isinstance(driver, dict) or driver.get("name") != "CodeQL":
         raise ValueError("not CodeQL output")
     automation_id = run.get("automationDetails", {}).get("id")
-    if not isinstance(automation_id, str) or not automation_id.endswith("/language:" + language):
+    if not isinstance(automation_id, str) or automation_id not in {"/language:" + language, "/language:" + language + "/"}:
         raise ValueError("SARIF category does not match scanned language")
     invocations = run.get("invocations", [])
-    if not isinstance(invocations, list) or any(
+    if not isinstance(invocations, list) or len(invocations) == 0 or any(
         not isinstance(x, dict) or x.get("executionSuccessful") is False for x in invocations
     ):
         raise ValueError("CodeQL analysis reports an unsuccessful invocation")
-    rules = driver.get("rules")
+    # CodeQL SARIF puts query rules in tool.extensions[].rules, not in
+    # tool.driver.rules. A clean scan may contain zero results and no driver rules.
+    tool = run.get("tool", {})
+    extensions = tool.get("extensions")
+    if not isinstance(extensions, list):
+        raise ValueError("missing CodeQL query pack metadata")
+    query_pack = {
+        "actions": "codeql/actions-queries",
+        "javascript-typescript": "codeql/javascript-queries",
+        "java-kotlin": "codeql/java-queries",
+    }[language]
+    packs = [(i, component) for i, component in enumerate(extensions)
+             if isinstance(component, dict) and component.get("name") == query_pack]
+    if len(packs) != 1:
+        raise ValueError("missing or duplicate expected CodeQL query pack")
+    component_index, component = packs[0]
+    rules = component.get("rules")
     if not isinstance(rules, list) or len(rules) == 0:
         raise ValueError("no CodeQL rule metadata")
     by_id = {}
-    for rule in rules:
+    for index, rule in enumerate(rules):
         if not isinstance(rule, dict) or not isinstance(rule.get("id"), str) or not rule["id"]:
             raise ValueError("malformed CodeQL rule")
         if rule["id"] in by_id:
             raise ValueError("duplicate CodeQL rule ID")
-        by_id[rule["id"]] = rule
+        by_id[rule["id"]] = (index, rule)
     results = run.get("results")
     if not isinstance(results, list):
         raise ValueError("missing or malformed result set")
@@ -66,9 +82,18 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
         if not isinstance(result, dict) or not isinstance(result.get("ruleId"), str):
             raise ValueError("result missing rule ID")
         rule_id = result["ruleId"]
-        rule = by_id.get(rule_id)
-        if rule is None:
+        entry = by_id.get(rule_id)
+        if entry is None:
             raise ValueError(f"result references unknown rule: {rule_id}")
+        rule_index, rule = entry
+        reference = result.get("rule")
+        if not isinstance(reference, dict) or reference.get("id") != rule_id:
+            raise ValueError(f"result has invalid SARIF rule reference: {rule_id}")
+        tool_component = reference.get("toolComponent")
+        if (not isinstance(tool_component, dict)
+                or tool_component.get("index") != component_index
+                or reference.get("index") != rule_index):
+            raise ValueError(f"result rule reference points outside verified CodeQL query pack: {rule_id}")
         properties = rule.get("properties", {})
         if not isinstance(properties, dict):
             raise ValueError("rule properties are malformed")
@@ -113,10 +138,13 @@ def self_test() -> None:
         if score is not None:
             rule["properties"]["security-severity"] = score
         return {"version": "2.1.0", "runs": [{
-            "tool": {"driver": {"name": "CodeQL", "rules": [rule]}},
-            "automationDetails": {"id": "/language:" + language},
+            "tool": {"driver": {"name": "CodeQL"}, "extensions": [
+                {"name": "codeql/java-queries", "rules": [rule]}]},
+            "automationDetails": {"id": "/language:" + language + "/"},
             "invocations": [{"executionSuccessful": True}],
-            "results": [{"ruleId": "java/test"}] if results else []}]}
+            "results": [{"ruleId": "java/test", "rule": {
+                "id": "java/test", "index": 0, "toolComponent": {"index": 0}
+            }}] if results else []}]}
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "result.sarif"
@@ -133,6 +161,8 @@ def self_test() -> None:
                 assert verdict["high_or_critical"] == 0
 
         probe(fixture())
+        # Real CodeQL 2.27.2 clean SARIF has zero driver rules/results but
+        # retains query descriptors in tool.extensions[].rules.
         probe(fixture(results=False))
         probe(fixture(score="7.0"), "High/Critical")
         probe(fixture(score="9.8"), "High/Critical")
@@ -144,13 +174,19 @@ def self_test() -> None:
         probe(fixture(), "candidate must be", current_sha="main")
         probe(fixture(), "category does not match", language="actions")
         bad = fixture()
+        bad["runs"][0]["tool"]["extensions"][0]["name"] = "codeql/other-queries"
+        probe(bad, "missing or duplicate expected CodeQL query pack")
+        bad = fixture()
+        bad["runs"][0]["results"][0]["rule"]["toolComponent"]["index"] = 5
+        probe(bad, "outside verified CodeQL query pack")
+        bad = fixture()
         bad["runs"][0]["invocations"][0]["executionSuccessful"] = False
         probe(bad, "unsuccessful invocation")
         bad = fixture()
         bad["runs"][0]["results"][0]["ruleId"] = "missing"
         probe(bad, "unknown rule")
         bad = fixture()
-        bad["runs"][0]["tool"]["driver"]["rules"] = []
+        bad["runs"][0]["tool"]["extensions"][0]["rules"] = []
         probe(bad, "no CodeQL rule")
         bad = fixture()
         bad["runs"][0].pop("results")
