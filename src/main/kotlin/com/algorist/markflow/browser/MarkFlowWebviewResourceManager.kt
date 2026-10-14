@@ -302,17 +302,7 @@ internal object MarkFlowWebviewResourceManager {
             val root = Files.createTempDirectory("markflow-renderer-")
             tempRoot = root
             JarFile(pluginJarPath.toFile()).use { jar ->
-                val entries = jar.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
-
-                    val target = root.resolve(entry.name.removePrefix("webview/"))
-                    target.parent?.let(Files::createDirectories)
-                    jar.getInputStream(entry).use { input ->
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-                    }
-                }
+                extractWebviewJarEntries(jar, root)
             }
             extractedWebviewRoot = root
             extractedWebviewRootIsTemp = true
@@ -325,6 +315,41 @@ internal object MarkFlowWebviewResourceManager {
             }
             LOG.error("MARKFLOW_UI failed to extract renderer resources: ${ex.message}", ex)
             null
+        }
+    }
+
+    /**
+     * JAR entry names are untrusted paths even when the JAR is part of a plugin bundle.
+     * Validate containment before creating directories or copying any bytes. Failures
+     * propagate to the owning extraction transaction, which deletes its temp root.
+     */
+    internal fun extractWebviewJarEntries(jar: JarFile, root: Path) {
+        val extractionRoot = root.toRealPath()
+        val entries = jar.entries()
+        while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            if (entry.isDirectory || !entry.name.startsWith("webview/")) continue
+
+            val name = entry.name.removePrefix("webview/")
+            val relative = Path.of(name)
+            require(name.isNotEmpty() && !relative.isAbsolute) {
+                "Invalid renderer archive entry path"
+            }
+            val target = extractionRoot.resolve(relative).normalize()
+            require(target != extractionRoot && target.startsWith(extractionRoot)) {
+                "Renderer archive entry escapes extraction root"
+            }
+            val parent = target.parent ?: throw IOException("Renderer archive entry has no parent")
+            Files.createDirectories(parent)
+            require(parent.toRealPath().startsWith(extractionRoot)) {
+                "Renderer archive entry traverses a symbolic link outside extraction root"
+            }
+            require(!Files.isSymbolicLink(target)) {
+                "Renderer archive entry targets a symbolic link"
+            }
+            jar.getInputStream(entry).use { input ->
+                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 
