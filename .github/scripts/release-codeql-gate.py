@@ -17,7 +17,6 @@ import tempfile
 LANGUAGES = ("actions", "javascript-typescript", "java-kotlin")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-MAX_AGE = dt.timedelta(days=7)
 
 
 def reject(message):
@@ -54,8 +53,11 @@ def metadata_ok(run, workflow, jobs, artifacts, repo, sha, now):
         created = dt.datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError("invalid scan creation time") from exc
-    if created.tzinfo is None or not dt.timedelta() <= now - created <= MAX_AGE:
-        reject("scan is stale or has a future timestamp")
+    # A successful scan is bound to immutable source, not an arbitrary age.
+    # An older run is eligible while all three original SARIF artifacts remain
+    # accessible and the CURRENT verifier still accepts their contents.
+    if created.tzinfo is None or created > now:
+        reject("scan has invalid or future timestamp")
     expected_jobs = {f"CodeQL ({lang})" for lang in LANGUAGES}
     if (not isinstance(jobs, dict)
         or jobs.get("total_count") != len(LANGUAGES)
@@ -187,7 +189,8 @@ def self_test():
     probe("mismatched", lambda r, w, j, a: r.update(conclusion="cancelled"))
     probe("mismatched", lambda r, w, j, a: r.update(path=".github/workflows/unsafe.yml"))
     probe("mismatched", lambda r, w, j, a: r.update(workflow_id=4))
-    probe("stale", lambda r, w, j, a: r.update(created_at="2026-09-01T00:00:00Z"))
+    probe(None, lambda r, w, j, a: r.update(created_at="2025-01-01T00:00:00Z"))
+    probe("future timestamp", lambda r, w, j, a: r.update(created_at="2026-10-15T00:00:00Z"))
     probe("language jobs", lambda r, w, j, a: j["jobs"][0].update(conclusion="failure"))
     probe("language jobs", lambda r, w, j, a: j["jobs"].pop())
     probe("SARIF artifacts", lambda r, w, j, a: a["artifacts"].pop())

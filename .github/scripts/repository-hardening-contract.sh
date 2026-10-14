@@ -54,6 +54,24 @@ if ( assert_pr_only_source_trigger "$trigger_fixture_dir/missing-pr.yml" "missin
   die "PR-only trigger guard accepted a missing PR event"
 fi
 
+# Stage D approved CI optimization: CodeQL must not run on PRs or pushes.
+# Keep weekly default-branch scanning and manual exact-SHA release evidence.
+assert_codeql_schedule_manual_only() {
+  local workflow="$1"
+  grep -Eq '^  schedule:([[:space:]]|$)' "$workflow" || die "CodeQL must retain weekly schedule"
+  grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$workflow" || die "CodeQL must retain manual candidate scan"
+  if grep -Eq '^  (pull_request|pull_request_target|push):([[:space:]]|$)' "$workflow"; then
+    die "CodeQL PR/push scanning has been intentionally retired; use schedule and dispatch only"
+  fi
+}
+printf 'on:\n  schedule:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/codeql-schedule-manual.yml"
+printf 'on:\n  schedule:\n  workflow_dispatch:\n  pull_request:\n' > "$trigger_fixture_dir/codeql-pr-regression.yml"
+assert_codeql_schedule_manual_only "$trigger_fixture_dir/codeql-schedule-manual.yml"
+if ( assert_codeql_schedule_manual_only "$trigger_fixture_dir/codeql-pr-regression.yml" ) 2>/dev/null; then
+  die "CodeQL trigger guard accepted PR-trigger regression"
+fi
+assert_codeql_schedule_manual_only .github/workflows/codeql.yml
+
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
