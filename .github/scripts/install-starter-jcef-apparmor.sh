@@ -34,7 +34,12 @@ case "${STARTER_SHARD:-}" in
   derived-content|full-differential-acceptance) ;;
   *) exit 1 ;;
 esac
-[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] || exit 1
+[[ "${RUNNER_OS:-}" == Linux ]] || exit 1
+case "${RUNNER_ARCH:-}" in
+  X64) [[ "$(uname -m)" == x86_64 ]] || exit 1 ;;
+  ARM64) [[ "$(uname -m)" == aarch64 ]] || exit 1 ;;
+  *) exit 1 ;;
+esac
 [[ "${STARTER_PLATFORM_VERSION:-}" == 2026.2.3 ]] || exit 1
 [[ -f /sys/module/apparmor/parameters/enabled ]] &&
   [[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] || {
