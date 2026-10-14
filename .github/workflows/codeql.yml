@@ -1,8 +1,8 @@
 name: CodeQL
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  # Intentionally no PR/push CodeQL: repeat scans were a development-CI bottleneck.
+  # Exact-main weekly/manual evidence remains required for new Marketplace publication.
   # Manually scan an exact reviewed, current main SHA before any release is created.
   # A successful run is evidence only: it does not prevent manual GitHub Release creation.
   workflow_dispatch:
@@ -20,12 +20,11 @@ on:
 permissions: {}
 
 concurrency:
-  group: codeql-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: codeql-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   analyze:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -45,7 +44,7 @@ jobs:
           - language: java-kotlin
             build-mode: manual
     env:
-      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
     steps:
       - name: Validate release-evidence source before checkout
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'

@@ -45,15 +45,15 @@
     },
     {
       "context": "CodeQL (javascript-typescript)",
-      "reason": "Advisory PR and weekly default-branch security analysis, not a required Merge Gate input; Qodana remains the required code-inspection authority. PR CodeQL does not immediately update default-branch alerts; scheduled scans normally refresh them weekly, but missed or failed runs can extend staleness. Promotion to required needs an explicit policy decision and suitable trigger coverage."
+      "reason": "Weekly protected-main and explicit exact-SHA manual CodeQL analysis only (PR trigger intentionally retired for CI optimization); not a Merge Gate input. Qodana remains the required code-inspection authority. Merged code may go unanalyzed until the next weekly run or manual candidate scan, and missed or failed schedules extend this detection gap. New Marketplace publication requires successful exact-SHA SARIF. Public GitHub Release creation is not yet administratively blocked (#404)."
     },
     {
       "context": "CodeQL (actions)",
-      "reason": "Advisory PR and weekly default-branch security analysis, not a required Merge Gate input; Qodana remains the required code-inspection authority. PR CodeQL does not immediately update default-branch alerts; scheduled scans normally refresh them weekly, but missed or failed runs can extend staleness. Promotion to required needs an explicit policy decision and suitable trigger coverage."
+      "reason": "Weekly protected-main and explicit exact-SHA manual CodeQL analysis only (PR trigger intentionally retired for CI optimization); not a Merge Gate input. Qodana remains the required code-inspection authority. Merged code may go unanalyzed until the next weekly run or manual candidate scan, and missed or failed schedules extend this detection gap. New Marketplace publication requires successful exact-SHA SARIF. Public GitHub Release creation is not yet administratively blocked (#404)."
     },
     {
       "context": "CodeQL (java-kotlin)",
-      "reason": "Advisory Kotlin/Java CodeQL scan with manual traced Gradle compilation. Restored using CodeQL CLI 2.27.2; validated 23,331 extracted Kotlin LOC and SARIF upload on PR #403 at SHA d3becf6f96ab6484b843063449f2d86baa26bd87. Retain weekly and PR scanning pending separate pre-release CodeQL gate and cadence policy decision. Required Qodana remains independent."
+      "reason": "Advisory Kotlin/Java CodeQL with real traced Gradle compilation. Retain weekly protected-main scanning and manual exact-SHA release checks; per-PR CodeQL intentionally removed for CI performance. Kotlin extraction previously verified with 23,331 LOC (PR #403). Qodana is still required on every PR; code merged since the last CodeQL run may remain unanalyzed until the next schedule or a manual scan. Public Release creation guard (#404) remains unresolved."
     }
   ],
   "release_only": [
