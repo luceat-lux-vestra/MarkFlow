@@ -143,6 +143,9 @@ jobs:
       - name: Verify release candidate SARIF policy fixtures
         run: python3 .github/scripts/release-codeql-verdict.py --self-test
 
+      - name: Verify Marketplace exact-SHA CodeQL evidence controls
+        run: python3 .github/scripts/release-codeql-gate.py --self-test
+
   live-readback:
     name: Live hardening readback
     if: ${{ vars.HARDENING_LIVE_READBACK_ENABLED == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || (github.ref_name == github.event.repository.default_branch && inputs.target_sha == '')) }}

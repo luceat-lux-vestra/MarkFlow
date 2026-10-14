@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 60
     environment: jetbrains-marketplace
     permissions:
+      actions: read
       contents: write
       pull-requests: write
       id-token: write
@@ -184,6 +185,25 @@ jobs:
             [ "$orphan_count" -eq 0 ] || { echo "::error::Signed release asset exists without a release identity."; exit 1; }
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      # New publication only; completed identities retain existing read-only recovery semantics.
+      # Fail closed BEFORE signing, artifact publication and Marketplace credentials.
+      # This cannot undo a public GitHub Release, which triggered this workflow.
+      - name: Require exact-SHA CodeQL security evidence before Marketplace publication
+        if: ${{ steps.state.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CANDIDATE_SHA: ${{ steps.source.outputs.tag_sha }}
+          REVIEWED_MAIN_SHA: ${{ steps.source.outputs.main_sha }}
+        run: |
+          set -euo pipefail
+          [ "$RELEASE_CANDIDATE_SHA" = "$REVIEWED_MAIN_SHA" ] || {
+            echo "::error::Release tag is not the exact current reviewed main HEAD; obtain new release evidence."
+            exit 1
+          }
+          python3 .github/scripts/release-codeql-gate.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --candidate-sha "$RELEASE_CANDIDATE_SHA"
 
       - name: Verify publication credentials
         if: ${{ steps.state.outputs.publish == 'true' }}
