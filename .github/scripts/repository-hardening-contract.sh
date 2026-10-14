@@ -411,8 +411,28 @@ grep -Fq 'inventory.map { it.id }' "$manifest_test" ||
   die "Full #353 acceptance must execute the entire expanded inventory"
 grep -Fq 'NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
   die "Manifest-declared non-Preview cases lost explicit disposition"
-grep -Fq 'error("Full #353 reviewed acceptance ledger remains unimplemented")' "$manifest_test" ||
-  die "Full-corpus evidence generation must remain fail-closed before reviewed acceptance"
+acceptance_ledger="fixtures/differential-acceptance/acceptance-ledger.tsv"
+[ -f "$acceptance_ledger" ] ||
+  die "Full #353 repository-owned acceptance ledger is missing"
+expected_acceptance_header=$'case_id\tmanifest_case_id\tsource_sha256\tblock_sha256\tclassification\tvisual_reference_expectation\treview_result\tevidence_source_head\tevidence_run_id\treview_note'
+[ "$(head -n 1 "$acceptance_ledger")" = "$expected_acceptance_header" ] ||
+  die "Full #353 acceptance ledger schema drifted"
+grep -Fq 'parseReviewedAcceptanceLedger' "$manifest_test" ||
+  die "Full #353 acceptance lost source-bound reviewed-ledger parsing"
+grep -Fq 'acceptanceLedgerNegativeControls()' "$manifest_test" ||
+  die "Full #353 acceptance lost reviewed-ledger adversarial controls"
+grep -Fq 'Reviewed acceptance ledger coverage mismatch' "$manifest_test" ||
+  die "Full #353 acceptance no longer requires complete expanded-case ledger coverage"
+grep -Fq 'Reviewed acceptance source bytes drifted' "$manifest_test" ||
+  die "Full #353 acceptance no longer binds review decisions to exact source bytes"
+grep -Fq 'Reviewed acceptance Mermaid block drifted' "$manifest_test" ||
+  die "Full #353 acceptance no longer binds expanded Mermaid block identity"
+grep -Fq 'reviewResult != "ACCEPT"' "$manifest_test" ||
+  die "Full #353 acceptance no longer rejects explicit reviewed failures"
+grep -Fq 'output.resolve("acceptance.json")' "$manifest_test" ||
+  die "Full #353 acceptance no longer emits a distinct final reviewed verdict"
+grep -Fq '\"full_differential_acceptance\":true' "$manifest_test" ||
+  die "Full #353 final verdict cannot signal reviewed full-corpus acceptance"
 grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 10.minutes' "$manifest_test" ||
   die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 10-minute limit"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||

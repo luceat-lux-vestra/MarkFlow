@@ -36,6 +36,24 @@ class MarkFlowStarterDifferentialManifestTest {
         val visualExpectation: String, val comparable: Boolean
     )
 
+    private data class AcceptanceDecision(
+        val caseId: String,
+        val manifestId: String,
+        val sourceSha256: String,
+        val blockSha256: String,
+        val classification: String,
+        val visualExpectation: String,
+        val reviewResult: String,
+        val evidenceSourceHead: String,
+        val evidenceRunId: String,
+        val reviewNote: String,
+    )
+
+    private val reviewedAcceptanceLedgerHeader =
+        "case_id\tmanifest_case_id\tsource_sha256\tblock_sha256\tclassification\t" +
+            "visual_reference_expectation\treview_result\tevidence_source_head\t" +
+            "evidence_run_id\treview_note"
+
     @Test
     fun boundedManifestCasesCaptureActualReferenceAndNative() {
         val root = Path.of("").toAbsolutePath().normalize()
@@ -49,6 +67,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
         check(headingInkVerticalNegativeControls()) { "Stage E19 heading raster Y negative controls failed" }
+        check(acceptanceLedgerNegativeControls()) {
+            "Full #353 acceptance-ledger negative controls failed"
+        }
         // Stage D capture completion and full #353 acceptance are separate
         // contracts. Never infer release approval from a successful bounded
         // source-identical capture of only a bounded subset of 89 expanded cases.
@@ -1428,9 +1449,42 @@ class MarkFlowStarterDifferentialManifestTest {
                     " unresolved structural/review findings. No threshold bypass permitted."
             }
             // Complete execution is only the evidence-generation milestone.
-            // A following #353 slice binds explicit review decisions to these
-            // exact source identities and retained artifacts.
-            error("Full #353 reviewed acceptance ledger remains unimplemented")
+            // Bind the final verdict to an explicit repository-owned review ledger.
+            // The ledger may reference an earlier evidence run, but every source,
+            // manifest identity and Mermaid block must still match this exact checkout.
+            val ledgerPath =
+                root.resolve("fixtures/differential-acceptance/acceptance-ledger.tsv")
+            val ledgerBytes = Files.readAllBytes(ledgerPath)
+            val decisions = parseReviewedAcceptanceLedger(
+                String(ledgerBytes, StandardCharsets.UTF_8), inventory
+            )
+            val rejected = decisions.values.filter { it.reviewResult != "ACCEPT" }
+            check(rejected.isEmpty()) {
+                "Full #353 reviewed acceptance ledger contains rejected cases: " +
+                    rejected.joinToString { it.caseId + "=" + it.reviewResult }
+            }
+            val reviewedEvidenceHead =
+                decisions.values.map { it.evidenceSourceHead }.toSet().single()
+            val reviewedEvidenceRunId =
+                decisions.values.map { it.evidenceRunId }.toSet().single()
+            Files.writeString(
+                output.resolve("acceptance.json"),
+                "{\n" +
+                    "\"schema\":\"markflow-full-differential-acceptance/v1\",\n" +
+                    "\"source_head\":\"" + sourceHead + "\",\n" +
+                    "\"manifest_sha256\":\"" + sha(manifest) + "\",\n" +
+                    "\"acceptance_ledger_sha256\":\"" + sha(ledgerBytes) + "\",\n" +
+                    "\"expanded_cases\":" + inventory.size + ",\n" +
+                    "\"reviewed_cases\":" + decisions.size + ",\n" +
+                    "\"reviewed_evidence_source_head\":\"" +
+                        reviewedEvidenceHead + "\",\n" +
+                    "\"reviewed_evidence_run_id\":" + reviewedEvidenceRunId + ",\n" +
+                    "\"full_differential_acceptance\":true,\n" +
+                    "\"release_eligible\":false,\n" +
+                    "\"remaining_release_chain\":\"#348 -> #309 -> #156 -> #84 -> #52\"\n" +
+                    "}\n",
+                StandardCharsets.UTF_8
+            )
         }
     }
 
@@ -1451,6 +1505,184 @@ class MarkFlowStarterDifferentialManifestTest {
             graphics.dispose()
         }
         check(ImageIO.write(image, "png", path.toFile())) { "PNG writer unavailable" }
+    }
+
+    private fun parseReviewedAcceptanceLedger(
+        raw: String,
+        inventory: List<Case>,
+    ): Map<String, AcceptanceDecision> {
+        check(raw.endsWith("\n") && !raw.contains('\r')) {
+            "Reviewed acceptance ledger must use complete LF lines"
+        }
+        val rows = raw.trimEnd('\n').split('\n')
+        check(rows.firstOrNull() == reviewedAcceptanceLedgerHeader) {
+            "Reviewed acceptance ledger schema changed"
+        }
+        val indexed = inventory.associateBy { it.id }
+        check(indexed.size == inventory.size) { "Duplicate expanded acceptance case identity" }
+        val decisions = linkedMapOf<String, AcceptanceDecision>()
+        val expandedId = Regex("[a-z0-9]+(?:-[a-z0-9]+)*(?:--block-[0-9]{2})?")
+        val manifestId = Regex("[a-z0-9]+(?:-[a-z0-9]+)*")
+        val sha256 = Regex("[0-9a-f]{64}")
+        val gitSha = Regex("[0-9a-f]{40}")
+        val runId = Regex("[1-9][0-9]*")
+        for (row in rows.drop(1)) {
+            check(row.isNotBlank()) { "Reviewed acceptance ledger contains a blank row" }
+            val fields = row.split('\t', limit = 10)
+            check(fields.size == 10) { "Malformed reviewed acceptance ledger row" }
+            val decision = AcceptanceDecision(
+                caseId = fields[0],
+                manifestId = fields[1],
+                sourceSha256 = fields[2],
+                blockSha256 = fields[3],
+                classification = fields[4],
+                visualExpectation = fields[5],
+                reviewResult = fields[6],
+                evidenceSourceHead = fields[7],
+                evidenceRunId = fields[8],
+                reviewNote = fields[9],
+            )
+            check(expandedId.matches(decision.caseId)) {
+                "Unsafe reviewed acceptance case ID: " + decision.caseId
+            }
+            check(manifestId.matches(decision.manifestId)) {
+                "Unsafe reviewed acceptance manifest ID: " + decision.manifestId
+            }
+            check(sha256.matches(decision.sourceSha256)) {
+                "Malformed reviewed source SHA-256: " + decision.caseId
+            }
+            check(decision.blockSha256 == "none" || sha256.matches(decision.blockSha256)) {
+                "Malformed reviewed Mermaid block SHA-256: " + decision.caseId
+            }
+            check(decision.reviewResult == "ACCEPT" || decision.reviewResult == "REJECT") {
+                "Unknown reviewed acceptance result: " + decision.caseId
+            }
+            check(gitSha.matches(decision.evidenceSourceHead)) {
+                "Malformed reviewed evidence source HEAD: " + decision.caseId
+            }
+            check(runId.matches(decision.evidenceRunId)) {
+                "Malformed reviewed evidence run ID: " + decision.caseId
+            }
+            check(decision.reviewNote.isNotBlank() && !decision.reviewNote.contains('\t')) {
+                "Reviewed acceptance note is required and must be one TSV field: " + decision.caseId
+            }
+            check(decisions.put(decision.caseId, decision) == null) {
+                "Duplicate reviewed acceptance case: " + decision.caseId
+            }
+            val entry = requireNotNull(indexed[decision.caseId]) {
+                "Unknown reviewed acceptance case: " + decision.caseId
+            }
+            check(decision.manifestId == entry.parent) {
+                "Reviewed acceptance manifest identity drifted: " + decision.caseId
+            }
+            check(decision.sourceSha256 == sha(entry.bytes)) {
+                "Reviewed acceptance source bytes drifted: " + decision.caseId
+            }
+            check(decision.blockSha256 == (entry.blockHash ?: "none")) {
+                "Reviewed acceptance Mermaid block drifted: " + decision.caseId
+            }
+            check(decision.classification == entry.classification) {
+                "Reviewed acceptance classification drifted: " + decision.caseId
+            }
+            check(decision.visualExpectation == entry.visualExpectation) {
+                "Reviewed acceptance visual contract drifted: " + decision.caseId
+            }
+        }
+        check(decisions.keys == indexed.keys) {
+            val missing = indexed.keys - decisions.keys
+            val extra = decisions.keys - indexed.keys
+            "Reviewed acceptance ledger coverage mismatch: reviewed=" + decisions.size +
+                " expected=" + indexed.size + " missing=" + missing.joinToString(",") +
+                " extra=" + extra.joinToString(",")
+        }
+        check(decisions.values.map { it.evidenceSourceHead }.toSet().size == 1) {
+            "Reviewed acceptance ledger must bind one evidence source HEAD"
+        }
+        check(decisions.values.map { it.evidenceRunId }.toSet().size == 1) {
+            "Reviewed acceptance ledger must bind one evidence workflow run"
+        }
+        return decisions
+    }
+
+    private fun acceptanceLedgerNegativeControls(): Boolean {
+        val markdownBytes = "# reviewed\n".toByteArray(StandardCharsets.UTF_8)
+        val mermaidBytes =
+            "```mermaid\ngraph TD\nA-->B\n```\n".toByteArray(StandardCharsets.UTF_8)
+        val inventory = listOf(
+            Case(
+                "md-reviewed", "md-reviewed", "markdown", "supported",
+                "fixtures/md-reviewed.md", markdownBytes, 0, null,
+                "source-anchored-geometry", true
+            ),
+            Case(
+                "mermaid-reviewed", "mermaid-reviewed", "mermaid", "supported",
+                "fixtures/mermaid-reviewed.md", mermaidBytes, 0,
+                sha("graph TD\nA-->B".toByteArray(StandardCharsets.UTF_8)),
+                "diagram-semantic-perceptual", true
+            ),
+        )
+        val evidenceHead = "1".repeat(40)
+        fun row(
+            entry: Case,
+            result: String = "ACCEPT",
+            sourceHash: String = sha(entry.bytes),
+            parent: String = entry.parent,
+            run: String = "38599999999",
+            head: String = evidenceHead,
+        ): String =
+            listOf(
+                entry.id,
+                parent,
+                sourceHash,
+                entry.blockHash ?: "none",
+                entry.classification,
+                entry.visualExpectation,
+                result,
+                head,
+                run,
+                "reviewed-source-bound-evidence",
+            ).joinToString("\t")
+
+        val valid = reviewedAcceptanceLedgerHeader + "\n" +
+            inventory.joinToString("\n") { row(it) } + "\n"
+        val missing = reviewedAcceptanceLedgerHeader + "\n" + row(inventory.first()) + "\n"
+        val duplicate = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first()) + "\n" + row(inventory.first()) + "\n"
+        val staleSource = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), sourceHash = "0".repeat(64)) + "\n" +
+            row(inventory.last()) + "\n"
+        val wrongParent = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), parent = "md-other") + "\n" +
+            row(inventory.last()) + "\n"
+        val malformedResult = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), result = "PASS") + "\n" +
+            row(inventory.last()) + "\n"
+        val malformedRun = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), run = "0") + "\n" +
+            row(inventory.last()) + "\n"
+        val mixedRun = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), run = "38599999999") + "\n" +
+            row(inventory.last(), run = "38600000000") + "\n"
+        val mixedHead = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first()) + "\n" +
+            row(inventory.last(), head = "2".repeat(40)) + "\n"
+        val explicitReject = reviewedAcceptanceLedgerHeader + "\n" +
+            row(inventory.first(), result = "REJECT") + "\n" +
+            row(inventory.last()) + "\n"
+
+        return runCatching { parseReviewedAcceptanceLedger(valid, inventory) }.isSuccess &&
+            runCatching { parseReviewedAcceptanceLedger(missing, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(duplicate, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(staleSource, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(wrongParent, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(malformedResult, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(malformedRun, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(mixedRun, inventory) }.isFailure &&
+            runCatching { parseReviewedAcceptanceLedger(mixedHead, inventory) }.isFailure &&
+            runCatching {
+                val decisions = parseReviewedAcceptanceLedger(explicitReject, inventory)
+                check(decisions.values.any { it.reviewResult == "REJECT" })
+            }.isSuccess
     }
 
     private data class MarkdownAnchor(val line: Int, val text: String)
