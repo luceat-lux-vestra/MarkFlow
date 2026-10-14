@@ -160,7 +160,6 @@ jobs:
           cache-read-only: true
 
       - name: Install ARM64 Skiko EGL runtime
-        if: ${{ matrix.install_egl }}
         shell: bash
         run: |
           set -euo pipefail
@@ -519,6 +518,7 @@ jobs:
           cache-read-only: true
 
       - name: Install ARM64 Skiko EGL runtime
+        if: ${{ matrix.install_egl }}
         shell: bash
         run: |
           set -euo pipefail
