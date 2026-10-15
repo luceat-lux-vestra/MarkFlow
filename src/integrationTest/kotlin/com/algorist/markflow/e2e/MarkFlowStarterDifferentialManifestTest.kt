@@ -1546,8 +1546,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                         entry.id
                                 }
                                 // Auxiliary A/B tabs can change the global selected editor.
-                                // Re-select this exact case by filename before switching it back
-                                // to EditorOnly and closing its TextEditorWithPreview/JCEF owner.
+                                // Close this exact already-open VirtualFile through FileEditorManager
+                                // so the platform disposes its TextEditorWithPreview/JCEF owner.
+                                // Cleanup must not reopen the file or toggle Preview layout again.
                                 markFlow.closeMarkdown(entry.id + ".md")
                                 heartbeat("case-cleanup-complete", entry.id)
                             }
