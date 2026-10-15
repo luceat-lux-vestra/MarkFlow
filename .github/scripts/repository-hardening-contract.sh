@@ -160,7 +160,38 @@ for workflow in \
 done
 
 native_evidence_workflow=".github/workflows/native-runtime-evidence.yml"
-grep -q '^  workflow_dispatch:
+grep -q '^  workflow_dispatch:$' "$native_evidence_workflow" || die "Native runtime evidence has no manual exact-SHA recovery trigger"
+grep -q '^      target_sha:$' "$native_evidence_workflow" || die "Native runtime evidence recovery trigger has no target_sha input"
+grep -Fq 'needs.target.outputs.source_sha' "$native_evidence_workflow" || die "Native runtime evidence jobs do not share the resolved exact source SHA"
+assert_recovery_target_validation "$native_evidence_workflow" "Native runtime evidence"
+
+for job in \
+  derived_renderer \
+  native_derived_presentation \
+  native_editing \
+  native_editor_shell \
+  native_host_resources \
+  native_image_import \
+  native_projection \
+  no_jcef_native_editing; do
+  grep -Eq "^  ${job}:" "$native_evidence_workflow" || die "Native runtime evidence lost probe job: $job"
+done
+
+for semantic_probe in \
+  'markflow-derived-renderer-probe' \
+  'markflow.nativeDerivedPresentationProbe.output' \
+  'runIdeForNativeEditingProbe' \
+  'runIdeForNativeEditorShellProbe' \
+  'runIdeForNativeHostResourcesProbe' \
+  'markflow.nativeImageImportProbe.output' \
+  'runIdeForNativeProjectionProbe' \
+  'runIdeForNoJcefNativeEditingProbe'; do
+  grep -Fq "$semantic_probe" "$native_evidence_workflow" || die "Native runtime evidence lost semantic probe: $semantic_probe"
+done
+
+exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sha }}' "$native_evidence_workflow")"
+[ "$exact_native_checkout_count" -ge 8 ] ||
+  die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
 
 [ ! -e .github/workflows/run-ui-tests.yml ] || die "obsolete Robot UI workflow must stay deleted"
 if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle.kts; then
