@@ -207,9 +207,11 @@ for job in \
   native_image_import \
   native_projection \
   no_jcef_native_editing; do
-  grep -Fq "run_${job}: ${{ steps.route.outputs.run_${job} }}" "$native_evidence_workflow" ||
-    die "Native runtime evidence lost router output for $job"
-  grep -Fq "if: needs.target.outputs.run_${job} == 'true'" "$native_evidence_workflow" ||
+  grep -Fq "run_${job}:" "$native_evidence_workflow" ||
+    die "Native runtime evidence lost router output name for $job"
+  grep -Fq "steps.route.outputs.run_${job}" "$native_evidence_workflow" ||
+    die "Native runtime evidence lost router output binding for $job"
+  grep -Fq "needs.target.outputs.run_${job} == 'true'" "$native_evidence_workflow" ||
     die "Native runtime evidence $job no longer honors per-probe path routing"
 done
 
