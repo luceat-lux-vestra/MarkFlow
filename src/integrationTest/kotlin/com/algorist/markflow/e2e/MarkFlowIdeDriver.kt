@@ -55,27 +55,30 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
 
-    fun closeMarkdown(fileName: String) {
-        // Close the already-open VirtualFile through the platform lifecycle. Re-opening the file
-        // or toggling TextEditorWithPreview layout during cleanup can retain/recreate Preview JCEF
-        // state instead of disposing the FileEditor that owned it.
+    fun closeMarkdown(editor: JEditorUiComponent, fileName: String) {
+        // Close the already-open VirtualFile through the platform lifecycle. The file disappearing
+        // from FileEditorManager is necessary but not sufficient: wait for the native Editor itself
+        // to be disposed so EditorFactoryListener release hooks have synchronously torn down the
+        // MarkFlow presentation controller and its optional JCEF runtime before the next case opens.
         val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
             "opened Markdown file not found for lifecycle close: $fileName"
         }
         val manager = driver.service<FileEditorManagerRemote>(driver.singleProject())
+        val remoteEditor = driver.cast(editor.editor, EditorStateRemote::class)
         driver.withContext(OnDispatcher.EDT) {
             manager.closeFile(file)
         }
         waitFor(
-            message = "Markdown FileEditor lifecycle closes: $fileName",
-            timeout = 10.seconds,
+            message = "Markdown FileEditor and native Editor lifecycle close: $fileName",
+            timeout = 20.seconds,
             getter = {
                 driver.withContext(OnDispatcher.EDT) {
-                    manager.isFileOpen(file)
+                    !manager.isFileOpen(file) && remoteEditor.isDisposed()
                 }
             },
-            checker = { isOpen -> !isOpen },
+            checker = { closed -> closed },
         )
+        editor.waitNotFound(10.seconds)
     }
 
     fun source(editor: JEditorUiComponent): String = editor.document.getText()
@@ -501,6 +504,7 @@ private interface NativeProjectionE2EBridgeRemote {
 private interface EditorStateRemote {
     fun getCaretModel(): CaretModelRemote
     fun isColumnMode(): Boolean
+    fun isDisposed(): Boolean
 }
 
 @Remote("com.intellij.openapi.editor.CaretModel")
