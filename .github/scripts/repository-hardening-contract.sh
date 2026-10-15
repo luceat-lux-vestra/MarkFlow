@@ -54,6 +54,53 @@ if ( assert_pr_only_source_trigger "$trigger_fixture_dir/missing-pr.yml" "missin
   die "PR-only trigger guard accepted a missing PR event"
 fi
 
+assert_ephemeral_workflow_lifecycle() {
+  local workflow="$1" label="$2" name
+  name="$(basename "$workflow")"
+
+  if [[ ! "$name" =~ ^(research|temporary|tmp|experiment)[-_].*\.ya?ml$ ]]; then
+    return 0
+  fi
+
+  head -n 20 "$workflow" | grep -Eq '^[[:space:]]*#[[:space:]]*lifecycle-owner:[[:space:]]*[^[:space:]].*$' ||
+    die "$label requires non-empty # lifecycle-owner: header metadata"
+  head -n 20 "$workflow" | grep -Eq '^[[:space:]]*#[[:space:]]*lifecycle-retire:[[:space:]]*[^[:space:]].*$' ||
+    die "$label requires non-empty # lifecycle-retire: header metadata"
+}
+
+cat > "$trigger_fixture_dir/research-lifecycle-valid.yml" <<'EOF'
+# lifecycle-owner: issue #439
+# lifecycle-retire: delete after bounded research evidence is recorded
+name: lifecycle fixture
+EOF
+cat > "$trigger_fixture_dir/research-lifecycle-missing-owner.yml" <<'EOF'
+# lifecycle-owner:
+# lifecycle-retire: delete after bounded research evidence is recorded
+name: lifecycle fixture
+EOF
+cat > "$trigger_fixture_dir/experiment-lifecycle-missing-retire.yaml" <<'EOF'
+# lifecycle-owner: issue #439
+# lifecycle-retire:
+name: lifecycle fixture
+EOF
+cat > "$trigger_fixture_dir/ci-maintained-fixture.yml" <<'EOF'
+name: maintained workflow fixture
+EOF
+
+assert_ephemeral_workflow_lifecycle "$trigger_fixture_dir/research-lifecycle-valid.yml" "valid ephemeral workflow fixture"
+if ( assert_ephemeral_workflow_lifecycle "$trigger_fixture_dir/research-lifecycle-missing-owner.yml" "missing-owner fixture" ) 2>/dev/null; then
+  die "ephemeral workflow lifecycle guard accepted a missing owner"
+fi
+if ( assert_ephemeral_workflow_lifecycle "$trigger_fixture_dir/experiment-lifecycle-missing-retire.yaml" "missing-retirement fixture" ) 2>/dev/null; then
+  die "ephemeral workflow lifecycle guard accepted a missing retirement condition"
+fi
+assert_ephemeral_workflow_lifecycle "$trigger_fixture_dir/ci-maintained-fixture.yml" "maintained workflow fixture"
+
+for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+  [ -e "$workflow" ] || continue
+  assert_ephemeral_workflow_lifecycle "$workflow" "$(basename "$workflow")"
+done
+
 # Stage D approved CI optimization: CodeQL must not run on PRs or pushes.
 # Keep weekly default-branch scanning and manual exact-SHA release evidence.
 assert_codeql_schedule_manual_only() {
