@@ -72,6 +72,31 @@ if ( assert_codeql_schedule_manual_only "$trigger_fixture_dir/codeql-pr-regressi
 fi
 assert_codeql_schedule_manual_only .github/workflows/codeql.yml
 
+assert_codeql_schedule_noop_guard() {
+  local workflow="$1"
+  grep -Fq 'name: CodeQL schedule guard' "$workflow" ||
+    die "CodeQL scheduled scans must have an unchanged-main guard"
+  grep -Fq 'if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then' "$workflow" ||
+    die "CodeQL manual/release dispatch must bypass the schedule-only skip decision"
+  grep -Fq 'echo "should_scan=true" >> "$GITHUB_OUTPUT"' "$workflow" ||
+    die "CodeQL explicit dispatch must always authorize a full scan"
+  grep -Fq 'event=schedule&status=success&branch=main&per_page=100' "$workflow" ||
+    die "CodeQL schedule guard must compare against successful main schedule history"
+  grep -Fq '.head_sha == $sha' "$workflow" ||
+    die "CodeQL schedule guard must use exact protected-main SHA equality"
+  grep -Fq 'needs: scan-guard' "$workflow" ||
+    die "CodeQL analyze matrix must depend on the schedule guard"
+  grep -Fq "if: needs.scan-guard.outputs.should_scan == 'true'" "$workflow" ||
+    die "CodeQL analyze matrix can run only when the guard authorizes it"
+}
+
+assert_codeql_schedule_noop_guard .github/workflows/codeql.yml
+cp .github/workflows/codeql.yml "$trigger_fixture_dir/codeql-guard-regression.yml"
+sed -i 's/\.head_sha == \$sha/.head_branch == "main"/' "$trigger_fixture_dir/codeql-guard-regression.yml"
+if ( assert_codeql_schedule_noop_guard "$trigger_fixture_dir/codeql-guard-regression.yml" ) 2>/dev/null; then
+  die "CodeQL schedule no-op guard accepted non-exact source identity"
+fi
+
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
