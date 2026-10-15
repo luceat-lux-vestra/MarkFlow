@@ -249,7 +249,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     rendererLifecycle.liveRuntimeCount()
                 }
                 check(rendererBaseline == 0) {
-                    "MarkFlow derived JCEF runtime leaked before #353 corpus start: " + rendererBaseline
+                    "MarkFlow derived JCEF runtime leaked before #353 corpus start: $rendererBaseline"
                 }
                 val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
                 val robot = Robot()
