@@ -16,8 +16,73 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # This job has only CodeQL dispatch/evidence rights. It has NO Marketplace
+  # environment, signing secrets, release-asset writes or publication authority.
+  # The public GitHub Release already exists at event time; this gate protects
+  # only downstream managed publication.
+  codeql-preflight:
+    name: Exact-source CodeQL publication preflight
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Fetch exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Release source may be historical. NEVER run the release tag's possibly
+      # outdated verifier; use the currently protected main policy instead.
+      # Keep the tagged source as the working repository for identity checks.
+      - name: Fetch trusted current-main release verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: .release-policy
+          persist-credentials: false
+
+      # Preserve existing completed-publication recovery. The privileged job
+      # independently validates the full signed asset and pending/published
+      # identity before performing any recovery action.
+      - name: Detect existing published recovery identity
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          jq -e --arg tag "$RELEASE_TAG" '
+            .tag_name == $tag and .id != null and
+            .draft == false and .prerelease == false
+          ' <<<"$release_json" >/dev/null
+          published_count="$(jq '[.assets[]? | select(.name == "markflow-release-published.json")] | length' <<<"$release_json")"
+          [ "$published_count" -le 1 ] || { echo "::error::Ambiguous completed publication identity"; exit 1; }
+          if [ "$published_count" -eq 1 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Already-published recovery: privileged job independently verifies existing signed assets."
+          fi
+
+      - name: Reuse, join or dispatch exact-source CodeQL security preflight
+        if: ${{ steps.recovery.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate_sha="$(git rev-parse HEAD)"
+          python3 .release-policy/.github/scripts/release-codeql-gate.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --candidate-sha "$candidate_sha" \
+            --tag "$RELEASE_TAG"
+
   release:
     name: Publish Plugin
+    needs: codeql-preflight
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     environment: jetbrains-marketplace
@@ -186,25 +251,9 @@ jobs:
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
-      # New publication only; completed identities retain existing read-only recovery semantics.
-      # Fail closed BEFORE signing, artifact publication and Marketplace credentials.
-      # This cannot undo a public GitHub Release, which triggered this workflow.
-      - name: Require exact-SHA CodeQL security evidence before Marketplace publication
-        if: ${{ steps.state.outputs.publish == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_CANDIDATE_SHA: ${{ steps.source.outputs.tag_sha }}
-          REVIEWED_MAIN_SHA: ${{ steps.source.outputs.main_sha }}
-        run: |
-          set -euo pipefail
-          [ "$RELEASE_CANDIDATE_SHA" = "$REVIEWED_MAIN_SHA" ] || {
-            echo "::error::Release tag is not the exact current reviewed main HEAD; obtain new release evidence."
-            exit 1
-          }
-          python3 .github/scripts/release-codeql-gate.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --candidate-sha "$RELEASE_CANDIDATE_SHA"
-
+      # New publication is authorized only by the preceding unprivileged
+      # exact-SHA CodeQL job. The existing publication-state check above
+      # retains the recovery guard, and signing/attestation starts below.
       - name: Verify publication credentials
         if: ${{ steps.state.outputs.publish == 'true' }}
         env:
