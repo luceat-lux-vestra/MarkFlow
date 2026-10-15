@@ -21,6 +21,7 @@ updates:
         dependency-type: development
         patterns:
           - "@types/*"
+          - "vite"
         update-types:
           - "minor"
           - "patch"
