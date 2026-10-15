@@ -196,6 +196,31 @@ is therefore raised to 12 minutes while the cohort, per-operation waits and
 the shard's 24-minute outer timeout remain unchanged. This is cleanup margin,
 not broader acceptance or a reason to add more PR cases.
 
+## Stage E25 — per-case editor/JCEF lifecycle cleanup
+
+Exact post-main run `38650709624` on
+`d38bf1033a1851a1486c45f41ebab873e33ab3e5` failed much earlier than the
+previous blank-Preview case: 15 cases captured, `md-indented-code` failed,
+73 remained unexecuted, and candidate structural failures stayed at zero.
+The IDEA log contained a platform JCEF failure in
+`RemoteMessageRouterImpl.create` / `JBCefClient` while opening another
+Markdown Preview. The manifest harness had been opening one
+`TextEditorWithPreview` per case without closing prior case editors, so each
+sequential case retained another bundled JCEF client.
+
+Every manifest case now owns an explicit lifecycle boundary. In a `finally`
+block the harness verifies exact source text/modification stamp/unsaved state,
+then re-selects that exact Markdown file by filename, switches its
+`TextEditorWithPreview` back to `EditorOnly`, and closes the entire editor
+before the next case opens. Exact-file selection is required because the H1
+A/B probe legitimately opens an auxiliary editor; the first candidate
+`421153f6...` proved that relying on global
+`FileEditorManager.selectedEditor` during cleanup fails on the first case.
+Cleanup failure is itself fail-closed and is preserved as a suppressed
+exception when another case failure is already authoritative. This changes no
+renderer behavior, corpus classification or visual tolerance; it removes
+accidental platform-browser accumulation from the acceptance harness.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each

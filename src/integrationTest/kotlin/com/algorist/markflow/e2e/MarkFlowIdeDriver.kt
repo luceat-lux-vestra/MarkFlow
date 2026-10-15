@@ -25,11 +25,11 @@ import kotlin.time.Duration.Companion.seconds
  * Keep this adapter limited to behavior exercised by the current acceptance slice.
  */
 class MarkFlowIdeDriver(private val driver: Driver) {
-    fun openMarkdown(fileName: String): JEditorUiComponent {
+    private fun selectNativeMarkdown(fileName: String): JEditorUiComponent {
         // IntelliJ's Markdown editor is a TextEditorWithPreview. Its persisted layout can be
         // preview-only, in which case the authoritative platform Editor exists but its Swing
-        // component is deliberately hidden. Select the maintained EditorOnly layout action in the
-        // active FileEditor context before locating the native EditorComponentImpl.
+        // component is deliberately hidden. Select the exact file first, then use the maintained
+        // EditorOnly layout action in that FileEditor context before locating EditorComponentImpl.
         driver.openFile(fileName, waitForCodeAnalysis = false, isTextEditor = false)
         val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
             "opened Markdown file not found: $fileName"
@@ -51,6 +51,14 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             }
             check(editor.isEditable()) { "opened Markdown editor is not editable: $fileName" }
         }
+    }
+
+    fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
+
+    fun closeMarkdown(fileName: String) {
+        // Re-select the exact case tab instead of depending on FileEditorManager.selectedEditor.
+        // Full-corpus cases may temporarily open auxiliary A/B tabs before cleanup.
+        close(selectNativeMarkdown(fileName))
     }
 
     fun source(editor: JEditorUiComponent): String = editor.document.getText()
