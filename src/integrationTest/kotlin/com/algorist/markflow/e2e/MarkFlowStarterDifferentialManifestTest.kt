@@ -276,6 +276,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         check(markFlow.source(editor) == source)
                         val stamp = markFlow.modificationStamp(editor)
                         caseStamp = stamp
+                        heartbeat("case-opened", entry.id)
                         val runtime = driver.withContext(OnDispatcher.EDT) {
                             preview.jcefRuntimeEvidence()
                         }
@@ -308,6 +309,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         (values["derivedDecoded"] ?: 0) > 0)
                             }
                         )
+                        heartbeat("case-native-ready", entry.id)
                         driver.withContext(OnDispatcher.EDT) {
                             visual.normalizeEditorChromeForCapture(remoteEditor)
                         }
@@ -487,9 +489,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                     preview.primaryCaretOffset(remoteEditor) == beforeCaret
                             }) { "E18 scroll probe altered the authoritative source/caret" }
                         }
+                        heartbeat("case-native-evidence-complete", entry.id)
                         var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
                         var reference: Rectangle? = null
                         if (entry.comparable) {
+                            heartbeat("case-reference-open", entry.id)
                             refIdentity = driver.withContext(OnDispatcher.EDT) {
                                 preview.showReferenceAtSourceLine(remoteEditor, entry.line)
                             }
@@ -506,6 +510,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 check(xywh.size == 4)
                                 Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
                             }
+                            heartbeat("case-reference-visible", entry.id)
                             if (entry.parent == "review-only-general-document") {
                                 waitFor(
                                     message = "Preview shows SAME general-document section: " + entry.id,
@@ -640,6 +645,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                     checker = { it }
                                 )
                             }
+                            heartbeat("case-reference-painted", entry.id)
                         } else {
                             check(entry.classification == "degraded" &&
                                 entry.visualExpectation == "diagnostic-only") {
@@ -1495,6 +1501,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         }
                         // Do not report a successful capture if its mandatory
                         // same-source A/B evidence failed earlier in this case.
+                        heartbeat("case-evidence-complete", entry.id)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
                     } catch (cause: Throwable) {
@@ -1525,6 +1532,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         val opened = caseEditor
                         val remote = caseRemoteEditor
                         if (opened != null && remote != null) {
+                            heartbeat("case-cleanup-start", entry.id)
                             val cleanup = runCatching {
                                 val expectedStamp = caseStamp
                                 check(driver.withContext(OnDispatcher.EDT) {
@@ -1541,6 +1549,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // Re-select this exact case by filename before switching it back
                                 // to EditorOnly and closing its TextEditorWithPreview/JCEF owner.
                                 markFlow.closeMarkdown(entry.id + ".md")
+                                heartbeat("case-cleanup-complete", entry.id)
                             }
                             val cleanupError = cleanup.exceptionOrNull()
                             if (cleanupError != null) {

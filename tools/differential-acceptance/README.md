@@ -242,6 +242,27 @@ remain unchanged. The watchdog self-test exercises both the console heartbeat
 and process-group identity checks. No acceptance criterion or case inventory
 is changed.
 
+## Stage E27 — intra-case liveness localization
+
+Exact post-main run `38736518267` on
+`50d89c23e3381737fd0d94ecc3112406456c790b` proved that one-minute console
+output alone does not prevent the hosted-runner shutdown. Its heartbeats
+showed normal case turnover until `md-fence-length-info`, then the same case
+remained active for more than five minutes before the runner itself shut down.
+This localizes the next defect to one case lifecycle rather than general
+workflow silence.
+
+The full-corpus harness now records bounded intra-case phases: opened,
+native-ready, native-evidence-complete, reference-open, reference-visible,
+reference-painted, evidence-complete, cleanup-start and cleanup-complete.
+The watchdog's active-phase inactivity bound is reduced from six minutes to
+three minutes so a blocked Driver/JCEF call is terminated and retained by the
+normal `always()` artifact path before the hosted runner is likely to
+disappear. `test-start` and `starter-launch` retain the existing 15-minute
+startup allowance, so slow IDE startup is not reclassified as a case stall.
+All individual explicit waits remain below this three-minute bound; acceptance
+criteria, corpus size and ledger requirements are unchanged.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each

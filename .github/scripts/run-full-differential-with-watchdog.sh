@@ -105,7 +105,7 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-idle_seconds="${MARKFLOW_WATCHDOG_IDLE_SECONDS:-360}"
+idle_seconds="${MARKFLOW_WATCHDOG_IDLE_SECONDS:-180}"
 startup_seconds="${MARKFLOW_WATCHDOG_STARTUP_SECONDS:-900}"
 total_seconds="${MARKFLOW_WATCHDOG_TOTAL_SECONDS:-5100}"
 poll_seconds="${MARKFLOW_WATCHDOG_POLL_SECONDS:-15}"
@@ -156,15 +156,17 @@ while kill -0 "$child_pid" 2>/dev/null; do
   now="$(date +%s)"
   elapsed=$((now - start_epoch))
   progress="missing"
+  phase="missing"
   idle=-1
   if [ -f "$progress_file" ]; then
     progress="$(tr '\t\n' '  ' < "$progress_file")"
+    phase="$(awk -F '\t' 'END {print $2}' "$progress_file")"
     mtime="$(stat -c %Y "$progress_file" 2>/dev/null || echo "$now")"
     idle=$((now - mtime))
   fi
 
   if [ "$now" -ge "$next_report_epoch" ]; then
-    echo "FULL_DIFFERENTIAL_HEARTBEAT elapsed_s=$elapsed idle_s=$idle progress=$progress"
+    echo "FULL_DIFFERENTIAL_HEARTBEAT elapsed_s=$elapsed idle_s=$idle phase=$phase progress=$progress"
     next_report_epoch=$((now + report_seconds))
   fi
 
@@ -177,7 +179,15 @@ while kill -0 "$child_pid" 2>/dev/null; do
   fi
 
   if [ -f "$progress_file" ]; then
-    if [ "$idle" -ge "$idle_seconds" ]; then
+    if [ "$phase" = "test-start" ] || [ "$phase" = "starter-launch" ]; then
+      if [ "$elapsed" -ge "$startup_seconds" ]; then
+        terminate_group "$child_pid" "startup-timeout" "$diagnostic_file" "$progress_file"
+        set +e
+        wait "$child_pid"
+        set -e
+        exit 124
+      fi
+    elif [ "$idle" -ge "$idle_seconds" ]; then
       terminate_group "$child_pid" "idle-timeout" "$diagnostic_file" "$progress_file"
       set +e
       wait "$child_pid"
