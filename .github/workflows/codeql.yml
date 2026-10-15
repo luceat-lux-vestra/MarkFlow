@@ -1,14 +1,15 @@
 name: CodeQL
+run-name: CodeQL source ${{ inputs.candidate_sha || github.sha }}
 
 on:
   # Intentionally no PR/push CodeQL: repeat scans were a development-CI bottleneck.
   # Exact-main weekly/manual evidence remains required for new Marketplace publication.
-  # Manually scan an exact reviewed, current main SHA before any release is created.
+  # Manually scan an exact protected-main ancestor SHA without publishing.
   # A successful run is evidence only: it does not prevent manual GitHub Release creation.
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: 'Exact 40-character main HEAD SHA for release-candidate security preflight'
+        description: 'Exact 40-character protected-main ancestor SHA for release-candidate preflight'
         required: true
         type: string
   # Default-branch alerts are refreshed weekly, not on each main merge.
@@ -20,8 +21,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: codeql-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ inputs.candidate_sha || github.sha }}
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -54,13 +55,20 @@ jobs:
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Candidate must be an exact immutable commit SHA"; exit 1; }
           [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Release evidence must originate from protected main"; exit 1; }
-          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ] || { echo "::error::Event SHA must match selected candidate"; exit 1; }
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            [ "$GITHUB_SHA" = "$EXPECTED_SHA" ] || { echo "::error::Scheduled event SHA mismatch"; exit 1; }
+          fi
           case "$GITHUB_EVENT_NAME" in
             workflow_dispatch|schedule) ;;
             *) echo "::error::Untrusted release-evidence event"; exit 1 ;;
           esac
           remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          [ "$remote_main" = "$EXPECTED_SHA" ] || { echo "::error::Stale candidate: current protected main does not match"; exit 1; }
+          [[ "$remote_main" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid protected main SHA"; exit 1; }
+          compare="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_SHA}...${remote_main}")"
+          jq -e --arg sha "$EXPECTED_SHA" '
+            (.status == "ahead" or .status == "identical") and
+            .base_commit.sha == $sha and .merge_base_commit.sha == $sha
+          ' <<<"$compare" >/dev/null || { echo "::error::Candidate is not in protected main history"; exit 1; }
           echo "Release candidate source verified: $EXPECTED_SHA"
 
       - name: Fetch exact source
@@ -68,9 +76,38 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 0
 
       - name: Verify exact checkout
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Verify protected-main ancestry
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$EXPECTED_SHA" FETCH_HEAD
+
+      - name: Record analyzed source
+        env:
+          CODEQL_LANGUAGE: ${{ matrix.language }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          sha = os.environ["EXPECTED_SHA"]
+          checkout = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if sha != checkout:
+              raise SystemExit("Analyzed checkout differs from selected SHA")
+          doc = {"schema": 1, "candidate_sha": sha, "checkout_sha": checkout,
+                 "event_sha": os.environ["GITHUB_SHA"],
+                 "run_id": int(os.environ["GITHUB_RUN_ID"]),
+                 "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                 "language": os.environ["CODEQL_LANGUAGE"]}
+          Path(os.environ["RUNNER_TEMP"], "source-identity.json").write_text(
+              json.dumps(doc, sort_keys=True), encoding="utf-8")
+          PY
 
       - name: Setup Java for Kotlin CodeQL
         if: matrix.language == 'java-kotlin'
@@ -117,6 +154,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Retain verified source provenance
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}
+          path: ${{ runner.temp }}/source-identity.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Enforce candidate security verdict
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         env:
@@ -128,6 +174,11 @@ jobs:
             --sarif-dir "$SARIF_DIR" \
             --language "${{ matrix.language }}" \
             --candidate-sha "$EXPECTED_SHA"
-          # A moving main invalidates this workflow's freshness claim.
-          remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          [ "$remote_main" = "$EXPECTED_SHA" ] || { echo "::error::main moved during candidate scan; evidence is stale"; exit 1; }
+          echo "Original SARIF validated for $EXPECTED_SHA."
+
+      - name: Verify protected-main ancestry after analysis
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$EXPECTED_SHA" FETCH_HEAD

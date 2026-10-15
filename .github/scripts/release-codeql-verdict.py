@@ -48,6 +48,36 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
         not isinstance(x, dict) or x.get("executionSuccessful") is not True for x in invocations
     ):
         raise ValueError("CodeQL analysis reports an unsuccessful invocation")
+    # CodeQL extracted-file diagnostics prove real language coverage rather
+    # than merely loading a query pack against an empty database.
+    diagnostic, suffixes = {
+        "actions": ("actions/diagnostics/successfully-extracted-files", (".yml", ".yaml")),
+        "javascript-typescript": ("js/diagnostics/successfully-extracted-files",
+                                  (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")),
+        "java-kotlin": ("java/diagnostics/successfully-extracted-files", (".kt",)),
+    }[language]
+    extracted = set()
+    for invocation in invocations:
+        notifications = invocation.get("toolExecutionNotifications")
+        if not isinstance(notifications, list):
+            raise ValueError("CodeQL extraction diagnostics are missing")
+        for note in notifications:
+            if not isinstance(note, dict):
+                raise ValueError("malformed CodeQL extraction diagnostic")
+            if note.get("descriptor", {}).get("id") != diagnostic:
+                continue
+            locations = note.get("locations")
+            if not isinstance(locations, list):
+                raise ValueError("malformed CodeQL extracted-file locations")
+            for location in locations:
+                if not isinstance(location, dict):
+                    raise ValueError("malformed CodeQL extraction file location")
+                uri = location.get("physicalLocation", {}).get("artifactLocation", {}).get("uri")
+                if isinstance(uri, str) and uri.endswith(suffixes):
+                    extracted.add(uri)
+    if not extracted:
+        raise ValueError(f"no verified {language} files extracted by CodeQL")
+
     # CodeQL SARIF puts query rules in tool.extensions[].rules, not in
     # tool.driver.rules. A clean scan may contain zero results and no driver rules.
     tool = run.get("tool", {})
@@ -127,7 +157,7 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
         raise ValueError(f"High/Critical CodeQL findings ({len(high)}): {findings}")
     return {"candidate_sha": candidate_sha, "language": language,
             "sarif_sha256": hashlib.sha256(raw).hexdigest(), "results": len(results),
-            "rules": len(rules), "high_or_critical": 0}
+            "rules": len(rules), "extracted_files": len(extracted), "high_or_critical": 0}
 
 
 def self_test() -> None:
@@ -141,7 +171,16 @@ def self_test() -> None:
             "tool": {"driver": {"name": "CodeQL"}, "extensions": [
                 {"name": "codeql/java-queries", "rules": [rule]}]},
             "automationDetails": {"id": "/language:" + language + "/"},
-            "invocations": [{"executionSuccessful": True}],
+            "invocations": [{"executionSuccessful": True,
+                             "toolExecutionNotifications": [{
+                                 "descriptor": {"id": ("js" if language == "javascript-typescript"
+                                     else "actions" if language == "actions" else "java")
+                                     + "/diagnostics/successfully-extracted-files"},
+                                 "locations": [{"physicalLocation": {
+                                     "artifactLocation": {"uri": ("src/a.ts" if language == "javascript-typescript"
+                                         else ".github/workflows/build.yml" if language == "actions"
+                                         else "src/main/kotlin/Test.kt")}}}]
+                             }]}],
             "results": [{"ruleId": "java/test", "rule": {
                 "id": "java/test", "index": 0, "toolComponent": {"index": 0}
             }}] if results else []}]}
@@ -164,6 +203,18 @@ def self_test() -> None:
         # Real CodeQL 2.27.2 clean SARIF has zero driver rules/results but
         # retains query descriptors in tool.extensions[].rules.
         probe(fixture(results=False))
+        js = fixture(language="javascript-typescript", results=False)
+        js["runs"][0]["tool"]["extensions"][0]["name"] = "codeql/javascript-queries"
+        probe(js, language="javascript-typescript")
+        actions = fixture(language="actions", results=False)
+        actions["runs"][0]["tool"]["extensions"][0]["name"] = "codeql/actions-queries"
+        probe(actions, language="actions")
+        empty = fixture(results=False)
+        empty["runs"][0]["invocations"][0]["toolExecutionNotifications"] = []
+        probe(empty, "no verified")
+        missing = fixture(results=False)
+        missing["runs"][0]["invocations"][0].pop("toolExecutionNotifications")
+        probe(missing, "extraction diagnostics are missing")
         probe(fixture(score="7.0"), "High/Critical")
         probe(fixture(score="9.8"), "High/Critical")
         probe(fixture(score=None), "no severity")

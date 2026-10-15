@@ -380,6 +380,43 @@ check_release_preflight() {
   grep -qE 'Run release preflight fixtures' "$audit" || { finding release_preflight "release preflight fixtures are not named in the hardening workflow"; clean=0; }
   grep -qE 'bash \.github/scripts/release-preflight-test\.sh' "$audit" || { finding release_preflight "release preflight fixtures are not executed by the hardening workflow"; clean=0; }
   [ -f "$release" ] || { finding release_preflight "release.yml is missing"; return 0; }
+  # The source-verifying scanner job must succeed before the privileged
+  # Marketplace job can acquire its publishing environment/secrets.
+  local scan_block publish_block
+  scan_block="$(job_block "$release" codeql-preflight)"
+  publish_block="$(job_block "$release" release)"
+  if [ -z "$scan_block" ] || ! grep -qF 'needs: codeql-preflight' <<< "$publish_block"; then
+    finding release_preflight "Marketplace publication must depend on exact-source CodeQL preflight"
+    clean=0
+  fi
+  if ! grep -qF 'actions: write' <<< "$scan_block" ||
+     ! grep -qF 'contents: read' <<< "$scan_block" ||
+     ! grep -qF 'path: .release-policy' <<< "$scan_block" ||
+     ! grep -qF 'ref: main' <<< "$scan_block" ||
+     ! grep -qF 'python3 .release-policy/.github/scripts/release-codeql-gate.py' <<< "$scan_block" ||
+     ! grep -qF 'steps.recovery.outputs.skip' <<< "$scan_block"; then
+    finding release_preflight "CodeQL preflight dispatch, source binding, or recovery guard missing"
+    clean=0
+  fi
+  if grep -Eq 'contents: write|id-token: write|attestations: write|environment: jetbrains-marketplace|secrets\.|publishPlugin|gh release upload' <<< "$scan_block"; then
+    finding release_preflight "CodeQL preflight must not hold publication authority"
+    clean=0
+  fi
+  # The published SARIF and source artifact contracts must match the consumer
+  # exactly; static checks catch name drift before release event execution.
+  local codeql_workflow="$WORKFLOW_DIR/codeql.yml"
+  local codeql_gate="$ROOT/.github/scripts/release-codeql-gate.py"
+  if ! grep -qF 'name: release-codeql-${{ env.EXPECTED_SHA }}-${{ matrix.language }}' "$codeql_workflow" ||
+     ! grep -qF 'name: codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}' "$codeql_workflow" ||
+     ! grep -qF 'f"release-codeql-{sha}-{language}"' "$codeql_gate" ||
+     ! grep -qF 'f"codeql-source-{sha}-{language}"' "$codeql_gate"; then
+    finding release_preflight "CodeQL raw SARIF/source artifact names disagree with release gate"
+    clean=0
+  fi
+  if grep -qF 'actions: write' <<< "$publish_block"; then
+    finding release_preflight "Marketplace publication job must not hold CodeQL dispatch authority"
+    clean=0
+  fi
   grep -qF 'types: [ released ]' "$release" || { finding release_preflight "release workflow must publish only from stable released events"; clean=0; }
   ! grep -qF 'prereleased' "$release" || { finding release_preflight "release workflow must not auto-publish GitHub prereleases to the default Marketplace channel"; clean=0; }
   grep -qE '^    environment:[[:space:]]+jetbrains-marketplace$' "$release" || { finding release_preflight "release job is not bound to jetbrains-marketplace environment"; clean=0; }
