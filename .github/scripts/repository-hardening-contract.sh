@@ -408,8 +408,13 @@ grep -Fq 'markFlow.closeMarkdown(entry.id + ".md")' "$manifest_test" ||
   die "#353 case cleanup no longer re-selects and closes the exact Markdown case"
 grep -Fq 'fun closeMarkdown(fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 exact-file Markdown lifecycle close helper is missing"
-grep -Fq 'close(selectNativeMarkdown(fileName))' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
-  die "#353 exact-file cleanup no longer restores EditorOnly before close"
+grep -Fq 'manager.closeFile(file)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file cleanup no longer closes the VirtualFile through FileEditorManager"
+grep -Fq 'manager.isFileOpen(file)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file cleanup no longer proves the platform FileEditor is closed"
+if grep -Fq 'close(selectNativeMarkdown(fileName))' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt"; then
+  die "#353 lifecycle cleanup must not reopen/reselect Markdown or toggle Preview layout before close"
+fi
 grep -Fq 'Case lifecycle close observed source identity drift:' "$manifest_test" ||
   die "#353 case cleanup lost source/stamp/unsaved fail-closed identity checks"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
