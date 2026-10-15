@@ -183,11 +183,13 @@ grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$post_main_full_differen
 full_differential_watchdog=".github/scripts/run-full-differential-with-watchdog.sh"
 [ -x "$full_differential_watchdog" ] || die "#353 full differential watchdog is missing or not executable"
 bash "$full_differential_watchdog" --self-test >/dev/null || die "#353 full differential watchdog self-test failed"
-grep -Fq 'MARKFLOW_WATCHDOG_IDLE_SECONDS:-360' "$full_differential_watchdog" || die "#353 watchdog lost the six-minute inactivity bound"
+grep -Fq 'MARKFLOW_WATCHDOG_IDLE_SECONDS:-180' "$full_differential_watchdog" || die "#353 watchdog lost the three-minute active-phase inactivity bound"
 grep -Fq 'MARKFLOW_WATCHDOG_STARTUP_SECONDS:-900' "$full_differential_watchdog" || die "#353 watchdog lost the fifteen-minute startup bound"
 grep -Fq 'MARKFLOW_WATCHDOG_TOTAL_SECONDS:-5100' "$full_differential_watchdog" || die "#353 watchdog lost the 85-minute absolute bound"
 grep -Fq 'MARKFLOW_WATCHDOG_REPORT_SECONDS:-60' "$full_differential_watchdog" || die "#353 watchdog lost the one-minute console keepalive cadence"
 grep -Fq 'FULL_DIFFERENTIAL_HEARTBEAT' "$full_differential_watchdog" || die "#353 watchdog no longer emits live progress to the Actions log"
+grep -Fq 'phase="$(awk -F' "$full_differential_watchdog" || die "#353 watchdog no longer parses progress phases"
+grep -Fq '[ "$phase" = "test-start" ] || [ "$phase" = "starter-launch" ]' "$full_differential_watchdog" || die "#353 watchdog no longer preserves the startup allowance before IDE readiness"
 grep -Fq 'FULL_DIFFERENTIAL_PROCESS_GROUP' "$full_differential_watchdog" || die "#353 watchdog lost process-group identity diagnostics"
 grep -Fq '[ "$child_pgid" != "$child_pid" ]' "$full_differential_watchdog" || die "#353 watchdog no longer fails closed when setsid isolation is broken"
 grep -Fq '[ "$child_pgid" = "$wrapper_pgid" ]' "$full_differential_watchdog" || die "#353 watchdog no longer protects the runner shell process group"
@@ -276,6 +278,10 @@ grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
   die "#353 full differential test no longer marks case progress before blocking Driver calls"
 grep -Fq 'heartbeat("case-complete", entry.id)' "$manifest_test" ||
   die "#353 full differential test no longer marks successful case completion"
+for phase in case-opened case-native-ready case-native-evidence-complete case-reference-open case-reference-visible case-reference-painted case-evidence-complete case-cleanup-start case-cleanup-complete; do
+  grep -Fq "heartbeat(\"$phase\", entry.id)" "$manifest_test" ||
+    die "#353 full differential lost intra-case heartbeat phase: $phase"
+done
 grep -Fq 'FULL_CORPUS_REFERENCE_BLANK_RECOVERY_ONCE' "$manifest_test" ||
   die "#353 full differential lost bounded blank Preview recovery"
 grep -Fq 'initial_result=BLANK_AFTER_20S' "$manifest_test" ||
