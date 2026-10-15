@@ -809,11 +809,32 @@ editor disappeared, while `closeMarkdown()` itself re-opened/re-selected the
 same Markdown file, forced `EditorOnly`, and then invoked the UI
 `CloseContent` action.
 
-The full-corpus cleanup now uses the platform-owned lifecycle directly:
-resolve the already-open exact `VirtualFile`, call
-`FileEditorManager.closeFile(file)` on the EDT, and fail closed unless
-`isFileOpen(file)` becomes false. No file reopen, layout toggle, or synthetic
-tab-close action is allowed on this cleanup path. The 89-case corpus remains
-monolithic for this diagnosis; sharding is intentionally deferred until this
-lifecycle fix is tested, so a passing run cannot hide the underlying resource
-accumulation defect.
+The first direct-close candidate on final PR HEAD `3beb1514...` was then
+re-tested by Starter run `38791981813`, derived-content job
+`116620295893`. It advanced beyond the earlier Preview-paint failure but
+failed at `mermaid-flowchart-large--block-01` while MarkFlow's own derived
+renderer stayed at `derivedFragments=2;derivedPending=2;derivedDecoded=0`.
+Eleven earlier cases had already captured with zero candidate structural
+failures. This exposed a second lifecycle problem instead of justifying a
+larger timeout: production eagerly created one hidden
+`JcefDerivedRendererRuntime` for every eligible Markdown editor, including
+plain Markdown with no Mermaid or KaTeX, and the harness only waited for
+`FileEditorManager.isFileOpen(file)==false`, not final native
+`Editor.isDisposed`/renderer teardown.
+
+The lifecycle correction therefore has three fail-closed boundaries. Cleanup
+resolves the already-open exact `VirtualFile`, calls
+`FileEditorManager.closeFile(file)` on the EDT, and waits until both the file
+is no longer open **and** its native `Editor` is disposed. The corpus then
+requires the MarkFlow-owned JCEF live-runtime count to return to its pre-corpus
+baseline before the next case starts. Product code no longer creates the
+optional derived JCEF runtime at editor attachment; it is created lazily only
+after a READY projection actually contains Mermaid/KaTeX derived fragments,
+is reused for that editor, and is disposed with the controller. A unit
+regression proves plain Markdown creates zero runtimes and derived Markdown
+creates/reuses exactly one.
+
+No file reopen, layout toggle, synthetic tab-close action, timeout relaxation,
+or sharding is used to hide the defect. The 89-case corpus remains monolithic
+until these lifecycle invariants are re-proven on the exact candidate and then
+on protected main.
