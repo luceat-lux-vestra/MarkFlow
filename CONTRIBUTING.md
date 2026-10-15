@@ -27,6 +27,12 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 11. Squash-merge only the reviewed `expected_head_sha`.
 12. Verify resulting `main` SHA/tree/signature and post-main checks before closing the Task.
 
+### GitHub Actions lifecycle
+
+Research, experiment, migration, and other temporary workflows should stay off protected default branch where practical. If an exceptional ephemeral workflow must land under `.github/workflows`, filenames beginning with `research-`, `temporary-`, `tmp-`, or `experiment-` must declare non-empty `# lifecycle-owner:` and `# lifecycle-retire:` header metadata. The owner identifies the responsible issue/campaign; the retirement declaration states the explicit deletion or consolidation condition.
+
+Historical Actions runs and artifacts are evidence. They are not a reason to keep or recreate obsolete workflow YAML solely for sidebar cleanup.
+
 Any HEAD change invalidates a prior PASS/evidence.
 
 Recommended branch names:
