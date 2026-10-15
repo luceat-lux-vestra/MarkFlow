@@ -75,7 +75,7 @@ The JetBrains `com.intellij.mermaid` plugin is also a valid platform-dependency 
 
 ## Executable proof contract
 
-`.github/workflows/native-editor-shell-evidence.yml` launches the real supported IntelliJ runtime under Xvfb with JCEF runtime support explicitly disabled and requires the diagnostic probe to produce a complete PASS evidence document.
+`.github/workflows/native-runtime-evidence.yml` launches the real supported IntelliJ runtime under Xvfb with JCEF runtime support explicitly disabled and requires the diagnostic probe to produce a complete PASS evidence document.
 
 Required cases:
 
