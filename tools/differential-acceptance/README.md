@@ -210,10 +210,14 @@ sequential case retained another bundled JCEF client.
 
 Every manifest case now owns an explicit lifecycle boundary. In a `finally`
 block the harness verifies exact source text/modification stamp/unsaved state,
-then re-selects that exact Markdown file by filename, switches its
-`TextEditorWithPreview` back to `EditorOnly`, and closes the entire editor
-before the next case opens. Exact-file selection is required because the H1
-A/B probe legitimately opens an auxiliary editor; the first candidate
+then resolves that exact already-open Markdown `VirtualFile` and closes it
+through `FileEditorManager.closeFile()` on the EDT. Cleanup waits until
+`FileEditorManager.isFileOpen(file)` is false before the next case opens.
+It deliberately does **not** call `openFile`, re-select the tab, or switch
+`TextEditorWithPreview` back to `EditorOnly` during close: those UI actions
+can retain or recreate Preview/JCEF state instead of proving disposal of the
+FileEditor that owned it. Exact-file identity is required because the H1 A/B
+probe legitimately opens an auxiliary editor; the first candidate
 `421153f6...` proved that relying on global
 `FileEditorManager.selectedEditor` during cleanup fails on the first case.
 Cleanup failure is itself fail-closed and is preserved as a suppressed
@@ -792,3 +796,24 @@ The policy mirrors the repository's expensive CodeQL treatment while preserving
 bounded PR shards remain the routine development gate. Targeted
 `differentialCaseIds` runs remain a debugging mechanism, not a substitute for the
 canonical 89-case acceptance run.
+
+
+### Stage E29 — direct FileEditor lifecycle close
+
+Debug-enabled rerun `38771617499`, job `116567422942`, localized the current
+full-corpus failure before hosted-runner shutdown. The bundled Markdown Preview
+first failed to paint `md-fence-length-info`; the IDE later exited 137 while
+diagnostic `jstack` also stopped responding. This is consistent with the
+remaining lifecycle suspicion after Stage E25: cleanup proved only that the UI
+editor disappeared, while `closeMarkdown()` itself re-opened/re-selected the
+same Markdown file, forced `EditorOnly`, and then invoked the UI
+`CloseContent` action.
+
+The full-corpus cleanup now uses the platform-owned lifecycle directly:
+resolve the already-open exact `VirtualFile`, call
+`FileEditorManager.closeFile(file)` on the EDT, and fail closed unless
+`isFileOpen(file)` becomes false. No file reopen, layout toggle, or synthetic
+tab-close action is allowed on this cleanup path. The 89-case corpus remains
+monolithic for this diagnosis; sharding is intentionally deferred until this
+lifecycle fix is tested, so a passing run cannot hide the underlying resource
+accumulation defect.
