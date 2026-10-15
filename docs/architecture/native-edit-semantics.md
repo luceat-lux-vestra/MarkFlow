@@ -108,7 +108,7 @@ There is no browser ACK/revision/recovery, debounce/flush, delayed autosave, glo
 
 ## Runtime evidence
 
-`.github/workflows/native-editing-evidence.yml` launches a real supported IntelliJ runtime and retains #146 evidence for:
+`.github/workflows/native-runtime-evidence.yml` launches a real supported IntelliJ runtime and retains #146 evidence for:
 
 - authoritative project/VFS/Document ownership;
 - single-caret active-Transferable Markdown preference and bounded normalization;

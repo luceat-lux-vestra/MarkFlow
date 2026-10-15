@@ -1,0 +1,1579 @@
+# Canonical native runtime evidence authority for MarkFlow.
+# Consolidates eight historical one-probe workflows while preserving each
+# real IntelliJ/JCEF/no-JCEF semantic probe and artifact contract.
+name: Native Runtime Evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/native-runtime-evidence.yml'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'src/main/resources/META-INF/plugin.xml'
+      - 'src/main/resources/META-INF/markflow-jcef.xml'
+      - 'src/main/kotlin/com/algorist/markflow/renderer/**'
+      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
+      - 'webview/package.json'
+      - 'webview/package-lock.json'
+      - 'webview/derived-renderer.html'
+      - 'webview/vite.derived-renderer.config.ts'
+      - 'webview/src/renderer/**'
+      - 'webview/src/app/derived-renderer-service.ts'
+      - 'webview/src/app/browser-derived-renderer-backends.ts'
+      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
+      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
+      - 'docs/architecture/native-edit-semantics.md'
+      - 'docs/architecture/native-editor-shell-selection.md'
+      - 'docs/architecture/native-markdown-projection-foundation.md'
+      - 'docs/architecture/README.md'
+      - 'docs/architecture/0001-native-authority-projection-architecture.md'
+      - 'src/main/kotlin/com/algorist/markflow/trust/**'
+      - 'src/test/kotlin/com/algorist/markflow/trust/**'
+      - 'docs/architecture/native-host-resources.md'
+      - 'docs/product/image-file-import-contract.md'
+      - 'fixtures/markdown-fidelity/**'
+      - 'src/main/kotlin/com/algorist/markflow/settings/**'
+      - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact trusted main-history commit SHA to probe; defaults to the dispatch ref.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: native-runtime-evidence-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  target:
+    name: Resolve exact native evidence target
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      run_derived_renderer: ${{ steps.route.outputs.run_derived_renderer }}
+      run_native_derived_presentation: ${{ steps.route.outputs.run_native_derived_presentation }}
+      run_native_editing: ${{ steps.route.outputs.run_native_editing }}
+      run_native_editor_shell: ${{ steps.route.outputs.run_native_editor_shell }}
+      run_native_host_resources: ${{ steps.route.outputs.run_native_host_resources }}
+      run_native_image_import: ${{ steps.route.outputs.run_native_image_import }}
+      run_native_projection: ${{ steps.route.outputs.run_native_projection }}
+      run_no_jcef_native_editing: ${{ steps.route.outputs.run_no_jcef_native_editing }}
+    steps:
+      - name: Resolve and validate source
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          REQUESTED_SHA: ${{ inputs.target_sha || '' }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            SOURCE_SHA="$PR_HEAD_SHA"
+          else
+            SOURCE_SHA="${REQUESTED_SHA:-$DISPATCH_SHA}"
+          fi
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Recovery target is not an exact 40-hex commit SHA."; exit 1; }
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$SOURCE_SHA...$DEFAULT_BRANCH")"
+            status="$(jq -r '.status // empty' <<<"$comparison")"
+            base_sha="$(jq -r '.base_commit.sha // empty' <<<"$comparison")"
+            merge_base_sha="$(jq -r '.merge_base_commit.sha // empty' <<<"$comparison")"
+            if [[ "$base_sha" != "$SOURCE_SHA" || "$merge_base_sha" != "$SOURCE_SHA" || ( "$status" != "ahead" && "$status" != "identical" ) ]]; then
+              echo "::error::Recovery target is not the current default branch or one of its ancestors."
+              exit 1
+            fi
+          fi
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'Native evidence source: %s\n' "$SOURCE_SHA"
+
+
+      - name: Route native evidence by changed files
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            for key in derived_renderer native_derived_presentation native_editing native_editor_shell native_host_resources native_image_import native_projection no_jcef_native_editing; do
+              printf 'run_%s=true\n' "$key" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          gh api --paginate \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' > "$RUNNER_TEMP/native-evidence-changed-files.txt"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          patterns = json.loads(r'''{"derived_renderer":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_derived_presentation":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-edit-semantics.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/README.md"],"native_editor_shell":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md"],"native_host_resources":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/architecture/native-host-resources.md"],"native_image_import":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/product/image-file-import-contract.md"],"native_projection":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","fixtures/markdown-fidelity/**","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md","docs/architecture/README.md"],"no_jcef_native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/settings/**","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/0002-mermaid-katex-renderer-continuity.md"]}''')
+          changed = [
+              line.strip()
+              for line in Path(os.environ["RUNNER_TEMP"])
+                  .joinpath("native-evidence-changed-files.txt")
+                  .read_text(encoding="utf-8")
+                  .splitlines()
+              if line.strip()
+          ]
+
+          def compile_glob(pattern: str) -> re.Pattern[str]:
+              out = ["^"]
+              i = 0
+              while i < len(pattern):
+                  if pattern.startswith("**", i):
+                      out.append(".*")
+                      i += 2
+                  elif pattern[i] == "*":
+                      out.append("[^/]*")
+                      i += 1
+                  elif pattern[i] == "?":
+                      out.append("[^/]")
+                      i += 1
+                  else:
+                      out.append(re.escape(pattern[i]))
+                      i += 1
+              out.append("$")
+              return re.compile("".join(out))
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key, globs in patterns.items():
+                  compiled = [compile_glob(pattern) for pattern in globs]
+                  matched = any(regex.match(path) for path in changed for regex in compiled)
+                  verdict = "true" if matched else "false"
+                  output.write(f"run_{key}={verdict}\n")
+                  print(f"{key}: {'RUN' if matched else 'SKIP'}")
+          PY
+
+  derived_renderer:
+    needs: target
+    if: needs.target.outputs.run_derived_renderer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Isolated JCEF renderer (${{ matrix.id }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: idea-2026.2.3
+            platform_version: 2026.2.3
+    steps:
+      - name: Validate dispatched target
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Recovery target is not an exact 40-hex commit SHA."; exit 1; }
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$TARGET_SHA...$DEFAULT_BRANCH")"
+          status="$(jq -r '.status // empty' <<<"$comparison")"
+          base_sha="$(jq -r '.base_commit.sha // empty' <<<"$comparison")"
+          merge_base_sha="$(jq -r '.merge_base_commit.sha // empty' <<<"$comparison")"
+          if [[ "$base_sha" != "$TARGET_SHA" || "$merge_base_sha" != "$TARGET_SHA" || ( "$status" != "ahead" && "$status" != "identical" ) ]]; then
+            echo "::error::Recovery target is not the current default branch or one of its ancestors."
+            exit 1
+          fi
+          printf 'Validated main-history target: %s\n' "$TARGET_SHA"
+
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Record dispatched validation target
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+        run: |
+          printf 'Validation target: %s\n' "$TARGET_SHA"
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-derived-renderer-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run isolated renderer probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_TOOL_OPTIONS="-Dmarkflow.derivedRendererProbe.output=$GITHUB_WORKSPACE/build/derived-renderer-probe/evidence.json -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
+          timeout --signal=TERM --kill-after=15s 10m \
+            ./gradlew runIde -PplatformVersion="${{ matrix.platform_version }}" --args=markflow-derived-renderer-probe --stacktrace
+
+      - name: Validate evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/derived-renderer-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('derived renderer probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedRuntime') != 'ISOLATED_JCEF':
+              raise SystemExit(f"unexpected renderer runtime: {evidence.get('selectedRuntime')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"renderer evidence verdict is not PASS: {evidence.get('verdict')}")
+          if evidence.get('baselineLiveInstances') != evidence.get('finalLiveInstances'):
+              raise SystemExit('renderer live-instance count did not return to baseline')
+
+          required = {
+              'runtime-factory-registered',
+              'resource-start-failure-rollback',
+              'runtime-create-failure-rollback',
+              'temp-root-cleanup-retry',
+              'runtime-create-latency',
+              'mermaid-success',
+              'mermaid-math-literal-fallback',
+              'mermaid-syntax-failure',
+              'katex-inline-success',
+              'katex-display-success',
+              'katex-malformed-degradation',
+              'cross-origin-navigation-blocked',
+              'repeated-create-dispose',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate renderer evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(f"renderer evidence case mismatch: {sorted(set(by_id) ^ required)}")
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f"renderer evidence failures: {failed}")
+
+          def metric(case_id, key):
+              detail = str(by_id[case_id].get('detail', ''))
+              prefix = f"{key}="
+              token = next((part for part in detail.split() if part.startswith(prefix)), None)
+              if token is None:
+                  raise SystemExit(f"{case_id} missing {key}: {detail}")
+              return int(token[len(prefix):])
+
+          resource_markers = ('resourceOwners=0', 'serverRunning=false', 'extractedRoot=false', 'tempRoot=false')
+          rollback_detail = str(by_id['resource-start-failure-rollback'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in rollback_detail:
+                  raise SystemExit(f"renderer resource rollback marker missing {marker}: {rollback_detail}")
+
+          create_failure_detail = str(by_id['runtime-create-failure-rollback'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in create_failure_detail:
+                  raise SystemExit(f"renderer create-failure rollback marker missing {marker}: {create_failure_detail}")
+
+          temp_cleanup_detail = str(by_id['temp-root-cleanup-retry'].get('detail', ''))
+          for marker in ('retainedAfterFailure=true', 'rootChanged=true', *resource_markers):
+              if marker not in temp_cleanup_detail:
+                  raise SystemExit(f"renderer temp-root recovery marker missing {marker}: {temp_cleanup_detail}")
+
+          lifecycle_detail = str(by_id['repeated-create-dispose'].get('detail', ''))
+          for marker in resource_markers:
+              if marker not in lifecycle_detail:
+                  raise SystemExit(f"renderer resource lifecycle marker missing {marker}: {lifecycle_detail}")
+
+          budgets = {
+              ('runtime-create-latency', 'elapsedMs'): 15000,
+              ('mermaid-success', 'elapsedMs'): 15000,
+              ('mermaid-math-literal-fallback', 'elapsedMs'): 15000,
+              ('katex-inline-success', 'elapsedMs'): 15000,
+              ('katex-display-success', 'elapsedMs'): 15000,
+              ('repeated-create-dispose', 'elapsedMs'): 10000,
+          }
+          for (case_id, key), budget in budgets.items():
+              observed = metric(case_id, key)
+              if observed > budget:
+                  raise SystemExit(f"{case_id} {key}={observed} exceeded budget {budget}")
+
+          print(f"Derived renderer evidence PASS on IDE {evidence.get('ideBuild')}")
+          for case in cases:
+              print(f"{case.get('id')}: {case.get('outcome')} - {case.get('detail')}")
+          PY
+
+      - name: Classify retained JCEF shutdown diagnostics
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          marker = 'AppShutdownProxySelector - network access during/after app shutdown'
+          warnings = 0
+          for log in sorted(Path('.intellijPlatform/sandbox').rglob('idea.log')):
+              lines = log.read_text(encoding='utf-8', errors='replace').splitlines()
+              for index, line in enumerate(lines):
+                  if marker not in line:
+                      continue
+                  warnings += 1
+                  block = [line]
+                  for following in lines[index + 1:index + 30]:
+                      if re.match(r'^\d{4}-\d{2}-\d{2}', following):
+                          break
+                      block.append(following)
+                  joined = '\n'.join(block)
+                  if 'com.algorist.markflow' in joined:
+                      raise SystemExit(f'MarkFlow-owned stack detected in JCEF shutdown warning from {log}:\n{joined}')
+          print(f'JCEF shutdown warnings classified: count={warnings}, markflowOwned=0')
+          PY
+
+      - name: Upload renderer evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: derived-renderer-evidence-${{ matrix.id }}
+          path: |
+            build/derived-renderer-probe/evidence.json
+            build/derived-renderer-probe/mermaid-math-literal-fallback.png
+            build/derived-renderer-probe/mermaid-math-literal-fallback.svg
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-derived-renderer-xvfb.log
+          if-no-files-found: warn
+
+  native_derived_presentation:
+    needs: target
+    if: needs.target.outputs.run_native_derived_presentation == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native derived presentation probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-derived-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native derived presentation probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build/native-derived-presentation-probe/project"
+          export JAVA_TOOL_OPTIONS="-Dmarkflow.nativeDerivedPresentationProbe.output=$GITHUB_WORKSPACE/build/native-derived-presentation-probe/evidence.json -Didea.trust.all.projects=true -Dide.mac.message.dialogs.as.sheets=false -Djb.privacy.policy.text=<!--999.999--> -Djb.consents.confirmation.enabled=false"
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIde --args="$GITHUB_WORKSPACE/build/native-derived-presentation-probe/project" --stacktrace
+
+      - name: Validate native derived presentation evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-derived-presentation-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native derived presentation probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedSurface') != 'PLATFORM_TEXT_EDITOR_DERIVED_INLAYS':
+              raise SystemExit(f"unexpected native derived surface: {evidence.get('selectedSurface')}")
+          if evidence.get('jcefSupported') is not True:
+              raise SystemExit(f"real JCEF proof did not run with JCEF: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native derived presentation verdict is not PASS: {evidence.get('verdict')}")
+          if evidence.get('baselineLiveRuntimes') != evidence.get('finalLiveRuntimes'):
+              raise SystemExit('derived renderer runtime count did not return to baseline')
+
+          required = {
+              'jcef-runtime-available',
+              'authoritative-document-fixture',
+              'platform-text-editor-selected',
+              'derived-projection-contract',
+              'real-mermaid-katex-inert-inlays',
+              'caret-selection-exact-source-reveal',
+              'split-editor-presentation-isolation',
+              'renderer-unavailable-source-fallback',
+              'renderer-failure-source-fallback',
+              'missing-artifact-source-fallback',
+              'stale-renderer-identity-rejected',
+              'final-source-and-lifecycle-stability',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate #148 evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"#148 evidence case mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'#148 required cases failed: {failed}')
+
+          def detail(case_id):
+              return str(by_id[case_id].get('detail', ''))
+
+          if 'projectDefault=false' not in detail('authoritative-document-fixture') or 'insideProject=true' not in detail('authoritative-document-fixture'):
+              raise SystemExit('native derived proof did not run in a real opened project')
+          real = detail('real-mermaid-katex-inert-inlays')
+          if 'decodedPng=6' not in real or 'inlays=6' not in real or 'sourceStable=true' not in real:
+              raise SystemExit(f'real renderer-to-inlay proof incomplete: {real}')
+          reveal = detail('caret-selection-exact-source-reveal')
+          if not all(marker in reveal for marker in ('inlineCaretReveal=true', 'displaySelectionReveal=true', 'restored=true')):
+              raise SystemExit(f'exact-source reveal proof incomplete: {reveal}')
+          split = detail('split-editor-presentation-isolation')
+          if 'sharedDocument=true' not in split or 'independentInlays=true' not in split or 'independentReveal=true' not in split:
+              raise SystemExit(f'split-editor isolation proof incomplete: {split}')
+          for case_id in ('renderer-unavailable-source-fallback', 'renderer-failure-source-fallback', 'missing-artifact-source-fallback'):
+              if 'exactSourceFallback=true' not in detail(case_id):
+                  raise SystemExit(f'{case_id} did not prove exact source fallback: {detail(case_id)}')
+          stale = detail('stale-renderer-identity-rejected')
+          if 'staleResultsRejected=3' not in stale or 'staleOverwrite=false' not in stale:
+              raise SystemExit(f'stale renderer rejection proof incomplete: {stale}')
+          final = detail('final-source-and-lifecycle-stability')
+          if not all(marker in final for marker in ('controllers=0', 'editors=0', 'runtimeBaselineRestored=true', 'sourceStable=true')):
+              raise SystemExit(f'final #148 lifecycle proof incomplete: {final}')
+
+          print(f"Native derived presentation PASS on IDE {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')} - {detail(case_id)}")
+          PY
+
+      - name: Upload native derived presentation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-derived-presentation-evidence
+          path: |
+            build/native-derived-presentation-probe/evidence.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-derived-xvfb.log
+          if-no-files-found: warn
+
+  native_editing:
+    needs: target
+    if: needs.target.outputs.run_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native editing probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-editing-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editing probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeEditingProbe --stacktrace
+
+      - name: Validate native editing evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-editing-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native editing probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native editing proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-native-editing',
+              'authoritative-editing-fixture',
+              'platform-text-provider-boundary',
+              'native-paste-preprocessor-registered',
+              'markdown-mime-preferred-payload-only',
+              'markdown-like-plain-payload-only',
+              'code-block-paste-delegates-literal',
+              'multicaret-paste-delegates-platform',
+              'ordinary-plain-paste-delegates-unchanged',
+              'rich-edit-locality-undo-redo',
+              'multicaret-rich-edit-is-local-and-isolated',
+              'unsafe-rich-edit-fails-without-source-change',
+              'platform-state-roundtrip-source-stable',
+              'final-native-editing-lifecycle',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native editing evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native editing case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native editing required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-editing-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native editing proof did not run inside a real project: {fixture_detail}')
+          mime_detail = str(by_id['markdown-mime-preferred-payload-only'].get('detail', ''))
+          for flag in ('markdownMimePreferred=true', 'surroundingSourceStable=true', 'undoRedo=true'):
+              if flag not in mime_detail:
+                  raise SystemExit(f'Markdown MIME paste contract incomplete: {mime_detail}')
+          code_detail = str(by_id['code-block-paste-delegates-literal'].get('detail', ''))
+          if 'codeBlockDelegated=true' not in code_detail or 'markdownMimeSuppressed=true' not in code_detail:
+              raise SystemExit(f'code-block literal paste contract incomplete: {code_detail}')
+          multicaret_paste_detail = str(by_id['multicaret-paste-delegates-platform'].get('detail', ''))
+          for flag in ('multicaretPasteDelegated=true', 'markdownMimeSuppressed=true', 'platformCarets=2', 'undoRedo=true'):
+              if flag not in multicaret_paste_detail:
+                  raise SystemExit(f'platform multicaret paste contract incomplete: {multicaret_paste_detail}')
+          rich_detail = str(by_id['rich-edit-locality-undo-redo'].get('detail', ''))
+          for flag in ('sourceLocal=true', 'undo=true', 'redo=true'):
+              if flag not in rich_detail:
+                  raise SystemExit(f'rich-edit command contract incomplete: {rich_detail}')
+          multi_detail = str(by_id['multicaret-rich-edit-is-local-and-isolated'].get('detail', ''))
+          for flag in ('multicaret=2', 'secondEditorStateIsolated=true', 'trackedSourceDelta=true'):
+              if flag not in multi_detail:
+                  raise SystemExit(f'multicaret edit/isolation contract incomplete: {multi_detail}')
+          state_detail = str(by_id['platform-state-roundtrip-source-stable'].get('detail', ''))
+          for flag in ('legacyStateAuthority=false', 'splitIsolation=true', 'sourceStable=true'):
+              if flag not in state_detail:
+                  raise SystemExit(f'platform state contract incomplete: {state_detail}')
+          lifecycle_detail = str(by_id['final-native-editing-lifecycle'].get('detail', ''))
+          if 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'native editing lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          parity_path = Path('build/native-editing-probe/parity.json')
+          if not parity_path.is_file():
+              raise SystemExit('#152 editing parity probe did not produce parity.json')
+          parity = json.loads(parity_path.read_text(encoding='utf-8'))
+          if parity.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected editing parity schema: {parity.get('schemaVersion')}")
+          if parity.get('verdict') != 'PASS':
+              raise SystemExit(f"native Markdown editing parity verdict is not PASS: {parity.get('verdict')}")
+          parity_required = {
+              'multicaret-single-source-markdown-platform-semantics',
+              'multicaret-ambiguous-source-delegates-platform',
+              'column-mode-markdown-platform-semantics',
+              'bundled-markdown-actions-source-local',
+          }
+          parity_cases = parity.get('cases') or []
+          parity_by_id = {case.get('id'): case for case in parity_cases}
+          if len(parity_by_id) != len(parity_cases):
+              raise SystemExit('duplicate editing parity case ids')
+          if set(parity_by_id) != parity_required:
+              raise SystemExit(
+                  f"editing parity case contract mismatch: missing={sorted(parity_required - set(parity_by_id))}, "
+                  f"unexpected={sorted(set(parity_by_id) - parity_required)}"
+              )
+          parity_failed = sorted(
+              case_id for case_id in parity_required if parity_by_id[case_id].get('outcome') != 'PASS'
+          )
+          if parity_failed:
+              raise SystemExit(f'editing parity required cases failed: {parity_failed}')
+
+          parity_markers = {
+              'multicaret-single-source-markdown-platform-semantics': (
+                  'markdownPreferred=true', 'sourceCarets=1', 'destinationCarets=2', 'platformDuplication=true', 'undoRedo=true'
+              ),
+              'multicaret-ambiguous-source-delegates-platform': (
+                  'nullMetadataDelegated=true', 'newlineSegmentationStable=true', 'multiSourceOffsetsDelegated=true'
+              ),
+              'column-mode-markdown-platform-semantics': (
+                  'columnMode=true', 'platformClones=2', 'perLineDistribution=true', 'prospectiveCodeDestinationDelegated=true'
+              ),
+              'bundled-markdown-actions-source-local': (
+                  'actionsRegistered=3', 'boldLocal=true', 'italicLocal=true', 'codeLocal=true', 'boldUndoRedo=true', 'unrelatedSourceStable=true'
+              ),
+          }
+          for case_id, markers in parity_markers.items():
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing editing parity markers {missing}: {detail}')
+
+          print(f"Native editing verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          print(f"Native Markdown editing parity verdict: {parity['verdict']}")
+          for case_id in sorted(parity_required):
+              print(f"editing-parity/{case_id}: {parity_by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native editing evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-editing-evidence
+          path: |
+            build/native-editing-probe/evidence.json
+            build/native-editing-probe/parity.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-editing-xvfb.log
+          if-no-files-found: warn
+
+  native_editor_shell:
+    needs: target
+    if: needs.target.outputs.run_native_editor_shell == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native editor shell probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-shell-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editor shell probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeEditorShellProbe --stacktrace
+
+      - name: Validate native shell evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-editor-shell-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native editor shell probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 5:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native editor shell proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-runtime',
+              'authoritative-document-fixture',
+              'provider-and-bundled-markdown-coexistence',
+              'editor-factory-presentation-lifecycle',
+              'shared-document-splits',
+              'platform-keyboard-and-keymap',
+              'platform-clipboard',
+              'platform-ime-composition',
+              'caret-selection-scroll-file-editor-state',
+              'dirty-save-undo-redo',
+              'exact-source-fallback',
+              'create-recreate-dispose',
+              'owned-file-editor-rejection-boundary',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native shell evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native shell case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native shell required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native shell proof did not run inside a real opened project: {fixture_detail}')
+          undo_detail = str(by_id['dirty-save-undo-redo'].get('detail', ''))
+          if 'undoScope=project-text-editor' not in undo_detail:
+              raise SystemExit(f'undo proof did not use project TextEditor context: {undo_detail}')
+          boundary_detail = str(by_id['owned-file-editor-rejection-boundary'].get('detail', ''))
+          for flag in ('platformTextAuthority=true', 'legacyBrowserProvider=false', 'presentationOnly=true'):
+              if flag not in boundary_detail:
+                  raise SystemExit(f'production FileEditor ownership boundary incomplete: {boundary_detail}')
+
+          providers = evidence.get('providerInventory') or []
+          selected = [p for p in providers if p.get('selectedPlatformTextProvider') is True]
+          if len(selected) != 1 or selected[0].get('accepted') is not True or selected[0].get('policy') != 'NONE':
+              raise SystemExit(f'invalid selected platform text provider evidence: {selected}')
+          legacy = [p for p in providers if p.get('legacyMarkFlowProvider') is True]
+          if legacy:
+              raise SystemExit(f'legacy MarkFlow browser provider remained registered after native production cutover: {legacy}')
+          markdown = [p for p in providers if 'markdown' in str(p.get('className', '')).lower()]
+          if not markdown or not any(p.get('accepted') is True for p in markdown):
+              raise SystemExit(f'bundled Markdown provider did not coexist as an accepting provider: {markdown}')
+
+          print(f"Native shell verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native shell evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-editor-shell-evidence
+          path: |
+            build/native-editor-shell-probe/evidence.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-shell-xvfb.log
+          if-no-files-found: warn
+
+  native_host_resources:
+    needs: target
+    if: needs.target.outputs.run_native_host_resources == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native host resources probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Assert native host-resource package has no browser-realm capability dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeHostResourceProjection.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeHostResourcePresentationController.kt
+            src/main/kotlin/com/algorist/markflow/trust/ExternalNavigationPolicy.kt
+            src/main/kotlin/com/algorist/markflow/trust/NativeLocalImageResolver.kt
+          )
+          if grep -En 'MarkFlowWebviewResourceManager|SourceNativeLocalImageCapability|JBCef|com\.intellij\.ui\.jcef|127\.0\.0\.1|__markflow_source_image__' "${files[@]}"; then
+            echo 'native host-resource implementation depends on forbidden browser/JCEF/loopback capability surface' >&2
+            exit 1
+          fi
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-host-resources-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native host resources probe with JCEF plugin disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeHostResourcesProbe --stacktrace
+
+      - name: Validate native host resources evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-host-resources-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native host resources probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedSurface') != 'PLATFORM_TEXT_EDITOR_HOST_RESOURCES':
+              raise SystemExit(f"unexpected selected surface: {evidence.get('selectedSurface')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native host resources verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-plugin-absent-host-resource-path',
+              'authoritative-document-fixture',
+              'platform-text-editor-selected',
+              'host-resource-projection-contract',
+              'valid-and-failed-local-image-runtime',
+              'caret-selection-exact-source-reveal',
+              'explicit-host-navigation-allow-deny',
+              'split-editor-presentation-isolation',
+              'hostile-local-path-and-media-policy',
+              'document-move-and-reopen-context',
+              'stale-image-result-rejected',
+              'repeated-create-dispose-ownership',
+              'final-source-and-lifecycle-stability',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native host-resource evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"host-resource case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native host-resource required cases failed: {failed}')
+
+          jcef = str(by_id['jcef-plugin-absent-host-resource-path'].get('detail', ''))
+          if 'jcefClassPresent=false' not in jcef or 'jcefSupported=false' not in jcef:
+              raise SystemExit(f'JCEF-disabled host-resource proof incomplete: {jcef}')
+          images = str(by_id['valid-and-failed-local-image-runtime'].get('detail', ''))
+          if 'pngJpegDecoded=4' not in images or 'sourceFallback=true' not in images:
+              raise SystemExit(f'local image success/failure runtime proof incomplete: {images}')
+          hostile = str(by_id['hostile-local-path-and-media-policy'].get('detail', ''))
+          for marker in ('symlinkEscapeRejected=true', 'mediaMismatchRejected=true', 'oversizeRejected=true'):
+              if marker not in hostile:
+                  raise SystemExit(f'hostile local-image proof missing {marker}: {hostile}')
+          navigation = str(by_id['explicit-host-navigation-allow-deny'].get('detail', ''))
+          for marker in ('httpAccepted=1', 'implicitGestureRejected=true', 'javascriptRejected=true', 'relativeRejected=true'):
+              if marker not in navigation:
+                  raise SystemExit(f'navigation proof missing {marker}: {navigation}')
+          moved = str(by_id['document-move-and-reopen-context'].get('detail', ''))
+          for marker in ('oldContextRevoked=true', 'movedContextResolved=true', 'reopenedNativeOwner=true'):
+              if marker not in moved:
+                  raise SystemExit(f'move/reopen proof missing {marker}: {moved}')
+          stale = str(by_id['stale-image-result-rejected'].get('detail', ''))
+          if 'staleOverwrite=false' not in stale:
+              raise SystemExit(f'stale image proof incomplete: {stale}')
+          final = str(by_id['final-source-and-lifecycle-stability'].get('detail', ''))
+          if 'controllers=0' not in final or 'editors=0' not in final or 'sourceStable=true' not in final:
+              raise SystemExit(f'final ownership/source proof incomplete: {final}')
+
+          print(f"Native host resources verdict: {evidence['verdict']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native host resources evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-host-resources-evidence
+          path: |
+            build/native-host-resources-probe/evidence.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-host-resources-xvfb.log
+          if-no-files-found: warn
+
+  native_image_import:
+    needs: target
+    if: needs.target.outputs.run_native_image_import == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native image import probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Assert image import remains host-owned and browser-free
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportService.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportGestures.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportProbe.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportGestureProbe.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportTransactionProbe.kt
+            src/main/kotlin/com/algorist/markflow/editor/native/NativeImageImportDestinationRaceProbe.kt
+            src/main/kotlin/com/algorist/markflow/trust/NativeLocalImageResolver.kt
+          )
+          if grep -En 'JBCef|com\.intellij\.ui\.jcef|MarkFlowWebviewResourceManager|127\.0\.0\.1|__markflow_source_image__|file.?token|upload' "${files[@]}"; then
+            echo 'native image import depends on forbidden browser/JCEF/loopback capability surface' >&2
+            exit 1
+          fi
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-image-import-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native image import probe with JCEF plugin disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Dmarkflow.nativeImageImportProbe.output=$GITHUB_WORKSPACE/build/native-image-import-probe/evidence.json"
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNoJcefNativeEditingProbe --stacktrace
+
+      - name: Validate native image import evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-image-import-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native image import probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedSurface') != 'PLATFORM_TEXT_EDITOR_NATIVE_IMAGE_IMPORT':
+              raise SystemExit(f"unexpected selected surface: {evidence.get('selectedSurface')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native image import verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-plugin-absent-import-path',
+              'authoritative-saved-local-document',
+              'chooser-single-multi-raster-matrix-and-order',
+              'contained-link-and-unrepresentable-copy',
+              'collision-no-overwrite',
+              'clipboard-file-and-image-transferables',
+              'file-drop-platform-caret-position',
+              'validation-failures-source-stable',
+              'context-rejections-and-multicaret',
+              'hostile-authority-and-symlink-rejections',
+              'vfs-and-source-failure-rollback',
+              'rollback-failure-orphan-diagnostic',
+              'undo-redo-assets-persist',
+              'reopen-rename-and-host-presentation-feed',
+              'final-lifecycle-stability',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native image import evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"image-import case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              details = {case_id: by_id[case_id].get('detail') for case_id in failed}
+              raise SystemExit(f'native image import required cases failed: {details}')
+
+          required_markers = {
+              'jcef-plugin-absent-import-path': ('jcefClassPresent=false', 'jcefSupported=false'),
+              'chooser-single-multi-raster-matrix-and-order': ('chooserSingle=true', 'chooserMulti=4', 'formats=PNG,JPEG,GIF,BMP', 'lexicalOutsideRegion=true'),
+              'contained-link-and-unrepresentable-copy': ('containedLinked=true', 'copiedWhenDecoderRejects=true', 'finalTargetRoundTrip=true'),
+              'collision-no-overwrite': ('overwrite=false', 'preexistingBytesStable=true'),
+              'clipboard-file-and-image-transferables': ('activeFileTransferable=true', 'activeImageTransferable=true', 'plainTextAuthority=false'),
+              'file-drop-platform-caret-position': ('insertedAtResolvedCaret=true',),
+              'validation-failures-source-stable': ('unsupported=true', 'mismatch=true', 'oversize=true', 'dimensionBomb=true', 'pixelBomb=true', 'filesCreated=0'),
+              'context-rejections-and-multicaret': ('readOnlyRejected=true', 'unsavedRejected=true', 'nonLocalRejected=true', 'multicaretRejected=true'),
+              'vfs-and-source-failure-rollback': ('vfsWriteFailureRolledBack=true', 'sourceCommandFailureRolledBack=true', 'partialAssets=false'),
+              'rollback-failure-orphan-diagnostic': ('safeOrphan=assets/orphan.png', 'inconsistencySilent=false'),
+              'undo-redo-assets-persist': ('undoMarkdownOnly=true', 'assetPersists=true', 'recopy=false'),
+              'reopen-rename-and-host-presentation-feed': ('reopenSourceExact=true', 'hostProjectionTarget=true', 'resolverSuccess=true'),
+              'final-lifecycle-stability': ('leak=false',),
+          }
+          for case_id, markers in required_markers.items():
+              detail = str(by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing evidence markers {missing}: {detail}')
+
+          gesture_path = Path('build/native-image-import-probe/gesture-hardening.json')
+          if not gesture_path.is_file():
+              raise SystemExit('gesture hardening probe did not produce gesture-hardening.json')
+          gesture = json.loads(gesture_path.read_text(encoding='utf-8'))
+          if gesture.get('schemaVersion') != 1 or gesture.get('verdict') != 'PASS':
+              raise SystemExit(f'gesture hardening verdict is not PASS: {gesture}')
+          gesture_required = {
+              'file-drop-single-multi-stable-order': ('dropSingle=true', 'dropMulti=2', 'stableOrder=true', 'insertedAtResolvedCaret=true'),
+              'mixed-file-list-atomic-rejection': ('mixedFileListRecognized=true', 'atomicReject=true', 'sourceStable=true', 'filesCreated=0'),
+              'case-insensitive-multi-collision-reservation': ('caseInsensitiveReservation=true', 'sameBasenameMulti=true', 'suffixes=-2,-3', 'overwrite=false', 'preexistingBytesStable=true'),
+          }
+          gesture_cases = gesture.get('cases') or []
+          gesture_by_id = {case.get('id'): case for case in gesture_cases}
+          if set(gesture_by_id) != set(gesture_required):
+              raise SystemExit(f'gesture hardening case contract mismatch: {gesture_by_id}')
+          for case_id, markers in gesture_required.items():
+              case = gesture_by_id[case_id]
+              if case.get('outcome') != 'PASS':
+                  raise SystemExit(f'gesture hardening case failed: {case_id}: {case}')
+              detail = str(case.get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing gesture markers {missing}: {detail}')
+
+          race_path = Path('build/native-image-import-probe/destination-race.json')
+          if not race_path.is_file():
+              raise SystemExit('destination race probe did not produce destination-race.json')
+          race = json.loads(race_path.read_text(encoding='utf-8'))
+          if race.get('schemaVersion') != 1 or race.get('verdict') != 'PASS':
+              raise SystemExit(f'destination race verdict is not PASS: {race}')
+          race_cases = race.get('cases') or []
+          if len(race_cases) != 1 or race_cases[0].get('id') != 'case-insensitive-post-preflight-collision':
+              raise SystemExit(f'destination race case contract mismatch: {race_cases}')
+          race_case = race_cases[0]
+          if race_case.get('outcome') != 'PASS':
+              raise SystemExit(f'destination race case failed: {race_case}')
+          race_detail = str(race_case.get('detail', ''))
+          race_markers = (
+              'raceInjected=true',
+              'caseInsensitiveRecheck=true',
+              'copyRejected=true',
+              'sourceStable=true',
+              'competingFilePreserved=true',
+              'operationFileCreated=false',
+          )
+          missing = [marker for marker in race_markers if marker not in race_detail]
+          if missing:
+              raise SystemExit(f'destination race case missing markers {missing}: {race_detail}')
+
+          hardening_path = Path('build/native-image-import-probe/transaction-hardening.json')
+          if not hardening_path.is_file():
+              raise SystemExit('transaction hardening probe did not produce transaction-hardening.json')
+          hardening = json.loads(hardening_path.read_text(encoding='utf-8'))
+          if hardening.get('schemaVersion') != 1 or hardening.get('verdict') != 'PASS':
+              raise SystemExit(f'transaction hardening verdict is not PASS: {hardening}')
+          hardening_required = {
+              'vfs-visible-collision-reservation': ('vfsVisibleCollision=true', 'suffix=-2', 'overwrite=false', 'preexistingBytesStable=true'),
+              'post-commit-ui-failure-does-not-rollback': ('postCommitFailureResultSuccess=true', 'sourceReferencePresent=true', 'assetPersists=true', 'rollbackAfterCommit=false'),
+              'listener-pce-after-commit-preserves-transaction': ('pcePropagated=true', 'sourceCommitted=true', 'assetPersists=true', 'rollbackAfterObservedCommit=false'),
+              'precommit-pce-propagates-after-cleanup': ('copyPcePropagated=true', 'copyRollbackComplete=true', 'sourcePcePropagated=true', 'sourceRollbackComplete=true', 'sourceStable=true'),
+              'preexisting-assets-directory-preserved-on-rollback': ('preexistingDirectoryPreserved=true', 'operationAssetRemoved=true', 'sourceStable=true'),
+              'document-path-change-boundary': ('sameParentRenameAllowed=true', 'crossParentMoveRejected=true', 'rollbackOnMove=true', 'sourceStableOnMove=true'),
+          }
+          hardening_cases = hardening.get('cases') or []
+          hardening_by_id = {case.get('id'): case for case in hardening_cases}
+          if set(hardening_by_id) != set(hardening_required):
+              raise SystemExit(f'transaction hardening case contract mismatch: {hardening_by_id}')
+          for case_id, markers in hardening_required.items():
+              case = hardening_by_id[case_id]
+              if case.get('outcome') != 'PASS':
+                  raise SystemExit(f'transaction hardening case failed: {case_id}: {case}')
+              detail = str(case.get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing hardening markers {missing}: {detail}')
+
+          print(f"Native image import verdict: {evidence['verdict']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')} :: {by_id[case_id].get('detail')}")
+          print(f"Gesture hardening verdict: {gesture['verdict']}")
+          for case_id in sorted(gesture_required):
+              print(f"{case_id}: {gesture_by_id[case_id].get('outcome')} :: {gesture_by_id[case_id].get('detail')}")
+          print(f"Destination race verdict: {race['verdict']}")
+          print(f"case-insensitive-post-preflight-collision: {race_case.get('outcome')} :: {race_case.get('detail')}")
+          print(f"Transaction hardening verdict: {hardening['verdict']}")
+          for case_id in sorted(hardening_required):
+              print(f"{case_id}: {hardening_by_id[case_id].get('outcome')} :: {hardening_by_id[case_id].get('detail')}")
+          PY
+
+      - name: Upload native image import evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-image-import-evidence
+          path: |
+            build/native-image-import-probe/evidence.json
+            build/native-image-import-probe/gesture-hardening.json
+            build/native-image-import-probe/destination-race.json
+            build/native-image-import-probe/transaction-hardening.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-image-import-xvfb.log
+          if-no-files-found: warn
+
+  native_projection:
+    needs: target
+    if: needs.target.outputs.run_native_projection == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Real IntelliJ native projection probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-projection-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native projection probe with JCEF disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeProjectionProbe --stacktrace
+
+      - name: Validate native projection evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/native-projection-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('native projection probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 2:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('parserStrategy') != 'JETBRAINS_BUNDLED_MARKDOWN':
+              raise SystemExit(f"unexpected parser strategy: {evidence.get('parserStrategy')}")
+          if evidence.get('jcefSupported') is not False:
+              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"native projection proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-disabled-projection-path',
+              'authoritative-document-fixture',
+              'platform-text-and-markdown-coexistence',
+              'attach-no-edit-source-stability',
+              'parser-proven-projection-plan',
+              'inline-and-block-native-presentation',
+              'caret-and-selection-exact-source-reveal',
+              'stale-plan-rejected-before-apply',
+              'document-change-refresh',
+              'config-stale-plan-rejected-before-apply',
+              'typed-degradation-falls-back-to-source',
+              'split-editor-presentation-isolation',
+              'malformed-unsupported-source-degrades-safely',
+              'refresh-recreate-dispose-source-stability',
+              'final-lifecycle-ownership',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate native projection evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"native projection case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'native projection required cases failed: {failed}')
+
+          fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
+          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
+              raise SystemExit(f'native projection proof did not run inside a real opened project: {fixture_detail}')
+          stale_detail = str(by_id['stale-plan-rejected-before-apply'].get('detail', ''))
+          if 'staleRejected=true' not in stale_detail:
+              raise SystemExit(f'source-stale projection was not proven rejected: {stale_detail}')
+          config_stale_detail = str(by_id['config-stale-plan-rejected-before-apply'].get('detail', ''))
+          if 'configStaleRejected=true' not in config_stale_detail or 'recoveredGeneration=2' not in config_stale_detail:
+              raise SystemExit(f'config-stale projection contract incomplete: {config_stale_detail}')
+          degraded_detail = str(by_id['typed-degradation-falls-back-to-source'].get('detail', ''))
+          if 'exactSourceFallback=true' not in degraded_detail or 'recovered=true' not in degraded_detail:
+              raise SystemExit(f'typed degradation/recovery contract incomplete: {degraded_detail}')
+          presentation_detail = str(by_id['inline-and-block-native-presentation'].get('detail', ''))
+          if 'taskRows=2' not in presentation_detail or 'checkedTasks=1' not in presentation_detail:
+              raise SystemExit(f'native task-list presentation evidence incomplete: {presentation_detail}')
+          reveal_detail = str(by_id['caret-and-selection-exact-source-reveal'].get('detail', ''))
+          if 'multicaretSelectionReveal=true' not in reveal_detail:
+              raise SystemExit(f'multicaret source-reveal evidence incomplete: {reveal_detail}')
+          lifecycle_detail = str(by_id['final-lifecycle-ownership'].get('detail', ''))
+          if 'controllers=0' not in lifecycle_detail or 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'projection lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          parity_path = Path('build/native-projection-probe/parity.json')
+          if not parity_path.is_file():
+              raise SystemExit('#152 native Markdown parity probe did not produce parity.json')
+          parity = json.loads(parity_path.read_text(encoding='utf-8'))
+          if parity.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected parity schema: {parity.get('schemaVersion')}")
+          if parity.get('verdict') != 'PASS':
+              raise SystemExit(f"native Markdown parity verdict is not PASS: {parity.get('verdict')}")
+          parity_required = {
+              'fidelity-corpus-runtime-mapping',
+              'raw-html-safe-runtime',
+              'raw-html-hostile-degraded-runtime',
+              'ordinary-parser-table-boundary',
+              'ordinary-native-presentation-source-neutral',
+              'ordinary-accessibility-source-fallback',
+              'table-native-presentation-source-neutral',
+              'table-caret-selection-and-end-boundary-reveal',
+              'table-mouse-inlay-reveal',
+              'table-accessibility-source-fallback',
+              'rapid-edit-caret-regeneration',
+              'large-representative-document-baseline',
+          }
+          parity_cases = parity.get('cases') or []
+          parity_by_id = {case.get('id'): case for case in parity_cases}
+          if len(parity_by_id) != len(parity_cases):
+              raise SystemExit('duplicate native Markdown parity case ids')
+          if set(parity_by_id) != parity_required:
+              raise SystemExit(
+                  f"native Markdown parity case contract mismatch: missing={sorted(parity_required - set(parity_by_id))}, "
+                  f"unexpected={sorted(set(parity_by_id) - parity_required)}"
+              )
+          parity_failed = sorted(
+              case_id for case_id in parity_required if parity_by_id[case_id].get('outcome') != 'PASS'
+          )
+          if parity_failed:
+              raise SystemExit(f'native Markdown parity required cases failed: {parity_failed}')
+
+          marker_contract = {
+              'fidelity-corpus-runtime-mapping': (
+                  'fixtures=13', 'exactIdentity=true', 'rangesInBounds=true', 'imageBoundary=true'
+              ),
+              'raw-html-safe-runtime': ('fragments=2', 'safe=2', 'rasterized=2', 'sourceStable=true'),
+              'raw-html-hostile-degraded-runtime': ('blocked=', 'exactSourceFallback=true', 'sourceStable=true'),
+              'ordinary-parser-table-boundary': ('allKinds=true', 'linkSyntax=true', 'halfOpenBoundary=true'),
+              'ordinary-native-presentation-source-neutral': (
+                  'listBlocks=true', 'quoteBlock=true', 'emphasisItalic=true', 'strongBold=true',
+                  'strikethroughEffect=true', 'inlineCodeSemantic=true', 'inlineCodeReveal=true',
+                  'indentedCodeBlock=true', 'linkHyperlink=true', 'linkConceal=true',
+                  'boundaryReveal=true', 'sourceStable=true'
+              ),
+              'ordinary-accessibility-source-fallback': (
+                  'sourceFallback=true', 'folds=0', 'highlighters=0', 'sourceStable=true', 'stampStable=true'
+              ),
+              'table-native-presentation-source-neutral': ('inlays=1', 'folds=2', 'sourceStable=true'),
+              'table-caret-selection-and-end-boundary-reveal': ('caretReveal=true', 'selectionReveal=true', 'endBoundaryInactive=true'),
+              'table-mouse-inlay-reveal': ('mouseEvent=true', 'mouseReveal=true', 'sourceStable=true'),
+              'table-accessibility-source-fallback': ('sourceVisible=true', 'accessibilityFallback=1'),
+              'rapid-edit-caret-regeneration': ('iterations=20', 'exactIdentity=true', 'caretMovement=true'),
+              'large-representative-document-baseline': ('rangesInBounds=true', 'table=1'),
+          }
+          for case_id, markers in marker_contract.items():
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              missing = [marker for marker in markers if marker not in detail]
+              if missing:
+                  raise SystemExit(f'{case_id} missing parity markers {missing}: {detail}')
+
+          def metric(case_id, key):
+              detail = str(parity_by_id[case_id].get('detail', ''))
+              prefix = f"{key}="
+              token = next((part for part in detail.split() if part.startswith(prefix)), None)
+              if token is None:
+                  raise SystemExit(f"{case_id} missing {key}: {detail}")
+              return int(token[len(prefix):])
+
+          rapid_ms = metric('rapid-edit-caret-regeneration', 'elapsedMs')
+          if rapid_ms > 5000:
+              raise SystemExit(f'rapid edit/caret projection latency {rapid_ms}ms exceeded 5000ms budget')
+          large_ms = metric('large-representative-document-baseline', 'planElapsedMs')
+          if large_ms > 3000:
+              raise SystemExit(f'large projection planning latency {large_ms}ms exceeded 3000ms budget')
+
+          print(f"Native projection verdict: {evidence['verdict']}")
+          print(f"Selected shell: {evidence['selectedShell']}")
+          print(f"Parser: {evidence['parserStrategy']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          print(f"Native Markdown parity verdict: {parity['verdict']}")
+          for case_id in sorted(parity_required):
+              print(f"parity/{case_id}: {parity_by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Upload native projection evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-projection-evidence
+          path: |
+            build/native-projection-probe/evidence.json
+            build/native-projection-probe/parity.json
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-native-projection-xvfb.log
+          if-no-files-found: warn
+
+  no_jcef_native_editing:
+    needs: target
+    if: needs.target.outputs.run_no_jcef_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: No-JCEF native editing (${{ matrix.id }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: idea-2026.2.3
+            platform_version: 2026.2.3
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-no-jcef-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run real IntelliJ native editing probe with JCEF plugin disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 10m \
+            ./gradlew runIdeForNoJcefNativeEditingProbe -PplatformVersion="${{ matrix.platform_version }}" --stacktrace
+
+      - name: Validate no-JCEF evidence completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('build/no-jcef-native-editing-probe/evidence.json')
+          if not path.is_file():
+              raise SystemExit('no-JCEF native editing probe did not produce evidence.json')
+
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"no-JCEF proof verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'jcef-plugin-class-absent',
+              'real-project-authoritative-document',
+              'platform-text-provider-owns-source',
+              'optional-jcef-renderer-registrations-absent',
+              'base-native-paste-extension-present',
+              'settings-degrade-without-renderer',
+              'authoritative-native-edit-undo-redo-save',
+              'final-native-lifecycle',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if len(by_id) != len(cases):
+              raise SystemExit('duplicate no-JCEF evidence case ids')
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"no-JCEF case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
+          if failed:
+              raise SystemExit(f'no-JCEF required cases failed: {failed}')
+
+          jcef_detail = str(by_id['jcef-plugin-class-absent'].get('detail', ''))
+          if 'classPresent=false' not in jcef_detail or 'supported=false' not in jcef_detail:
+              raise SystemExit(f'JCEF plugin was not actually absent from the MarkFlow classloader: {jcef_detail}')
+          registration_detail = str(by_id['optional-jcef-renderer-registrations-absent'].get('detail', ''))
+          registration_flags = (
+              'temporaryProvider=false',
+              'nativePresentationSettingsSinks=1',
+              'rendererRuntimeFactories=0',
+          )
+          missing_registration_flags = [flag for flag in registration_flags if flag not in registration_detail]
+          if missing_registration_flags:
+              raise SystemExit(
+                  f'no-JCEF production registration contract missing {missing_registration_flags}: {registration_detail}'
+              )
+          settings_detail = str(by_id['settings-degrade-without-renderer'].get('detail', ''))
+          settings_flags = (
+              'settingsAvailable=true',
+              'themeAvailable=true',
+              'nativePresentationSinkCount=1',
+              'rendererRuntimeFactoryCount=0',
+          )
+          missing_settings_flags = [flag for flag in settings_flags if flag not in settings_detail]
+          if missing_settings_flags:
+              raise SystemExit(
+                  f'no-JCEF settings degradation contract missing {missing_settings_flags}: {settings_detail}'
+              )
+          editing_detail = str(by_id['authoritative-native-edit-undo-redo-save'].get('detail', ''))
+          for flag in ('sameDocument=true', 'dirty=true', 'undo=true', 'redo=true', 'save=true'):
+              if flag not in editing_detail:
+                  raise SystemExit(f'native source-editing proof incomplete: {editing_detail}')
+          lifecycle_detail = str(by_id['final-native-lifecycle'].get('detail', ''))
+          if 'editors=0' not in lifecycle_detail:
+              raise SystemExit(f'no-JCEF lifecycle cleanup incomplete: {lifecycle_detail}')
+
+          print(f"No-JCEF native editing verdict: {evidence['verdict']}")
+          print(f"IDE build: {evidence.get('ideBuild')}")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('outcome')}")
+          PY
+
+      - name: Reject hidden MarkFlow/JCEF class-loading failures
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t logs < <(find .intellijPlatform/sandbox -type f -name idea.log -print 2>/dev/null || true)
+          if ((${#logs[@]} == 0)); then
+            echo 'No idea.log found; evidence file remains the primary proof.'
+            exit 0
+          fi
+          if grep -E 'PluginException.*com\.algorist\.markflow|Cannot load.*com\.algorist\.markflow|NoClassDefFoundError: com/intellij/ui/jcef' "${logs[@]}"; then
+            echo 'Hidden MarkFlow/JCEF class-loading failure detected.' >&2
+            exit 1
+          fi
+
+      - name: Upload no-JCEF evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: no-jcef-native-editing-evidence-${{ matrix.id }}
+          path: |
+            build/no-jcef-native-editing-probe/evidence.json
+            .intellijPlatform/sandbox/**/idea.log
+            .intellijPlatform/sandbox/**/bg-wa/**
+            ${{ runner.temp }}/markflow-no-jcef-xvfb.log
+          if-no-files-found: warn

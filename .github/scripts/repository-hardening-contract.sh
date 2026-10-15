@@ -148,41 +148,72 @@ grep -Fq 'run: ./gradlew testWebviewSource' .github/workflows/build.yml || die "
 assert_gradle_managed_node ".github/workflows/build.yml" "Build workflow"
 assert_gradle_managed_node ".github/workflows/release.yml" "Release workflow"
 assert_gradle_managed_node ".github/workflows/starter-driver-e2e.yml" "Starter Driver workflow"
-assert_gradle_managed_node ".github/workflows/native-editor-shell-evidence.yml" "Native Editor Shell workflow"
-assert_gradle_managed_node ".github/workflows/native-editing-evidence.yml" "Native Editing workflow"
-assert_gradle_managed_node ".github/workflows/derived-renderer-evidence.yml" "Derived Renderer workflow"
-assert_gradle_managed_node ".github/workflows/native-host-resources-evidence.yml" "Native Host Resources workflow"
-assert_gradle_managed_node ".github/workflows/native-projection-evidence.yml" "Native Projection workflow"
-assert_gradle_managed_node ".github/workflows/no-jcef-native-editing-evidence.yml" "No-JCEF Native Editing workflow"
-assert_gradle_managed_node ".github/workflows/native-image-import-evidence.yml" "Native Image Import workflow"
-assert_gradle_managed_node ".github/workflows/native-derived-presentation-evidence.yml" "Native Derived Presentation workflow"
+assert_gradle_managed_node ".github/workflows/native-runtime-evidence.yml" "Native Runtime Evidence workflow"
 
-for workflow in \
-  ".github/workflows/native-projection-evidence.yml" \
-  ".github/workflows/native-host-resources-evidence.yml" \
-  ".github/workflows/native-image-import-evidence.yml"; do
-  assert_gradle_catalog_trigger "$workflow" "$(basename "$workflow")"
-done
+assert_gradle_catalog_trigger ".github/workflows/native-runtime-evidence.yml" "Native Runtime Evidence workflow"
 
 for workflow in \
   ".github/workflows/starter-driver-e2e.yml" \
-  ".github/workflows/native-editor-shell-evidence.yml" \
-  ".github/workflows/native-editing-evidence.yml" \
-  ".github/workflows/derived-renderer-evidence.yml" \
-  ".github/workflows/native-host-resources-evidence.yml" \
-  ".github/workflows/native-projection-evidence.yml" \
-  ".github/workflows/no-jcef-native-editing-evidence.yml" \
-  ".github/workflows/native-image-import-evidence.yml" \
-  ".github/workflows/native-derived-presentation-evidence.yml"; do
+  ".github/workflows/native-runtime-evidence.yml"; do
   assert_pr_only_source_trigger "$workflow" "$(basename "$workflow")"
   assert_webview_dependency_trigger "$workflow" "$(basename "$workflow")"
 done
 
-renderer_workflow=".github/workflows/derived-renderer-evidence.yml"
-grep -q '^  workflow_dispatch:$' "$renderer_workflow" || die "Derived renderer evidence has no manual exact-SHA recovery trigger"
-grep -q '^      target_sha:$' "$renderer_workflow" || die "Derived renderer evidence recovery trigger has no target_sha input"
-grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$renderer_workflow" || die "Derived renderer evidence does not checkout the requested recovery SHA"
-assert_recovery_target_validation "$renderer_workflow" "Derived renderer evidence"
+native_evidence_workflow=".github/workflows/native-runtime-evidence.yml"
+grep -q '^  workflow_dispatch:$' "$native_evidence_workflow" || die "Native runtime evidence has no manual exact-SHA recovery trigger"
+grep -q '^      target_sha:$' "$native_evidence_workflow" || die "Native runtime evidence recovery trigger has no target_sha input"
+grep -Fq 'needs.target.outputs.source_sha' "$native_evidence_workflow" || die "Native runtime evidence jobs do not share the resolved exact source SHA"
+assert_recovery_target_validation "$native_evidence_workflow" "Native runtime evidence"
+
+for job in \
+  derived_renderer \
+  native_derived_presentation \
+  native_editing \
+  native_editor_shell \
+  native_host_resources \
+  native_image_import \
+  native_projection \
+  no_jcef_native_editing; do
+  grep -Eq "^  ${job}:" "$native_evidence_workflow" || die "Native runtime evidence lost probe job: $job"
+done
+
+for semantic_probe in \
+  'markflow-derived-renderer-probe' \
+  'markflow.nativeDerivedPresentationProbe.output' \
+  'runIdeForNativeEditingProbe' \
+  'runIdeForNativeEditorShellProbe' \
+  'runIdeForNativeHostResourcesProbe' \
+  'markflow.nativeImageImportProbe.output' \
+  'runIdeForNativeProjectionProbe' \
+  'runIdeForNoJcefNativeEditingProbe'; do
+  grep -Fq "$semantic_probe" "$native_evidence_workflow" || die "Native runtime evidence lost semantic probe: $semantic_probe"
+done
+
+exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sha }}' "$native_evidence_workflow")"
+[ "$exact_native_checkout_count" -ge 8 ] ||
+  die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
+
+
+grep -Fq 'pull-requests: read' "$native_evidence_workflow" ||
+  die "Native runtime evidence changed-file router lacks pull-request read permission"
+grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$native_evidence_workflow" ||
+  die "Native runtime evidence no longer routes from the complete PR changed-file list"
+for job in \
+  derived_renderer \
+  native_derived_presentation \
+  native_editing \
+  native_editor_shell \
+  native_host_resources \
+  native_image_import \
+  native_projection \
+  no_jcef_native_editing; do
+  grep -Fq "run_${job}:" "$native_evidence_workflow" ||
+    die "Native runtime evidence lost router output name for $job"
+  grep -Fq "steps.route.outputs.run_${job}" "$native_evidence_workflow" ||
+    die "Native runtime evidence lost router output binding for $job"
+  grep -Fq "needs.target.outputs.run_${job} == 'true'" "$native_evidence_workflow" ||
+    die "Native runtime evidence $job no longer honors per-probe path routing"
+done
 
 [ ! -e .github/workflows/run-ui-tests.yml ] || die "obsolete Robot UI workflow must stay deleted"
 if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle.kts; then
@@ -636,7 +667,7 @@ done
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
 grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium path"
-for native_workflow in "$starter_workflow" ".github/workflows/native-image-import-evidence.yml"; do
+for native_workflow in "$starter_workflow" "$native_evidence_workflow"; do
   grep -Fq 'sudo apt-get install -y --no-install-recommends libegl1' "$native_workflow" || die "$native_workflow lacks required ARM64 Skiko EGL runtime"
   grep -Fq 'ldconfig -p | grep -F libEGL.so.1' "$native_workflow" || die "$native_workflow does not prove EGL availability"
 done
