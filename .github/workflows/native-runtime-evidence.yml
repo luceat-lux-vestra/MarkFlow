@@ -45,6 +45,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: native-runtime-evidence-${{ inputs.target_sha || github.event.pull_request.number || github.ref }}
@@ -57,6 +58,14 @@ jobs:
     timeout-minutes: 5
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
+      run_derived_renderer: ${{ steps.route.outputs.run_derived_renderer }}
+      run_native_derived_presentation: ${{ steps.route.outputs.run_native_derived_presentation }}
+      run_native_editing: ${{ steps.route.outputs.run_native_editing }}
+      run_native_editor_shell: ${{ steps.route.outputs.run_native_editor_shell }}
+      run_native_host_resources: ${{ steps.route.outputs.run_native_host_resources }}
+      run_native_image_import: ${{ steps.route.outputs.run_native_image_import }}
+      run_native_projection: ${{ steps.route.outputs.run_native_projection }}
+      run_no_jcef_native_editing: ${{ steps.route.outputs.run_no_jcef_native_editing }}
     steps:
       - name: Resolve and validate source
         id: resolve
@@ -89,9 +98,195 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           printf 'Native evidence source: %s\n' "$SOURCE_SHA"
 
+
+      - name: Route native evidence by changed files
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            for key in derived_renderer native_derived_presentation native_editing native_editor_shell native_host_resources native_image_import native_projection no_jcef_native_editing; do
+              printf 'run_%s=true\n' "$key" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          gh api --paginate \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' > "$RUNNER_TEMP/native-evidence-changed-files.txt"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          patterns = json.loads(r'''{
+  "derived_renderer": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/resources/META-INF/markflow-jcef.xml",
+    "src/main/kotlin/com/algorist/markflow/renderer/**",
+    "src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "webview/derived-renderer.html",
+    "webview/vite.derived-renderer.config.ts",
+    "webview/src/renderer/**",
+    "webview/src/app/derived-renderer-service.ts",
+    "webview/src/app/browser-derived-renderer-backends.ts"
+  ],
+  "native_derived_presentation": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/resources/META-INF/markflow-jcef.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "src/main/kotlin/com/algorist/markflow/renderer/**",
+    "src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "webview/derived-renderer.html",
+    "webview/vite.derived-renderer.config.ts",
+    "webview/src/renderer/**",
+    "webview/src/app/derived-renderer-service.ts",
+    "webview/src/app/browser-derived-renderer-backends.ts"
+  ],
+  "native_editing": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "src/test/kotlin/com/algorist/markflow/editor/native/**",
+    "docs/architecture/native-edit-semantics.md",
+    "docs/architecture/native-editor-shell-selection.md",
+    "docs/architecture/native-markdown-projection-foundation.md",
+    "docs/architecture/README.md"
+  ],
+  "native_editor_shell": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "docs/architecture/native-editor-shell-selection.md",
+    "docs/architecture/0001-native-authority-projection-architecture.md"
+  ],
+  "native_host_resources": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "src/main/kotlin/com/algorist/markflow/trust/**",
+    "src/test/kotlin/com/algorist/markflow/editor/native/**",
+    "src/test/kotlin/com/algorist/markflow/trust/**",
+    "docs/architecture/native-host-resources.md"
+  ],
+  "native_image_import": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "src/main/kotlin/com/algorist/markflow/trust/**",
+    "src/test/kotlin/com/algorist/markflow/editor/native/**",
+    "src/test/kotlin/com/algorist/markflow/trust/**",
+    "docs/product/image-file-import-contract.md"
+  ],
+  "native_projection": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "fixtures/markdown-fidelity/**",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "src/test/kotlin/com/algorist/markflow/editor/native/**",
+    "docs/architecture/native-markdown-projection-foundation.md",
+    "docs/architecture/native-editor-shell-selection.md",
+    "docs/architecture/0001-native-authority-projection-architecture.md",
+    "docs/architecture/README.md"
+  ],
+  "no_jcef_native_editing": [
+    ".github/workflows/native-runtime-evidence.yml",
+    "build.gradle.kts",
+    "gradle.properties",
+    "gradle/**",
+    "webview/package.json",
+    "webview/package-lock.json",
+    "src/main/resources/META-INF/plugin.xml",
+    "src/main/resources/META-INF/markflow-jcef.xml",
+    "src/main/kotlin/com/algorist/markflow/settings/**",
+    "src/main/kotlin/com/algorist/markflow/editor/native/**",
+    "docs/architecture/0002-mermaid-katex-renderer-continuity.md"
+  ]
+}''')
+          changed = [
+              line.strip()
+              for line in Path(os.environ["RUNNER_TEMP"])
+                  .joinpath("native-evidence-changed-files.txt")
+                  .read_text(encoding="utf-8")
+                  .splitlines()
+              if line.strip()
+          ]
+
+          def compile_glob(pattern: str) -> re.Pattern[str]:
+              out = ["^"]
+              i = 0
+              while i < len(pattern):
+                  if pattern.startswith("**", i):
+                      out.append(".*")
+                      i += 2
+                  elif pattern[i] == "*":
+                      out.append("[^/]*")
+                      i += 1
+                  elif pattern[i] == "?":
+                      out.append("[^/]")
+                      i += 1
+                  else:
+                      out.append(re.escape(pattern[i]))
+                      i += 1
+              out.append("$")
+              return re.compile("".join(out))
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key, globs in patterns.items():
+                  compiled = [compile_glob(pattern) for pattern in globs]
+                  matched = any(regex.match(path) for path in changed for regex in compiled)
+                  verdict = "true" if matched else "false"
+                  output.write(f"run_{key}={verdict}\n")
+                  print(f"{key}: {'RUN' if matched else 'SKIP'}")
+          PY
+
   derived_renderer:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_derived_renderer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Isolated JCEF renderer (${{ matrix.id }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
@@ -298,7 +493,7 @@ jobs:
 
   native_derived_presentation:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_derived_presentation == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native derived presentation probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -429,7 +624,7 @@ jobs:
 
   native_editing:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native editing probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -619,7 +814,7 @@ jobs:
 
   native_editor_shell:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_editor_shell == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native editor shell probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -747,7 +942,7 @@ jobs:
 
   native_host_resources:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_host_resources == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native host resources probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -890,7 +1085,7 @@ jobs:
 
   native_image_import:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_image_import == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native image import probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -1132,7 +1327,7 @@ jobs:
 
   native_projection:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_native_projection == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native projection probe
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -1350,7 +1545,7 @@ jobs:
 
   no_jcef_native_editing:
     needs: target
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: needs.target.outputs.run_no_jcef_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: No-JCEF native editing (${{ matrix.id }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
