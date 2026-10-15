@@ -756,3 +756,39 @@ The research-B pilot and the shipping additive path are still distinct. In parti
 the co-start H1 inline allocation/paint overflow, source-exact Setext fallback and
 resize-driven fold reflow still require packaged real-IDE acceptance before switching
 the shipping default or closing #350; #353 full 89-case acceptance stays open.
+
+
+### Stage E28 — CodeQL-style full-corpus execution policy
+
+The temporary push-on-main campaign workflow from Stage E21 is retired. Full
+89-case differential acceptance is now intentionally **absent from ordinary PR
+and push CI** and has one canonical workflow:
+`.github/workflows/full-differential-acceptance.yml`.
+
+The policy mirrors the repository's expensive CodeQL treatment while preserving
+#353's evidence semantics:
+
+- `workflow_dispatch` requires an exact 40-character repository commit SHA and
+  always runs the complete 89-case acceptance contract for that immutable source.
+- During stabilization, a scheduled health check runs on the **1st and 15th of
+  each month**. The cadence is temporary and should be removed once the
+  full-corpus path is stable.
+- A scheduled invocation first finds the preceding completed scheduled run. If
+  the protected-main SHA is identical, or only paths irrelevant to the
+  differential contract changed, the expensive package/IDE jobs are skipped.
+  Manual exact-SHA invocations never use this skip.
+- Relevant-change detection includes production/editor sources, integration E2E
+  sources, renderer sources, Markdown/differential fixtures, the acceptance
+  tooling, Gradle/runtime inputs, JCEF setup, the watchdog, and this workflow.
+- The 180-second active-phase watchdog, 15-minute startup allowance, 85-minute
+  absolute bound, exact package digest checks, all-89 inventory requirement and
+  source-bound reviewed ledger remain fail-closed.
+- A successful `acceptance.json` still deliberately reports
+  `release_eligible=false`. Reuse/dispatch of exact-SHA full-corpus evidence at
+  the publication boundary belongs to the later #348/#309 release chain rather
+  than turning this expensive test back into routine development CI.
+
+`starter-driver-e2e.yml` no longer carries a second manual full-corpus job; its
+bounded PR shards remain the routine development gate. Targeted
+`differentialCaseIds` runs remain a debugging mechanism, not a substitute for the
+canonical 89-case acceptance run.
