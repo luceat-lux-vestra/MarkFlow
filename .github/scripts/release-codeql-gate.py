@@ -33,6 +33,7 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 TAG = re.compile(r"v[1-9][0-9]*\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 WORKFLOW = "codeql.yml"
 RUN_PREFIX = "CodeQL source "
+GUARD_JOB = "CodeQL schedule guard"
 WAIT_SECONDS = 80 * 60
 POLL_SECONDS = 15
 
@@ -103,7 +104,16 @@ def verify_jobs(payload: dict, sha: str, modern: bool) -> None:
     jobs = payload.get("jobs")
     require(isinstance(jobs, list) and payload.get("total_count") == len(jobs),
             "incomplete CodeQL job listing")
-    require(len(jobs) == len(LANGUAGES), "expected exactly three CodeQL language jobs")
+    expected_names = {f"CodeQL ({language})" for language in LANGUAGES}
+    allowed_names = expected_names | {GUARD_JOB}
+    names = {j.get("name") for j in jobs if isinstance(j, dict)}
+    require(names <= allowed_names, "unexpected CodeQL workflow job")
+    guards = [j for j in jobs if isinstance(j, dict) and j.get("name") == GUARD_JOB]
+    require(len(guards) <= 1, "duplicate CodeQL schedule guard job")
+    if guards:
+        require(guards[0].get("status") == "completed"
+                and guards[0].get("conclusion") == "success",
+                "CodeQL schedule guard did not complete successfully")
     for language in LANGUAGES:
         matches = [j for j in jobs if isinstance(j, dict)
                    and j.get("name") == f"CodeQL ({language})"]
@@ -217,11 +227,34 @@ def find_runs(repo: str, sha: str, workflow_id: int) -> list[dict]:
                   reverse=True)
 
 
+def intentional_schedule_skip(repo: str, run: dict) -> bool:
+    if (run.get("event") != "schedule"
+            or run.get("status") != "completed"
+            or run.get("conclusion") != "success"
+            or not isinstance(run.get("id"), int)):
+        return False
+    payload = gh_json(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+    jobs = payload.get("jobs")
+    require(isinstance(jobs, list) and payload.get("total_count") == len(jobs),
+            "incomplete CodeQL schedule-guard job listing")
+    guards = [j for j in jobs if isinstance(j, dict) and j.get("name") == GUARD_JOB]
+    if len(guards) != 1 or guards[0].get("conclusion") != "success":
+        return False
+    others = [j for j in jobs if j is not guards[0]]
+    return all(isinstance(j, dict) and j.get("conclusion") == "skipped" for j in others)
+
+
 def select_run(repo: str, sha: str, workflow_id: int) -> dict | None:
     runs = find_runs(repo, sha, workflow_id)
     active = [r for r in runs if r.get("status") != "completed"]
     require(len(active) <= 1, "multiple concurrent CodeQL scans for candidate SHA")
-    return runs[0] if runs else None
+    if active:
+        return active[0]
+    for run in runs:
+        if intentional_schedule_skip(repo, run):
+            continue
+        return run
+    return None
 
 
 def dispatch(repo: str, sha: str) -> None:
@@ -329,6 +362,25 @@ def self_test() -> None:
          "conclusion": "success", "head_sha": other, "steps": steps}
         for language in LANGUAGES]}
     verify_jobs(jobs, sha, True)
+    guarded_jobs = json.loads(json.dumps(jobs))
+    guarded_jobs["jobs"].insert(0, {
+        "name": GUARD_JOB, "status": "completed", "conclusion": "success",
+        "head_sha": other, "steps": []
+    })
+    guarded_jobs["total_count"] = 4
+    verify_jobs(guarded_jobs, sha, True)
+    skipped_schedule = dict(modern, event="schedule", head_sha=sha)
+    skipped_jobs = {"total_count": 4, "jobs": [{
+        "name": GUARD_JOB, "status": "completed", "conclusion": "success"
+    }] + [{
+        "name": f"CodeQL ({language})", "status": "completed", "conclusion": "skipped"
+    } for language in LANGUAGES]}
+    with patch(__name__ + ".gh_json", return_value=skipped_jobs):
+        assert intentional_schedule_skip("owner/repo", skipped_schedule)
+    not_skipped_jobs = json.loads(json.dumps(skipped_jobs))
+    not_skipped_jobs["jobs"][1]["conclusion"] = "success"
+    with patch(__name__ + ".gh_json", return_value=not_skipped_jobs):
+        assert not intentional_schedule_skip("owner/repo", skipped_schedule)
     artifacts = {"total_count": 6, "artifacts": [
         {"name": f"release-codeql-{sha}-{lang}" if kind == "sarif" else
          f"codeql-source-{sha}-{lang}", "expired": False, "size_in_bytes": 100,
@@ -378,7 +430,10 @@ def self_test() -> None:
     reject(lambda: verify_jobs(bad_jobs, sha, True), "attestation")
     bad_jobs = json.loads(json.dumps(jobs))
     bad_jobs["jobs"][0]["name"] = "CodeQL (other)"
-    reject(lambda: verify_jobs(bad_jobs, sha, True), "missing or duplicate")
+    reject(lambda: verify_jobs(bad_jobs, sha, True), "unexpected CodeQL workflow job")
+    bad_guard = json.loads(json.dumps(guarded_jobs))
+    bad_guard["jobs"][0]["conclusion"] = "failure"
+    reject(lambda: verify_jobs(bad_guard, sha, True), "schedule guard")
     for change, fragment in [
         ({"expired": True}, "expired or empty"),
         ({"size_in_bytes": 0}, "expired or empty"),
