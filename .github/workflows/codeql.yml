@@ -25,7 +25,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  scan-guard:
+    name: CodeQL schedule guard
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      should_scan: ${{ steps.decide.outputs.should_scan }}
+    steps:
+      - name: Decide whether full CodeQL is required
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then
+            echo "should_scan=true" >> "$GITHUB_OUTPUT"
+            echo "Explicit candidate scan: always run full CodeQL."
+            exit 0
+          fi
+
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Scheduled source is not an immutable SHA."
+            exit 1
+          }
+
+          runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/codeql.yml/runs?event=schedule&status=success&branch=main&per_page=100")"
+          jq -e --arg sha "$GITHUB_SHA" --argjson current "$GITHUB_RUN_ID" '
+            .workflow_runs
+            | any(
+                .id != $current
+                and .head_sha == $sha
+                and .head_branch == "main"
+                and .path == ".github/workflows/codeql.yml"
+              )
+          ' <<<"$runs" >/dev/null && {
+            echo "should_scan=false" >> "$GITHUB_OUTPUT"
+            echo "Protected main SHA $GITHUB_SHA already has a successful scheduled CodeQL run; skipping unchanged full scan."
+            exit 0
+          }
+
+          echo "should_scan=true" >> "$GITHUB_OUTPUT"
+          echo "No successful scheduled CodeQL run exists for protected main SHA $GITHUB_SHA; running full scan."
+
   analyze:
+    needs: scan-guard
+    if: needs.scan-guard.outputs.should_scan == 'true'
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
