@@ -283,6 +283,16 @@ grep -Fq 'Bundled Preview recovery altered authoritative source state' "$manifes
   die "#353 Preview recovery lost source/stamp/caret/unsaved invariants"
 grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
   die "#353 Preview recovery no longer requires a genuine nonblank second paint"
+grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
+  die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
+grep -Fq 'markFlow.closeMarkdown(entry.id + ".md")' "$manifest_test" ||
+  die "#353 case cleanup no longer re-selects and closes the exact Markdown case"
+grep -Fq 'fun closeMarkdown(fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file Markdown lifecycle close helper is missing"
+grep -Fq 'close(selectNativeMarkdown(fileName))' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file cleanup no longer restores EditorOnly before close"
+grep -Fq 'Case lifecycle close observed source identity drift:' "$manifest_test" ||
+  die "#353 case cleanup lost source/stamp/unsaved fail-closed identity checks"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"

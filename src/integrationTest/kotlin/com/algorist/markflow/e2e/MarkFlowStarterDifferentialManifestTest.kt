@@ -260,13 +260,22 @@ class MarkFlowStarterDifferentialManifestTest {
                     val dest = output.resolve(entry.id)
                     states[entry.id] = "CAPTURE_FAILED"
                     heartbeat("case-start", entry.id)
+                    var caseEditor:
+                        com.intellij.driver.sdk.ui.components.common.JEditorUiComponent? = null
+                    var caseRemoteEditor: Editor? = null
+                    var caseStamp: Long? = null
+                    var caseFailure: Throwable? = null
+                    var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
+                        caseEditor = editor
                         markFlow.assertProductionProjectionAttached(editor)
                         val remoteEditor = editor.editor
+                        caseRemoteEditor = remoteEditor
                         val source = String(entry.bytes, StandardCharsets.UTF_8)
                         check(markFlow.source(editor) == source)
                         val stamp = markFlow.modificationStamp(editor)
+                        caseStamp = stamp
                         val runtime = driver.withContext(OnDispatcher.EDT) {
                             preview.jcefRuntimeEvidence()
                         }
@@ -1489,6 +1498,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
                     } catch (cause: Throwable) {
+                        caseFailure = cause
                         heartbeat("case-failed", entry.id)
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
@@ -1501,10 +1511,50 @@ class MarkFlowStarterDifferentialManifestTest {
                             cause.message?.startsWith(
                                 "E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE:"
                             ) == true) {
-                            continue
+                            toleratedStructuralFailure = true
+                        } else {
+                            throw cause
                         }
-                        throw cause
+                    } finally {
+                        // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE:
+                        // Every manifest case owns a TextEditorWithPreview. Leaving
+                        // prior cases open accumulates bundled JCEF clients until the
+                        // platform remote CEF router fails. Restore the native editor,
+                        // prove source identity is still intact, then close the whole
+                        // editor before the next case creates another Preview.
+                        val opened = caseEditor
+                        val remote = caseRemoteEditor
+                        if (opened != null && remote != null) {
+                            val cleanup = runCatching {
+                                val expectedStamp = caseStamp
+                                check(driver.withContext(OnDispatcher.EDT) {
+                                    preview.sourceText(remote) ==
+                                        String(entry.bytes, StandardCharsets.UTF_8) &&
+                                        (expectedStamp == null ||
+                                            preview.sourceStamp(remote) == expectedStamp) &&
+                                        !preview.sourceUnsaved(remote)
+                                }) {
+                                    "Case lifecycle close observed source identity drift: " +
+                                        entry.id
+                                }
+                                // Auxiliary A/B tabs can change the global selected editor.
+                                // Re-select this exact case by filename before switching it back
+                                // to EditorOnly and closing its TextEditorWithPreview/JCEF owner.
+                                markFlow.closeMarkdown(entry.id + ".md")
+                            }
+                            val cleanupError = cleanup.exceptionOrNull()
+                            if (cleanupError != null) {
+                                states[entry.id] = "CAPTURE_FAILED"
+                                heartbeat("case-failed", entry.id)
+                                val original = caseFailure
+                                if (original == null || toleratedStructuralFailure) {
+                                    throw cleanupError
+                                }
+                                original.addSuppressed(cleanupError)
+                            }
+                        }
                     }
+                    if (toleratedStructuralFailure) continue
                 }
                 heartbeat("case-loop-complete")
             }
