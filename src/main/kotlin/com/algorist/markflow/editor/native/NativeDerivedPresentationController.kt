@@ -63,7 +63,7 @@ internal data class NativeDerivedPresentationEvidence(
  */
 internal class NativeDerivedPresentationController(
     private val editor: Editor,
-    runtime: DerivedRendererRuntime?,
+    private var runtime: DerivedRendererRuntime?,
     private val runtimeProvider: (() -> DerivedRendererRuntime?)? = null,
     private val settingsProvider: () -> MarkFlowRuntimeSettings = {
         MarkFlowSettingsService.getInstance().runtimeSettings()
@@ -71,7 +71,6 @@ internal class NativeDerivedPresentationController(
     private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
 ) : Disposable {
     private val gson = Gson()
-    private var runtime: DerivedRendererRuntime? = runtime
     private val pending = LinkedHashMap<String, PendingRequest>()
     private val decoded = LinkedHashMap<ProjectionKey, DecodedArtifact>()
     private val reservedFolds = LinkedHashMap<ProjectionKey, FoldRegion>()
