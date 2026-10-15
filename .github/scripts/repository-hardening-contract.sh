@@ -193,6 +193,26 @@ exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sh
 [ "$exact_native_checkout_count" -ge 8 ] ||
   die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
 
+
+grep -Fq 'pull-requests: read' "$native_evidence_workflow" ||
+  die "Native runtime evidence changed-file router lacks pull-request read permission"
+grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$native_evidence_workflow" ||
+  die "Native runtime evidence no longer routes from the complete PR changed-file list"
+for job in \
+  derived_renderer \
+  native_derived_presentation \
+  native_editing \
+  native_editor_shell \
+  native_host_resources \
+  native_image_import \
+  native_projection \
+  no_jcef_native_editing; do
+  grep -Fq "run_${job}: ${{ steps.route.outputs.run_${job} }}" "$native_evidence_workflow" ||
+    die "Native runtime evidence lost router output for $job"
+  grep -Fq "if: needs.target.outputs.run_${job} == 'true'" "$native_evidence_workflow" ||
+    die "Native runtime evidence $job no longer honors per-probe path routing"
+done
+
 [ ! -e .github/workflows/run-ui-tests.yml ] || die "obsolete Robot UI workflow must stay deleted"
 if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle.kts; then
   die "obsolete Robot UI test infrastructure remains in build.gradle.kts"
