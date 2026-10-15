@@ -18,8 +18,8 @@ wrapper_sha="$(sed -n 's/^distributionSha256Sum=//p' "$wrapper")"
 [ -n "$wrapper_gradle" ] || die "Gradle wrapper distribution version could not be parsed"
 [ "$configured_gradle" = "$wrapper_gradle" ] || die "gradleVersion ($configured_gradle) does not match wrapper ($wrapper_gradle)"
 [[ "$wrapper_sha" =~ ^[0-9a-f]{64}$ ]] || die "Gradle wrapper distributionSha256Sum is missing or malformed"
-if [ "$wrapper_gradle" = "9.8.0" ] && [ "$wrapper_sha" != "bafd5ce9cfaea0fbccfdc8439a1ac42fbd4cd9c89dc9a988228d8a2639a58e6c" ]; then
-  die "Gradle 9.8.0 distribution checksum does not match the reviewed upstream checksum"
+if [ "$wrapper_gradle" = "9.8.1" ] && [ "$wrapper_sha" != "dce76f55f8e251a3a1f130eb120f30b3d271de2b76c9b0729d316b5a1b6dc01f" ]; then
+  die "Gradle 9.8.1 distribution checksum does not match the reviewed upstream checksum"
 fi
 
 assert_recovery_target_validation() {
@@ -225,7 +225,7 @@ if grep -Eq '263\.|2026\.3|eap2|EAP2' "$starter_workflow"; then
 fi
 [ "$(grep -Fc './gradlew buildPlugin ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must package the candidate plugin exactly once"
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
-grep -Fq 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
+grep -Fq 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
 grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance' "$starter_workflow" || die "Starter package manifest does not freeze the maintained semantic and visual acceptance sets"
 for shard in canonical core-editing ordinary-markdown derived-content lifecycle; do
   grep -Fq "shard: $shard" "$starter_workflow" || die "Starter workflow is missing $shard shard"
