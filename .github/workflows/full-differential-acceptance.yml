@@ -1,28 +1,156 @@
-name: Full Differential Acceptance Post-Main
+name: Full Differential Acceptance
+run-name: Full Differential source ${{ inputs.target_sha || github.sha }}
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/full-differential-acceptance-post-main.yml'
-      - '.github/scripts/run-full-differential-with-watchdog.sh'
-      - 'fixtures/differential-acceptance/acceptance-ledger.tsv'
-      - 'src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt'
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Exact 40-character repository commit SHA to test'
+        required: true
+        type: string
+  # Temporary stabilization health check. Remove this schedule once the
+  # full-corpus path has proven stable; manual exact-SHA execution remains.
+  schedule:
+    - cron: '17 18 1,15 * *'
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: full-differential-acceptance-post-main-${{ github.sha }}
+  group: full-differential-acceptance-${{ inputs.target_sha || github.sha }}
   cancel-in-progress: false
 
 env:
   STARTER_PLATFORM_VERSION: '2026.2.3'
-  STARTER_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
+  policy:
+    name: Resolve exact source and cadence policy
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      run_full: ${{ steps.decision.outputs.run_full }}
+      reason: ${{ steps.decision.outputs.reason }}
+    steps:
+      - name: Validate exact requested source
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Full differential target must be an exact 40-character commit SHA"
+            exit 1
+          }
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              resolved="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${REQUESTED_SHA}" --jq '.sha')"
+              [ "$resolved" = "$REQUESTED_SHA" ] || {
+                echo "::error::Requested SHA does not resolve exactly in this repository"
+                exit 1
+              }
+              ;;
+            schedule)
+              [ "$GITHUB_REF" = "refs/heads/main" ] || {
+                echo "::error::Scheduled full differential must originate from main"
+                exit 1
+              }
+              remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+              [ "$remote_main" = "$REQUESTED_SHA" ] || {
+                echo "::error::Scheduled event is not the current protected-main SHA"
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::Unsupported full differential trigger: $GITHUB_EVENT_NAME"
+              exit 1
+              ;;
+          esac
+          echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch exact source for cadence decision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether scheduled corpus changed
+        id: decision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manual-exact-sha" >> "$GITHUB_OUTPUT"
+            echo "Manual exact-SHA request: full corpus will run."
+            exit 0
+          fi
+
+          previous_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/full-differential-acceptance.yml/runs?event=schedule&status=completed&per_page=20" \
+              --jq '.workflow_runs[0].head_sha // ""'
+          )"
+
+          if [ -z "$previous_sha" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=first-scheduled-health-check" >> "$GITHUB_OUTPUT"
+            echo "No previous scheduled run exists; full corpus will run."
+            exit 0
+          fi
+
+          [[ "$previous_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Previous scheduled run returned malformed head SHA: $previous_sha"
+            exit 1
+          }
+
+          if [ "$previous_sha" = "$SOURCE_SHA" ]; then
+            echo "run_full=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no-source-change" >> "$GITHUB_OUTPUT"
+            echo "No source change since previous scheduled attempt; skipping full corpus."
+            exit 0
+          fi
+
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$previous_sha" "$SOURCE_SHA"; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=history-discontinuity" >> "$GITHUB_OUTPUT"
+            echo "Previous scheduled SHA is not an ancestor of current main; fail-safe full corpus will run."
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$previous_sha" "$SOURCE_SHA")"
+          relevant="$(
+            printf '%s\n' "$changed" |
+              grep -E '^(\.github/workflows/full-differential-acceptance\.yml|\.github/scripts/run-full-differential-with-watchdog\.sh|\.github/scripts/install-starter-jcef-apparmor\.sh|build\.gradle\.kts|settings\.gradle\.kts|gradle\.properties|gradlew|\.nvmrc|gradle/|src/main/|src/integrationTest/|webview/|fixtures/differential-acceptance/|fixtures/markdown-fidelity/|tools/differential-acceptance/)' || true
+          )"
+
+          if [ -z "$relevant" ]; then
+            echo "run_full=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no-relevant-change" >> "$GITHUB_OUTPUT"
+            echo "Repository changed, but no full-differential-relevant path changed since $previous_sha."
+          else
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=relevant-change" >> "$GITHUB_OUTPUT"
+            {
+              echo "Relevant changes since previous scheduled SHA $previous_sha:"
+              printf '%s\n' "$relevant"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
   package:
+    if: needs.policy.outputs.run_full == 'true'
+    needs: [policy]
     name: Package exact full-differential plugin
+    env:
+      STARTER_SOURCE_SHA: ${{ needs.policy.outputs.source_sha }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -38,7 +166,7 @@ jobs:
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
           [ "$actual" = "$STARTER_SOURCE_SHA" ] || {
-            echo "::error::Post-main package checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
+            echo "::error::Full differential package checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
             exit 1
           }
 
@@ -77,7 +205,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_set=full-differential-acceptance-post-main"
+            echo "scenario_set=full-differential-acceptance"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact plugin artifact
@@ -85,14 +213,17 @@ jobs:
         with:
           name: full-differential-plugin-${{ github.run_id }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           path: |
             build/e2e-package/plugin.zip
             build/e2e-package/manifest.txt
 
   full-differential:
-    needs: [package]
-    name: Full Differential Acceptance Post-Main
+    if: needs.policy.outputs.run_full == 'true'
+    needs: [policy, package]
+    name: Full Differential Acceptance
+    env:
+      STARTER_SOURCE_SHA: ${{ needs.policy.outputs.source_sha }}
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -108,7 +239,7 @@ jobs:
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
           [ "$actual" = "$STARTER_SOURCE_SHA" ] || {
-            echo "::error::Post-main full differential checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
+            echo "::error::Full differential checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
             exit 1
           }
 
@@ -134,8 +265,8 @@ jobs:
         run: |
           set -euo pipefail
           manifest="build/e2e-package/manifest.txt"
-          [ -f "$manifest" ] || { echo "::error::Post-main package manifest missing"; exit 1; }
-          [ -f build/e2e-package/plugin.zip ] || { echo "::error::Post-main plugin artifact missing"; exit 1; }
+          [ -f "$manifest" ] || { echo "::error::Full differential package manifest missing"; exit 1; }
+          [ -f build/e2e-package/plugin.zip ] || { echo "::error::Full differential plugin artifact missing"; exit 1; }
           source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
           archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
           expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
@@ -143,7 +274,7 @@ jobs:
           scenario_set="$(sed -n 's/^scenario_set=//p' "$manifest")"
           [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
           [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
-          [ "$scenario_set" = "full-differential-acceptance-post-main" ]
+          [ "$scenario_set" = "full-differential-acceptance" ]
           [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
           [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
           mkdir -p build/distributions
@@ -164,11 +295,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-full-differential-post-main-xvfb.log" 2>&1 &
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-full-differential-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
       - name: Run complete 89-case reviewed acceptance
         shell: bash
+        env:
+          POLICY_REASON: ${{ needs.policy.outputs.reason }}
         run: |
           set -euo pipefail
           pass_dir="build/e2e-evidence/derived-content/differential-manifest"
@@ -190,14 +323,14 @@ jobs:
           set -e
 
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Post-main full differential run mutated the packaged plugin artifact"
+            echo "::error::Full differential run mutated the packaged plugin artifact"
             exit 1
           }
 
           mkdir -p "$pass_dir"
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'source_sha=%s\ncontract=acceptance\ntrigger=post-main-push\n' \
-            "$STARTER_SOURCE_SHA" > "$pass_dir/run-contract.txt"
+          printf 'source_sha=%s\ncontract=acceptance\ntrigger=%s\npolicy_reason=%s\n' \
+            "$STARTER_SOURCE_SHA" "$GITHUB_EVENT_NAME" "$POLICY_REASON" > "$pass_dir/run-contract.txt"
 
           if [ "$test_status" -ne 0 ]; then
             if [ -f "$pass_dir/summary.json" ]; then
@@ -216,7 +349,7 @@ jobs:
 
           acceptance="$pass_dir/acceptance.json"
           [ -f "$acceptance" ] || {
-            echo "::error::Post-main full differential test returned success without acceptance.json"
+            echo "::error::Full differential test returned success without acceptance.json"
             exit 1
           }
           jq -e --arg sha "$STARTER_SOURCE_SHA" '
@@ -227,7 +360,7 @@ jobs:
             .full_differential_acceptance == true and
             .release_eligible == false
           ' "$acceptance" >/dev/null || {
-            echo "::error::Post-main acceptance verdict is malformed or not exact-SHA"
+            echo "::error::Full differential acceptance verdict is malformed or not exact-SHA"
             cat "$acceptance"
             exit 1
           }
@@ -236,13 +369,13 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: full-differential-post-main-${{ github.run_id }}
+          name: full-differential-${{ github.run_id }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           path: |
             build/e2e-evidence/derived-content/differential-manifest/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             build/e2e-package/manifest.txt
             out/ide-tests/**/log/**
-            ${{ runner.temp }}/markflow-full-differential-post-main-xvfb.log
+            ${{ runner.temp }}/markflow-full-differential-xvfb.log

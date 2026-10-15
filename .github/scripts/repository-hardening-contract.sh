@@ -190,21 +190,26 @@ if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle
 fi
 
 starter_workflow=".github/workflows/starter-driver-e2e.yml"
-post_main_full_differential=".github/workflows/full-differential-acceptance-post-main.yml"
-[ -f "$post_main_full_differential" ] || die "#353 post-main full differential workflow is missing"
-grep -Eq '^  push:([[:space:]]|$)' "$post_main_full_differential" || die "#353 post-main proof must be triggered by exact main pushes"
-grep -Fq 'branches: [main]' "$post_main_full_differential" || die "#353 post-main proof must be scoped to protected main"
-grep -Fq ".github/workflows/full-differential-acceptance-post-main.yml" "$post_main_full_differential" || die "#353 post-main proof must self-trigger when its contract changes"
-grep -Fq "fixtures/differential-acceptance/acceptance-ledger.tsv" "$post_main_full_differential" || die "#353 post-main proof must run when the reviewed ledger changes"
-grep -Fq ".github/scripts/run-full-differential-with-watchdog.sh" "$post_main_full_differential" || die "#353 post-main proof must run when the watchdog contract changes"
-grep -Fq "MarkFlowStarterDifferentialManifestTest.kt" "$post_main_full_differential" || die "#353 post-main proof must run when the heartbeat producer changes"
-if grep -Eq '^  (pull_request|pull_request_target|workflow_dispatch):([[:space:]]|$)' "$post_main_full_differential"; then
-  die "#353 post-main proof must stay a narrow push-only exact-SHA control"
+full_differential_workflow=".github/workflows/full-differential-acceptance.yml"
+[ -f "$full_differential_workflow" ] || die "#353 canonical full differential workflow is missing"
+[ ! -e .github/workflows/full-differential-acceptance-post-main.yml ] || die "#353 obsolete post-main push workflow must stay deleted"
+grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$full_differential_workflow" || die "#353 full differential must retain manual exact-SHA execution"
+grep -Eq '^  schedule:([[:space:]]|$)' "$full_differential_workflow" || die "#353 full differential must retain temporary stabilization cadence"
+grep -Fq "cron: '17 18 1,15 * *'" "$full_differential_workflow" || die "#353 stabilization cadence must remain twice monthly until explicitly retired"
+if grep -Eq '^  (pull_request|pull_request_target|push):([[:space:]]|$)' "$full_differential_workflow"; then
+  die "#353 full corpus must not return to ordinary PR/push CI"
 fi
-grep -Fq 'STARTER_SOURCE_SHA: ${{ github.sha }}' "$post_main_full_differential" || die "#353 post-main proof lost exact push-SHA identity"
-[ "$(grep -Fc 'ref: ${{ env.STARTER_SOURCE_SHA }}' "$post_main_full_differential" || true)" = "2" ] || die "#353 post-main package and acceptance jobs must both checkout the exact push SHA"
-grep -Fq 'cache-read-only: true' "$post_main_full_differential" || die "#353 post-main proof must not write Gradle cache state"
-grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$post_main_full_differential" || die "#353 post-main proof lost the bounded JCEF AppArmor identity"
+grep -Fq 'target_sha:' "$full_differential_workflow" || die "#353 manual full corpus lost exact-SHA input"
+grep -Fq 'Full differential target must be an exact 40-character commit SHA' "$full_differential_workflow" || die "#353 manual full corpus no longer rejects mutable/ambiguous refs"
+grep -Fq 'event=schedule&status=completed' "$full_differential_workflow" || die "#353 scheduled cadence no longer anchors its no-change guard to the previous scheduled attempt"
+grep -Fq 'git diff --name-only "$previous_sha" "$SOURCE_SHA"' "$full_differential_workflow" || die "#353 scheduled cadence no longer checks changes since the previous scheduled SHA"
+grep -Fq 'src/main/' "$full_differential_workflow" || die "#353 scheduled relevant-change guard lost production sources"
+grep -Fq 'src/integrationTest/' "$full_differential_workflow" || die "#353 scheduled relevant-change guard lost real-IDE acceptance sources"
+grep -Fq 'fixtures/differential-acceptance/' "$full_differential_workflow" || die "#353 scheduled relevant-change guard lost acceptance fixtures"
+grep -Fq 'run_full=false' "$full_differential_workflow" || die "#353 scheduled no-change path no longer skips the expensive corpus"
+grep -Fq "if: needs.policy.outputs.run_full == 'true'" "$full_differential_workflow" || die "#353 expensive jobs no longer honor cadence policy"
+grep -Fq 'cache-read-only: true' "$full_differential_workflow" || die "#353 full differential must not write Gradle cache state"
+grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workflow" || die "#353 full differential lost the bounded JCEF AppArmor identity"
 full_differential_watchdog=".github/scripts/run-full-differential-with-watchdog.sh"
 [ -x "$full_differential_watchdog" ] || die "#353 full differential watchdog is missing or not executable"
 bash "$full_differential_watchdog" --self-test >/dev/null || die "#353 full differential watchdog self-test failed"
@@ -220,17 +225,17 @@ grep -Fq '[ "$child_pgid" != "$child_pid" ]' "$full_differential_watchdog" || di
 grep -Fq '[ "$child_pgid" = "$wrapper_pgid" ]' "$full_differential_watchdog" || die "#353 watchdog no longer protects the runner shell process group"
 grep -Fq 'kill -TERM -- "-$child_pid"' "$full_differential_watchdog" || die "#353 watchdog no longer terminates the whole Gradle/IDE process group"
 grep -Fq 'kill -KILL -- "-$child_pid"' "$full_differential_watchdog" || die "#353 watchdog no longer escalates stuck process cleanup"
-grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"' "$post_main_full_differential" || die "#353 post-main proof no longer exports heartbeat location"
-grep -Fq 'run-full-differential-with-watchdog.sh' "$post_main_full_differential" || die "#353 post-main proof bypasses the fail-fast watchdog"
-grep -Fq -- '-PdifferentialContract=acceptance' "$post_main_full_differential" || die "#353 post-main proof no longer executes the full acceptance contract"
-if grep -Fq -- '-PdifferentialCaseIds=' "$post_main_full_differential"; then
-  die "#353 post-main proof must never reduce the 89-case inventory"
+grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"' "$full_differential_workflow" || die "#353 full differential no longer exports heartbeat location"
+grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" || die "#353 full differential bypasses the fail-fast watchdog"
+grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
+if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
+  die "#353 canonical full corpus must never reduce the 89-case inventory"
 fi
-grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$post_main_full_differential" || die "#353 post-main proof no longer executes the differential manifest suite"
-grep -Fq '.captured_unverified == 89' "$post_main_full_differential" || die "#353 post-main failure diagnostics no longer distinguish complete capture from review failure"
-grep -Fq '.full_differential_acceptance == true' "$post_main_full_differential" || die "#353 post-main proof no longer requires the reviewed final verdict"
-grep -Fq '.release_eligible == false' "$post_main_full_differential" || die "#353 post-main proof must not bypass #348/#309 release gates"
-grep -Fq 'if: ${{ always() }}' "$post_main_full_differential" || die "#353 post-main proof must retain artifacts even on fail-closed review runs"
+grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$full_differential_workflow" || die "#353 full differential no longer executes the differential manifest suite"
+grep -Fq '.captured_unverified == 89' "$full_differential_workflow" || die "#353 full differential failure diagnostics no longer distinguish complete capture from review failure"
+grep -Fq '.full_differential_acceptance == true' "$full_differential_workflow" || die "#353 full differential no longer requires the reviewed final verdict"
+grep -Fq '.release_eligible == false' "$full_differential_workflow" || die "#353 full differential must not bypass #348/#309 release gates"
+grep -Fq 'if: ${{ always() }}' "$full_differential_workflow" || die "#353 full differential must retain artifacts even on fail-closed review runs"
 
 starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
 [ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
@@ -536,8 +541,8 @@ grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes'
   die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
   die "Full #353 Starter launch lost its distinct diagnostic identity"
-grep -Fq 'timeout --signal=TERM --kill-after=30s 85m' "$starter_workflow" ||
-  die "Full #353 workflow no longer leaves cleanup headroom beyond the 75-minute Starter lifetime"
+grep -Fq 'timeout-minutes: 100' "$full_differential_workflow" ||
+  die "Full #353 workflow no longer leaves job cleanup headroom beyond the 85-minute watchdog bound"
 grep -Fq 'val hasDerivedPresentation =' "$visual_bridge" ||
   die "#353 visual bridge lost its derived-presentation refresh discriminator"
 grep -Fq '(controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0' "$visual_bridge" ||
@@ -546,14 +551,10 @@ grep -Fq 'if (!hasDerivedPresentation) {' "$visual_bridge" ||
   die "#353 visual bridge no longer suppresses layout refresh for derived rendering"
 grep -Fq 'NativeMarkFlowProductionLifecycle.refreshAll()' "$visual_bridge" ||
   die "#353 visual bridge lost required ordinary layout refresh after viewport normalization"
-grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
-  die "Starter workflow lost the opt-in full differential evidence dispatch"
-grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow" ||
-  die "Starter workflow lost the full differential evidence job"
-grep -Fq -- '-PdifferentialContract=acceptance' "$starter_workflow" ||
-  die "Full differential job no longer invokes the acceptance contract"
-grep -Fq 'starter-driver-full-differential-' "$starter_workflow" ||
-  die "Full differential evidence artifact is no longer retained"
+if grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
+  grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow"; then
+  die "Starter workflow must not duplicate the canonical full differential workflow"
+fi
 grep -Fq '\"full_differential_acceptance\":false' "$manifest_test" ||
   die "Incomplete Stage D capture cannot claim full visual acceptance"
 grep -Fq '\"release_eligible\":false' "$manifest_test" ||
@@ -577,7 +578,7 @@ grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workf
   die "Starter no longer installs its pinned JBR profile"
 grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
   die "Matrix JCEF profile installer must remain restricted to derived-content"
-grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$starter_workflow" ||
+grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workflow" ||
   die "Full differential JCEF setup lost its explicit scoped shard identity"
 grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" ||
   die "JCEF profile installer scope allowlist drifted"
