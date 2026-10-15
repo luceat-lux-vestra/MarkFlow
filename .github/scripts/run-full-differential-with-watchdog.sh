@@ -47,8 +47,10 @@ run_self_test() {
   MARKFLOW_WATCHDOG_STARTUP_SECONDS=2 \
   MARKFLOW_WATCHDOG_TOTAL_SECONDS=20 \
   MARKFLOW_WATCHDOG_POLL_SECONDS=1 \
+  MARKFLOW_WATCHDOG_REPORT_SECONDS=1 \
   "$0" "$tmp/progress.tsv" "$tmp/watchdog.txt" -- \
-    bash -c 'printf "1\tself-test\tcase\n" > "$MARKFLOW_DIFFERENTIAL_PROGRESS_FILE"; sleep 30'
+    bash -c 'printf "1\tself-test\tcase\n" > "$MARKFLOW_DIFFERENTIAL_PROGRESS_FILE"; sleep 30' \
+    >"$tmp/self-test.log" 2>&1
   rc=$?
   set -e
   if [ "$rc" -ne 124 ]; then
@@ -63,6 +65,16 @@ run_self_test() {
   }
   grep -Fq "last_progress=" "$tmp/watchdog.txt" || {
     echo "watchdog self-test: last progress diagnostic missing" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  grep -Fq "FULL_DIFFERENTIAL_HEARTBEAT" "$tmp/self-test.log" || {
+    echo "watchdog self-test: console heartbeat missing" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  grep -Fq "FULL_DIFFERENTIAL_PROCESS_GROUP" "$tmp/self-test.log" || {
+    echo "watchdog self-test: process-group identity diagnostic missing" >&2
     rm -rf "$tmp"
     return 1
   }
@@ -97,8 +109,9 @@ idle_seconds="${MARKFLOW_WATCHDOG_IDLE_SECONDS:-360}"
 startup_seconds="${MARKFLOW_WATCHDOG_STARTUP_SECONDS:-900}"
 total_seconds="${MARKFLOW_WATCHDOG_TOTAL_SECONDS:-5100}"
 poll_seconds="${MARKFLOW_WATCHDOG_POLL_SECONDS:-15}"
+report_seconds="${MARKFLOW_WATCHDOG_REPORT_SECONDS:-60}"
 
-for value in "$idle_seconds" "$startup_seconds" "$total_seconds" "$poll_seconds"; do
+for value in "$idle_seconds" "$startup_seconds" "$total_seconds" "$poll_seconds" "$report_seconds"; do
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
     echo "watchdog limits must be positive integers" >&2
     exit 2
@@ -112,6 +125,27 @@ start_epoch="$(date +%s)"
 setsid "$@" &
 child_pid=$!
 
+wrapper_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
+child_pgid=""
+for _ in {1..20}; do
+  child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$child_pgid" = "$child_pid" ]; then
+    break
+  fi
+  kill -0 "$child_pid" 2>/dev/null || break
+  sleep 0.1
+done
+if [ -z "$child_pgid" ] || [ "$child_pgid" != "$child_pid" ] ||
+  [ -z "$wrapper_pgid" ] || [ "$child_pgid" = "$wrapper_pgid" ]; then
+  echo "watchdog process-group isolation failed: child_pid=$child_pid child_pgid=$child_pgid wrapper_pgid=$wrapper_pgid" >&2
+  kill -TERM "$child_pid" 2>/dev/null || true
+  wait "$child_pid" 2>/dev/null || true
+  exit 2
+fi
+echo "FULL_DIFFERENTIAL_PROCESS_GROUP child_pid=$child_pid child_pgid=$child_pgid wrapper_pid=$$ wrapper_pgid=$wrapper_pgid"
+
+next_report_epoch=$((start_epoch + report_seconds))
+
 on_signal() {
   terminate_group "$child_pid" "wrapper-signal" "$diagnostic_file" "$progress_file"
   exit 130
@@ -121,6 +155,18 @@ trap on_signal INT TERM HUP
 while kill -0 "$child_pid" 2>/dev/null; do
   now="$(date +%s)"
   elapsed=$((now - start_epoch))
+  progress="missing"
+  idle=-1
+  if [ -f "$progress_file" ]; then
+    progress="$(tr '\t\n' '  ' < "$progress_file")"
+    mtime="$(stat -c %Y "$progress_file" 2>/dev/null || echo "$now")"
+    idle=$((now - mtime))
+  fi
+
+  if [ "$now" -ge "$next_report_epoch" ]; then
+    echo "FULL_DIFFERENTIAL_HEARTBEAT elapsed_s=$elapsed idle_s=$idle progress=$progress"
+    next_report_epoch=$((now + report_seconds))
+  fi
 
   if [ "$elapsed" -ge "$total_seconds" ]; then
     terminate_group "$child_pid" "total-timeout" "$diagnostic_file" "$progress_file"
@@ -131,8 +177,6 @@ while kill -0 "$child_pid" 2>/dev/null; do
   fi
 
   if [ -f "$progress_file" ]; then
-    mtime="$(stat -c %Y "$progress_file" 2>/dev/null || echo "$now")"
-    idle=$((now - mtime))
     if [ "$idle" -ge "$idle_seconds" ]; then
       terminate_group "$child_pid" "idle-timeout" "$diagnostic_file" "$progress_file"
       set +e

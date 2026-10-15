@@ -221,6 +221,27 @@ exception when another case failure is already authoritative. This changes no
 renderer behavior, corpus classification or visual tolerance; it removes
 accidental platform-browser accumulation from the acceptance harness.
 
+## Stage E26 — runner-visible full-corpus heartbeat
+
+Post-main run `38730876299` on exact main
+`9d573048a97ec74371084ae9b947e4a07744cc3a` was interrupted twice by the
+GitHub hosted runner itself. Both attempts entered the 89-case test body and
+then ended with `The runner has received a shutdown signal` /
+`The operation was canceled`; neither reached a test assertion, watchdog
+diagnostic, nor the local `always()` evidence upload. Similar historical
+run `38705123619` shows the same platform-level shutdown after a long silent
+IDE interval. This does not prove a documented GitHub idle timeout, but the
+correlation is operationally strong enough to remove the silence as a variable.
+
+The watchdog now emits one Actions-log heartbeat per minute containing total
+elapsed seconds, progress-file idle seconds and the latest phase/case identity.
+It also proves at startup that the Gradle/IDE child process group is a distinct
+`setsid` group whose PGID equals the child PID and differs from the wrapper
+shell PGID. The existing six-minute no-progress timeout and TERM→KILL cleanup
+remain unchanged. The watchdog self-test exercises both the console heartbeat
+and process-group identity checks. No acceptance criterion or case inventory
+is changed.
+
 ### Stage D geometry instrumentation — bounded
 
 The real-IDE manifest capture now retains `native-raster-geometry.txt` for each
