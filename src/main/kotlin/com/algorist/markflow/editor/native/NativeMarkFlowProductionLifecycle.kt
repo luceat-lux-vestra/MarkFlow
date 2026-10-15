@@ -42,14 +42,16 @@ internal object NativeMarkFlowProductionLifecycle {
         val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return false
         if (!MarkFlowFileSupport.isMarkFlowTarget(file)) return false
 
-        var runtime: DerivedRendererRuntime? = null
         var hostResources: NativeHostResourcePresentationController? = null
         var derivedPresentation: NativeDerivedPresentationController? = null
         var rawHtmlPresentation: NativeRawHtmlPresentationController? = null
         return try {
-            runtime = createRendererRuntimeOrNull()
             hostResources = NativeHostResourcePresentationController(editor)
-            derivedPresentation = NativeDerivedPresentationController(editor, runtime)
+            derivedPresentation = NativeDerivedPresentationController(
+                editor = editor,
+                runtime = null,
+                runtimeProvider = ::createRendererRuntimeOrNull,
+            )
             rawHtmlPresentation = NativeRawHtmlPresentationController(editor)
             val controller = NativePresentationController(
                 editor = editor,
@@ -76,10 +78,10 @@ internal object NativeMarkFlowProductionLifecycle {
             editor.putUserData(controllerKey, controller)
             true
         } catch (failure: ProcessCanceledException) {
-            cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources, runtime)
+            cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources)
             throw failure
         } catch (failure: Throwable) {
-            cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources, runtime)
+            cleanupPartial(rawHtmlPresentation, derivedPresentation, hostResources)
             LOG.warn(
                 "MarkFlow native production presentation could not attach; exact source editor remains available",
                 failure,
@@ -136,14 +138,9 @@ internal object NativeMarkFlowProductionLifecycle {
         rawHtmlPresentation: NativeRawHtmlPresentationController?,
         derivedPresentation: NativeDerivedPresentationController?,
         hostResources: NativeHostResourcePresentationController?,
-        runtime: DerivedRendererRuntime?,
     ) {
         runCatching { rawHtmlPresentation?.let(Disposer::dispose) }
-        if (derivedPresentation != null) {
-            runCatching { Disposer.dispose(derivedPresentation) }
-        } else {
-            runCatching { runtime?.dispose() }
-        }
+        runCatching { derivedPresentation?.let(Disposer::dispose) }
         runCatching { hostResources?.let(Disposer::dispose) }
     }
 
