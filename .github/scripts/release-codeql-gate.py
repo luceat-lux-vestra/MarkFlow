@@ -136,26 +136,42 @@ def verify_jobs(payload: dict, sha: str, modern: bool) -> None:
                     f"{language} missing successful {name} attestation")
 
 
-def verify_artifacts(payload: dict, sha: str, run_id: int, modern: bool) -> dict:
+def verify_artifacts(payload: dict, sha: str, run_id: int, modern: bool,
+                     allow_missing: bool = False) -> dict | None:
     items = payload.get("artifacts")
     require(isinstance(items, list) and payload.get("total_count") == len(items),
             "incomplete CodeQL artifact listing")
     found = {}
+    missing = False
     for language in LANGUAGES:
         names = {"sarif": f"release-codeql-{sha}-{language}"}
         if modern:
             names["source"] = f"codeql-source-{sha}-{language}"
         for kind, name in names.items():
             matches = [a for a in items if isinstance(a, dict) and a.get("name") == name]
-            require(len(matches) == 1, f"missing or duplicate {language} {kind} artifact")
+            require(len(matches) <= 1, f"duplicate {language} {kind} artifact")
+            if not matches:
+                if allow_missing:
+                    missing = True
+                    continue
+                require(False, f"missing or duplicate {language} {kind} artifact")
             art = matches[0]
-            require(art.get("expired") is False and isinstance(art.get("size_in_bytes"), int)
+            require(isinstance(art.get("size_in_bytes"), int)
                     and art["size_in_bytes"] > 0, f"{language} {kind} artifact expired or empty")
             if isinstance(art.get("workflow_run"), dict):
                 require(art["workflow_run"].get("id") == run_id,
                         f"{language} {kind} belongs to another run")
+            if art.get("expired") is True:
+                if allow_missing:
+                    missing = True
+                    continue
+                require(False, f"{language} {kind} artifact expired or empty")
+            require(art.get("expired") is False,
+                    f"{language} {kind} unknown expiry state")
         found[language] = names
-    return found
+    # Expiration means *absence of usable proof*, not acceptance of a bad
+    # manifest or a failed security finding. Malformed present artifacts fail.
+    return None if missing else found
 
 
 def download(run_id: int, repo: str, name: str, destination: Path) -> None:
@@ -175,7 +191,8 @@ def verify_manifest(root: Path, sha: str, run: dict, language: str) -> None:
     require(document == expected, f"{language} actual checkout identity mismatch")
 
 
-def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str) -> dict:
+def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str,
+                    allow_missing: bool = False) -> dict | None:
     modern = verify_run(run, sha, workflow_id)
     require(run.get("head_repository", {}).get("full_name") == repo,
             "CodeQL head repository does not match trusted repository")
@@ -189,7 +206,9 @@ def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str) -> dict:
     jobs = gh_json(f"repos/{repo}/actions/runs/{rid}/jobs?filter=latest&per_page=100")
     verify_jobs(jobs, sha, modern)
     artifacts = gh_json(f"repos/{repo}/actions/runs/{rid}/artifacts?per_page=100")
-    names = verify_artifacts(artifacts, sha, rid, modern)
+    names = verify_artifacts(artifacts, sha, rid, modern, allow_missing=allow_missing)
+    if names is None:
+        return None
     proof = {}
     with tempfile.TemporaryDirectory(prefix="codeql-preflight-") as temp:
         root = Path(temp)
@@ -211,18 +230,27 @@ def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str) -> dict:
 def find_runs(repo: str, sha: str, workflow_id: int) -> list[dict]:
     found = []
     # Searching by event head_sha would exclude historical-commit scans.
-    # A bounded recent search may miss old evidence; that means a fresh scan.
-    # Search only approved trigger types. Historical PR-triggered runs can be
-    # numerous; fetching their pages every 15 seconds risks Actions API limits.
-    # Beyond the bounded recent eligible window, start a new verified scan.
+    # Search only approved trigger types. Continue page-wise with an explicit
+    # limit; silent truncation would permit missing a failed exact-source scan.
+    # A history beyond the finite bound is a security NO-GO, not a green reuse.
     for event in ("workflow_dispatch", "schedule"):
-        data = gh_json(
-            f"repos/{repo}/actions/workflows/{WORKFLOW}/runs"
-            f"?event={event}&per_page=100"
-        )
-        runs = data.get("workflow_runs")
-        require(isinstance(runs, list), "malformed workflow run listing")
-        found.extend(x for x in runs if eligible_run(x, sha, workflow_id))
+        # Paginate instead of silently interpreting the most recent 100
+        # runs as a complete source history. An exceeded bound is NO-GO.
+        for page in range(1, 11):
+            data = gh_json(
+                f"repos/{repo}/actions/workflows/{WORKFLOW}/runs"
+                f"?event={event}&per_page=100&page={page}"
+            )
+            runs = data.get("workflow_runs")
+            require(isinstance(runs, list) and len(runs) <= 100,
+                    "malformed workflow run listing")
+            require(all(isinstance(x, dict) for x in runs),
+                    "malformed CodeQL discovery record")
+            found.extend(x for x in runs if eligible_run(x, sha, workflow_id))
+            if len(runs) < 100:
+                break
+        else:
+            raise ValueError("CodeQL discovery exceeded the safe 1000-run bound")
     return sorted(found, key=lambda r: (r.get("created_at", ""), r.get("id", 0)),
                   reverse=True)
 
@@ -244,17 +272,22 @@ def intentional_schedule_skip(repo: str, run: dict) -> bool:
     return all(isinstance(j, dict) and j.get("conclusion") == "skipped" for j in others)
 
 
-def select_run(repo: str, sha: str, workflow_id: int) -> dict | None:
-    runs = find_runs(repo, sha, workflow_id)
+def select_run(repo: str, sha: str, workflow_id: int,
+               ignored: set[int] | None = None) -> dict | None:
+    runs = [r for r in find_runs(repo, sha, workflow_id)
+            if not intentional_schedule_skip(repo, r)]
+    # A later green scanner cannot mask a historical failed/rerun attempt.
+    for run in runs:
+        require(run.get("run_attempt") == 1,
+                "ambiguous rerun/attempt for candidate CodeQL scan")
+        if run.get("status") == "completed":
+            require(run.get("conclusion") == "success",
+                    f"CodeQL run {run.get('id')} ended: {run.get('conclusion')}")
     active = [r for r in runs if r.get("status") != "completed"]
     require(len(active) <= 1, "multiple concurrent CodeQL scans for candidate SHA")
     if active:
         return active[0]
-    for run in runs:
-        if intentional_schedule_skip(repo, run):
-            continue
-        return run
-    return None
+    return next((r for r in runs if r.get("id") not in (ignored or set())), None)
 
 
 def dispatch(repo: str, sha: str) -> None:
@@ -271,6 +304,11 @@ def run_preflight(sha: str, tag: str, repo: str,
     require(isinstance(workflow_id, int) and workflow_id > 0
             and workflow.get("state") == "active", "trusted CodeQL workflow unavailable")
     selected = select_run(repo, sha, workflow_id)
+    # A previously successful full scan whose original archive aged out is
+    # skipped only after its identity and complete matrix were verified.
+    expired_ids: set[int] = set()
+    verified_ids: set[int] = set()
+    verified_proof: dict | None = None
     dispatched = False
     if selected is None:
         # The destination workflow only accepts trusted protected-main sources.
@@ -285,7 +323,7 @@ def run_preflight(sha: str, tag: str, repo: str,
     deadline = time.monotonic() + timeout
     discovery_deadline = min(deadline, time.monotonic() + 150)
     while True:
-        current = select_run(repo, sha, workflow_id)
+        current = select_run(repo, sha, workflow_id, expired_ids | verified_ids)
         if current is not None:
             require(current.get("run_attempt") == 1,
                     "CodeQL rerun/attempt ambiguity")
@@ -293,14 +331,47 @@ def run_preflight(sha: str, tag: str, repo: str,
             if status == "completed":
                 require(current.get("conclusion") == "success",
                         f"CodeQL run {current.get('id')} ended: {current.get('conclusion')}")
-                result = verify_evidence(current, sha, workflow_id, repo)
+                result = verify_evidence(current, sha, workflow_id, repo,
+                                         allow_missing=not dispatched)
+                if result is None:
+                    # Only expiration/absent archives reach here. A newly
+                    # dispatched successful scanner lacking proof is NO-GO.
+                    expired_ids.add(current["id"])
+                    print(f"Original CodeQL evidence expired/missing for run "
+                          f"{current['id']}; searching older verified proof",
+                          flush=True)
+                    continue
+                if not dispatched:
+                    # Do not let the first green scanner conceal malformed,
+                    # security-positive or untrusted same-source duplicates.
+                    verified_ids.add(current["id"])
+                    if verified_proof is None:
+                        verified_proof = result
+                    print(f"Independently verified complete CodeQL run {current['id']}",
+                          flush=True)
+                    continue
                 verify_source(sha, tag, repo)
-                result["execution"] = "dispatched" if dispatched else "reused-or-joined"
+                result["execution"] = "dispatched"
                 return result
             require(status in {"queued", "in_progress", "waiting", "pending", "requested"},
                     f"unrecognized CodeQL run status: {status}")
         elif not dispatched:
-            raise ValueError("previously visible CodeQL run vanished")
+            if verified_proof is not None:
+                verify_source(sha, tag, repo)
+                verified_proof["execution"] = "reused-or-joined"
+                return verified_proof
+            if not expired_ids:
+                raise ValueError("previously visible CodeQL run vanished")
+            # Exhausted all completed candidates with genuinely expired or
+            # missing original artifacts. One canonical scan, never a retry
+            # loop or security-failure laundering.
+            dispatch(repo, sha)
+            dispatched = True
+            # Registration latency begins with this new dispatch, not with
+            # the potentially lengthy audit of historical eligible artifacts.
+            discovery_deadline = min(deadline, time.monotonic() + 150)
+            print(f"Regenerating exact-source CodeQL original proof for {sha}",
+                  flush=True)
         if time.monotonic() >= deadline:
             raise ValueError("CodeQL preflight timed out before complete verified evidence")
         if current is None and time.monotonic() >= discovery_deadline:
@@ -455,12 +526,15 @@ def self_test() -> None:
         snapshots = iter(sequence)
         last = sequence[-1]
         scans = []
-        def choose(*args):
+        def choose(*args, **kwargs):
             try:
                 entry = next(snapshots)
             except StopIteration:
                 entry = last
             scans.append(entry)
+            ignored = args[3] if len(args) > 3 else kwargs.get("ignored", set())
+            if entry is not None and entry.get("id") in ignored:
+                return None
             return entry
         with patch(__name__ + ".verify_source"), \
              patch(__name__ + ".gh_json", return_value={"id": 2, "state": "active"}), \
@@ -479,14 +553,94 @@ def self_test() -> None:
                 assert result["run_id"] == 17
             assert invoke.call_count == expected_dispatches
 
+    # An old successful matrix with genuinely expired original archives is
+    # classified as missing, but wrong source, empty, duplicate or malformed
+    # present proof remains a security NO-GO.
+    expired = json.loads(json.dumps(artifacts))
+    expired["artifacts"][0]["expired"] = True
+    assert verify_artifacts(expired, sha, 17, True, allow_missing=True) is None
+    absent = json.loads(json.dumps(artifacts))
+    absent["artifacts"].pop()
+    absent["total_count"] -= 1
+    assert verify_artifacts(absent, sha, 17, True, allow_missing=True) is None
+    corrupted = json.loads(json.dumps(expired))
+    corrupted["artifacts"][0]["workflow_run"]["id"] = 99
+    reject(lambda: verify_artifacts(corrupted, sha, 17, True,
+                                    allow_missing=True), "another run")
+    empty = json.loads(json.dumps(expired))
+    empty["artifacts"][0]["size_in_bytes"] = 0
+    reject(lambda: verify_artifacts(empty, sha, 17, True,
+                                    allow_missing=True), "expired or empty")
+
+    with patch(__name__ + ".find_runs", return_value=[
+        modern, dict(modern, id=18, conclusion="failure")]):
+        reject(lambda: select_run("owner/repo", sha, 2), "ended")
+    with patch(__name__ + ".find_runs", return_value=[
+        modern, dict(modern, id=18, run_attempt=2)]):
+        reject(lambda: select_run("owner/repo", sha, 2), "rerun")
+    with patch(__name__ + ".find_runs", return_value=[
+        modern, dict(modern, id=18)]):
+        assert select_run("owner/repo", sha, 2, {17})["id"] == 18
+
+    long_page = [dict(modern, id=100 + i) for i in range(100)]
+    with patch(__name__ + ".gh_json", side_effect=[
+        {"workflow_runs": long_page},
+        {"workflow_runs": [modern]},
+        {"workflow_runs": []},
+    ]) as paged:
+        assert len(find_runs("owner/repo", sha, 2)) == 101
+        assert paged.call_count == 3
+
+    # A concurrent second exact-candidate full scan cannot be joined
+    # ambiguously, even when no historical completed result exists.
     active = dict(modern, status="in_progress", conclusion=None)
+    with patch(__name__ + ".find_runs", return_value=[
+        active, dict(active, id=18)]):
+        reject(lambda: select_run("owner/repo", sha, 2), "multiple concurrent")
+    with patch(__name__ + ".gh_json", return_value={
+        "workflow_runs": long_page
+    }):
+        reject(lambda: find_runs("owner/repo", sha, 2), "1000-run bound")
     queued = dict(modern, status="queued", conclusion=None)
     failed = dict(modern, conclusion="failure")
     exercise([modern, modern], 0)
+    # Two independently eligible complete same-SHA scans must each pass their
+    # original SARIF and source-manifest verification; reuse only afterwards.
+    with patch(__name__ + ".verify_source"), \
+         patch(__name__ + ".gh_json", return_value={"id": 2, "state": "active"}), \
+         patch(__name__ + ".select_run", side_effect=[
+             modern, modern, dict(modern, id=18), None]), \
+         patch(__name__ + ".dispatch") as unnecessary, \
+         patch(__name__ + ".verify_evidence", side_effect=[
+             {"run_id": 17}, {"run_id": 18}]) as checks, \
+         patch(__name__ + ".time.sleep"), \
+         patch(__name__ + ".time.monotonic",
+               side_effect=(x for x in range(0, 10000))):
+        reuse = run_preflight(sha, "v1.0.0", "owner/repo",
+                              timeout=50, poll=1)
+        assert reuse["execution"] == "reused-or-joined"
+        assert checks.call_count == 2 and unnecessary.call_count == 0
+
     exercise([None, None, queued, active, modern], 1)
     exercise([active, active, modern], 0)
     exercise([failed, failed], 0, "ended")
     exercise([None] * 10, 1, "timed out")
+    # A stale completed scanner first requires fresh canonical dispatch;
+    # the complete new scanner may then authorize the unchanged source.
+    with patch(__name__ + ".verify_source"), \
+         patch(__name__ + ".gh_json", return_value={"id": 2, "state": "active"}), \
+         patch(__name__ + ".select_run", side_effect=[
+             modern, modern, None, queued, active, modern]), \
+         patch(__name__ + ".dispatch") as regenerated, \
+         patch(__name__ + ".verify_evidence", side_effect=[
+             None, {"run_id": 17}]) as checks, \
+         patch(__name__ + ".time.sleep"), \
+         patch(__name__ + ".time.monotonic",
+               side_effect=(x for x in range(0, 10000))):
+        result = run_preflight(sha, "v1.0.0", "owner/repo",
+                               timeout=50, poll=1)
+        assert result["execution"] == "dispatched"
+        assert checks.call_count == 2 and regenerated.call_count == 1
     print("Exact-source CodeQL reuse/dispatch/join/wait negative controls passed")
 
 
