@@ -31,7 +31,7 @@ MarkFlow is maintained under a proof-obligation review discipline. Public visibi
 
 Research, experiment, migration, and other temporary workflows should stay off protected default branch where practical. If an exceptional ephemeral workflow must land under `.github/workflows`, filenames beginning with `research-`, `temporary-`, `tmp-`, or `experiment-` must declare non-empty `# lifecycle-owner:` and `# lifecycle-retire:` header metadata. The owner identifies the responsible issue/campaign; the retirement declaration states the explicit deletion or consolidation condition.
 
-Historical Actions runs and artifacts are evidence. They are not a reason to keep or recreate obsolete workflow YAML solely for sidebar cleanup.
+Historical Actions runs/artifacts are not automatically evidence. Preserve them when a concrete issue, PR, R2A campaign, security/release decision, benchmark, or migration record consumes them as immutable proof. Orphaned temporary/research/one-off history with no such consumer may be deleted after exact workflow-ID/path/run-count validation; never delete evidence-bearing history solely for sidebar cosmetics. Old run history is not a reason to keep or recreate obsolete workflow source.
 
 Any HEAD change invalidates a prior PASS/evidence.
 
