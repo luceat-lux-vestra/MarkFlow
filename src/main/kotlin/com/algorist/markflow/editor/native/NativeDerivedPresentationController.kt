@@ -63,7 +63,8 @@ internal data class NativeDerivedPresentationEvidence(
  */
 internal class NativeDerivedPresentationController(
     private val editor: Editor,
-    private val runtime: DerivedRendererRuntime?,
+    private var runtime: DerivedRendererRuntime?,
+    private val runtimeProvider: (() -> DerivedRendererRuntime?)? = null,
     private val settingsProvider: () -> MarkFlowRuntimeSettings = {
         MarkFlowSettingsService.getInstance().runtimeSettings()
     },
@@ -122,10 +123,12 @@ internal class NativeDerivedPresentationController(
             accessibilityFallbacks += currentDerived.size
             return
         }
-        val selectedRuntime = runtime ?: run {
-            rendererFailures += currentDerived.size
-            return
-        }
+        val selectedRuntime = runtime
+            ?: runtimeProvider?.invoke()?.also { runtime = it }
+            ?: run {
+                rendererFailures += currentDerived.size
+                return
+            }
         val settings = runCatching(settingsProvider).getOrElse {
             rendererFailures += currentDerived.size
             return
@@ -532,7 +535,9 @@ internal class NativeDerivedPresentationController(
         currentDerived = emptyList()
         currentPlanIdentity = null
         disposed = true
-        runCatching { runtime?.dispose() }
+        val ownedRuntime = runtime
+        runtime = null
+        runCatching { ownedRuntime?.dispose() }
     }
 
     private fun onEdt(action: () -> Unit) {

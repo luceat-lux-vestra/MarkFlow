@@ -244,6 +244,13 @@ class MarkFlowStarterDifferentialManifestTest {
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialManifestVisualRemote::class)
                 val preview = driver.utility(DifferentialManifestPreviewRemote::class)
+                val rendererLifecycle = driver.utility(DifferentialRendererLifecycleRemote::class)
+                val rendererBaseline = driver.withContext(OnDispatcher.EDT) {
+                    rendererLifecycle.liveRuntimeCount()
+                }
+                check(rendererBaseline == 0) {
+                    "MarkFlow derived JCEF runtime leaked before #353 corpus start: $rendererBaseline"
+                }
                 val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
                 val robot = Robot()
                 check(driver.withContext(OnDispatcher.EDT) {
@@ -1546,9 +1553,21 @@ class MarkFlowStarterDifferentialManifestTest {
                                         entry.id
                                 }
                                 // Auxiliary A/B tabs can change the global selected editor.
-                                // Re-select this exact case by filename before switching it back
-                                // to EditorOnly and closing its TextEditorWithPreview/JCEF owner.
-                                markFlow.closeMarkdown(entry.id + ".md")
+                                // Close this exact already-open VirtualFile through FileEditorManager
+                                // so the platform disposes its TextEditorWithPreview/JCEF owner.
+                                // Cleanup must not reopen the file or toggle Preview layout again.
+                                markFlow.closeMarkdown(opened, entry.id + ".md")
+                                waitFor(
+                                    message = "MarkFlow derived JCEF runtime returns to baseline: " +
+                                        entry.id,
+                                    timeout = 20.seconds,
+                                    getter = {
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            rendererLifecycle.liveRuntimeCount()
+                                        }
+                                    },
+                                    checker = { live -> live == rendererBaseline },
+                                )
                                 heartbeat("case-cleanup-complete", entry.id)
                             }
                             val cleanupError = cleanup.exceptionOrNull()
@@ -2807,6 +2826,12 @@ private interface DifferentialManifestVisualRemote {
     fun contentWidth(editor: Editor): Int
     fun contentHeight(editor: Editor): Int
     fun visualEvidence(editor: Editor): String
+}
+
+@Remote(value = "com.algorist.markflow.renderer.jcef.JcefDerivedRendererLifecycleE2EBridge",
+    plugin = "com.algorist.markflow")
+private interface DifferentialRendererLifecycleRemote {
+    fun liveRuntimeCount(): Int
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeDifferentialPreviewE2EBridge",
