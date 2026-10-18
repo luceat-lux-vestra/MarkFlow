@@ -365,6 +365,19 @@ jobs:
             exit 1
           }
 
+      - name: Upload core full differential evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: full-differential-core-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: true
+          path: |
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/e2e-package/manifest.txt
+            build/test-results/integrationTest/*.xml
+
       - name: Stage stable full differential evidence
         if: ${{ always() }}
         shell: bash
