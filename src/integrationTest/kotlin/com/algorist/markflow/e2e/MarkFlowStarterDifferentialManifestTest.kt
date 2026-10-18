@@ -2948,6 +2948,7 @@ private interface DifferentialManifestPreviewRemote {
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
     fun referencePanelAttached(editor: Editor): Boolean
+    fun referencePanelShowing(editor: Editor): Boolean
     fun previewLifecycleEvidence(editor: Editor): String
     fun jcefRuntimeEvidence(): String
     fun nativeRasterGeometry(editor: Editor): String
