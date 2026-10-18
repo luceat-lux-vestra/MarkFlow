@@ -594,7 +594,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                         Files.writeString(
                                             dest.resolve("reference-recovery.txt"),
                                             "detached_before_retry=true\n" +
-                                                preview.previewLifecycleEvidence(remoteEditor),
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    preview.previewLifecycleEvidence(remoteEditor)
+                                                },
                                             StandardCharsets.UTF_8,
                                             java.nio.file.StandardOpenOption.APPEND
                                         )
@@ -1567,10 +1569,14 @@ class MarkFlowStarterDifferentialManifestTest {
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),
                                     "phase=before-hide\n" +
-                                        preview.previewLifecycleEvidence(remote),
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remote)
+                                        },
                                     StandardCharsets.UTF_8
                                 )
-                                preview.restoreNative(remote)
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.restoreNative(remote)
+                                }
                                 waitFor(
                                     message = "Bundled Preview panel detached before close: " +
                                         entry.id,
@@ -1584,7 +1590,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),
                                     "phase=after-hide\n" +
-                                        preview.previewLifecycleEvidence(remote),
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remote)
+                                        },
                                     StandardCharsets.UTF_8,
                                     java.nio.file.StandardOpenOption.APPEND
                                 )
