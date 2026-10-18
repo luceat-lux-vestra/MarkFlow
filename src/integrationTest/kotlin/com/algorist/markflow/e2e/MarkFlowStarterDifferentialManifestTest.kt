@@ -170,6 +170,10 @@ class MarkFlowStarterDifferentialManifestTest {
         val sandbox = Files.createTempDirectory("markflow-353-manifest-")
         val project = sandbox.resolve("project")
         var failure: Throwable? = null
+        // Fatal per-case driver failures are deferred until the IDE has closed cleanly.
+        // Throwing them from inside useDriverAndCloseIde makes Starter start expensive
+        // failure diagnostics against an already-degraded IDE before evidence is staged.
+        var deferredDriverFailure: Throwable? = null
         try {
             val base = root.resolve("src/integrationTest/resources/projects/markdown-smoke")
             check(base.toFile().copyRecursively(project.toFile(), overwrite = true))
@@ -1626,7 +1630,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             ) == true) {
                             toleratedStructuralFailure = true
                         } else {
-                            throw cause
+                            deferredDriverFailure = cause
                         }
                     } finally {
                         // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE:
@@ -1637,7 +1641,8 @@ class MarkFlowStarterDifferentialManifestTest {
                         // editor before the next case creates another Preview.
                         val opened = caseEditor
                         val remote = caseRemoteEditor
-                        if (opened != null && remote != null) {
+                        if (opened != null && remote != null &&
+                            (caseFailure == null || toleratedStructuralFailure)) {
                             heartbeat("case-cleanup-start", entry.id)
                             val cleanup = runCatching {
                                 val expectedStamp = caseStamp
@@ -1728,16 +1733,34 @@ class MarkFlowStarterDifferentialManifestTest {
                                 heartbeat("case-failed", entry.id)
                                 val original = caseFailure
                                 if (original == null || toleratedStructuralFailure) {
-                                    throw cleanupError
+                                    deferredDriverFailure = cleanupError
+                                } else {
+                                    original.addSuppressed(cleanupError)
                                 }
-                                original.addSuppressed(cleanupError)
                             }
                         }
+                        if (opened != null && remote != null &&
+                            caseFailure != null && !toleratedStructuralFailure) {
+                            heartbeat("case-cleanup-deferred-to-ide-close", entry.id)
+                            Files.writeString(
+                                dest.resolve("reference-lifecycle.txt"),
+                                "phase=deferred-to-ide-close-after-fatal-case\n" +
+                                    "reason=preserve-primary-failure-and-exit-driver-cleanly\n",
+                                StandardCharsets.UTF_8,
+                                java.nio.file.StandardOpenOption.CREATE,
+                                java.nio.file.StandardOpenOption.APPEND,
+                            )
+                        }
+                    }
+                    if (deferredDriverFailure != null) {
+                        heartbeat("case-fatal-deferred-to-ide-close", entry.id)
+                        return@useDriverAndCloseIde
                     }
                     if (toleratedStructuralFailure) continue
                 }
                 heartbeat("case-loop-complete")
             }
+            deferredDriverFailure?.let { throw it }
         } catch (cause: Throwable) {
             failure = cause
         } finally {
