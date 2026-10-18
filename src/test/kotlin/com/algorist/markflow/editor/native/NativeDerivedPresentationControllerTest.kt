@@ -202,6 +202,41 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         Disposer.dispose(controller)
     }
 
+    fun testDerivedRuntimeIsLazyReusedAndDisposedOnce() {
+        myFixture.configureByText("lazy-runtime.md", "Plain body line.\n")
+        val editor = myFixture.editor
+        val runtime = DeferredRuntime()
+        var creates = 0
+        val controller = NativeDerivedPresentationController(
+            editor = editor,
+            runtime = null,
+            runtimeProvider = {
+                creates += 1
+                runtime
+            },
+            settingsProvider = { runtimeSettings() },
+            richPresentationEnabled = { true },
+        )
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        assertEquals("plain Markdown must not create a JCEF derived runtime", 0, creates)
+        assertEquals(0, runtime.rendered.size)
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            editor.document.setText(representativeSource())
+        }
+        editor.caretModel.moveToOffset(editor.document.text.indexOf("Plain body") + 2)
+        controller.applyPlan(plan(configGeneration = 1L))
+        assertEquals("first derived plan must create exactly one runtime", 1, creates)
+        assertEquals(3, runtime.rendered.size)
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        assertEquals("subsequent derived plans must reuse the owned runtime", 1, creates)
+
+        Disposer.dispose(controller)
+        assertEquals("controller must dispose its lazily created runtime exactly once", 1, runtime.disposeCalls)
+    }
+
     fun testNativeRasterSizingRetainsMermaidModesZoomAndKatexInlineDisplayBounds() {
         assertEquals(
             400 to 200,
@@ -397,6 +432,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
     private class DeferredRuntime : DerivedRendererRuntime {
         val rendered = mutableListOf<Rendered>()
         val cancelled = mutableListOf<String>()
+        var disposeCalls = 0
 
         override fun render(request: DerivedRendererRuntimeRequest, callback: (DerivedRendererRuntimeResult) -> Unit) {
             rendered += Rendered(request, callback)
@@ -406,7 +442,9 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
             cancelled += requestId
         }
 
-        override fun dispose() = Unit
+        override fun dispose() {
+            disposeCalls += 1
+        }
     }
 
     private class FailingRuntime : DerivedRendererRuntime {

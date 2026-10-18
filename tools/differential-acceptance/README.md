@@ -210,10 +210,14 @@ sequential case retained another bundled JCEF client.
 
 Every manifest case now owns an explicit lifecycle boundary. In a `finally`
 block the harness verifies exact source text/modification stamp/unsaved state,
-then re-selects that exact Markdown file by filename, switches its
-`TextEditorWithPreview` back to `EditorOnly`, and closes the entire editor
-before the next case opens. Exact-file selection is required because the H1
-A/B probe legitimately opens an auxiliary editor; the first candidate
+then resolves that exact already-open Markdown `VirtualFile` and closes it
+through `FileEditorManager.closeFile()` on the EDT. Cleanup waits until
+`FileEditorManager.isFileOpen(file)` is false before the next case opens.
+It deliberately does **not** call `openFile`, re-select the tab, or switch
+`TextEditorWithPreview` back to `EditorOnly` during close: those UI actions
+can retain or recreate Preview/JCEF state instead of proving disposal of the
+FileEditor that owned it. Exact-file identity is required because the H1 A/B
+probe legitimately opens an auxiliary editor; the first candidate
 `421153f6...` proved that relying on global
 `FileEditorManager.selectedEditor` during cleanup fails on the first case.
 Cleanup failure is itself fail-closed and is preserved as a suppressed
@@ -792,3 +796,45 @@ The policy mirrors the repository's expensive CodeQL treatment while preserving
 bounded PR shards remain the routine development gate. Targeted
 `differentialCaseIds` runs remain a debugging mechanism, not a substitute for the
 canonical 89-case acceptance run.
+
+
+### Stage E29 — direct FileEditor lifecycle close
+
+Debug-enabled rerun `38771617499`, job `116567422942`, localized the current
+full-corpus failure before hosted-runner shutdown. The bundled Markdown Preview
+first failed to paint `md-fence-length-info`; the IDE later exited 137 while
+diagnostic `jstack` also stopped responding. This is consistent with the
+remaining lifecycle suspicion after Stage E25: cleanup proved only that the UI
+editor disappeared, while `closeMarkdown()` itself re-opened/re-selected the
+same Markdown file, forced `EditorOnly`, and then invoked the UI
+`CloseContent` action.
+
+The first direct-close candidate on final PR HEAD `3beb1514...` was then
+re-tested by Starter run `38791981813`, derived-content job
+`116620295893`. It advanced beyond the earlier Preview-paint failure but
+failed at `mermaid-flowchart-large--block-01` while MarkFlow's own derived
+renderer stayed at `derivedFragments=2;derivedPending=2;derivedDecoded=0`.
+Eleven earlier cases had already captured with zero candidate structural
+failures. This exposed a second lifecycle problem instead of justifying a
+larger timeout: production eagerly created one hidden
+`JcefDerivedRendererRuntime` for every eligible Markdown editor, including
+plain Markdown with no Mermaid or KaTeX, and the harness only waited for
+`FileEditorManager.isFileOpen(file)==false`, not final native
+`Editor.isDisposed`/renderer teardown.
+
+The lifecycle correction therefore has three fail-closed boundaries. Cleanup
+resolves the already-open exact `VirtualFile`, calls
+`FileEditorManager.closeFile(file)` on the EDT, and waits until both the file
+is no longer open **and** its native `Editor` is disposed. The corpus then
+requires the MarkFlow-owned JCEF live-runtime count to return to its pre-corpus
+baseline before the next case starts. Product code no longer creates the
+optional derived JCEF runtime at editor attachment; it is created lazily only
+after a READY projection actually contains Mermaid/KaTeX derived fragments,
+is reused for that editor, and is disposed with the controller. A unit
+regression proves plain Markdown creates zero runtimes and derived Markdown
+creates/reuses exactly one.
+
+No file reopen, layout toggle, synthetic tab-close action, timeout relaxation,
+or sharding is used to hide the defect. The 89-case corpus remains monolithic
+until these lifecycle invariants are re-proven on the exact candidate and then
+on protected main.

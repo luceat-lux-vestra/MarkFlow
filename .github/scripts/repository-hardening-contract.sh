@@ -404,12 +404,30 @@ grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
   die "#353 Preview recovery no longer requires a genuine nonblank second paint"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
   die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
-grep -Fq 'markFlow.closeMarkdown(entry.id + ".md")' "$manifest_test" ||
-  die "#353 case cleanup no longer re-selects and closes the exact Markdown case"
-grep -Fq 'fun closeMarkdown(fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
-  die "#353 exact-file Markdown lifecycle close helper is missing"
-grep -Fq 'close(selectNativeMarkdown(fileName))' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
-  die "#353 exact-file cleanup no longer restores EditorOnly before close"
+grep -Fq 'markFlow.closeMarkdown(remote, entry.id + ".md")' "$manifest_test" ||
+  die "#353 case cleanup no longer closes the exact retained native Editor"
+grep -Fq 'fun closeMarkdown(editor: Editor, fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 retained-editor Markdown lifecycle close helper is missing"
+grep -Fq 'manager.closeFile(file)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file cleanup no longer closes the VirtualFile through FileEditorManager"
+grep -Fq '!manager.isFileOpen(file) && remoteEditor.isDisposed()' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 exact-file cleanup no longer waits for both FileEditor and native Editor disposal"
+grep -Fq 'rendererLifecycle.liveRuntimeCount()' "$manifest_test" ||
+  die "#353 full corpus no longer proves MarkFlow JCEF runtime release between cases"
+grep -Fq 'MarkFlow derived JCEF runtime returns to baseline:' "$manifest_test" ||
+  die "#353 case cleanup no longer waits for the renderer runtime baseline"
+[ -f "src/main/kotlin/com/algorist/markflow/renderer/jcef/JcefDerivedRendererLifecycleE2EBridge.kt" ] ||
+  die "#353 JCEF lifecycle diagnostic bridge is missing"
+grep -Fq 'runtimeProvider = ::createRendererRuntimeOrNull' "src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt" ||
+  die "Native production lifecycle no longer lazily creates the optional derived JCEF runtime"
+if grep -Fq 'runtime = createRendererRuntimeOrNull()' "src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"; then
+  die "Native production lifecycle must not eagerly create JCEF for every Markdown editor"
+fi
+grep -Fq 'testDerivedRuntimeIsLazyReusedAndDisposedOnce' "src/test/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationControllerTest.kt" ||
+  die "Lazy derived-runtime lifecycle regression test is missing"
+if grep -Fq 'close(selectNativeMarkdown(fileName))' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt"; then
+  die "#353 lifecycle cleanup must not reopen/reselect Markdown or toggle Preview layout before close"
+fi
 grep -Fq 'Case lifecycle close observed source identity drift:' "$manifest_test" ||
   die "#353 case cleanup lost source/stamp/unsaved fail-closed identity checks"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"

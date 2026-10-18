@@ -55,10 +55,29 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
 
-    fun closeMarkdown(fileName: String) {
-        // Re-select the exact case tab instead of depending on FileEditorManager.selectedEditor.
-        // Full-corpus cases may temporarily open auxiliary A/B tabs before cleanup.
-        close(selectNativeMarkdown(fileName))
+    fun closeMarkdown(editor: Editor, fileName: String) {
+        // Cleanup must not touch the UI component again: switching to the bundled Preview or an
+        // auxiliary A/B editor can already remove JEditorUiComponent from the visible hierarchy.
+        // The caller retains the actual remote native Editor opened for this case, so close the
+        // already-open VirtualFile and prove that exact Editor is disposed before the next case.
+        val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
+            "opened Markdown file not found for lifecycle close: $fileName"
+        }
+        val manager = driver.service<FileEditorManagerRemote>(driver.singleProject())
+        val remoteEditor = driver.cast(editor, EditorStateRemote::class)
+        driver.withContext(OnDispatcher.EDT) {
+            manager.closeFile(file)
+        }
+        waitFor(
+            message = "Markdown FileEditor and native Editor lifecycle close: $fileName",
+            timeout = 20.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    !manager.isFileOpen(file) && remoteEditor.isDisposed()
+                }
+            },
+            checker = { closed -> closed },
+        )
     }
 
     fun source(editor: JEditorUiComponent): String = editor.document.getText()
@@ -430,6 +449,8 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 @Remote("com.intellij.openapi.fileEditor.FileEditorManager")
 private interface FileEditorManagerRemote {
     fun getSelectedEditor(file: VirtualFile): FileEditorRemote?
+    fun closeFile(file: VirtualFile)
+    fun isFileOpen(file: VirtualFile): Boolean
 }
 
 @Remote("com.intellij.openapi.fileEditor.FileEditor")
@@ -482,6 +503,7 @@ private interface NativeProjectionE2EBridgeRemote {
 private interface EditorStateRemote {
     fun getCaretModel(): CaretModelRemote
     fun isColumnMode(): Boolean
+    fun isDisposed(): Boolean
 }
 
 @Remote("com.intellij.openapi.editor.CaretModel")
