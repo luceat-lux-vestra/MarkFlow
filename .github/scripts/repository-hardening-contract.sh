@@ -442,6 +442,13 @@ grep -Fq 'getEditors(file)' "src/main/kotlin/com/algorist/markflow/editor/native
   die "#353 bundled Preview bridge regressed to selected-editor lifecycle lookup"
 grep -Fq 'fun closeMarkdown(editor: Editor, fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 retained-editor Markdown lifecycle close helper is missing"
+grep -Fq 'fun close(editor: JEditorUiComponent)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 generic Starter editor close helper is missing"
+grep -Fq 'FileEditor/native Editor lifecycle closes:' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 generic Starter close no longer proves exact platform lifecycle disposal"
+if grep -Fq 'driver.invokeAction("CloseContent"' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt"; then
+  die "#353 Starter close must not depend on global UI CloseContent/JEditorUiComponent disappearance"
+fi
 grep -Fq 'manager.closeFile(file)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 exact-file cleanup no longer closes the VirtualFile through FileEditorManager"
 grep -Fq '!manager.isFileOpen(file) && remoteEditor.isDisposed()' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
