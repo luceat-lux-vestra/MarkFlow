@@ -429,11 +429,11 @@ grep -Fq '!preview.referencePanelAttached(remote)' "$manifest_test" ||
   die "#353 case cleanup no longer proves the bundled JCEF panel detached"
 grep -Fq 'reference-lifecycle.txt' "$manifest_test" ||
   die "#353 case cleanup no longer persists bundled Preview lifecycle evidence"
-grep -Fq 'fun referencePanelAttached(editor: Editor): Boolean' "$differential_bridge" ||
+grep -Fq 'fun referencePanelAttached(editor: Editor): Boolean' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "#353 bundled Preview bridge lost panel attachment observation"
-grep -Fq 'fun previewLifecycleEvidence(editor: Editor): String' "$differential_bridge" ||
+grep -Fq 'fun previewLifecycleEvidence(editor: Editor): String' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "#353 bundled Preview bridge lost lifecycle diagnostics"
-grep -Fq 'getEditors(file)' "$differential_bridge" ||
+grep -Fq 'getEditors(file)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "#353 bundled Preview bridge regressed to selected-editor lifecycle lookup"
 grep -Fq 'fun closeMarkdown(editor: Editor, fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 retained-editor Markdown lifecycle close helper is missing"
