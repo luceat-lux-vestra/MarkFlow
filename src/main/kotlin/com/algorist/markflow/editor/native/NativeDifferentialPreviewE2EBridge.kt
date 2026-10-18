@@ -617,6 +617,19 @@ internal object NativeDifferentialPreviewE2EBridge {
         return previewPanel(preview) != null
     }
 
+    fun referencePanelShowing(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        val panel = previewPanel(preview) ?: return false
+        val panelComponent = panel.javaClass.methods
+            .firstOrNull { it.name == "getComponent" && it.parameterCount == 0 }
+            ?.invoke(panel) as? Component ?: return false
+        return preview.component.isShowing &&
+            panelComponent.isShowing &&
+            panelComponent.width > 100 &&
+            panelComponent.height > 100
+    }
+
     fun previewLifecycleEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
