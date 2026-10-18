@@ -37,6 +37,8 @@ internal object NativeDifferentialPreviewE2EBridge {
     private var lastDetachedReferenceBrowser: JBCefBrowser? = null
     private var lastDetachedReferencePanelIdentity: Int? = null
     private var lastDetachedReferenceBeforeClose = AtomicBoolean(true)
+    private var nextDetachedReferenceCloseMarker: Path? = null
+    private var lastDetachedReferenceCloseMarker: Path? = null
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
@@ -732,9 +734,27 @@ internal object NativeDifferentialPreviewE2EBridge {
         return listOf(rect.x, rect.y, rect.width, rect.height).joinToString(",")
     }
 
+    /**
+     * Arm a one-shot host-visible marker for the next bundled Preview close.
+     * The CEF life-span callback writes this file from the IDE process, while
+     * the Starter test polls Files.exists() in its own process. This keeps the
+     * native-close timeout independent of Driver RPC / EDT responsiveness.
+     */
+    fun armDetachedReferenceBrowserCloseMarker(markerPath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val marker = Path.of(markerPath).toAbsolutePath().normalize()
+        val parent = requireNotNull(marker.parent) { "Native-close marker has no parent" }
+        Files.createDirectories(parent)
+        Files.deleteIfExists(marker)
+        nextDetachedReferenceCloseMarker = marker
+    }
+
     fun restoreNative(editor: Editor) {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
+        val closeMarker = nextDetachedReferenceCloseMarker
+        nextDetachedReferenceCloseMarker = null
+        lastDetachedReferenceCloseMarker = closeMarker
         // Capture the actual JBCefBrowser before MarkdownPreviewFileEditor hides
         // and nulls its panel. Do not clear an existing tracker when the panel is
         // already detached: normal acceptance may restore native earlier and the
@@ -744,23 +764,36 @@ internal object NativeDifferentialPreviewE2EBridge {
                 ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
             val cefBrowser = browser.getCefBrowser()
             val beforeClose = AtomicBoolean(false)
+            val panelIdentity = System.identityHashCode(panel)
+            val browserIdentity = System.identityHashCode(browser)
             browser.getJBCefClient().addLifeSpanHandler(
                 object : CefLifeSpanHandlerAdapter() {
                     override fun onBeforeClose(closingBrowser: CefBrowser) {
-                        if (closingBrowser === cefBrowser) {
-                            beforeClose.set(true)
+                        if (closingBrowser === cefBrowser && beforeClose.compareAndSet(false, true)) {
+                            closeMarker?.let { marker ->
+                                runCatching {
+                                    Files.writeString(
+                                        marker,
+                                        "schema=markflow-bundled-preview-native-close-marker/v1\n" +
+                                            "panel_identity=" + panelIdentity + "\n" +
+                                            "browser_identity=" + browserIdentity + "\n" +
+                                            "cef_before_close_observed=true\n"
+                                    )
+                                }
+                            }
                         }
                     }
                 },
                 cefBrowser,
             )
             lastDetachedReferenceBrowser = browser
-            lastDetachedReferencePanelIdentity = System.identityHashCode(panel)
+            lastDetachedReferencePanelIdentity = panelIdentity
             lastDetachedReferenceBeforeClose = beforeClose
         }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        // Swing layout and native CefBrowser close are asynchronous. Callers must
-        // wait for both panel detach and detachedReferenceBrowserClosed().
+        // Swing layout and native CefBrowser close are asynchronous. Callers that
+        // need a hard wall-clock bound should arm a host marker before this call
+        // and wait for that marker after proving panel detach.
     }
 
     fun detachedReferenceBrowserClosed(): Boolean {
@@ -780,6 +813,9 @@ internal object NativeDifferentialPreviewE2EBridge {
             "browser_identity=" + (browser?.let { System.identityHashCode(it) }?.toString() ?: "NONE"),
             "jbcef_disposed=" + (browser?.isDisposed ?: true),
             "cef_before_close_observed=" + beforeCloseObserved,
+            "close_marker=" + (lastDetachedReferenceCloseMarker?.toString() ?: "NONE"),
+            "close_marker_exists=" +
+                (lastDetachedReferenceCloseMarker?.let(Files::exists) ?: false),
             "native_close_complete=" + (browser == null ||
                 (browser.isDisposed && beforeCloseObserved)),
         ).joinToString(separator = "\n", postfix = "\n")
