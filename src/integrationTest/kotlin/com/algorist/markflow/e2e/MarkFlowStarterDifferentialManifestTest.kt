@@ -610,6 +610,19 @@ class MarkFlowStarterDifferentialManifestTest {
                                             } },
                                             checker = { it }
                                         )
+                                        Files.writeString(
+                                            dest.resolve("reference-recovery.txt"),
+                                            "detached_before_retry=true\n" +
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    preview.previewLifecycleEvidence(remoteEditor)
+                                                } +
+                                                "phase=native-close-wait-start\n" +
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    preview.detachedReferenceBrowserEvidence()
+                                                },
+                                            StandardCharsets.UTF_8,
+                                            java.nio.file.StandardOpenOption.APPEND
+                                        )
                                         waitFor(
                                             message = "Bundled Preview native browser closed for recovery: " +
                                                 entry.id,
@@ -622,11 +635,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         heartbeat("case-reference-browser-closed", entry.id)
                                         Files.writeString(
                                             dest.resolve("reference-recovery.txt"),
-                                            "detached_before_retry=true\n" +
-                                                driver.withContext(OnDispatcher.EDT) {
-                                                    preview.previewLifecycleEvidence(remoteEditor)
-                                                } +
-                                                "phase=native-close-after-detach\n" +
+                                            "phase=native-close-complete\n" +
                                                 driver.withContext(OnDispatcher.EDT) {
                                                     preview.detachedReferenceBrowserEvidence()
                                                 },
@@ -1667,6 +1676,19 @@ class MarkFlowStarterDifferentialManifestTest {
                                     } },
                                     checker = { it }
                                 )
+                                Files.writeString(
+                                    dest.resolve("reference-lifecycle.txt"),
+                                    "phase=after-hide\n" +
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remote)
+                                        } +
+                                        "phase=native-close-wait-start\n" +
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.detachedReferenceBrowserEvidence()
+                                        },
+                                    StandardCharsets.UTF_8,
+                                    java.nio.file.StandardOpenOption.APPEND
+                                )
                                 waitFor(
                                     message = "Bundled Preview native browser closed before next case: " +
                                         entry.id,
@@ -1679,11 +1701,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 heartbeat("case-reference-native-close-complete", entry.id)
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),
-                                    "phase=after-hide\n" +
-                                        driver.withContext(OnDispatcher.EDT) {
-                                            preview.previewLifecycleEvidence(remote)
-                                        } +
-                                        "phase=native-close-complete\n" +
+                                    "phase=native-close-complete\n" +
                                         driver.withContext(OnDispatcher.EDT) {
                                             preview.detachedReferenceBrowserEvidence()
                                         },
