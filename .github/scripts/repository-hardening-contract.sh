@@ -419,6 +419,17 @@ grep -Fq '!preview.referencePanelAttached(remoteEditor)' "$manifest_test" ||
   die "#353 Preview recovery no longer waits for panel detach before re-showing Preview"
 grep -Fq 'detached_before_retry=true' "$manifest_test" ||
   die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
+grep -Fq 'preview.armDetachedReferenceBrowserCloseMarker(' "$manifest_test" ||
+  die "#353 native-close observation lost the host-visible CEF marker seam"
+grep -Fq 'getter = { Files.exists(recoveryCloseMarker) }' "$manifest_test" ||
+  die "#353 recovery native-close wait regressed to Driver/EDT polling"
+grep -Fq 'getter = { Files.exists(cleanupCloseMarker) }' "$manifest_test" ||
+  die "#353 cleanup native-close wait regressed to Driver/EDT polling"
+if grep -Fq 'preview.detachedReferenceBrowserClosed()' "$manifest_test"; then
+  die "#353 native-close timeout must not depend on a blocking Driver/EDT getter"
+fi
+grep -Fq 'fun armDetachedReferenceBrowserCloseMarker(markerPath: String)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "#353 bundled Preview bridge lost host-visible native-close marker support"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
   die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER' "$manifest_test" ||
