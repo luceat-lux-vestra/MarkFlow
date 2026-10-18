@@ -888,3 +888,19 @@ full-corpus run.
 
 The corpus remains monolithic while this disposal boundary is tested. No
 timeout increase or sharding is used as a substitute for lifecycle proof.
+
+A later bounded-corpus failure exposed a separate Starter harness bug in the
+generic `MarkFlowIdeDriver.close(JEditorUiComponent)` helper. It invoked the
+UI `CloseContent` action and then waited for a frame-global
+`JEditorUiComponent[EditorComponentImpl]` locator to disappear. That condition
+does not identify the editor being closed: any other visible editor in the IDE
+keeps the locator alive and produces a false 10-second timeout. Differential
+H1 diagnostics legitimately keep auxiliary editors open, so this close helper
+was structurally invalid rather than merely flaky.
+
+The generic Starter close helper now uses the same exact-object authority as
+the full-corpus cleanup: retain the native `Editor`, resolve its exact
+`VirtualFile`, call `FileEditorManager.closeFile(file)` on the EDT, and wait
+until both `isFileOpen(file)==false` and that retained native Editor reports
+disposed. UI `CloseContent` and global `waitNotFound()` are no longer
+accepted as lifecycle authority by repository hardening.
