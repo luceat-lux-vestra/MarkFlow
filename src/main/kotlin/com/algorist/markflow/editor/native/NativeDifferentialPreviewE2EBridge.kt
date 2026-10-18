@@ -10,6 +10,9 @@ import java.awt.Container
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
+import org.cef.browser.CefBrowser
+import org.cef.handler.CefLifeSpanHandlerAdapter
+import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
@@ -33,6 +36,7 @@ internal object NativeDifferentialPreviewE2EBridge {
     // creates another bundled Preview.
     private var lastDetachedReferenceBrowser: JBCefBrowser? = null
     private var lastDetachedReferencePanelIdentity: Int? = null
+    private var lastDetachedReferenceBeforeClose = AtomicBoolean(true)
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
@@ -738,8 +742,21 @@ internal object NativeDifferentialPreviewE2EBridge {
         previewPanel(preview)?.let { panel ->
             val browser = panel as? JBCefBrowser
                 ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+            val cefBrowser = browser.cefBrowser
+            val beforeClose = AtomicBoolean(false)
+            browser.jbCefClient.addLifeSpanHandler(
+                object : CefLifeSpanHandlerAdapter() {
+                    override fun onBeforeClose(closingBrowser: CefBrowser) {
+                        if (closingBrowser === cefBrowser) {
+                            beforeClose.set(true)
+                        }
+                    }
+                },
+                cefBrowser,
+            )
             lastDetachedReferenceBrowser = browser
             lastDetachedReferencePanelIdentity = System.identityHashCode(panel)
+            lastDetachedReferenceBeforeClose = beforeClose
         }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
         // Swing layout and native CefBrowser close are asynchronous. Callers must
@@ -749,21 +766,22 @@ internal object NativeDifferentialPreviewE2EBridge {
     fun detachedReferenceBrowserClosed(): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val browser = lastDetachedReferenceBrowser ?: return true
-        return browser.isDisposed && !browser.isCefBrowserCreated
+        return browser.isDisposed && lastDetachedReferenceBeforeClose.get()
     }
 
     fun detachedReferenceBrowserEvidence(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val browser = lastDetachedReferenceBrowser
+        val beforeCloseObserved = lastDetachedReferenceBeforeClose.get()
         return listOf(
             "schema=markflow-bundled-preview-native-close/v1",
             "tracked=" + (browser != null),
             "panel_identity=" + (lastDetachedReferencePanelIdentity?.toString() ?: "NONE"),
             "browser_identity=" + (browser?.let { System.identityHashCode(it) }?.toString() ?: "NONE"),
             "jbcef_disposed=" + (browser?.isDisposed ?: true),
-            "native_browser_created=" + (browser?.isCefBrowserCreated ?: false),
+            "cef_before_close_observed=" + beforeCloseObserved,
             "native_close_complete=" + (browser == null ||
-                (browser.isDisposed && !browser.isCefBrowserCreated)),
+                (browser.isDisposed && beforeCloseObserved)),
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
