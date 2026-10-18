@@ -56,13 +56,15 @@ internal object NativeDifferentialPreviewE2EBridge {
     private fun editors(editor: Editor): Pair<TextEditorWithPreview, FileEditor> {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
-        val selected = requireNotNull(FileEditorManager.getInstance(project).selectedEditor)
-        check(selected.javaClass.name == MARKDOWN_SPLIT) {
-            "Reference is not the platform Markdown split editor: " + selected.javaClass.name
+        val file = requireNotNull(FileDocumentManager.getInstance().getFile(editor.document)) {
+            "Differential editor document has no VirtualFile"
         }
-        check(selected is TextEditorWithPreview && selected.textEditor.editor === editor) {
-            "Reference split editor does not own the candidate source Editor"
-        }
+        val selected = FileEditorManager.getInstance(project).getEditors(file)
+            .filterIsInstance<TextEditorWithPreview>()
+            .singleOrNull {
+                it.javaClass.name == MARKDOWN_SPLIT && it.textEditor.editor === editor
+            }
+            ?: error("Exact platform Markdown split editor unavailable for " + file.name)
         // myPreview is protected in TextEditorWithPreview, with no public preview accessor.
         // Reflection is deliberately confined to this test-only compatibility boundary.
         val field = TextEditorWithPreview::class.java.getDeclaredField("myPreview")
@@ -74,6 +76,18 @@ internal object NativeDifferentialPreviewE2EBridge {
         }
         check(preview.isValid) { "Platform Markdown preview is invalid" }
         return selected to preview
+    }
+
+    private fun previewPanel(preview: FileEditor): Any? {
+        val field = preview.javaClass.getDeclaredField("panel")
+        check(field.trySetAccessible()) { "Markdown preview panel field access changed" }
+        return field.get(preview)
+    }
+
+    private fun previewDisposed(preview: FileEditor): Boolean {
+        val field = preview.javaClass.getDeclaredField("isDisposed")
+        check(field.trySetAccessible()) { "Markdown preview disposed field access changed" }
+        return field.getBoolean(preview)
     }
 
     /**
@@ -595,6 +609,30 @@ internal object NativeDifferentialPreviewE2EBridge {
         val (_, preview) = editors(editor)
         val component = preview.component
         return component.isShowing && component.width > 100 && component.height > 100
+    }
+
+    fun referencePanelAttached(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        return previewPanel(preview) != null
+    }
+
+    fun previewLifecycleEvidence(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (selected, preview) = editors(editor)
+        val panel = previewPanel(preview)
+        val panelComponent = panel?.javaClass?.methods
+            ?.firstOrNull { it.name == "getComponent" && it.parameterCount == 0 }
+            ?.invoke(panel) as? Component
+        return listOf(
+            "schema=markflow-bundled-preview-lifecycle/v1",
+            "layout=" + (selected.layout?.name ?: "NULL"),
+            "preview_disposed=" + previewDisposed(preview),
+            "preview_component_showing=" + preview.component.isShowing,
+            "panel_attached=" + (panel != null),
+            "panel_class=" + (panel?.javaClass?.name ?: "NONE"),
+            "panel_component_showing=" + (panelComponent?.isShowing ?: false),
+        ).joinToString(separator = "\n", postfix = "\n")
     }
 
     // SHOW_PREVIEW hides the Swing editor; callers must cache the remote Editor
