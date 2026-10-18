@@ -815,7 +815,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             "cef_before_close_observed=" + beforeCloseObserved,
             "close_marker=" + (lastDetachedReferenceCloseMarker?.toString() ?: "NONE"),
             "close_marker_exists=" +
-                (lastDetachedReferenceCloseMarker?.let(Files::exists) ?: false),
+                (lastDetachedReferenceCloseMarker?.let { Files.exists(it) } ?: false),
             "native_close_complete=" + (browser == null ||
                 (browser.isDisposed && beforeCloseObserved)),
         ).joinToString(separator = "\n", postfix = "\n")
