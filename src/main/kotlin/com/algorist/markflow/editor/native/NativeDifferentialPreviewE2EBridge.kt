@@ -9,6 +9,7 @@ import java.awt.Component
 import java.awt.Container
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
+import com.intellij.ui.jcef.JBCefBrowser
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,6 +25,14 @@ internal object NativeDifferentialPreviewE2EBridge {
     private const val MARKDOWN_PREVIEW = "org.intellij.plugins.markdown.ui.preview.MarkdownPreviewFileEditor"
     private val fontOriginals =
         java.util.WeakHashMap<Editor, Float>()
+
+    // #353 Full Differential close barrier. MarkdownPreviewFileEditor nulls its
+    // panel after Disposer.dispose(panel), but JBCefBrowser closes the native
+    // CefBrowser asynchronously via close(true). Retain the most recently hidden
+    // browser long enough to prove native close completion before the corpus
+    // creates another bundled Preview.
+    private var lastDetachedReferenceBrowser: JBCefBrowser? = null
+    private var lastDetachedReferencePanelIdentity: Int? = null
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
@@ -721,9 +730,41 @@ internal object NativeDifferentialPreviewE2EBridge {
 
     fun restoreNative(editor: Editor) {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val (selected, _) = editors(editor)
+        val (selected, preview) = editors(editor)
+        // Capture the actual JBCefBrowser before MarkdownPreviewFileEditor hides
+        // and nulls its panel. Do not clear an existing tracker when the panel is
+        // already detached: normal acceptance may restore native earlier and the
+        // finally block still owns the native-close barrier.
+        previewPanel(preview)?.let { panel ->
+            val browser = panel as? JBCefBrowser
+                ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+            lastDetachedReferenceBrowser = browser
+            lastDetachedReferencePanelIdentity = System.identityHashCode(panel)
+        }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        // Swing layout is asynchronous: caller must wait for actual restored visibility.
+        // Swing layout and native CefBrowser close are asynchronous. Callers must
+        // wait for both panel detach and detachedReferenceBrowserClosed().
+    }
+
+    fun detachedReferenceBrowserClosed(): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val browser = lastDetachedReferenceBrowser ?: return true
+        return browser.isDisposed && !browser.isCefBrowserCreated
+    }
+
+    fun detachedReferenceBrowserEvidence(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val browser = lastDetachedReferenceBrowser
+        return listOf(
+            "schema=markflow-bundled-preview-native-close/v1",
+            "tracked=" + (browser != null),
+            "panel_identity=" + (lastDetachedReferencePanelIdentity?.toString() ?: "NONE"),
+            "browser_identity=" + (browser?.let { System.identityHashCode(it) }?.toString() ?: "NONE"),
+            "jbcef_disposed=" + (browser?.isDisposed ?: true),
+            "native_browser_created=" + (browser?.isCefBrowserCreated ?: false),
+            "native_close_complete=" + (browser == null ||
+                (browser.isDisposed && !browser.isCefBrowserCreated)),
+        ).joinToString(separator = "\n", postfix = "\n")
     }
 
     fun nativeShowing(editor: Editor): Boolean {
