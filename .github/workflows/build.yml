@@ -34,6 +34,9 @@ jobs:
     timeout-minutes: 65
     outputs:
       docs_only: ${{ steps.change-scope.outputs.docs_only }}
+      run_native_runtime: ${{ steps.change-scope.outputs.run_native_runtime }}
+      run_starter_driver: ${{ steps.change-scope.outputs.run_starter_driver }}
+      run_hardening: ${{ steps.change-scope.outputs.run_hardening }}
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -95,42 +98,134 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           set -uo pipefail
           docs_only=false
+          run_native_runtime=false
+          run_starter_driver=false
+          run_hardening=false
 
           if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "Non-PR validation always uses the full product-validation path."
+            echo "Non-PR Build dispatch preserves the product-validation-only path; specialized authorities remain separately dispatchable."
           elif [ "$EVENT_ACTION" = "edited" ]; then
-            echo "PR metadata edit uses the dedicated metadata-only fast path."
-          elif ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::warning::Changed-file count is empty or malformed; using full validation."
+            echo "PR metadata edit reuses the unchanged exact-head validation and does not replay specialized evidence."
+          elif [ "$PR_DRAFT" = "true" ]; then
+            echo "Draft PR keeps specialized evidence dormant until ready_for_review."
           else
-            tmp="$(mktemp -d)"
-            trap 'rm -rf "$tmp"' EXIT
+            # Fail closed for any incomplete/unknown scope classification.
+            run_native_runtime=true
+            run_starter_driver=true
+            run_hardening=true
 
-            if ! gh api -H 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA" \
-              --jq '.content' | tr -d '\n' | base64 --decode > "$tmp/classifier.py"; then
-              echo "::warning::Trusted base docs-only classifier is unavailable; using full validation."
-            elif ! gh api --paginate -H 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
-              --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
-              echo "::warning::Changed-file API read failed; using full validation."
+            if ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::warning::Changed-file count is empty or malformed; running every specialized PR validation component."
             else
-              result="$(python3 "$tmp/classifier.py" --expected-count "$EXPECTED_COUNT" < "$tmp/files" 2>"$tmp/classifier.err")"
-              status=$?
-              if [ "$status" -eq 0 ] && { [ "$result" = "true" ] || [ "$result" = "false" ]; }; then
-                docs_only="$result"
+              tmp="$(mktemp -d)"
+              trap 'rm -rf "$tmp"' EXIT
+
+              if ! gh api --paginate -H 'Accept: application/vnd.github+json' \
+                "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+                --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
+                echo "::warning::Changed-file API read failed; running every specialized PR validation component."
               else
-                echo "::warning::Docs-only classifier failed or returned an invalid result; using full validation."
-                cat "$tmp/classifier.err" >&2 || true
+                actual_count="$(wc -l < "$tmp/files" | tr -d '[:space:]')"
+                if [ "$actual_count" != "$EXPECTED_COUNT" ]; then
+                  echo "::warning::Changed-file list is incomplete ($actual_count/$EXPECTED_COUNT); running every specialized PR validation component."
+                else
+                  if gh api -H 'Accept: application/vnd.github+json' \
+                    "repos/$GITHUB_REPOSITORY/contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA" \
+                    --jq '.content' | tr -d '\n' | base64 --decode > "$tmp/classifier.py"; then
+                    result="$(python3 "$tmp/classifier.py" --expected-count "$EXPECTED_COUNT" < "$tmp/files" 2>"$tmp/classifier.err")"
+                    status=$?
+                    if [ "$status" -eq 0 ] && { [ "$result" = "true" ] || [ "$result" = "false" ]; }; then
+                      docs_only="$result"
+                    else
+                      echo "::warning::Docs-only classifier failed or returned an invalid result; using full product validation."
+                      cat "$tmp/classifier.err" >&2 || true
+                    fi
+                  else
+                    echo "::warning::Trusted base docs-only classifier is unavailable; using full product validation."
+                  fi
+
+                  matches_any() {
+                    local path pattern status filename previous_filename
+                    while IFS=$'\t' read -r status filename previous_filename; do
+                      for path in "$filename" "$previous_filename"; do
+                        [ -n "$path" ] || continue
+                        for pattern in "$@"; do
+                          if [[ "$path" == $pattern ]]; then
+                            return 0
+                          fi
+                        done
+                      done
+                    done < "$tmp/files"
+                    return 1
+                  }
+
+                  run_native_runtime=false
+                  if matches_any \
+                    '.github/workflows/build.yml' \
+                    '.github/workflows/native-runtime-evidence.yml' \
+                    'build.gradle.kts' 'gradle.properties' 'gradle/**' \
+                    'src/main/resources/META-INF/plugin.xml' \
+                    'src/main/resources/META-INF/markflow-jcef.xml' \
+                    'src/main/kotlin/com/algorist/markflow/renderer/**' \
+                    'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt' \
+                    'webview/package.json' 'webview/package-lock.json' \
+                    'webview/derived-renderer.html' 'webview/vite.derived-renderer.config.ts' \
+                    'webview/src/renderer/**' \
+                    'webview/src/app/derived-renderer-service.ts' \
+                    'webview/src/app/browser-derived-renderer-backends.ts' \
+                    'src/main/kotlin/com/algorist/markflow/editor/native/**' \
+                    'src/test/kotlin/com/algorist/markflow/editor/native/**' \
+                    'docs/architecture/native-edit-semantics.md' \
+                    'docs/architecture/native-editor-shell-selection.md' \
+                    'docs/architecture/native-markdown-projection-foundation.md' \
+                    'docs/architecture/README.md' \
+                    'docs/architecture/0001-native-authority-projection-architecture.md' \
+                    'src/main/kotlin/com/algorist/markflow/trust/**' \
+                    'src/test/kotlin/com/algorist/markflow/trust/**' \
+                    'docs/architecture/native-host-resources.md' \
+                    'docs/product/image-file-import-contract.md' \
+                    'fixtures/markdown-fidelity/**' \
+                    'src/main/kotlin/com/algorist/markflow/settings/**' \
+                    'docs/architecture/0002-mermaid-katex-renderer-continuity.md'; then
+                    run_native_runtime=true
+                  fi
+
+                  run_starter_driver=false
+                  if matches_any \
+                    '.github/workflows/build.yml' \
+                    '.github/workflows/starter-driver-e2e.yml' \
+                    '.github/scripts/check-starter-driver-diagnostics.py' \
+                    'build.gradle.kts' 'gradle/libs.versions.toml' \
+                    'webview/package.json' 'webview/package-lock.json' \
+                    'src/integrationTest/**' 'src/main/**'; then
+                    run_starter_driver=true
+                  fi
+
+                  run_hardening=false
+                  if matches_any \
+                    '.github/**' 'gradle/**' 'gradle.properties' 'gradlew' 'gradlew.bat' \
+                    'build.gradle.kts' 'settings.gradle.kts' '.nvmrc' \
+                    'webview/package.json' 'webview/package-lock.json' '.run/**' \
+                    'GOVERNANCE.md' 'docs/architecture/**' 'docs/release/**'; then
+                    run_hardening=true
+                  fi
+                fi
               fi
             fi
           fi
 
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "run_native_runtime=$run_native_runtime" >> "$GITHUB_OUTPUT"
+          echo "run_starter_driver=$run_starter_driver" >> "$GITHUB_OUTPUT"
+          echo "run_hardening=$run_hardening" >> "$GITHUB_OUTPUT"
           echo "docs-only fast path: $docs_only"
+          echo "native runtime evidence: $run_native_runtime"
+          echo "starter driver e2e: $run_starter_driver"
+          echo "hardening audit: $run_hardening"
 
   build:
     name: Build
@@ -761,9 +856,26 @@ jobs:
         with:
           fail-on-severity: moderate
 
+  nativeRuntimeEvidence:
+    name: Native Runtime Evidence
+    needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.run_native_runtime == 'true' }}
+    uses: ./.github/workflows/native-runtime-evidence.yml
+
+  starterDriverE2E:
+    name: Starter Driver E2E
+    needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.run_starter_driver == 'true' }}
+    uses: ./.github/workflows/starter-driver-e2e.yml
+
+  hardeningAudit:
+    name: Hardening audit
+    needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.run_hardening == 'true' }}
+    uses: ./.github/workflows/hardening-audit.yml
   mergeGate:
     name: Merge Gate
-    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]
+    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeRuntimeEvidence, starterDriverE2E, hardeningAudit ]
     if: ${{ always() }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -776,6 +888,12 @@ jobs:
           VERIFY_PLUGIN_RESULT: ${{ needs.verify.result }}
           PR_METADATA_SAFETY_RESULT: ${{ needs.metadataSafety.result }}
           DEPENDENCY_REVIEW_RESULT: ${{ needs.dependencyReview.result }}
+          NATIVE_RUNTIME_REQUIRED: ${{ needs.headEvidence.outputs.run_native_runtime }}
+          NATIVE_RUNTIME_RESULT: ${{ needs.nativeRuntimeEvidence.result }}
+          STARTER_DRIVER_REQUIRED: ${{ needs.headEvidence.outputs.run_starter_driver }}
+          STARTER_DRIVER_RESULT: ${{ needs.starterDriverE2E.result }}
+          HARDENING_REQUIRED: ${{ needs.headEvidence.outputs.run_hardening }}
+          HARDENING_RESULT: ${{ needs.hardeningAudit.result }}
         run: |
           set -euo pipefail
           failed=0
@@ -793,6 +911,29 @@ jobs:
               failed=1
             fi
           done
+
+          require_routed_component() {
+            local name="$1" required="$2" result="$3"
+            if [ "$required" = "true" ]; then
+              if [ "$result" != "success" ]; then
+                echo "::error::$name was required but concluded '$result'; Merge Gate fails closed."
+                failed=1
+              fi
+            elif [ "$required" = "false" ]; then
+              if [ "$result" != "skipped" ]; then
+                echo "::error::$name was out of scope but concluded '$result' instead of 'skipped'; Merge Gate fails closed."
+                failed=1
+              fi
+            else
+              echo "::error::$name routing decision is '$required'; Merge Gate fails closed."
+              failed=1
+            fi
+          }
+
+          require_routed_component "Native Runtime Evidence" "$NATIVE_RUNTIME_REQUIRED" "$NATIVE_RUNTIME_RESULT"
+          require_routed_component "Starter Driver E2E" "$STARTER_DRIVER_REQUIRED" "$STARTER_DRIVER_RESULT"
+          require_routed_component "Hardening audit" "$HARDENING_REQUIRED" "$HARDENING_RESULT"
+
           [ "$failed" -eq 0 ]
           echo "All authoritative merge-gate components succeeded."
 

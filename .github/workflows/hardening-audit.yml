@@ -1,28 +1,22 @@
-# Repository hardening checks. Pull-request execution is deliberately scoped to
-# hardening-sensitive repository inputs; scheduled/manual runs remain the complete
-# credential-less drift audit. Privileged live GitHub administration readback remains
-# an explicit opt-in boundary and is never inferred from a successful offline audit.
+# Repository hardening checks. Pull-request execution is routed by build.yml and
+# calls this reusable workflow only for hardening-sensitive repository inputs;
+# scheduled/manual runs remain the complete credential-less drift audit. Privileged
+# live GitHub administration readback remains an explicit opt-in boundary and is never
+# inferred from a successful offline audit.
 
 name: Hardening audit
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/**'
-      - 'gradle/**'
-      - 'gradle.properties'
-      - 'gradlew'
-      - 'gradlew.bat'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - '.nvmrc'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - '.run/**'
-      - 'GOVERNANCE.md'
-      - 'docs/architecture/**'
-      - 'docs/release/**'
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Optional exact trusted main SHA for non-PR callers.
+        required: false
+        type: string
+    secrets:
+      HARDENING_AUDIT_TOKEN:
+        description: Optional privileged token; PR orchestration intentionally does not pass it.
+        required: false
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
