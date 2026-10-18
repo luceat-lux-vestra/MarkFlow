@@ -314,6 +314,17 @@ grep -Fq '.captured_unverified == 89' "$full_differential_workflow" || die "#353
 grep -Fq '.full_differential_acceptance == true' "$full_differential_workflow" || die "#353 full differential no longer requires the reviewed final verdict"
 grep -Fq '.release_eligible == false' "$full_differential_workflow" || die "#353 full differential must not bypass #348/#309 release gates"
 grep -Fq 'if: ${{ always() }}' "$full_differential_workflow" || die "#353 full differential must retain artifacts even on fail-closed review runs"
+grep -Fq 'name: Stage stable full differential evidence' "$full_differential_workflow" ||
+  die "#353 full differential no longer snapshots stable failure evidence before upload"
+grep -Fq 'build/full-differential-upload/**' "$full_differential_workflow" ||
+  die "#353 full differential upload no longer uses the immutable staging bundle"
+grep -Fq "find build/test-results/integrationTest -maxdepth 1 -type f -name '*.xml'" "$full_differential_workflow" ||
+  die "#353 full differential no longer copies only stable JUnit XML results"
+if grep -Fq 'build/test-results/integrationTest/**' "$full_differential_workflow"; then
+  die "#353 full differential must not upload transient Gradle binary/in-progress results directly"
+fi
+grep -Fq 'run_attempt=$GITHUB_RUN_ATTEMPT' "$full_differential_workflow" ||
+  die "#353 full differential failure bundle lost attempt identity"
 
 starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
 [ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
@@ -402,12 +413,42 @@ grep -Fq 'Bundled Preview recovery altered authoritative source state' "$manifes
   die "#353 Preview recovery lost source/stamp/caret/unsaved invariants"
 grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
   die "#353 Preview recovery no longer requires a genuine nonblank second paint"
+grep -Fq 'Bundled Preview panel detached for recovery:' "$manifest_test" ||
+  die "#353 Preview recovery no longer proves the old JCEF panel was disposed before retry"
+grep -Fq '!preview.referencePanelAttached(remoteEditor)' "$manifest_test" ||
+  die "#353 Preview recovery no longer waits for panel detach before re-showing Preview"
+grep -Fq 'detached_before_retry=true' "$manifest_test" ||
+  die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
   die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
+grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER' "$manifest_test" ||
+  die "#353 full corpus no longer documents the single lifecycle owner boundary"
+if grep -Fq 'markFlow.close(editor)' "$manifest_test"; then
+  die "#353 primary case editor must not be UI-closed before finally owns Preview detach/FileEditor disposal"
+fi
 grep -Fq 'markFlow.closeMarkdown(remote, entry.id + ".md")' "$manifest_test" ||
   die "#353 case cleanup no longer closes the exact retained native Editor"
+grep -Fq 'Bundled Preview panel detached before close:' "$manifest_test" ||
+  die "#353 case cleanup no longer requires Preview panel detach before FileEditor close"
+grep -Fq '!preview.referencePanelAttached(remote)' "$manifest_test" ||
+  die "#353 case cleanup no longer proves the bundled JCEF panel detached"
+grep -Fq 'reference-lifecycle.txt' "$manifest_test" ||
+  die "#353 case cleanup no longer persists bundled Preview lifecycle evidence"
+grep -Fq 'fun referencePanelAttached(editor: Editor): Boolean' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "#353 bundled Preview bridge lost panel attachment observation"
+grep -Fq 'fun previewLifecycleEvidence(editor: Editor): String' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "#353 bundled Preview bridge lost lifecycle diagnostics"
+grep -Fq 'getEditors(file)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "#353 bundled Preview bridge regressed to selected-editor lifecycle lookup"
 grep -Fq 'fun closeMarkdown(editor: Editor, fileName: String)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 retained-editor Markdown lifecycle close helper is missing"
+grep -Fq 'fun close(editor: JEditorUiComponent)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 generic Starter editor close helper is missing"
+grep -Fq 'FileEditor/native Editor lifecycle closes:' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
+  die "#353 generic Starter close no longer proves exact platform lifecycle disposal"
+if grep -Fq 'driver.invokeAction("CloseContent"' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt"; then
+  die "#353 Starter close must not depend on global UI CloseContent/JEditorUiComponent disappearance"
+fi
 grep -Fq 'manager.closeFile(file)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||
   die "#353 exact-file cleanup no longer closes the VirtualFile through FileEditorManager"
 grep -Fq '!manager.isFileOpen(file) && remoteEditor.isDisposed()' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowIdeDriver.kt" ||

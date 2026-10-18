@@ -582,13 +582,23 @@ class MarkFlowStarterDifferentialManifestTest {
                                             preview.restoreNative(remoteEditor)
                                         }
                                         waitFor(
-                                            message = "Native restored for Preview recovery: " +
+                                            message = "Bundled Preview panel detached for recovery: " +
                                                 entry.id,
                                             timeout = 20.seconds,
                                             getter = { driver.withContext(OnDispatcher.EDT) {
-                                                preview.nativeShowing(remoteEditor)
+                                                preview.nativeShowing(remoteEditor) &&
+                                                    !preview.referencePanelAttached(remoteEditor)
                                             } },
                                             checker = { it }
+                                        )
+                                        Files.writeString(
+                                            dest.resolve("reference-recovery.txt"),
+                                            "detached_before_retry=true\n" +
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    preview.previewLifecycleEvidence(remoteEditor)
+                                                },
+                                            StandardCharsets.UTF_8,
+                                            java.nio.file.StandardOpenOption.APPEND
                                         )
                                         check(driver.withContext(OnDispatcher.EDT) {
                                             preview.sourceText(remoteEditor) == source &&
@@ -1080,7 +1090,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }
                             }
                         }
-                        markFlow.close(editor)
+                        // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER:
+                        // Do not close the primary case editor here. The finally block below owns
+                        // the only lifecycle transition for it: hide bundled Preview, prove the
+                        // Markdown JCEF panel detached, then close the exact FileEditor/native Editor.
+                        // Auxiliary H1 A/B editors use different files and retain their own cleanup.
                         if (entry.id == "md-atx-headings-h1-h6") {
                             // C is the actual product default; A is the frozen
                             // legacy baseline, B the pinned JCEF typography probe.
@@ -1552,10 +1566,40 @@ class MarkFlowStarterDifferentialManifestTest {
                                     "Case lifecycle close observed source identity drift: " +
                                         entry.id
                                 }
-                                // Auxiliary A/B tabs can change the global selected editor.
-                                // Close this exact already-open VirtualFile through FileEditorManager
-                                // so the platform disposes its TextEditorWithPreview/JCEF owner.
-                                // Cleanup must not reopen the file or toggle Preview layout again.
+                                // Hide the exact retained Preview first. IntelliJ's
+                                // MarkdownPreviewFileEditor disposes its JCEF-backed panel from the
+                                // componentHidden lifecycle callback; prove that detach completed
+                                // before closing the owning TextEditorWithPreview.
+                                Files.writeString(
+                                    dest.resolve("reference-lifecycle.txt"),
+                                    "phase=before-hide\n" +
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remote)
+                                        },
+                                    StandardCharsets.UTF_8
+                                )
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.restoreNative(remote)
+                                }
+                                waitFor(
+                                    message = "Bundled Preview panel detached before close: " +
+                                        entry.id,
+                                    timeout = 20.seconds,
+                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                        preview.nativeShowing(remote) &&
+                                            !preview.referencePanelAttached(remote)
+                                    } },
+                                    checker = { it }
+                                )
+                                Files.writeString(
+                                    dest.resolve("reference-lifecycle.txt"),
+                                    "phase=after-hide\n" +
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remote)
+                                        },
+                                    StandardCharsets.UTF_8,
+                                    java.nio.file.StandardOpenOption.APPEND
+                                )
                                 markFlow.closeMarkdown(remote, entry.id + ".md")
                                 waitFor(
                                     message = "MarkFlow derived JCEF runtime returns to baseline: " +
@@ -2841,6 +2885,8 @@ private interface DifferentialManifestPreviewRemote {
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
+    fun referencePanelAttached(editor: Editor): Boolean
+    fun previewLifecycleEvidence(editor: Editor): String
     fun jcefRuntimeEvidence(): String
     fun nativeRasterGeometry(editor: Editor): String
     fun rasterGeometryNegativeControls(): Boolean

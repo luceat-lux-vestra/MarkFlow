@@ -838,3 +838,69 @@ No file reopen, layout toggle, synthetic tab-close action, timeout relaxation,
 or sharding is used to hide the defect. The 89-case corpus remains monolithic
 until these lifecycle invariants are re-proven on the exact candidate and then
 on protected main.
+
+
+### Stage E30 — explicit bundled Preview panel disposal boundary
+
+Protected-main full acceptance run `39122624927` exposed two independent
+failure modes on the same exact source SHA
+`2e409f4d03f3884d64a744108087b6352a0dba5f`.
+
+Attempt 1, full-differential job `117661830082`, remained healthy through
+`md-image-syntax` with a final watchdog idle age of only two seconds and was
+then interrupted by a hosted-runner shutdown signal. That attempt is
+infrastructure failure evidence, not an application stall.
+
+Debug-enabled attempt 2, job `117665087404`, did **not** receive a runner
+shutdown. It advanced through the former `md-fence-length-info` failure
+boundary and later stalled on `md-escaped-punctuation`:
+the initial bundled JCEF first-paint wait timed out after 20 seconds, the
+single recovery failed to repaint after another 60 seconds, progress remained
+unchanged for the watchdog's 180-second idle boundary, and the watchdog
+terminated the isolated Gradle/IDE process group with exit 124. No OOM,
+SIGKILL, code 137, or GitHub cancellation preceded that failure.
+
+Upstream IntelliJ 2026.2 Markdown Preview owns a
+`MarkdownPreviewFileEditor` whose visibility listener detaches the current
+`MarkdownHtmlPanel` when the Preview component is hidden. Detach removes the
+panel and disposes it before clearing the editor's `panel` field. Merely
+switching layout and observing the source editor again is therefore not proof
+that the old JCEF panel has actually crossed its disposal boundary.
+
+The #353 harness now resolves the exact `TextEditorWithPreview` from the
+retained source `Editor`/VirtualFile instead of global selected-editor state.
+Both blank-Preview recovery and normal per-case cleanup switch to the native
+editor and fail closed until the bundled Preview's private `panel` field is
+actually null. Lifecycle evidence records layout, Preview disposal state,
+Preview component visibility, panel presence/class and panel component
+visibility. Only after panel detach does case cleanup close the owning
+FileEditor and require the MarkFlow-owned derived-JCEF live count to return to
+baseline. A recovery retry likewise cannot re-show Preview until the previous
+panel has detached.
+
+Failure evidence upload is also staged into an immutable bundle before
+`upload-artifact`. Gradle's transient
+`build/test-results/integrationTest/binary/in-progress-*` files are excluded;
+stable JUnit XML, HTML reports, #353 evidence, IDE logs, watchdog diagnostics,
+the packaged-plugin manifest and Xvfb log are copied first. This prevents an
+ENOENT race from deleting the very diagnostics needed to analyze a failed
+full-corpus run.
+
+The corpus remains monolithic while this disposal boundary is tested. No
+timeout increase or sharding is used as a substitute for lifecycle proof.
+
+A later bounded-corpus failure exposed a separate Starter harness bug in the
+generic `MarkFlowIdeDriver.close(JEditorUiComponent)` helper. It invoked the
+UI `CloseContent` action and then waited for a frame-global
+`JEditorUiComponent[EditorComponentImpl]` locator to disappear. That condition
+does not identify the editor being closed: any other visible editor in the IDE
+keeps the locator alive and produces a false 10-second timeout. Differential
+H1 diagnostics legitimately keep auxiliary editors open, so this close helper
+was structurally invalid rather than merely flaky.
+
+The generic Starter close helper now uses the same exact-object authority as
+the full-corpus cleanup: retain the native `Editor`, resolve its exact
+`VirtualFile`, call `FileEditorManager.closeFile(file)` on the EDT, and wait
+until both `isFileOpen(file)==false` and that retained native Editor reports
+disposed. UI `CloseContent` and global `waitNotFound()` are no longer
+accepted as lifecycle authority by repository hardening.
