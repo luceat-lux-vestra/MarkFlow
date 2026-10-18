@@ -3072,7 +3072,6 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceUnsaved(editor: Editor): Boolean
     fun armDetachedReferenceBrowserCloseMarker(markerPath: String)
     fun restoreNative(editor: Editor)
-    fun detachedReferenceBrowserClosed(): Boolean
     fun detachedReferenceBrowserEvidence(): String
     fun nativeShowing(editor: Editor): Boolean
 }
