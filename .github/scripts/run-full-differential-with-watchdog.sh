@@ -147,7 +147,26 @@ echo "FULL_DIFFERENTIAL_PROCESS_GROUP child_pid=$child_pid child_pgid=$child_pgi
 next_report_epoch=$((start_epoch + report_seconds))
 
 on_signal() {
-  terminate_group "$child_pid" "wrapper-signal" "$diagnostic_file" "$progress_file"
+  # Hosted-runner shutdown gives the wrapper only a small termination window.
+  # Keep the signal path parser-simple and bounded: do not collect a process tree
+  # or run command substitutions here. The normal watchdog timeout path retains
+  # the richer terminate_group diagnostic.
+  trap - INT TERM HUP
+  {
+    echo "schema=markflow-full-differential-watchdog/v1"
+    echo "reason=wrapper-signal"
+    echo "child_pid=$child_pid"
+    if [ -f "$progress_file" ]; then
+      printf 'last_progress='
+      tr '\t\n' '  ' < "$progress_file" || true
+      printf '\n'
+    else
+      echo "last_progress=missing"
+    fi
+  } > "$diagnostic_file" 2>/dev/null || true
+  kill -TERM -- "-$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
+  sleep 1
+  kill -KILL -- "-$child_pid" 2>/dev/null || kill -KILL "$child_pid" 2>/dev/null || true
   exit 130
 }
 trap on_signal INT TERM HUP
