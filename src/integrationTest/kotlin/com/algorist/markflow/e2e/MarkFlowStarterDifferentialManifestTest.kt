@@ -512,6 +512,15 @@ class MarkFlowStarterDifferentialManifestTest {
                                 } },
                                 checker = { it }
                             )
+                            waitFor(
+                                message = "Bundled Preview panel ready: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    preview.referencePanelShowing(remoteEditor)
+                                } },
+                                checker = { it }
+                            )
+                            heartbeat("case-reference-panel-ready", entry.id)
                             reference = driver.withContext(OnDispatcher.EDT) {
                                 val xywh = preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
                                 check(xywh.size == 4)
@@ -570,12 +579,22 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 Files.readAllBytes(firstCapture)
                                             )
                                         }
+                                        val firstFailureLifecycle =
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.previewLifecycleEvidence(remoteEditor)
+                                            }
+                                        System.err.println(
+                                            "FULL_DIFFERENTIAL_REFERENCE_FIRST_PAINT_FAILURE case=" +
+                                                entry.id + "\n" + firstFailureLifecycle
+                                        )
                                         Files.writeString(
                                             dest.resolve("reference-recovery.txt"),
                                             "schema=markflow-reference-blank-recovery/v1\n" +
                                                 "case_id=" + entry.id + "\n" +
                                                 "initial_result=BLANK_AFTER_20S\n" +
-                                                "recovery_attempts=1\n",
+                                                "recovery_attempts=1\n" +
+                                                "phase=first-paint-failure\n" +
+                                                firstFailureLifecycle,
                                             StandardCharsets.UTF_8
                                         )
                                         driver.withContext(OnDispatcher.EDT) {
@@ -622,19 +641,62 @@ class MarkFlowStarterDifferentialManifestTest {
                                             } },
                                             checker = { it }
                                         )
+                                        waitFor(
+                                            message = "Bundled Preview panel ready after recovery: " +
+                                                entry.id,
+                                            timeout = 20.seconds,
+                                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                                preview.referencePanelShowing(remoteEditor)
+                                            } },
+                                            checker = { it }
+                                        )
+                                        val retryLifecycle = driver.withContext(OnDispatcher.EDT) {
+                                            preview.previewLifecycleEvidence(remoteEditor)
+                                        }
+                                        System.err.println(
+                                            "FULL_DIFFERENTIAL_REFERENCE_REATTACHED case=" +
+                                                entry.id + "\n" + retryLifecycle
+                                        )
+                                        Files.writeString(
+                                            dest.resolve("reference-recovery.txt"),
+                                            "reattached_after_retry=true\n" +
+                                                "phase=after-reattach\n" +
+                                                retryLifecycle,
+                                            StandardCharsets.UTF_8,
+                                            java.nio.file.StandardOpenOption.APPEND
+                                        )
                                         reference = driver.withContext(OnDispatcher.EDT) {
                                             val xywh = preview.referenceBounds(remoteEditor)
                                                 .split(',').map(String::toInt)
                                             check(xywh.size == 4)
                                             Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
                                         }
-                                        waitFor(
-                                            message = "Bundled JCEF paints after single recovery: " +
-                                                entry.id,
-                                            timeout = 60.seconds,
-                                            getter = ::captureReferencePaint,
-                                            checker = { it }
-                                        )
+                                        try {
+                                            waitFor(
+                                                message = "Bundled JCEF paints after single recovery: " +
+                                                    entry.id,
+                                                timeout = 60.seconds,
+                                                getter = ::captureReferencePaint,
+                                                checker = { it }
+                                            )
+                                        } catch (cause: WaitForException) {
+                                            val failedRetryLifecycle =
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    preview.previewLifecycleEvidence(remoteEditor)
+                                                }
+                                            System.err.println(
+                                                "FULL_DIFFERENTIAL_REFERENCE_RECOVERY_PAINT_FAILURE case=" +
+                                                    entry.id + "\n" + failedRetryLifecycle
+                                            )
+                                            Files.writeString(
+                                                dest.resolve("reference-recovery.txt"),
+                                                "phase=recovery-paint-failure\n" +
+                                                    failedRetryLifecycle,
+                                                StandardCharsets.UTF_8,
+                                                java.nio.file.StandardOpenOption.APPEND
+                                            )
+                                            throw cause
+                                        }
                                         check(driver.withContext(OnDispatcher.EDT) {
                                             preview.sourceText(remoteEditor) == source &&
                                                 preview.sourceStamp(remoteEditor) == stamp &&
@@ -2886,6 +2948,7 @@ private interface DifferentialManifestPreviewRemote {
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
     fun referencePanelAttached(editor: Editor): Boolean
+    fun referencePanelShowing(editor: Editor): Boolean
     fun previewLifecycleEvidence(editor: Editor): String
     fun jcefRuntimeEvidence(): String
     fun nativeRasterGeometry(editor: Editor): String
