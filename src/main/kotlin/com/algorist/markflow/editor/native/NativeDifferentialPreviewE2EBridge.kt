@@ -626,7 +626,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             ?.invoke(panel) as? Component
         return listOf(
             "schema=markflow-bundled-preview-lifecycle/v1",
-            "layout=" + (selected.layout?.name ?: "NULL"),
+            "layout=" + (selected.getLayout()?.name ?: "NULL"),
             "preview_disposed=" + previewDisposed(preview),
             "preview_component_showing=" + preview.component.isShowing,
             "panel_attached=" + (panel != null),
