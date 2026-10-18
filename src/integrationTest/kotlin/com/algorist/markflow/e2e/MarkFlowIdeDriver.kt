@@ -440,9 +440,27 @@ class MarkFlowIdeDriver(private val driver: Driver) {
     }
 
     fun close(editor: JEditorUiComponent) {
-        editor.setFocus()
-        driver.invokeAction("CloseContent", component = editor.component)
-        editor.waitNotFound(10.seconds)
+        // UI CloseContent + JEditorUiComponent.waitNotFound() is not a valid lifecycle proof.
+        // The Driver locator is frame-global, so another visible editor can keep that generic
+        // JEditorUiComponent selector alive after the requested file has already closed.
+        // Close the exact VirtualFile through FileEditorManager and prove the retained native
+        // Editor is disposed instead.
+        val remoteEditor = driver.cast(editor.editor, EditorStateRemote::class)
+        val file = editor.editor.getVirtualFile()
+        val manager = driver.service<FileEditorManagerRemote>(driver.singleProject())
+        driver.withContext(OnDispatcher.EDT) {
+            manager.closeFile(file)
+        }
+        waitFor(
+            message = "FileEditor/native Editor lifecycle closes: " + file.getName(),
+            timeout = 20.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    !manager.isFileOpen(file) && remoteEditor.isDisposed()
+                }
+            },
+            checker = { closed -> closed },
+        )
     }
 }
 
