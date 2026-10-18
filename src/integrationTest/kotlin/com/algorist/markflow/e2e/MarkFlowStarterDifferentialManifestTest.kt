@@ -1090,7 +1090,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }
                             }
                         }
-                        markFlow.close(editor)
+                        // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER:
+                        // Do not close the primary case editor here. The finally block below owns
+                        // the only lifecycle transition for it: hide bundled Preview, prove the
+                        // Markdown JCEF panel detached, then close the exact FileEditor/native Editor.
+                        // Auxiliary H1 A/B editors use different files and retain their own cleanup.
                         if (entry.id == "md-atx-headings-h1-h6") {
                             // C is the actual product default; A is the frozen
                             // legacy baseline, B the pinned JCEF typography probe.
