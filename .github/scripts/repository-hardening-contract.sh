@@ -421,6 +421,11 @@ grep -Fq 'detached_before_retry=true' "$manifest_test" ||
   die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
   die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
+grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER' "$manifest_test" ||
+  die "#353 full corpus no longer documents the single lifecycle owner boundary"
+if grep -Fq 'markFlow.close(editor)' "$manifest_test"; then
+  die "#353 primary case editor must not be UI-closed before finally owns Preview detach/FileEditor disposal"
+fi
 grep -Fq 'markFlow.closeMarkdown(remote, entry.id + ".md")' "$manifest_test" ||
   die "#353 case cleanup no longer closes the exact retained native Editor"
 grep -Fq 'Bundled Preview panel detached before close:' "$manifest_test" ||
