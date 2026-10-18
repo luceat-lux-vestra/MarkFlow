@@ -796,12 +796,6 @@ internal object NativeDifferentialPreviewE2EBridge {
         // and wait for that marker after proving panel detach.
     }
 
-    fun detachedReferenceBrowserClosed(): Boolean {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        val browser = lastDetachedReferenceBrowser ?: return true
-        return browser.isDisposed && lastDetachedReferenceBeforeClose.get()
-    }
-
     fun detachedReferenceBrowserEvidence(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val browser = lastDetachedReferenceBrowser
