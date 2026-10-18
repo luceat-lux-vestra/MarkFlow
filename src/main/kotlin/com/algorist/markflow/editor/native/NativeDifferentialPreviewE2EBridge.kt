@@ -742,9 +742,9 @@ internal object NativeDifferentialPreviewE2EBridge {
         previewPanel(preview)?.let { panel ->
             val browser = panel as? JBCefBrowser
                 ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
-            val cefBrowser = browser.cefBrowser
+            val cefBrowser = browser.getCefBrowser()
             val beforeClose = AtomicBoolean(false)
-            browser.jbCefClient.addLifeSpanHandler(
+            browser.getJBCefClient().addLifeSpanHandler(
                 object : CefLifeSpanHandlerAdapter() {
                     override fun onBeforeClose(closingBrowser: CefBrowser) {
                         if (closingBrowser === cefBrowser) {
