@@ -149,6 +149,17 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         jcefRuntime.contains("idea_jcef_remote_property=false\n"))) {
                     "JCEF execution mode differs from $executionMode:\n$jcefRuntime"
                 }
+                // Prove the native trace settings reached the IDE process that
+                // launches cef_server; don't confuse missing logs with fast RPC.
+                if (expectedRemote) {
+                    check(jcefRuntime.contains("idea_cef_server_trace_flag=true\n") &&
+                        jcefRuntime.contains("idea_cef_server_log_level=trace\n") &&
+                        jcefRuntime.contains("idea_cef_server_log_path=" +
+                            output.resolve("cef-server-trace.log").toAbsolutePath().normalize() +
+                            "\n")) {
+                        "Remote JCEF native load trace was not configured in the IDE:\n$jcefRuntime"
+                    }
+                }
                 val robot = Robot()
                 val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
                 for (number in 1..iterations) {

@@ -451,6 +451,21 @@ jobs:
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
+          # JCEF's native RemoteLoadHandler already supports targeted tracing.
+          # Activate it only inside this opt-in diagnostic, not package or
+          # acceptance jobs. Native log timestamps use the server's local TZ.
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            export CEF_SERVER_LOG_LEVEL=trace
+            export CEF_SERVER_TRACE_RemoteLoadHandler=true
+            export CEF_SERVER_LOG_PATH="$PWD/$pass_dir/cef-server-trace.log"
+            printf 'schema=markflow-cef-server-load-trace/v1\n' > "$pass_dir/cef-server-trace-contract.txt"
+            printf 'enabled=true\nsource_head=%s\ntrace_flag=%s\nlog_level=%s\nlog_path=%s\n' \
+              "$STARTER_SOURCE_SHA" "$CEF_SERVER_TRACE_RemoteLoadHandler" \
+              "$CEF_SERVER_LOG_LEVEL" "$CEF_SERVER_LOG_PATH" >> "$pass_dir/cef-server-trace-contract.txt"
+            printf 'server_local_timezone=%s\nserver_launch_date=%s\n' \
+              "$(date +%z)" "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+              >> "$pass_dir/cef-server-trace-contract.txt"
+          fi
           test_status=0
           set +e
           MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" \
@@ -460,6 +475,13 @@ jobs:
                 --stacktrace --tests "$suite"
           test_status=$?
           set -e
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            if [[ -s "$pass_dir/cef-server-trace.log" ]]; then
+              echo "Native cef_server diagnostic log captured."
+            else
+              echo "::warning::No native cef_server trace log; server-side event timing is unverified."
+            fi
+          fi
 
           # Never let a skipped test or incomplete iteration count look like PASS.
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"

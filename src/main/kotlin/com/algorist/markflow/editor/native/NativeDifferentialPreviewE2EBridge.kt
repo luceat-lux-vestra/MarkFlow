@@ -922,6 +922,12 @@ internal object NativeDifferentialPreviewE2EBridge {
             "idea_java_home=" + System.getProperty("java.home", "UNKNOWN"),
             "idea_jcef_remote_property=" + System.getProperty("jcef.remote.enabled", "UNSET"),
             "idea_jcef_remote_enabled=" + jcefRemoteEnabled(),
+            "idea_cef_server_trace_flag=" +
+                System.getenv("CEF_SERVER_TRACE_RemoteLoadHandler").orEmpty(),
+            "idea_cef_server_log_level=" +
+                System.getenv("CEF_SERVER_LOG_LEVEL").orEmpty(),
+            "idea_cef_server_log_path=" +
+                System.getenv("CEF_SERVER_LOG_PATH").orEmpty(),
             "idea_apparmor_current=" + read("/proc/self/attr/current"),
             "kernel_apparmor_restrict_unprivileged_userns=" +
                 read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
