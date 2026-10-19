@@ -10,6 +10,7 @@ import java.awt.Container
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.openapi.util.registry.Registry
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import java.util.concurrent.atomic.AtomicBoolean
@@ -665,6 +666,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "browser_identity=" + System.identityHashCode(browser),
             "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
             "jbcef_disposed=" + browser.isDisposed,
+            "registry_markdown_osr=" + Registry.`is`("ide.browser.jcef.markdownView.osr.enabled"),
+            "browser_offscreen_rendering=" + browser.isOffScreenRendering,
             "panel_showing=" + referencePanelShowing(editor),
         ).joinToString(separator = "\n", postfix = "\n")
     }

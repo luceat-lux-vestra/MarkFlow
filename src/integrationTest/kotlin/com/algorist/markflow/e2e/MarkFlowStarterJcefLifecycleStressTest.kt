@@ -69,6 +69,9 @@ class MarkFlowStarterJcefLifecycleStressTest {
             "Starter requires markflow.test.platformVersion"
         }
         check(version == "2026.2.3") { "Use the pinned Full Differential platform" }
+        val renderMode = System.getenv("MARKFLOW_JCEF_STRESS_RENDER_MODE") ?: "osr"
+        require(renderMode == "osr" || renderMode == "windowed")
+        val expectedOsr = renderMode == "osr"
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let { process ->
                 val sha = process.inputStream.bufferedReader().readText().trim()
@@ -86,7 +89,7 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 "source_head=$sourceHead\nide_version=$version\n" +
                 "iterations=$iterations\nfixture=$fileName\n" +
                 "scope=diagnostic-only-not-full-differential-acceptance\n" +
-                "retries=0\n", StandardCharsets.UTF_8)
+                "render_mode=$renderMode\nretries=0\n", StandardCharsets.UTF_8)
 
         val sandbox = Files.createTempDirectory("markflow-353-jcef-stress-")
         val project = sandbox.resolve("project")
@@ -110,6 +113,7 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
                 addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+                if (!expectedOsr) addSystemProperty("ide.browser.jcef.markdownView.osr.enabled", false)
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
@@ -170,6 +174,10 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             preview.referenceBrowserIdentity(remoteEditor)
                         }
                         record("panel-showing", identity)
+                        check(identity.contains("registry_markdown_osr=$expectedOsr\n") &&
+                            identity.contains("browser_offscreen_rendering=$expectedOsr\n")) {
+                            "JCEF rendering mode mismatch for $renderMode iteration $iteration: $identity"
+                        }
                         check(identity.contains("jbcef_disposed=false\n") &&
                             identity.contains("panel_showing=true\n")) {
                             "Stress iteration has no live bundled JCEF browser: $iteration"

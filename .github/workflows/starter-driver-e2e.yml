@@ -24,6 +24,14 @@ on:
         required: false
         type: boolean
         default: false
+      jcef_lifecycle_render_mode:
+        description: 'Diagnostic rendering: OSR default or windowed alternative'
+        required: false
+        type: choice
+        options:
+          - osr
+          - windowed
+        default: osr
 
 permissions:
   contents: read
@@ -414,6 +422,8 @@ jobs:
 
       - name: Run isolated 50-iteration bundled JCEF lifecycle diagnostic
         shell: bash
+        env:
+          JCEF_STRESS_RENDER_MODE: ${{ inputs.jcef_lifecycle_render_mode || 'osr' }}
         run: |
           set -euo pipefail
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
@@ -422,7 +432,7 @@ jobs:
           mkdir -p "$pass_dir"
           test_status=0
           set +e
-          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 \
+          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
