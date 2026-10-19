@@ -13,6 +13,7 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.openapi.util.registry.Registry
 import org.cef.browser.CefBrowser
+import org.cef.callback.CefStringVisitor
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.Rectangle
@@ -676,12 +677,56 @@ internal object NativeDifferentialPreviewE2EBridge {
             "panel_identity=" + System.identityHashCode(panel),
             "browser_identity=" + System.identityHashCode(browser),
             "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
+            "native_browser_created=" + browser.isCefBrowserCreated,
+            "cef_browser_closing=" + browser.getCefBrowser().isClosing,
+            "cef_browser_closed=" + browser.getCefBrowser().isClosed,
             "jbcef_disposed=" + browser.isDisposed,
             "jcef_remote_enabled=" + jcefRemoteEnabled(),
             "registry_markdown_osr=" + Registry.`is`("ide.browser.jcef.markdownView.osr.enabled"),
             "browser_offscreen_rendering=" + browser.isOffScreenRendering,
             "panel_showing=" + referencePanelShowing(editor),
         ).joinToString(separator = "\n", postfix = "\n")
+    }
+
+    /**
+     * An asynchronous, exact-bundled-CEF DOM-text probe. The host must not
+     * block the IDE/EDT waiting for CefStringVisitor: on-screen text is only
+     * accepted after the native browser is created and CEF returns the actual
+     * rendered page text. Each request owns a unique host-visible evidence file.
+     */
+    fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) { "No bundled Preview for DOM text probe" }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        check(!browser.isDisposed && browser.isCefBrowserCreated) {
+            "Cannot request rendered text before native browser creation"
+        }
+        val cef = browser.getCefBrowser()
+        check(!cef.isClosing && !cef.isClosed) { "Cannot request rendered text from closing browser" }
+        val path = Path.of(probePath).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent) { "Probe path has no parent" })
+        check(!Files.exists(path)) { "Rendered text probe result already exists: $path" }
+        cef.getText(CefStringVisitor { text ->
+            // CefStringVisitor is asynchronous: do not dispatch back to the EDT.
+            val write = runCatching {
+                Files.writeString(
+                    path, text ?: "",
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                )
+            }
+            if (write.isFailure) {
+                runCatching {
+                    Files.writeString(
+                        path.resolveSibling(path.fileName.toString() + ".write-error"),
+                        "callback_write_failure=" +
+                            write.exceptionOrNull()?.javaClass?.name + "\n"
+                    )
+                }
+            }
+        })
     }
 
     fun previewLifecycleEvidence(editor: Editor): String {

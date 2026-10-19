@@ -40,6 +40,8 @@ import kotlin.time.Duration.Companion.seconds
 class MarkFlowStarterJcefLifecycleStressTest {
     private val iterations = 50
     private val fileName = "JCEF-LIFECYCLE-STRESS.md"
+    private val renderedTextAnchorA = "One plain Markdown document is reopened for every iteration."
+    private val renderedTextAnchorB = "The fourth simple paragraph keeps the visible vertical span nontrivial."
     private val fixture = """
         # Minimal reference preview lifecycle
 
@@ -194,25 +196,129 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         val browserIdentity = identity.lineSequence()
                             .first { it.startsWith("browser_identity=") }
                             .substringAfter('=')
+                        // Swing panel visibility is not proof of native CefBrowser creation.
+                        // Preserve the exact onAfterCreated-equivalent readiness boundary.
+                        record("native-creation-wait")
+                        try {
+                            waitFor(
+                                message = "Bundled native browser created: stress iteration $iteration",
+                                timeout = 20.seconds,
+                                getter = {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        preview.referenceBrowserIdentity(remoteEditor)
+                                    }.contains("native_browser_created=true\n")
+                                },
+                                checker = { it }
+                            )
+                        } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                            record("native-creation-timeout", "failure_class=NATIVE_CREATION_TIMEOUT\n")
+                            throw IllegalStateException(
+                                "NATIVE_CREATION_TIMEOUT: stress iteration $iteration", cause
+                            )
+                        }
+                        val createdIdentity = driver.withContext(OnDispatcher.EDT) {
+                            preview.referenceBrowserIdentity(remoteEditor)
+                        }
+                        record("native-created", createdIdentity)
+                        check(createdIdentity.contains("native_browser_created=true\n") &&
+                            createdIdentity.contains("jbcef_disposed=false\n") &&
+                            createdIdentity.contains("cef_browser_closed=false\n")) {
+                            "Native browser creation evidence is not authoritative: $iteration"
+                        }
+
+                        // CEF text callback validates document-specific DOM content.
+                        // A system notification, toolbar, or 'Loading...' pixels cannot pass.
+                        record("content-ready-wait")
+                        var requestedTextProbes = 0
+                        var pendingTextProbe: Path? = null
+                        try {
+                            waitFor(
+                                message = "Bundled Markdown DOM text ready: stress iteration $iteration",
+                                timeout = 20.seconds,
+                                getter = {
+                                    val pending = pendingTextProbe
+                                    when {
+                                        pending == null -> {
+                                            requestedTextProbes++
+                                            val requestPath = dest.resolve(
+                                                "rendered-text-probe-" +
+                                                    requestedTextProbes.toString().padStart(4, '0') + ".txt"
+                                            )
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.requestReferenceRenderedTextProbe(
+                                                    remoteEditor, requestPath.toString()
+                                                )
+                                            }
+                                            pendingTextProbe = requestPath
+                                            false
+                                        }
+                                        !Files.exists(pending) -> false
+                                        else -> {
+                                            val visibleText = Files.readString(pending)
+                                            val matched = visibleText.contains(renderedTextAnchorA) &&
+                                                visibleText.contains(renderedTextAnchorB)
+                                            if (matched) {
+                                                Files.writeString(
+                                                    dest.resolve("rendered-content-proof.txt"),
+                                                    "schema=markflow-bundled-jcef-rendered-text/v1\n" +
+                                                        "probe=" + pending.fileName + "\n" +
+                                                        "anchor_a_present=true\nanchor_b_present=true\n"
+                                                )
+                                            } else {
+                                                pendingTextProbe = null
+                                            }
+                                            matched
+                                        }
+                                    }
+                                },
+                                checker = { it }
+                            )
+                        } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                            record("content-not-ready",
+                                "failure_class=CONTENT_NOT_READY\ntext_probes=$requestedTextProbes\n")
+                            throw IllegalStateException(
+                                "CONTENT_NOT_READY: stress iteration $iteration", cause
+                            )
+                        }
+                        record("content-ready", "dom_anchor_a=true\ndom_anchor_b=true\n" +
+                            "text_probes=$requestedTextProbes\n")
+
                         val xywh = driver.withContext(OnDispatcher.EDT) {
                             preview.referenceBounds(remoteEditor).split(',').map(String::toInt)
                         }
                         check(xywh.size == 4)
                         val bounds = Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
                         record("first-paint-wait")
-                        waitFor(
-                            message = "Bundled JCEF first paint: stress iteration $iteration",
-                            timeout = 20.seconds,
-                            getter = {
-                                robot.waitForIdle()
-                                val image = robot.createScreenCapture(bounds)
-                                check(ImageIO.write(image, "png",
-                                    dest.resolve("reference-paint-probe.png").toFile()))
-                                nonblank.referenceHasVisibleContent(image)
-                            },
-                            checker = { it }
-                        )
-                        record("first-paint-observed", "first_paint_nonblank=true\n")
+                        try {
+                            waitFor(
+                                message = "Bundled JCEF fixture-content viewport paint: stress iteration $iteration",
+                                timeout = 20.seconds,
+                                getter = {
+                                    robot.waitForIdle()
+                                    val image = robot.createScreenCapture(bounds)
+                                    check(ImageIO.write(image, "png",
+                                        dest.resolve("reference-paint-probe.png").toFile()))
+                                    // Exclude edges, notification balloons and the lower-right
+                                    // IDE chrome; the two exact CEF DOM anchors were checked above.
+                                    val contentRegion = image.getSubimage(
+                                        image.width / 20,
+                                        image.height / 8,
+                                        image.width * 3 / 4,
+                                        image.height * 5 / 8,
+                                    )
+                                    nonblank.referenceHasVisibleContent(contentRegion)
+                                },
+                                checker = { it }
+                            )
+                        } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                            record("content-not-ready",
+                                "failure_class=CONTENT_NOT_READY\nreason=fixture_viewport_not_painted\n")
+                            throw IllegalStateException(
+                                "CONTENT_NOT_READY: fixture viewport paint iteration $iteration", cause
+                            )
+                        }
+                        record("first-paint-observed",
+                            "rendered_text_proof=true\ncontent_region_nonblank=true\n")
                         check(driver.withContext(OnDispatcher.EDT) {
                             preview.sourceText(remoteEditor) == fixture &&
                                 preview.sourceStamp(remoteEditor) == stamp &&
@@ -239,12 +345,19 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         })
                         // This is host process polling only: do not call Driver/EDT
                         // from the wait getter. A missing callback is a hard FAIL.
-                        waitFor(
-                            message = "Bundled native onBeforeClose: stress iteration $iteration",
-                            timeout = 20.seconds,
-                            getter = { Files.exists(marker) },
-                            checker = { it }
-                        )
+                        try {
+                            waitFor(
+                                message = "Bundled native onBeforeClose: stress iteration $iteration",
+                                timeout = 20.seconds,
+                                getter = { Files.exists(marker) },
+                                checker = { it }
+                            )
+                        } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                            record("native-close-timeout", "failure_class=NATIVE_CLOSE_TIMEOUT\n")
+                            throw IllegalStateException(
+                                "NATIVE_CLOSE_TIMEOUT: stress iteration $iteration", cause
+                            )
+                        }
                         val markerBody = Files.readString(marker)
                         check(markerBody.contains("cef_before_close_observed=true\n") &&
                             markerBody.contains("browser_identity=$browserIdentity\n")) {
@@ -320,6 +433,7 @@ private interface JcefStressPreviewRemote {
     fun referencePanelShowing(editor: Editor): Boolean
     fun referencePanelAttached(editor: Editor): Boolean
     fun referenceBrowserIdentity(editor: Editor): String
+    fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String)
     fun referenceBounds(editor: Editor): String
     fun jcefRuntimeEvidence(): String
     fun sourceText(editor: Editor): String
