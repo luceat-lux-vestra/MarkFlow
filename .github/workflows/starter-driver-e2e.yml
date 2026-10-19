@@ -19,6 +19,11 @@ on:
         required: false
         type: boolean
         default: false
+      jcef_lifecycle_stress:
+        description: 'Run only the 50-iteration bundled JCEF lifecycle stress diagnostic (#353)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -89,7 +94,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,full-differential-acceptance"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,full-differential-acceptance,jcef-lifecycle-stress"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact Starter plugin artifact
@@ -103,6 +108,7 @@ jobs:
             build/e2e-package/manifest.txt
 
   shards:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress }}
     needs: [ package ]
     name: Real IDE Starter Driver (${{ matrix.shard }})
     runs-on: ${{ matrix.runner }}
@@ -331,7 +337,139 @@ jobs:
 
 
 
+  jcef-lifecycle-stress:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress }}
+    needs: [ package ]
+    name: Bundled JCEF lifecycle stress (50 sequential iterations)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::JCEF stress source checkout drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$manifest" ] && [ -f build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          [[ ",$(field scenario_sets)," == *",jcef-lifecycle-stress,"* ]]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive_name="$(field plugin_archive)"
+          [[ "$archive_name" = *.zip && "$archive_name" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-lifecycle-stress
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-stress-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run isolated 50-iteration bundled JCEF lifecycle diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
+          pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          test_status=0
+          set +e
+          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 \
+            timeout --signal=TERM --kill-after=30s 45m \
+              ./gradlew integrationTest -x buildPlugin \
+                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          # Never let a skipped test or incomplete iteration count look like PASS.
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-stress\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" > "$pass_dir/workflow-contract.txt"
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::JCEF stress changed the exact plugin artifact"
+            exit 1
+          }
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::JCEF lifecycle stress failed with status $test_status"
+            exit "$test_status"
+          }
+          [ -f "$pass_dir/result.txt" ] || {
+            echo "::error::Stress test was skipped or did not produce a result"
+            exit 1
+          }
+          grep -Fxq 'result=PASS' "$pass_dir/result.txt"
+          grep -Fxq 'completed=50' "$pass_dir/result.txt"
+          [ "$(find "$pass_dir" -maxdepth 1 -type d -name 'iteration-*' | wc -l)" -eq 50 ] || {
+            echo "::error::JCEF stress did not record exactly 50 iterations"
+            exit 1
+          }
+
+      - name: Upload JCEF lifecycle stress evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-lifecycle-stress-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-stress-xvfb.log
+
   visual:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress }}
     needs: [ package ]
     name: Deterministic Visual Acceptance
     runs-on: ubuntu-24.04
@@ -443,7 +581,7 @@ jobs:
             ${{ runner.temp }}/markflow-visual-xvfb.log
 
   visual-gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
     needs: [ package, visual ]
     name: Deterministic Visual Acceptance Gate
     runs-on: ubuntu-24.04-arm
@@ -466,7 +604,7 @@ jobs:
           }
 
   release-candidate-repeat:
-    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat && !inputs.jcef_lifecycle_stress
     needs: [ package ]
     name: Release candidate canonical repeat
     runs-on: ubuntu-24.04-arm
@@ -604,7 +742,7 @@ jobs:
             ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
 
   gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
     runs-on: ubuntu-24.04-arm
