@@ -237,14 +237,35 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         // CEF text callback validates document-specific DOM content.
                         // A system notification, toolbar, or 'Loading...' pixels cannot pass.
                         record("content-ready-wait")
+                        val domWaitStartNs = System.nanoTime()
                         var requestedTextProbes = 0
+                        var domPolls = 0
                         var pendingTextProbe: Path? = null
+                        fun traceHostDom(phase: String, probe: Path? = pendingTextProbe,
+                                         detail: String = "") {
+                            // Keep the original wait/poll cadence and verdict unchanged.
+                            Files.writeString(
+                                dest.resolve("rendered-text-host-timing.tsv"),
+                                "timestamp_ms=" + System.currentTimeMillis() +
+                                    "\telapsed_ms=" + (System.nanoTime() - domWaitStartNs) / 1_000_000 +
+                                    "\tphase=" + phase +
+                                    "\tprobe=" + (probe?.fileName ?: "NONE") +
+                                    "\tpolls=" + domPolls +
+                                    "\t" + detail + "\n",
+                                StandardCharsets.UTF_8,
+                                StandardOpenOption.CREATE,
+                                StandardOpenOption.APPEND,
+                            )
+                        }
+                        traceHostDom("host-dom-wait-start")
                         try {
                             waitFor(
                                 message = "Bundled Markdown DOM text ready: stress iteration $iteration",
                                 timeout = 20.seconds,
                                 getter = {
+                                    domPolls++
                                     val pending = pendingTextProbe
+                                    traceHostDom("host-poll", pending)
                                     when {
                                         pending == null -> {
                                             requestedTextProbes++
@@ -252,11 +273,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                                                 "rendered-text-probe-" +
                                                     requestedTextProbes.toString().padStart(4, '0') + ".txt"
                                             )
+                                            traceHostDom("host-request-start", requestPath)
                                             driver.withContext(OnDispatcher.EDT) {
                                                 preview.requestReferenceRenderedTextProbe(
                                                     remoteEditor, requestPath.toString()
                                                 )
                                             }
+                                            traceHostDom("host-request-return", requestPath)
                                             pendingTextProbe = requestPath
                                             false
                                         }
@@ -265,6 +288,8 @@ class MarkFlowStarterJcefLifecycleStressTest {
                                             val visibleText = Files.readString(pending)
                                             val matched = visibleText.contains(renderedTextAnchorA) &&
                                                 visibleText.contains(renderedTextAnchorB)
+                                            traceHostDom("host-response-evaluated", pending,
+                                                "chars=" + visibleText.length + "\tanchors_matched=" + matched)
                                             if (matched) {
                                                 Files.writeString(
                                                     dest.resolve("rendered-content-proof.txt"),
@@ -282,12 +307,17 @@ class MarkFlowStarterJcefLifecycleStressTest {
                                 checker = { it }
                             )
                         } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                            traceHostDom("host-dom-wait-timeout", pendingTextProbe,
+                                "text_probes=" + requestedTextProbes +
+                                    "\tpending_exists=" + (pendingTextProbe?.let(Files::exists) ?: false))
                             record("content-not-ready",
                                 "failure_class=CONTENT_NOT_READY\ntext_probes=$requestedTextProbes\n")
                             throw IllegalStateException(
                                 "CONTENT_NOT_READY: stress iteration $iteration", cause
                             )
                         }
+                        traceHostDom("host-dom-wait-success", pendingTextProbe,
+                            "text_probes=" + requestedTextProbes)
                         record("content-ready", "dom_anchor_a=true\ndom_anchor_b=true\n" +
                             "text_probes=$requestedTextProbes\n")
 

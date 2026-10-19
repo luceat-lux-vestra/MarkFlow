@@ -708,8 +708,28 @@ internal object NativeDifferentialPreviewE2EBridge {
         val path = Path.of(probePath).toAbsolutePath().normalize()
         Files.createDirectories(requireNotNull(path.parent) { "Probe path has no parent" })
         check(!Files.exists(path)) { "Rendered text probe result already exists: $path" }
+        val timingPath = path.resolveSibling("rendered-text-ide-timing.tsv")
+        fun traceCef(phase: String, detail: String = "") {
+            // Trace files are diagnostic-only. A tracing failure must not change
+            // the actual JCEF callback contract or prevent the text response.
+            runCatching {
+                Files.writeString(
+                    timingPath,
+                    "timestamp_ms=" + System.currentTimeMillis() +
+                        "\tphase=" + phase +
+                        "\tprobe=" + path.fileName +
+                        "\tthread=" + Thread.currentThread().name +
+                        "\t" + detail + "\n",
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND,
+                )
+            }
+        }
+        traceCef("cef-get-text-invoke")
         cef.getText(CefStringVisitor { text ->
             // CefStringVisitor is asynchronous: do not dispatch back to the EDT.
+            // Record callback ARRIVAL before writing the result file.
+            traceCef("cef-text-callback", "chars=" + (text?.length ?: 0))
             val write = runCatching {
                 Files.writeString(
                     path, text ?: "",
@@ -718,6 +738,8 @@ internal object NativeDifferentialPreviewE2EBridge {
                 )
             }
             if (write.isFailure) {
+                traceCef("cef-text-file-write-failed",
+                    "error=" + write.exceptionOrNull()?.javaClass?.name)
                 runCatching {
                     Files.writeString(
                         path.resolveSibling(path.fileName.toString() + ".write-error"),
@@ -725,8 +747,11 @@ internal object NativeDifferentialPreviewE2EBridge {
                             write.exceptionOrNull()?.javaClass?.name + "\n"
                     )
                 }
+            } else {
+                traceCef("cef-text-file-written", "chars=" + (text?.length ?: 0))
             }
         })
+        traceCef("cef-get-text-return")
     }
 
     fun previewLifecycleEvidence(editor: Editor): String {
