@@ -32,6 +32,14 @@ on:
           - osr
           - windowed
         default: osr
+      jcef_lifecycle_execution_mode:
+        description: 'Diagnostic JCEF process mode: real IDE default Remote or in-process alternative'
+        required: false
+        type: choice
+        options:
+          - remote
+          - in_process
+        default: remote
 
 permissions:
   contents: read
@@ -424,15 +432,28 @@ jobs:
         shell: bash
         env:
           JCEF_STRESS_RENDER_MODE: ${{ inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ inputs.jcef_lifecycle_execution_mode || 'remote' }}
         run: |
           set -euo pipefail
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
+            echo "::error::Unsupported JCEF process mode: $JCEF_STRESS_EXECUTION_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_RENDER_MODE" == osr || "$JCEF_STRESS_RENDER_MODE" == windowed ]] || {
+            echo "::error::Unsupported JCEF render mode: $JCEF_STRESS_RENDER_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == in_process || "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+            echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
+            exit 1
+          }
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
           test_status=0
           set +e
-          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" \
+          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -442,8 +463,8 @@ jobs:
 
           # Never let a skipped test or incomplete iteration count look like PASS.
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'source_head=%s\nmode=jcef-lifecycle-stress\nfull_differential_acceptance=false\n' \
-            "$STARTER_SOURCE_SHA" > "$pass_dir/workflow-contract.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-stress\nexecution_mode=%s\nrender_mode=%s\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" > "$pass_dir/workflow-contract.txt"
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
             echo "::error::JCEF stress changed the exact plugin artifact"
             exit 1

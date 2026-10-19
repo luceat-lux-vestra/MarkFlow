@@ -73,7 +73,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
         check(version == "2026.2.3") { "Use the pinned Full Differential platform" }
         val renderMode = System.getenv("MARKFLOW_JCEF_STRESS_RENDER_MODE") ?: "osr"
         require(renderMode == "osr" || renderMode == "windowed")
+        val executionMode = System.getenv("MARKFLOW_JCEF_STRESS_EXECUTION_MODE") ?: "remote"
+        require(executionMode == "remote" || executionMode == "in_process")
+        val expectedRemote = executionMode == "remote"
         val expectedOsr = renderMode == "osr"
+        require(!expectedRemote || expectedOsr) {
+            "Pinned IDEA 2026.2.3 forces OSR for out-of-process JCEF"
+        }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let { process ->
                 val sha = process.inputStream.bufferedReader().readText().trim()
@@ -91,7 +97,8 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 "source_head=$sourceHead\nide_version=$version\n" +
                 "iterations=$iterations\nfixture=$fileName\n" +
                 "scope=diagnostic-only-not-full-differential-acceptance\n" +
-                "render_mode=$renderMode\nexpected_jcef_remote=false\nretries=0\n", StandardCharsets.UTF_8)
+                "render_mode=$renderMode\nexecution_mode=$executionMode\n" +
+                "expected_jcef_remote=$expectedRemote\nretries=0\n", StandardCharsets.UTF_8)
 
         val sandbox = Files.createTempDirectory("markflow-353-jcef-stress-")
         val project = sandbox.resolve("project")
@@ -115,9 +122,9 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
                 addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
-                // Keep JCEF execution mode identical for both OSR and windowed experiments.
-                // IDEA 2026.2.3 otherwise forces OSR when out-of-process JCEF is enabled.
-                addSystemProperty("jcef.remote.enabled", false)
+                // Default Remote JCEF must use IDEA's untouched production setting.
+                // The in-process variant is a separate, explicitly requested experiment.
+                if (!expectedRemote) addSystemProperty("jcef.remote.enabled", false)
                 if (!expectedOsr) addSystemProperty("ide.browser.jcef.markdownView.osr.enabled", false)
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
@@ -137,9 +144,10 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 }
                 Files.writeString(output.resolve("jcef-runtime-evidence.txt"),
                     jcefRuntime, StandardCharsets.UTF_8)
-                check(jcefRuntime.contains("idea_jcef_remote_property=false\n") &&
-                    jcefRuntime.contains("idea_jcef_remote_enabled=false\n")) {
-                    "JCEF in-process mode is unavailable or was not selected:\n$jcefRuntime"
+                check(jcefRuntime.contains("idea_jcef_remote_enabled=$expectedRemote\n") &&
+                    (expectedRemote ||
+                        jcefRuntime.contains("idea_jcef_remote_property=false\n"))) {
+                    "JCEF execution mode differs from $executionMode:\n$jcefRuntime"
                 }
                 val robot = Robot()
                 val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
@@ -184,10 +192,10 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             preview.referenceBrowserIdentity(remoteEditor)
                         }
                         record("panel-showing", identity)
-                        check(identity.contains("jcef_remote_enabled=false\n") &&
+                        check(identity.contains("jcef_remote_enabled=$expectedRemote\n") &&
                             identity.contains("registry_markdown_osr=$expectedOsr\n") &&
                             identity.contains("browser_offscreen_rendering=$expectedOsr\n")) {
-                            "JCEF rendering mode mismatch for $renderMode iteration $iteration: $identity"
+                            "JCEF execution/rendering mode mismatch for $executionMode/$renderMode iteration $iteration: $identity"
                         }
                         check(identity.contains("jbcef_disposed=false\n") &&
                             identity.contains("panel_showing=true\n")) {
