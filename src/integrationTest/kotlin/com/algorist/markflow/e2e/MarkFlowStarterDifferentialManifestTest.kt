@@ -276,6 +276,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseRemoteEditor: Editor? = null
                     var caseStamp: Long? = null
                     var caseFailure: Throwable? = null
+                    var caseReferenceCloseMarker: Path? = null
                     var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
@@ -601,7 +602,13 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 firstFailureLifecycle,
                                             StandardCharsets.UTF_8
                                         )
+                                        val recoveryCloseMarker = dest.resolve(
+                                            "reference-native-close-recovery.marker"
+                                        ).toAbsolutePath().normalize()
                                         driver.withContext(OnDispatcher.EDT) {
+                                            preview.armDetachedReferenceBrowserCloseMarker(
+                                                recoveryCloseMarker.toString()
+                                            )
                                             preview.restoreNative(remoteEditor)
                                         }
                                         waitFor(
@@ -631,9 +638,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                             message = "Bundled Preview native browser closed for recovery: " +
                                                 entry.id,
                                             timeout = 20.seconds,
-                                            getter = { driver.withContext(OnDispatcher.EDT) {
-                                                preview.detachedReferenceBrowserClosed()
-                                            } },
+                                            getter = { Files.exists(recoveryCloseMarker) },
                                             checker = { it }
                                         )
                                         heartbeat("case-reference-browser-closed", entry.id)
@@ -905,7 +910,15 @@ class MarkFlowStarterDifferentialManifestTest {
                             preview.sourceUnsaved(remoteEditor)
                         })
                         if (entry.comparable) {
-                            driver.withContext(OnDispatcher.EDT) { preview.restoreNative(remoteEditor) }
+                            caseReferenceCloseMarker = dest.resolve(
+                                "reference-native-close-cleanup.marker"
+                            ).toAbsolutePath().normalize()
+                            driver.withContext(OnDispatcher.EDT) {
+                                preview.armDetachedReferenceBrowserCloseMarker(
+                                    requireNotNull(caseReferenceCloseMarker).toString()
+                                )
+                                preview.restoreNative(remoteEditor)
+                            }
                             waitFor(
                                 message = "Native restored: " + entry.id, timeout = 20.seconds,
                                 getter = { driver.withContext(OnDispatcher.EDT) {
@@ -1668,51 +1681,70 @@ class MarkFlowStarterDifferentialManifestTest {
                                         },
                                     StandardCharsets.UTF_8
                                 )
-                                driver.withContext(OnDispatcher.EDT) {
-                                    preview.restoreNative(remote)
+                                val cleanupCloseMarker = if (entry.comparable) {
+                                    caseReferenceCloseMarker ?: dest.resolve(
+                                        "reference-native-close-cleanup.marker"
+                                    ).toAbsolutePath().normalize().also { marker ->
+                                        caseReferenceCloseMarker = marker
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.armDetachedReferenceBrowserCloseMarker(
+                                                marker.toString()
+                                            )
+                                            preview.restoreNative(remote)
+                                        }
+                                    }
+                                } else {
+                                    null
                                 }
-                                waitFor(
-                                    message = "Bundled Preview panel detached before close: " +
-                                        entry.id,
-                                    timeout = 20.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
+                                if (cleanupCloseMarker != null) {
+                                    waitFor(
+                                        message = "Bundled Preview panel detached before close: " +
+                                            entry.id,
+                                        timeout = 20.seconds,
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeShowing(remote) &&
+                                                !preview.referencePanelAttached(remote)
+                                        } },
+                                        checker = { it }
+                                    )
+                                    Files.writeString(
+                                        dest.resolve("reference-lifecycle.txt"),
+                                        "phase=after-hide\n" +
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.previewLifecycleEvidence(remote)
+                                            } +
+                                            "phase=native-close-wait-start\n" +
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.detachedReferenceBrowserEvidence()
+                                            },
+                                        StandardCharsets.UTF_8,
+                                        java.nio.file.StandardOpenOption.APPEND
+                                    )
+                                    waitFor(
+                                        message = "Bundled Preview native browser closed before next case: " +
+                                            entry.id,
+                                        timeout = 20.seconds,
+                                        getter = { Files.exists(cleanupCloseMarker) },
+                                        checker = { it }
+                                    )
+                                    heartbeat("case-reference-native-close-complete", entry.id)
+                                    Files.writeString(
+                                        dest.resolve("reference-lifecycle.txt"),
+                                        "phase=native-close-complete\n" +
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.detachedReferenceBrowserEvidence()
+                                            },
+                                        StandardCharsets.UTF_8,
+                                        java.nio.file.StandardOpenOption.APPEND
+                                    )
+                                } else {
+                                    check(driver.withContext(OnDispatcher.EDT) {
                                         preview.nativeShowing(remote) &&
                                             !preview.referencePanelAttached(remote)
-                                    } },
-                                    checker = { it }
-                                )
-                                Files.writeString(
-                                    dest.resolve("reference-lifecycle.txt"),
-                                    "phase=after-hide\n" +
-                                        driver.withContext(OnDispatcher.EDT) {
-                                            preview.previewLifecycleEvidence(remote)
-                                        } +
-                                        "phase=native-close-wait-start\n" +
-                                        driver.withContext(OnDispatcher.EDT) {
-                                            preview.detachedReferenceBrowserEvidence()
-                                        },
-                                    StandardCharsets.UTF_8,
-                                    java.nio.file.StandardOpenOption.APPEND
-                                )
-                                waitFor(
-                                    message = "Bundled Preview native browser closed before next case: " +
-                                        entry.id,
-                                    timeout = 20.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
-                                        preview.detachedReferenceBrowserClosed()
-                                    } },
-                                    checker = { it }
-                                )
-                                heartbeat("case-reference-native-close-complete", entry.id)
-                                Files.writeString(
-                                    dest.resolve("reference-lifecycle.txt"),
-                                    "phase=native-close-complete\n" +
-                                        driver.withContext(OnDispatcher.EDT) {
-                                            preview.detachedReferenceBrowserEvidence()
-                                        },
-                                    StandardCharsets.UTF_8,
-                                    java.nio.file.StandardOpenOption.APPEND
-                                )
+                                    }) {
+                                        "Diagnostic-only case lost native layout before close: " + entry.id
+                                    }
+                                }
                                 markFlow.closeMarkdown(remote, entry.id + ".md")
                                 waitFor(
                                     message = "MarkFlow derived JCEF runtime returns to baseline: " +
@@ -3038,8 +3070,8 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceStamp(editor: Editor): Long
     fun primaryCaretOffset(editor: Editor): Int
     fun sourceUnsaved(editor: Editor): Boolean
+    fun armDetachedReferenceBrowserCloseMarker(markerPath: String)
     fun restoreNative(editor: Editor)
-    fun detachedReferenceBrowserClosed(): Boolean
     fun detachedReferenceBrowserEvidence(): String
     fun nativeShowing(editor: Editor): Boolean
 }
