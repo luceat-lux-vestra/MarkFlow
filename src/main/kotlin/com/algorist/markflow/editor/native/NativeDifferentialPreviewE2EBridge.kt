@@ -10,6 +10,7 @@ import java.awt.Container
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefApp
 import com.intellij.openapi.util.registry.Registry
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
@@ -646,6 +647,16 @@ internal object NativeDifferentialPreviewE2EBridge {
             panelComponent.height > 100
     }
 
+    // JBCefApp.isRemoteEnabled() is package-private in pinned IDEA 2026.2.3.
+    // Fail closed if JetBrains changes this diagnostic-only reflection boundary.
+    private fun jcefRemoteEnabled(): Boolean {
+        val app = JBCefApp.getInstance()
+        val method = app.javaClass.getDeclaredMethod("isRemoteEnabled")
+        check(method.trySetAccessible()) { "Cannot inspect actual JCEF execution mode" }
+        return method.invoke(app) as? Boolean
+            ?: error("Unexpected JBCefApp.isRemoteEnabled() result")
+    }
+
     /**
      * Read-only identity of the active *bundled* Markdown Preview browser.
      * The diagnostic can distinguish repeated native browser creation from
@@ -666,6 +677,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             "browser_identity=" + System.identityHashCode(browser),
             "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
             "jbcef_disposed=" + browser.isDisposed,
+            "jcef_remote_enabled=" + jcefRemoteEnabled(),
             "registry_markdown_osr=" + Registry.`is`("ide.browser.jcef.markdownView.osr.enabled"),
             "browser_offscreen_rendering=" + browser.isOffScreenRendering,
             "panel_showing=" + referencePanelShowing(editor),
@@ -739,6 +751,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "idea_process_command=" + command,
             "idea_proc_self_exe=" + executable,
             "idea_java_home=" + System.getProperty("java.home", "UNKNOWN"),
+            "idea_jcef_remote_property=" + System.getProperty("jcef.remote.enabled", "UNSET"),
+            "idea_jcef_remote_enabled=" + jcefRemoteEnabled(),
             "idea_apparmor_current=" + read("/proc/self/attr/current"),
             "kernel_apparmor_restrict_unprivileged_userns=" +
                 read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
