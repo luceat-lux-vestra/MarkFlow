@@ -645,6 +645,30 @@ internal object NativeDifferentialPreviewE2EBridge {
             panelComponent.height > 100
     }
 
+    /**
+     * Read-only identity of the active *bundled* Markdown Preview browser.
+     * The diagnostic can distinguish repeated native browser creation from
+     * accidental session reuse without changing the production lifecycle.
+     */
+    fun referenceBrowserIdentity(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Markdown Preview has no active browser panel"
+        }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        return listOf(
+            "schema=markflow-bundled-preview-active-browser/v1",
+            "preview_identity=" + System.identityHashCode(preview),
+            "panel_identity=" + System.identityHashCode(panel),
+            "browser_identity=" + System.identityHashCode(browser),
+            "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
+            "jbcef_disposed=" + browser.isDisposed,
+            "panel_showing=" + referencePanelShowing(editor),
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
     fun previewLifecycleEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
