@@ -188,6 +188,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             } },
                             checker = { it }
                         )
+                        // Attach the per-browser CEF load tracer while the real
+                        // bundled panel is live. No retries or extra load requests.
+                        val loadTrace = dest.resolve("jcef-load-events.tsv")
+                        driver.withContext(OnDispatcher.EDT) {
+                            preview.installReferenceLoadTrace(remoteEditor, loadTrace.toString())
+                        }
+                        record("load-trace-installed", "load_events_file=" + loadTrace + "\n")
                         val identity = driver.withContext(OnDispatcher.EDT) {
                             preview.referenceBrowserIdentity(remoteEditor)
                         }
@@ -471,6 +478,7 @@ private interface JcefStressPreviewRemote {
     fun referencePanelShowing(editor: Editor): Boolean
     fun referencePanelAttached(editor: Editor): Boolean
     fun referenceBrowserIdentity(editor: Editor): String
+    fun installReferenceLoadTrace(editor: Editor, traceFile: String)
     fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String)
     fun referenceBounds(editor: Editor): String
     fun jcefRuntimeEvidence(): String

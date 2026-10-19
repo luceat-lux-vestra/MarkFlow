@@ -15,6 +15,10 @@ import com.intellij.openapi.util.registry.Registry
 import org.cef.browser.CefBrowser
 import org.cef.callback.CefStringVisitor
 import org.cef.handler.CefLifeSpanHandlerAdapter
+import org.cef.handler.CefLoadHandlerAdapter
+import org.cef.handler.CefLoadHandler
+import org.cef.browser.CefFrame
+import org.cef.network.CefRequest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.Rectangle
 import java.nio.file.Files
@@ -42,6 +46,14 @@ internal object NativeDifferentialPreviewE2EBridge {
     private var lastDetachedReferenceBeforeClose = AtomicBoolean(true)
     private var nextDetachedReferenceCloseMarker: Path? = null
     private var lastDetachedReferenceCloseMarker: Path? = null
+    // Exactly one diagnostic listener per live bundled Preview; removed before
+    // that panel's normal disposal so successive iterations do not accumulate it.
+    private data class ReferenceLoadTrace(
+        val browser: JBCefBrowser,
+        val handler: CefLoadHandlerAdapter,
+        val path: Path,
+    )
+    private var referenceLoadTrace: ReferenceLoadTrace? = null
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
@@ -689,6 +701,93 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
+     * #353 diagnostic only: correlate CEF page-load events with getText callback
+     * timestamps. Called after bundled panel attachment and before waiting for
+     * native creation; never changes page loading or the production Preview.
+     * Missing load-start events are possible if registration was late; the
+     * registration timestamp is always present to make that visible.
+     */
+    fun installReferenceLoadTrace(editor: Editor, traceFile: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(referenceLoadTrace == null) { "Previous bundled Preview load trace was not removed" }
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Preview was not attached for load trace"
+        }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        check(!browser.isDisposed) { "Cannot trace an already disposed bundled browser" }
+        val cefBrowser = browser.getCefBrowser()
+        val path = Path.of(traceFile).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent) { "Load trace has no parent" })
+        check(!Files.exists(path)) { "Bundled load trace already exists: $path" }
+        val traceLock = Any()
+        fun trace(event: String, detail: String = "") {
+            val atMs = System.currentTimeMillis()
+            synchronized(traceLock) {
+                runCatching {
+                    Files.writeString(
+                        path,
+                        "timestamp_ms=" + atMs +
+                            "\tevent=" + event +
+                            "\tthread=" + Thread.currentThread().name +
+                            "\tbrowser_identity=" + System.identityHashCode(browser) +
+                            "\tcef_identity=" + System.identityHashCode(cefBrowser) +
+                            "\t" + detail + "\n",
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND,
+                    )
+                }
+            }
+        }
+        val handler = object : CefLoadHandlerAdapter() {
+            override fun onLoadingStateChange(
+                callbackBrowser: CefBrowser, isLoading: Boolean,
+                canGoBack: Boolean, canGoForward: Boolean,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("loading-state-change", "is_loading=" + isLoading)
+                }
+            }
+
+            override fun onLoadStart(
+                callbackBrowser: CefBrowser, frame: CefFrame,
+                transitionType: CefRequest.TransitionType,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    // No synchronous frame RPC from CEF's callback thread.
+                    trace("load-start", "frame_identity=" + System.identityHashCode(frame) +
+                        "\ttransition=" + transitionType)
+                }
+            }
+
+            override fun onLoadEnd(
+                callbackBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("load-end", "frame_identity=" + System.identityHashCode(frame) +
+                        "\thttp_status=" + httpStatusCode)
+                }
+            }
+
+            override fun onLoadError(
+                callbackBrowser: CefBrowser, frame: CefFrame,
+                errorCode: CefLoadHandler.ErrorCode, errorText: String, failedUrl: String,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("load-error", "frame_identity=" + System.identityHashCode(frame) +
+                        "\terror_code=" + errorCode)
+                }
+            }
+        }
+        trace("load-handler-registration-start",
+            "native_created=" + browser.isCefBrowserCreated)
+        browser.getJBCefClient().addLoadHandler(handler, cefBrowser)
+        referenceLoadTrace = ReferenceLoadTrace(browser, handler, path)
+        trace("load-handler-registered")
+    }
+
+    /**
      * An asynchronous, exact-bundled-CEF DOM-text probe. The host must not
      * block the IDE/EDT waiting for CefStringVisitor: on-screen text is only
      * accepted after the native browser is created and CEF returns the actual
@@ -866,6 +965,26 @@ internal object NativeDifferentialPreviewE2EBridge {
         val closeMarker = nextDetachedReferenceCloseMarker
         nextDetachedReferenceCloseMarker = null
         lastDetachedReferenceCloseMarker = closeMarker
+        // Stop diagnostic load listeners before the genuine JCEF disposal path.
+        // Do not retain one per iteration on a shared client.
+        referenceLoadTrace?.let { loadTrace ->
+            val stillAttached = previewPanel(preview)
+            check(stillAttached === loadTrace.browser) {
+                "Load trace browser identity differs from the bundled Preview being closed"
+            }
+            loadTrace.browser.getJBCefClient().removeLoadHandler(
+                loadTrace.handler, loadTrace.browser.getCefBrowser()
+            )
+            Files.writeString(
+                loadTrace.path,
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=load-handler-removed\tthread=" +
+                    Thread.currentThread().name + "\n",
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND,
+            )
+            referenceLoadTrace = null
+        }
         // Capture the actual JBCefBrowser before MarkdownPreviewFileEditor hides
         // and nulls its panel. Do not clear an existing tracker when the panel is
         // already detached: normal acceptance may restore native earlier and the
