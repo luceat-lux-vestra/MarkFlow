@@ -790,12 +790,44 @@ internal object NativeDifferentialPreviewE2EBridge {
             val beforeClose = AtomicBoolean(false)
             val panelIdentity = System.identityHashCode(panel)
             val browserIdentity = System.identityHashCode(browser)
+            // Diagnostic-only event journal. In particular, a missing marker alone
+            // cannot distinguish a missing native callback from a swallowed
+            // filesystem write failure. Persist native callbacks on their own
+            // thread; the host timeout must not make a Driver/EDT round-trip.
+            val eventLog = closeMarker?.resolveSibling("native-close.events")
+            fun recordNativeCloseEvent(phase: String, closingBrowser: CefBrowser? = null) {
+                eventLog?.let { log ->
+                    runCatching {
+                        Files.writeString(
+                            log,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                " phase=" + phase +
+                                " thread=" + Thread.currentThread().name +
+                                " panel_identity=" + panelIdentity +
+                                " browser_identity=" + browserIdentity +
+                                " cef_identity=" + System.identityHashCode(cefBrowser) +
+                                " callback_cef_identity=" +
+                                    (closingBrowser?.let { System.identityHashCode(it) } ?: "NONE") +
+                                " cef_same=" + (closingBrowser === cefBrowser) + "\n",
+                            java.nio.file.StandardOpenOption.CREATE,
+                            java.nio.file.StandardOpenOption.APPEND,
+                        )
+                    }
+                }
+            }
+            recordNativeCloseEvent("handler-registration-start")
             browser.getJBCefClient().addLifeSpanHandler(
                 object : CefLifeSpanHandlerAdapter() {
+                    override fun doClose(closingBrowser: CefBrowser): Boolean {
+                        recordNativeCloseEvent("cef-do-close", closingBrowser)
+                        return false // Preserve CefLifeSpanHandlerAdapter default behavior.
+                    }
+
                     override fun onBeforeClose(closingBrowser: CefBrowser) {
+                        recordNativeCloseEvent("cef-on-before-close", closingBrowser)
                         if (closingBrowser === cefBrowser && beforeClose.compareAndSet(false, true)) {
                             closeMarker?.let { marker ->
-                                runCatching {
+                                val write = runCatching {
                                     Files.writeString(
                                         marker,
                                         "schema=markflow-bundled-preview-native-close-marker/v1\n" +
@@ -804,12 +836,18 @@ internal object NativeDifferentialPreviewE2EBridge {
                                             "cef_before_close_observed=true\n"
                                     )
                                 }
+                                recordNativeCloseEvent(
+                                    if (write.isSuccess) "native-marker-written" else
+                                        "native-marker-write-failed-" +
+                                            write.exceptionOrNull()?.javaClass?.simpleName
+                                )
                             }
                         }
                     }
                 },
                 cefBrowser,
             )
+            recordNativeCloseEvent("handler-registered")
             lastDetachedReferenceBrowser = browser
             lastDetachedReferencePanelIdentity = panelIdentity
             lastDetachedReferenceBeforeClose = beforeClose
