@@ -13,7 +13,6 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.openapi.util.registry.Registry
 import org.cef.browser.CefBrowser
-import org.cef.callback.CefStringVisitor
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefLoadHandler
@@ -671,6 +670,30 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
+     * #353 diagnostic-only compatibility seam. IntelliJ's internal
+     * isCefBrowserCreated() reports actual native creation (not Swing
+     * visibility, content readiness, or a heuristic CefBrowser identifier).
+     * Retain its exact Boolean semantics without a statically linked
+     * INTERNAL_API_USAGES reference in the packaged test bridge. If the pinned
+     * IDE changes this method, fail closed instead of reporting 'not created'.
+     * This is still an internal API dependency, not a public compatibility fix.
+     */
+    private val nativeBrowserCreatedAccessor by lazy {
+        JBCefBrowser::class.java.getMethod("isCefBrowserCreated").also { method ->
+            check(method.parameterCount == 0 &&
+                method.returnType == Boolean::class.javaPrimitiveType) {
+                "Unexpected JBCefBrowser native-created accessor contract"
+            }
+        }
+    }
+
+    private fun nativeBrowserCreated(browser: JBCefBrowser): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return nativeBrowserCreatedAccessor.invoke(browser) as? Boolean
+            ?: error("JBCefBrowser native-created accessor returned non-Boolean")
+    }
+
+    /**
      * Read-only identity of the active *bundled* Markdown Preview browser.
      * The diagnostic can distinguish repeated native browser creation from
      * accidental session reuse without changing the production lifecycle.
@@ -689,7 +712,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             "panel_identity=" + System.identityHashCode(panel),
             "browser_identity=" + System.identityHashCode(browser),
             "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
-            "native_browser_created=" + browser.isCefBrowserCreated,
+            "native_browser_created=" + nativeBrowserCreated(browser),
             "cef_browser_closing=" + browser.getCefBrowser().isClosing,
             "cef_browser_closed=" + browser.getCefBrowser().isClosed,
             "jbcef_disposed=" + browser.isDisposed,
@@ -781,7 +804,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             }
         }
         trace("load-handler-registration-start",
-            "native_created=" + browser.isCefBrowserCreated)
+            "native_created=" + nativeBrowserCreated(browser))
         browser.getJBCefClient().addLoadHandler(handler, cefBrowser)
         referenceLoadTrace = ReferenceLoadTrace(browser, handler, path)
         trace("load-handler-registered")
@@ -799,7 +822,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panel = checkNotNull(previewPanel(preview)) { "No bundled Preview for DOM text probe" }
         val browser = panel as? JBCefBrowser
             ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
-        check(!browser.isDisposed && browser.isCefBrowserCreated) {
+        check(!browser.isDisposed && nativeBrowserCreated(browser)) {
             "Cannot request rendered text before native browser creation"
         }
         val cef = browser.getCefBrowser()
@@ -825,7 +848,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             }
         }
         traceCef("cef-get-text-invoke")
-        cef.getText(CefStringVisitor { text ->
+        cef.getText { text ->
             // CefStringVisitor is asynchronous: do not dispatch back to the EDT.
             // Record callback ARRIVAL before writing the result file.
             traceCef("cef-text-callback", "chars=" + (text?.length ?: 0))
@@ -849,7 +872,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             } else {
                 traceCef("cef-text-file-written", "chars=" + (text?.length ?: 0))
             }
-        })
+        }
         traceCef("cef-get-text-return")
     }
 
