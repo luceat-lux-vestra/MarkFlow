@@ -178,6 +178,17 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 }
                 val robot = Robot()
                 val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
+                // Opt-in only: 2 direct-split opens are enough to identify the
+                // first overwritten platform panel before a 50-run experiment.
+                val traceOwner = iterationMode == "preflight_2" &&
+                    initialOpenMode == "direct_split"
+                if (traceOwner) {
+                    driver.withContext(OnDispatcher.EDT) {
+                        preview.startReferencePanelOwnerTrace(
+                            fileName, output.resolve("panel-ownership-events.tsv").toString()
+                        )
+                    }
+                }
                 for (number in 1..iterations) {
                     val iteration = number.toString().padStart(3, '0')
                     val dest = output.resolve("iteration-$iteration")
@@ -558,6 +569,11 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         record("post-detach-wrapper", driver.withContext(OnDispatcher.EDT) {
                             preview.previewLifecycleEvidence(remoteEditor)
                         })
+                        if (traceOwner) {
+                            record("post-detach-owner-trace", driver.withContext(OnDispatcher.EDT) {
+                                preview.snapshotReferencePanelOwnerTrace("after-detach")
+                            })
+                        }
                         // This is host process polling only: do not call Driver/EDT
                         // from the wait getter. A missing callback is a hard FAIL.
                         try {
@@ -596,6 +612,11 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         markFlow.closeMarkdown(remoteEditor, fileName)
                         completed++
                         record("file-editor-closed")
+                        if (traceOwner) {
+                            record("post-file-close-owner-trace", driver.withContext(OnDispatcher.EDT) {
+                                preview.snapshotReferencePanelOwnerTrace("after-file-close")
+                            })
+                        }
                     } catch (cause: Throwable) {
                         // Preserve the first substantive failure and its last
                         // screenshot/marker evidence. Do not rerun or recover.
@@ -604,6 +625,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         deferredFailure = cause
                         break
                     }
+                }
+                if (traceOwner) {
+                    val finalOwnerState = driver.withContext(OnDispatcher.EDT) {
+                        preview.finishReferencePanelOwnerTrace()
+                    }
+                    Files.writeString(output.resolve("panel-ownership-final.txt"),
+                        finalOwnerState, StandardCharsets.UTF_8)
                 }
                 // As in Full Differential, defer a fatal exception until the
                 // Starter IDE shutdown boundary so diagnostics aren't gathered
@@ -649,6 +677,9 @@ private interface JcefStressPreviewRemote {
     fun referencePanelAttached(editor: Editor): Boolean
     fun referenceBrowserIdentity(editor: Editor): String
     fun previewLifecycleEvidence(editor: Editor): String
+    fun startReferencePanelOwnerTrace(filename: String, outputPath: String)
+    fun snapshotReferencePanelOwnerTrace(phase: String): String
+    fun finishReferencePanelOwnerTrace(): String
     fun prepareReferenceSplitAtOpen(editor: Editor): String
     fun installReferenceLoadTrace(editor: Editor, traceFile: String)
     fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String)

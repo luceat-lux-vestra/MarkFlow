@@ -5,8 +5,14 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import java.awt.AWTEvent
 import java.awt.Component
 import java.awt.Container
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.ContainerEvent
+import java.lang.ref.WeakReference
+import com.intellij.openapi.project.ProjectManager
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
@@ -53,6 +59,160 @@ internal object NativeDifferentialPreviewE2EBridge {
         val path: Path,
     )
     private var referenceLoadTrace: ReferenceLoadTrace? = null
+
+    // #353 2-open, direct_split-only ownership probe. Capture the platform's
+    // synchronous ContainerEvent at the point MarkdownPreviewFileEditor has
+    // stored its current panel but before a subsequent attach can overwrite it.
+    // No panel creation/disposal, no waiting, no synthetic CEF events.
+    private data class ObservedPanelOwner(
+        val wrapperId: Int,
+        val componentId: Int,
+        val panelId: Int,
+        val browserId: Int,
+        val cefId: Int,
+        val browser: WeakReference<JBCefBrowser>,
+    )
+    private class PanelOwnerTrace(
+        val path: Path,
+        val filename: String,
+        val listener: AWTEventListener,
+        val observed: MutableList<ObservedPanelOwner> = mutableListOf(),
+    )
+    private var panelOwnerTrace: PanelOwnerTrace? = null
+
+    /** Locate the real platform preview on EDT; never instantiate an editor. */
+    private fun resolvePreviewWrapperOwner(
+        wrapper: Container, child: Component, filename: String
+    ): JBCefBrowser? {
+        for (project in ProjectManager.getInstance().openProjects) {
+            val manager = FileEditorManager.getInstance(project)
+            for (file in manager.openFiles) {
+                if (file.name != filename) continue
+                for (selected in manager.getEditors(file).filterIsInstance<TextEditorWithPreview>()) {
+                    if (selected.javaClass.name != MARKDOWN_SPLIT) continue
+                    val field = TextEditorWithPreview::class.java.getDeclaredField("myPreview")
+                    check(field.trySetAccessible()) { "Preview field reflection changed" }
+                    val preview = field.get(selected) as? FileEditor ?: continue
+                    if (preview.javaClass.name != MARKDOWN_PREVIEW ||
+                        preview.component !== wrapper) continue
+                    val panel = previewPanel(preview) as? JBCefBrowser ?: continue
+                    if (panel.component === child) return panel
+                }
+            }
+        }
+        return null
+    }
+
+    private fun cefNativeId(browser: JBCefBrowser): String = runCatching {
+        val cef = browser.getCefBrowser()
+        cef.javaClass.getMethod("getIdentifier").invoke(cef).toString()
+    }.getOrElse { "UNAVAILABLE_" + it.javaClass.simpleName }
+
+    /**
+     * Register before opening the Markdown file. Restrict capture to actual
+     * JBLoadingPanel additions/removals; record unsuccessful owner lookups too
+     * so a missing binding can never masquerade as absence of duplicate attach.
+     */
+    fun startReferencePanelOwnerTrace(filename: String, outputPath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(panelOwnerTrace == null) { "Panel owner trace already armed" }
+        require(filename == "JCEF-LIFECYCLE-STRESS.md")
+        val path = Path.of(outputPath).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent))
+        Files.deleteIfExists(path)
+        lateinit var listener: AWTEventListener
+        listener = AWTEventListener { event ->
+            val containerEvent = event as? ContainerEvent ?: return@AWTEventListener
+            val child = containerEvent.child ?: return@AWTEventListener
+            if (child.javaClass.name != "com.intellij.ui.components.JBLoadingPanel") {
+                return@AWTEventListener
+            }
+            val parent = containerEvent.container
+            val eventName = when (containerEvent.id) {
+                ContainerEvent.COMPONENT_ADDED -> "component-added"
+                ContainerEvent.COMPONENT_REMOVED -> "component-removed"
+                else -> return@AWTEventListener
+            }
+            val trace = panelOwnerTrace ?: return@AWTEventListener
+            // Observation errors are recorded, not propagated to platform EDT.
+            val line = runCatching {
+                val owner = resolvePreviewWrapperOwner(parent, child, trace.filename)
+                if (eventName == "component-added" && owner != null) {
+                    val cef = owner.getCefBrowser()
+                    trace.observed.add(ObservedPanelOwner(
+                        System.identityHashCode(parent),
+                        System.identityHashCode(child),
+                        System.identityHashCode(owner),
+                        System.identityHashCode(owner),
+                        System.identityHashCode(cef),
+                        WeakReference(owner),
+                    ))
+                }
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=" + eventName +
+                    "\twrapper_identity=" + System.identityHashCode(parent) +
+                    "\tcomponent_identity=" + System.identityHashCode(child) +
+                    "\towner_resolved=" + (owner != null) +
+                    "\tpanel_identity=" + (owner?.let { System.identityHashCode(it) } ?: "NONE") +
+                    "\tcef_identity=" + (owner?.let { System.identityHashCode(it.getCefBrowser()) } ?: "NONE") +
+                    "\tcef_native_id=" + (owner?.let(::cefNativeId) ?: "NONE")
+            }.getOrElse { error ->
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=" + eventName +
+                    "\twrapper_identity=" + System.identityHashCode(parent) +
+                    "\tcomponent_identity=" + System.identityHashCode(child) +
+                    "\tobservation_error=" + error.javaClass.name
+            }
+            runCatching {
+                Files.writeString(trace.path, line + "\n",
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND)
+            }
+        }
+        panelOwnerTrace = PanelOwnerTrace(path, filename, listener)
+        Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.CONTAINER_EVENT_MASK)
+    }
+
+    fun snapshotReferencePanelOwnerTrace(phase: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val trace = checkNotNull(panelOwnerTrace) { "Panel owner trace was not armed" }
+        require(phase == "after-detach" || phase == "after-file-close" || phase == "final")
+        val lines = trace.observed.mapIndexed { index, owner ->
+            val browser = owner.browser.get()
+            listOf(
+                "index=" + index,
+                "wrapper_identity=" + owner.wrapperId,
+                "component_identity=" + owner.componentId,
+                "panel_identity=" + owner.panelId,
+                "cef_identity=" + owner.cefId,
+                "browser_reachable=" + (browser != null),
+                "jbcef_disposed=" + (browser?.isDisposed?.toString() ?: "UNKNOWN"),
+                "cef_closing=" + (browser?.getCefBrowser()?.isClosing?.toString() ?: "UNKNOWN"),
+                "cef_closed=" + (browser?.getCefBrowser()?.isClosed?.toString() ?: "UNKNOWN"),
+                "cef_native_id=" + (browser?.let(::cefNativeId) ?: "UNKNOWN"),
+            ).joinToString(",")
+        }
+        val evidence = "schema=markflow-preview-owner-trace/v1\n" +
+            "phase=$phase\nobserved_panels=" + trace.observed.size + "\n" +
+            lines.joinToString("\n", postfix = "\n")
+        Files.writeString(trace.path,
+            "timestamp_ms=" + System.currentTimeMillis() +
+                "\tevent=snapshot\tphase=" + phase +
+                "\tobserved_panels=" + trace.observed.size + "\n" +
+                lines.joinToString("\n", postfix = "\n"),
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.APPEND)
+        return evidence
+    }
+
+    fun finishReferencePanelOwnerTrace(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val evidence = snapshotReferencePanelOwnerTrace("final")
+        val trace = checkNotNull(panelOwnerTrace)
+        Toolkit.getDefaultToolkit().removeAWTEventListener(trace.listener)
+        panelOwnerTrace = null
+        return evidence
+    }
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
