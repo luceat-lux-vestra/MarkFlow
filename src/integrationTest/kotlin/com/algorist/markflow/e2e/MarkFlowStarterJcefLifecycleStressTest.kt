@@ -194,22 +194,56 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         check(markFlow.source(opened) == fixture)
                         val stamp = markFlow.modificationStamp(opened)
                         record("source-opened", "initial_open_mode=$initialOpenMode\n")
+                        // Capture actual per-open state BEFORE a panel wait or layout change.
+                        // In particular, show whether the prior SHOW_EDITOR layout was restored.
+                        val openedPreviewState = driver.withContext(OnDispatcher.EDT) {
+                            preview.previewLifecycleEvidence(remoteEditor)
+                        }
+                        record("source-opened-preview-state", openedPreviewState)
                         var initialPanelIdentity: String? = null
                         if (initialOpenMode == "direct_split") {
-                            // The upstream MarkdownPreviewFileEditor schedules an
-                            // initial panel attach regardless of the editor layout.
-                            // Prove this run REUSES that panel rather than silently
-                            // comparing an entirely different creation path.
-                            waitFor(
-                                message = "Initial split Preview panel attached: stress iteration $iteration",
-                                timeout = 20.seconds,
-                                getter = {
+                            // No EditorOnly roundtrip. If IntelliJ restored SHOW_EDITOR
+                            // from the previous close, move directly to split, recording
+                            // that transition separately from the as-opened state.
+                            val splitPreparation = driver.withContext(OnDispatcher.EDT) {
+                                preview.prepareReferenceSplitAtOpen(remoteEditor)
+                            }
+                            record("split-layout-prepared", splitPreparation)
+                            val initialWaitState = driver.withContext(OnDispatcher.EDT) {
+                                preview.previewLifecycleEvidence(remoteEditor)
+                            }
+                            record("initial-panel-wait-start", initialWaitState)
+                            check(initialWaitState.contains("layout=SHOW_EDITOR_AND_PREVIEW\n")) {
+                                "Direct split initial layout was not established: $iteration: $initialWaitState"
+                            }
+                            // Prove the attached panel is reused on the subsequent
+                            // SHOW_PREVIEW transition, not silently replaced.
+                            try {
+                                waitFor(
+                                    message = "Initial split Preview panel attached: stress iteration $iteration",
+                                    timeout = 20.seconds,
+                                    getter = {
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.referencePanelAttached(remoteEditor)
+                                        }
+                                    },
+                                    checker = { it }
+                                )
+                            } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                                val timeoutState = runCatching {
                                     driver.withContext(OnDispatcher.EDT) {
-                                        preview.referencePanelAttached(remoteEditor)
+                                        preview.previewLifecycleEvidence(remoteEditor)
                                     }
-                                },
-                                checker = { it }
-                            )
+                                }.getOrElse { error ->
+                                    "evidence_error_class=" + error.javaClass.name +
+                                        "\nevidence_error_message=" + (error.message ?: "NONE") + "\n"
+                                }
+                                record("initial-panel-timeout",
+                                    "failure_class=INITIAL_PANEL_NOT_ATTACHED\n" + timeoutState)
+                                throw IllegalStateException(
+                                    "INITIAL_PANEL_NOT_ATTACHED: stress iteration $iteration", cause
+                                )
+                            }
                             val initial = driver.withContext(OnDispatcher.EDT) {
                                 preview.previewLifecycleEvidence(remoteEditor)
                             }
@@ -535,6 +569,7 @@ private interface JcefStressPreviewRemote {
     fun referencePanelAttached(editor: Editor): Boolean
     fun referenceBrowserIdentity(editor: Editor): String
     fun previewLifecycleEvidence(editor: Editor): String
+    fun prepareReferenceSplitAtOpen(editor: Editor): String
     fun installReferenceLoadTrace(editor: Editor, traceFile: String)
     fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String)
     fun referenceBounds(editor: Editor): String
