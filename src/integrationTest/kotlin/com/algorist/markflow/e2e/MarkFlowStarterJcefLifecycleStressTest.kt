@@ -38,7 +38,6 @@ import kotlin.time.Duration.Companion.seconds
  * No retry, sharding, native-close timeout expansion, or corpus modification.
  */
 class MarkFlowStarterJcefLifecycleStressTest {
-    private val iterations = 50
     private val fileName = "JCEF-LIFECYCLE-STRESS.md"
     private val renderedTextAnchorA = "One plain Markdown document is reopened for every iteration."
     private val renderedTextAnchorB = "The fourth simple paragraph keeps the visible vertical span nontrivial."
@@ -77,6 +76,16 @@ class MarkFlowStarterJcefLifecycleStressTest {
         require(executionMode == "remote" || executionMode == "in_process")
         val initialOpenMode = System.getenv("MARKFLOW_JCEF_STRESS_OPEN_MODE") ?: "editor_only_roundtrip"
         require(initialOpenMode == "editor_only_roundtrip" || initialOpenMode == "direct_split")
+        // 2-iteration preflight is opt-in, direct-split only. The default remains
+        // the full 50-iteration lifecycle stress contract; no arbitrary count.
+        val iterationMode = System.getenv("MARKFLOW_JCEF_STRESS_ITERATION_MODE") ?: "stress_50"
+        require(iterationMode == "stress_50" || iterationMode == "preflight_2") {
+            "Unsupported JCEF lifecycle diagnostic iteration mode: $iterationMode"
+        }
+        require(iterationMode != "preflight_2" || initialOpenMode == "direct_split") {
+            "Two-iteration preflight requires direct_split opening mode"
+        }
+        val iterations = if (iterationMode == "preflight_2") 2 else 50
         val expectedRemote = executionMode == "remote"
         val expectedOsr = renderMode == "osr"
         require(!expectedRemote || expectedOsr) {
@@ -97,7 +106,7 @@ class MarkFlowStarterJcefLifecycleStressTest {
         Files.writeString(output.resolve("run-contract.txt"),
             "schema=markflow-jcef-lifecycle-stress/v1\n" +
                 "source_head=$sourceHead\nide_version=$version\n" +
-                "iterations=$iterations\nfixture=$fileName\n" +
+                "mode=$iterationMode\niterations=$iterations\nfixture=$fileName\n" +
                 "scope=diagnostic-only-not-full-differential-acceptance\n" +
                 "render_mode=$renderMode\nexecution_mode=$executionMode\n" +
                 "initial_open_mode=$initialOpenMode\n" +
@@ -534,12 +543,12 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 "Stress diagnostic executed only $completed/$iterations lifecycle iterations"
             }
             Files.writeString(output.resolve("result.txt"),
-                "result=PASS\ncompleted=$completed\n" +
+                "result=PASS\nmode=$iterationMode\ncompleted=$completed\n" +
                     "scope=JCEF_LIFECYCLE_ONLY_NOT_VISUAL_ACCEPTANCE\n",
                 StandardCharsets.UTF_8)
         } catch (cause: Throwable) {
             Files.writeString(output.resolve("failure.txt"),
-                "result=FAIL\ncompleted=$completed\n" +
+                "result=FAIL\nmode=$iterationMode\ncompleted=$completed\n" +
                     "exception=" + cause.javaClass.name + "\n" +
                     "message=" + (cause.message ?: "NONE") + "\n",
                 StandardCharsets.UTF_8)
