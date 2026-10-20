@@ -75,15 +75,19 @@ class MarkFlowStarterJcefLifecycleStressTest {
         val executionMode = System.getenv("MARKFLOW_JCEF_STRESS_EXECUTION_MODE") ?: "remote"
         require(executionMode == "remote" || executionMode == "in_process")
         val initialOpenMode = System.getenv("MARKFLOW_JCEF_STRESS_OPEN_MODE") ?: "editor_only_roundtrip"
-        require(initialOpenMode == "editor_only_roundtrip" || initialOpenMode == "direct_split")
-        // 2-iteration preflight is opt-in, direct-split only. The default remains
+        require(initialOpenMode == "editor_only_roundtrip" ||
+            initialOpenMode == "direct_split" || initialOpenMode == "hidden_attach_then_split")
+        val splitOpen = initialOpenMode == "direct_split" ||
+            initialOpenMode == "hidden_attach_then_split"
+        // 2-iteration preflight is opt-in for either split counterfactual.
+        // The default remains
         // the full 50-iteration lifecycle stress contract; no arbitrary count.
         val iterationMode = System.getenv("MARKFLOW_JCEF_STRESS_ITERATION_MODE") ?: "stress_50"
         require(iterationMode == "stress_50" || iterationMode == "preflight_2") {
             "Unsupported JCEF lifecycle diagnostic iteration mode: $iterationMode"
         }
-        require(iterationMode != "preflight_2" || initialOpenMode == "direct_split") {
-            "Two-iteration preflight requires direct_split opening mode"
+        require(iterationMode != "preflight_2" || splitOpen) {
+            "Two-iteration preflight requires a split counterfactual opening mode"
         }
         val iterations = if (iterationMode == "preflight_2") 2 else 50
         val expectedRemote = executionMode == "remote"
@@ -193,7 +197,7 @@ class MarkFlowStarterJcefLifecycleStressTest {
                     try {
                         // Close the whole FileEditor after every iteration so the
                         // next open necessarily exercises the bundled browser path.
-                        val opened = if (initialOpenMode == "direct_split") {
+                        val opened = if (splitOpen) {
                             markFlow.openMarkdownWithoutEditorOnlyRoundTrip(fileName)
                         } else {
                             markFlow.openMarkdown(fileName)
@@ -210,10 +214,63 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         }
                         record("source-opened-preview-state", openedPreviewState)
                         var initialPanelIdentity: String? = null
-                        if (initialOpenMode == "direct_split") {
-                            // No EditorOnly roundtrip. If IntelliJ restored SHOW_EDITOR
-                            // from the previous close, move directly to split, recording
-                            // that transition separately from the as-opened state.
+                        var hiddenPanelIdentity: String? = null
+                        if (initialOpenMode == "hidden_attach_then_split") {
+                            // Distinguishing counterfactual: wait for the platform's
+                            // initialization attach while the Preview is still hidden,
+                            // then expose that same panel. No sleeps or forced disposal.
+                            if (number > 1) {
+                                record("hidden-layout-precondition", openedPreviewState)
+                                check(openedPreviewState.contains("layout=SHOW_EDITOR\n")) {
+                                    "HIDDEN_LAYOUT_PRECONDITION_NOT_MET: stress iteration $iteration"
+                                }
+                            }
+                            if (openedPreviewState.contains("layout=SHOW_EDITOR\n")) {
+                                record("hidden-panel-wait-start", openedPreviewState)
+                                try {
+                                    waitFor(
+                                        message = "Hidden initial Preview panel attached: stress iteration $iteration",
+                                        timeout = 20.seconds,
+                                        getter = {
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                preview.referencePanelAttached(remoteEditor)
+                                            }
+                                        },
+                                        checker = { it }
+                                    )
+                                } catch (cause: com.intellij.driver.sdk.WaitForException) {
+                                    val atTimeout = driver.withContext(OnDispatcher.EDT) {
+                                        preview.previewLifecycleEvidence(remoteEditor)
+                                    }
+                                    record("hidden-panel-timeout",
+                                        "failure_class=HIDDEN_PANEL_NOT_ATTACHED\n" + atTimeout)
+                                    throw IllegalStateException(
+                                        "HIDDEN_PANEL_NOT_ATTACHED: stress iteration $iteration", cause
+                                    )
+                                }
+                                val hidden = driver.withContext(OnDispatcher.EDT) {
+                                    preview.previewLifecycleEvidence(remoteEditor)
+                                }
+                                record("hidden-panel-attached", hidden)
+                                check(hidden.contains("layout=SHOW_EDITOR\n") &&
+                                    hidden.contains("panel_attached=true\n") &&
+                                    hidden.contains("preview_component_showing=false\n")) {
+                                    "HIDDEN_PANEL_STATE_CHANGED: stress iteration $iteration: $hidden"
+                                }
+                                val hiddenBrowser = driver.withContext(OnDispatcher.EDT) {
+                                    preview.referenceBrowserIdentity(remoteEditor)
+                                }
+                                record("hidden-browser", hiddenBrowser)
+                                hiddenPanelIdentity = hiddenBrowser.lineSequence()
+                                    .first { it.startsWith("browser_identity=") }.substringAfter('=')
+                            } else {
+                                record("hidden-panel-not-applicable", openedPreviewState)
+                            }
+                        }
+                        if (splitOpen) {
+                            // direct_split: request split immediately after opening.
+                            // hidden_attach_then_split: prove hidden panel attachment
+                            // first and preserve its browser through split and show.
                             val splitPreparation = driver.withContext(OnDispatcher.EDT) {
                                 preview.prepareReferenceSplitAtOpen(remoteEditor)
                             }
@@ -265,6 +322,15 @@ class MarkFlowStarterJcefLifecycleStressTest {
                                 preview.referenceBrowserIdentity(remoteEditor)
                             }
                             record("pre-show-browser", beforeIdentity)
+                            if (hiddenPanelIdentity != null) {
+                                check(beforeIdentity.contains(
+                                    "browser_identity=$hiddenPanelIdentity\n"
+                                )) {
+                                    "HIDDEN_PANEL_REPLACED_ON_SPLIT: stress iteration $iteration"
+                                }
+                                record("hidden-browser-reused-after-split",
+                                    "browser_identity=$hiddenPanelIdentity\n")
+                            }
                             initialPanelIdentity = beforeIdentity.lineSequence()
                                 .first { it.startsWith("browser_identity=") }.substringAfter('=')
                         }
@@ -291,9 +357,9 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             preview.referenceBrowserIdentity(remoteEditor)
                         }
                         record("panel-showing", identity)
-                        if (initialOpenMode == "direct_split") {
+                        if (splitOpen) {
                             check(identity.contains("browser_identity=$initialPanelIdentity\n")) {
-                                "Direct split Preview browser was replaced before content proof: $iteration"
+                                "Split Preview browser was replaced before content proof: $iteration"
                             }
                             record("initial-browser-reused",
                                 "browser_identity=$initialPanelIdentity\n")
