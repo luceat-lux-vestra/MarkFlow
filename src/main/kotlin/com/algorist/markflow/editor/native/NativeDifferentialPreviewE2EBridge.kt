@@ -881,7 +881,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
         check(!previewDisposed(preview)) { "New bundled Markdown Preview is already disposed" }
-        val before = selected.getLayout()
+        val before = checkNotNull(selected.getLayout()) { "Bundled Preview layout is null at open" }
         check(before == TextEditorWithPreview.Layout.SHOW_EDITOR ||
             before == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
             "Direct split began from unexpected layout: $before"
@@ -889,7 +889,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         if (before == TextEditorWithPreview.Layout.SHOW_EDITOR) {
             selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW)
         }
-        val after = selected.getLayout()
+        val after = checkNotNull(selected.getLayout()) { "Bundled Preview layout is null after split" }
         check(after == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
             "Direct split layout not established: before=$before after=$after"
         }
