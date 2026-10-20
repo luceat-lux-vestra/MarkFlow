@@ -70,6 +70,8 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panelId: Int,
         val browserId: Int,
         val cefId: Int,
+        val firstObservedEvent: String,
+        val cefNativeIdAtCapture: String,
         val browser: WeakReference<JBCefBrowser>,
     )
     private class PanelOwnerTrace(
@@ -110,8 +112,10 @@ internal object NativeDifferentialPreviewE2EBridge {
 
     /**
      * Register before opening the Markdown file. Restrict capture to actual
-     * JBLoadingPanel additions/removals; record unsuccessful owner lookups too
-     * so a missing binding can never masquerade as absence of duplicate attach.
+     * JBLoadingPanel additions/removals. Resolve owners on both events:
+     * IDEA may not expose the FileEditor during COMPONENT_ADDED, but its
+     * soon-to-be-replaced panel is still inspectable at COMPONENT_REMOVED.
+     * Record unsuccessful lookups instead of treating them as no attachment.
      */
     fun startReferencePanelOwnerTrace(filename: String, outputPath: String) {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -137,7 +141,18 @@ internal object NativeDifferentialPreviewE2EBridge {
             // Observation errors are recorded, not propagated to platform EDT.
             val line = runCatching {
                 val owner = resolvePreviewWrapperOwner(parent, child, trace.filename)
-                if (eventName == "component-added" && owner != null) {
+                // AWT emits COMPONENT_ADDED before the bundled preview's
+                // FileEditor is necessarily discoverable through FileEditorManager.
+                // At COMPONENT_REMOVED the old 'panel' field may still reference
+                // that exact first panel, just before it is overwritten/disposed.
+                // Capture either event, exactly once per actual panel identity.
+                val newOwnerCaptured = if (owner != null &&
+                    trace.observed.none {
+                        it.wrapperId == System.identityHashCode(parent) &&
+                            it.componentId == System.identityHashCode(child) &&
+                            it.panelId == System.identityHashCode(owner)
+                    }
+                ) {
                     val cef = owner.getCefBrowser()
                     trace.observed.add(ObservedPanelOwner(
                         System.identityHashCode(parent),
@@ -145,14 +160,20 @@ internal object NativeDifferentialPreviewE2EBridge {
                         System.identityHashCode(owner),
                         System.identityHashCode(owner),
                         System.identityHashCode(cef),
+                        eventName,
+                        cefNativeId(owner),
                         WeakReference(owner),
                     ))
+                    true
+                } else {
+                    false
                 }
                 "timestamp_ms=" + System.currentTimeMillis() +
                     "\tevent=" + eventName +
                     "\twrapper_identity=" + System.identityHashCode(parent) +
                     "\tcomponent_identity=" + System.identityHashCode(child) +
                     "\towner_resolved=" + (owner != null) +
+                    "\tnew_owner_captured=" + newOwnerCaptured +
                     "\tpanel_identity=" + (owner?.let { System.identityHashCode(it) } ?: "NONE") +
                     "\tcef_identity=" + (owner?.let { System.identityHashCode(it.getCefBrowser()) } ?: "NONE") +
                     "\tcef_native_id=" + (owner?.let(::cefNativeId) ?: "NONE")
@@ -185,6 +206,8 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "component_identity=" + owner.componentId,
                 "panel_identity=" + owner.panelId,
                 "cef_identity=" + owner.cefId,
+                "first_observed_event=" + owner.firstObservedEvent,
+                "cef_native_id_at_capture=" + owner.cefNativeIdAtCapture,
                 "browser_reachable=" + (browser != null),
                 "jbcef_disposed=" + (browser?.isDisposed?.toString() ?: "UNKNOWN"),
                 "cef_closing=" + (browser?.getCefBrowser()?.isClosing?.toString() ?: "UNKNOWN"),
