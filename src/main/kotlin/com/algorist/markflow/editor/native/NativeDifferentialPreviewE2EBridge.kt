@@ -871,6 +871,33 @@ internal object NativeDifferentialPreviewE2EBridge {
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
+    /**
+     * #353 direct-split counterfactual: the prior iteration's SHOW_EDITOR layout
+     * can be restored when this same Markdown file is reopened. Establish split
+     * without an EditorOnly roundtrip, and disclose the actual transition.
+     * This test-only path never creates/disposes a browser explicitly.
+     */
+    fun prepareReferenceSplitAtOpen(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (selected, preview) = editors(editor)
+        check(!previewDisposed(preview)) { "New bundled Markdown Preview is already disposed" }
+        val before = selected.getLayout()
+        check(before == TextEditorWithPreview.Layout.SHOW_EDITOR ||
+            before == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
+            "Direct split began from unexpected layout: $before"
+        }
+        if (before == TextEditorWithPreview.Layout.SHOW_EDITOR) {
+            selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW)
+        }
+        val after = selected.getLayout()
+        check(after == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
+            "Direct split layout not established: before=$before after=$after"
+        }
+        return "layout_before=" + before.name + "\n" +
+            "layout_after=" + after.name + "\n" +
+            "split_transition_applied=" + (before != after) + "\n"
+    }
+
     // SHOW_PREVIEW hides the Swing editor; callers must cache the remote Editor
     // before that transition and inspect authoritative Document state through it.
     fun sourceText(editor: Editor): String {
