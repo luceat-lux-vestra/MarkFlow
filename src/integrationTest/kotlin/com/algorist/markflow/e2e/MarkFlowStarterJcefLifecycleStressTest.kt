@@ -75,6 +75,8 @@ class MarkFlowStarterJcefLifecycleStressTest {
         require(renderMode == "osr" || renderMode == "windowed")
         val executionMode = System.getenv("MARKFLOW_JCEF_STRESS_EXECUTION_MODE") ?: "remote"
         require(executionMode == "remote" || executionMode == "in_process")
+        val initialOpenMode = System.getenv("MARKFLOW_JCEF_STRESS_OPEN_MODE") ?: "editor_only_roundtrip"
+        require(initialOpenMode == "editor_only_roundtrip" || initialOpenMode == "direct_split")
         val expectedRemote = executionMode == "remote"
         val expectedOsr = renderMode == "osr"
         require(!expectedRemote || expectedOsr) {
@@ -98,6 +100,7 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 "iterations=$iterations\nfixture=$fileName\n" +
                 "scope=diagnostic-only-not-full-differential-acceptance\n" +
                 "render_mode=$renderMode\nexecution_mode=$executionMode\n" +
+                "initial_open_mode=$initialOpenMode\n" +
                 "expected_jcef_remote=$expectedRemote\nretries=0\n", StandardCharsets.UTF_8)
 
         val sandbox = Files.createTempDirectory("markflow-353-jcef-stress-")
@@ -181,12 +184,47 @@ class MarkFlowStarterJcefLifecycleStressTest {
                     try {
                         // Close the whole FileEditor after every iteration so the
                         // next open necessarily exercises the bundled browser path.
-                        val opened = markFlow.openMarkdown(fileName)
+                        val opened = if (initialOpenMode == "direct_split") {
+                            markFlow.openMarkdownWithoutEditorOnlyRoundTrip(fileName)
+                        } else {
+                            markFlow.openMarkdown(fileName)
+                        }
                         markFlow.assertProductionProjectionAttached(opened)
                         val remoteEditor = opened.editor
                         check(markFlow.source(opened) == fixture)
                         val stamp = markFlow.modificationStamp(opened)
-                        record("source-opened")
+                        record("source-opened", "initial_open_mode=$initialOpenMode\n")
+                        var initialPanelIdentity: String? = null
+                        if (initialOpenMode == "direct_split") {
+                            // The upstream MarkdownPreviewFileEditor schedules an
+                            // initial panel attach regardless of the editor layout.
+                            // Prove this run REUSES that panel rather than silently
+                            // comparing an entirely different creation path.
+                            waitFor(
+                                message = "Initial split Preview panel attached: stress iteration $iteration",
+                                timeout = 20.seconds,
+                                getter = {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        preview.referencePanelAttached(remoteEditor)
+                                    }
+                                },
+                                checker = { it }
+                            )
+                            val initial = driver.withContext(OnDispatcher.EDT) {
+                                preview.previewLifecycleEvidence(remoteEditor)
+                            }
+                            record("pre-show-split-panel", initial)
+                            check(initial.contains("layout=SHOW_EDITOR_AND_PREVIEW\n") &&
+                                initial.contains("panel_attached=true\n")) {
+                                "Direct split counterfactual did not preserve an initially attached Preview: $iteration: $initial"
+                            }
+                            val beforeIdentity = driver.withContext(OnDispatcher.EDT) {
+                                preview.referenceBrowserIdentity(remoteEditor)
+                            }
+                            record("pre-show-browser", beforeIdentity)
+                            initialPanelIdentity = beforeIdentity.lineSequence()
+                                .first { it.startsWith("browser_identity=") }.substringAfter('=')
+                        }
                         driver.withContext(OnDispatcher.EDT) {
                             preview.showReferenceAtSourceLine(remoteEditor, 0)
                         }
@@ -210,6 +248,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             preview.referenceBrowserIdentity(remoteEditor)
                         }
                         record("panel-showing", identity)
+                        if (initialOpenMode == "direct_split") {
+                            check(identity.contains("browser_identity=$initialPanelIdentity\n")) {
+                                "Direct split Preview browser was replaced before content proof: $iteration"
+                            }
+                            record("initial-browser-reused",
+                                "browser_identity=$initialPanelIdentity\n")
+                        }
                         check(identity.contains("jcef_remote_enabled=$expectedRemote\n") &&
                             identity.contains("registry_markdown_osr=$expectedOsr\n") &&
                             identity.contains("browser_offscreen_rendering=$expectedOsr\n")) {
@@ -489,6 +534,7 @@ private interface JcefStressPreviewRemote {
     fun referencePanelShowing(editor: Editor): Boolean
     fun referencePanelAttached(editor: Editor): Boolean
     fun referenceBrowserIdentity(editor: Editor): String
+    fun previewLifecycleEvidence(editor: Editor): String
     fun installReferenceLoadTrace(editor: Editor, traceFile: String)
     fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String)
     fun referenceBounds(editor: Editor): String

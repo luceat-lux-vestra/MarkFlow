@@ -40,6 +40,14 @@ on:
           - remote
           - in_process
         default: remote
+      jcef_lifecycle_open_mode:
+        description: 'Diagnostic initial editor path: original EditorOnly roundtrip or direct split reuse'
+        required: false
+        type: choice
+        options:
+          - editor_only_roundtrip
+          - direct_split
+        default: editor_only_roundtrip
 
 permissions:
   contents: read
@@ -433,6 +441,7 @@ jobs:
         env:
           JCEF_STRESS_RENDER_MODE: ${{ inputs.jcef_lifecycle_render_mode || 'osr' }}
           JCEF_STRESS_EXECUTION_MODE: ${{ inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
         run: |
           set -euo pipefail
           [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
@@ -445,6 +454,10 @@ jobs:
           }
           [[ "$JCEF_STRESS_EXECUTION_MODE" == in_process || "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
             echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split ]] || {
+            echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
             exit 1
           }
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
@@ -468,7 +481,7 @@ jobs:
           fi
           test_status=0
           set +e
-          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" \
+          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -485,8 +498,8 @@ jobs:
 
           # Never let a skipped test or incomplete iteration count look like PASS.
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'source_head=%s\nmode=jcef-lifecycle-stress\nexecution_mode=%s\nrender_mode=%s\nfull_differential_acceptance=false\n' \
-            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" > "$pass_dir/workflow-contract.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-stress\nexecution_mode=%s\nrender_mode=%s\ninitial_open_mode=%s\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
             echo "::error::JCEF stress changed the exact plugin artifact"
             exit 1
