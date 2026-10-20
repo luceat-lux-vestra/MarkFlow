@@ -553,6 +553,11 @@ class MarkFlowStarterJcefLifecycleStressTest {
                         record("panel-detached", driver.withContext(OnDispatcher.EDT) {
                             preview.detachedReferenceBrowserEvidence()
                         })
+                        // Capture any former CENTER child that outlives the active
+                        // panel's detach; keep all native-close gates unchanged.
+                        record("post-detach-wrapper", driver.withContext(OnDispatcher.EDT) {
+                            preview.previewLifecycleEvidence(remoteEditor)
+                        })
                         // This is host process polling only: do not call Driver/EDT
                         // from the wait getter. A missing callback is a hard FAIL.
                         try {

@@ -859,6 +859,23 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panelComponent = panel?.javaClass?.methods
             ?.firstOrNull { it.name == "getComponent" && it.parameterCount == 0 }
             ?.invoke(panel) as? Component
+        // IDEA 2026.2.3 MarkdownPreviewFileEditor adds each newly created
+        // panel component to its BorderLayout wrapper and stores only the last
+        // panel reference. A replaced CENTER component is not automatically
+        // removed from the container or disposed. Inspect ownership directly
+        // without modifying JetBrains' lifecycle.
+        val wrapper = preview.component
+        val directChildren = wrapper.components.toList()
+        val unownedChildren = directChildren.filter { it !== panelComponent }
+        val children = directChildren.joinToString(";") { child ->
+            listOf(
+                "identity=" + System.identityHashCode(child),
+                "class=" + child.javaClass.name,
+                "is_active_panel=" + (child === panelComponent),
+                "is_showing=" + child.isShowing,
+                "is_displayable=" + child.isDisplayable,
+            ).joinToString(",")
+        }
         return listOf(
             "schema=markflow-bundled-preview-lifecycle/v1",
             "layout=" + (selected.getLayout()?.name ?: "NULL"),
@@ -867,6 +884,11 @@ internal object NativeDifferentialPreviewE2EBridge {
             "panel_attached=" + (panel != null),
             "panel_class=" + (panel?.javaClass?.name ?: "NONE"),
             "panel_component_showing=" + (panelComponent?.isShowing ?: false),
+            "wrapper_identity=" + System.identityHashCode(wrapper),
+            "wrapper_direct_child_count=" + directChildren.size,
+            "wrapper_active_child_count=" + directChildren.count { it === panelComponent && panelComponent != null },
+            "wrapper_unowned_child_count=" + unownedChildren.size,
+            "wrapper_direct_children=" + children,
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
