@@ -73,6 +73,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         val firstObservedEvent: String,
         val cefNativeIdAtCapture: String,
         val browser: WeakReference<JBCefBrowser>,
+        val lifeSpanHandler: CefLifeSpanHandlerAdapter,
     )
     private class PanelOwnerTrace(
         val path: Path,
@@ -81,6 +82,26 @@ internal object NativeDifferentialPreviewE2EBridge {
         val observed: MutableList<ObservedPanelOwner> = mutableListOf(),
     )
     private var panelOwnerTrace: PanelOwnerTrace? = null
+
+    /** Serialize EDT and native CEF callback evidence into one event journal. */
+    private fun appendPanelOwnerTrace(trace: PanelOwnerTrace, line: String) {
+        synchronized(trace) {
+            runCatching {
+                Files.writeString(trace.path, line + "\n",
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND)
+            }.onFailure { error ->
+                runCatching {
+                    Files.writeString(
+                        trace.path.resolveSibling(trace.path.fileName.toString() + ".write-error"),
+                        "error_class=" + error.javaClass.name + "\n",
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND
+                    )
+                }
+            }
+        }
+    }
 
     /** Locate the real platform preview on EDT; never instantiate an editor. */
     private fun resolvePreviewWrapperOwner(
@@ -154,16 +175,56 @@ internal object NativeDifferentialPreviewE2EBridge {
                     }
                 ) {
                     val cef = owner.getCefBrowser()
+                    val weakOwner = WeakReference(owner)
+                    val panelId = System.identityHashCode(owner)
+                    val cefId = System.identityHashCode(cef)
+                    // Registration happens at the first resolvable container event,
+                    // before native creation for the problematic first Preview.
+                    // Do not block the CEF callback or mutate browser lifecycle.
+                    val handler = object : CefLifeSpanHandlerAdapter() {
+                        private fun recordNative(phase: String, actual: CefBrowser) {
+                            appendPanelOwnerTrace(trace,
+                                "timestamp_ms=" + System.currentTimeMillis() +
+                                    "\tevent=" + phase +
+                                    "\tpanel_identity=" + panelId +
+                                    "\tcef_identity=" + cefId +
+                                    "\tcallback_cef_identity=" + System.identityHashCode(actual) +
+                                    "\tcallback_cef_same=" + (actual === cef) +
+                                    "\tcef_native_id=" + actual.identifier +
+                                    "\tjbcef_disposed_at_callback=" +
+                                        (weakOwner.get()?.isDisposed?.toString() ?: "UNKNOWN") +
+                                    "\tcef_closing=" + actual.isClosing +
+                                    "\tcef_closed=" + actual.isClosed
+                            )
+                        }
+                        override fun onAfterCreated(browser: CefBrowser) {
+                            recordNative("cef-on-after-created", browser)
+                        }
+                        override fun onBeforeClose(browser: CefBrowser) {
+                            recordNative("cef-on-before-close", browser)
+                        }
+                    }
+                    owner.getJBCefClient().addLifeSpanHandler(handler, cef)
                     trace.observed.add(ObservedPanelOwner(
                         System.identityHashCode(parent),
                         System.identityHashCode(child),
-                        System.identityHashCode(owner),
-                        System.identityHashCode(owner),
-                        System.identityHashCode(cef),
+                        panelId,
+                        panelId,
+                        cefId,
                         eventName,
                         cefNativeId(owner),
-                        WeakReference(owner),
+                        weakOwner,
+                        handler,
                     ))
+                    appendPanelOwnerTrace(trace,
+                        "timestamp_ms=" + System.currentTimeMillis() +
+                            "\tevent=owner-handler-registered" +
+                            "\tpanel_identity=" + panelId +
+                            "\tcef_identity=" + cefId +
+                            "\tcef_native_id=" + cefNativeId(owner) +
+                            "\tjbcef_disposed_at_registration=" + owner.isDisposed +
+                            "\tcef_closing=" + cef.isClosing +
+                            "\tcef_closed=" + cef.isClosed)
                     true
                 } else {
                     false
@@ -176,7 +237,9 @@ internal object NativeDifferentialPreviewE2EBridge {
                     "\tnew_owner_captured=" + newOwnerCaptured +
                     "\tpanel_identity=" + (owner?.let { System.identityHashCode(it) } ?: "NONE") +
                     "\tcef_identity=" + (owner?.let { System.identityHashCode(it.getCefBrowser()) } ?: "NONE") +
-                    "\tcef_native_id=" + (owner?.let(::cefNativeId) ?: "NONE")
+                    "\tcef_native_id=" + (owner?.let(::cefNativeId) ?: "NONE") +
+                    "\tjbcef_disposed_at_container_event=" +
+                        (owner?.isDisposed?.toString() ?: "UNKNOWN")
             }.getOrElse { error ->
                 "timestamp_ms=" + System.currentTimeMillis() +
                     "\tevent=" + eventName +
@@ -184,11 +247,7 @@ internal object NativeDifferentialPreviewE2EBridge {
                     "\tcomponent_identity=" + System.identityHashCode(child) +
                     "\tobservation_error=" + error.javaClass.name
             }
-            runCatching {
-                Files.writeString(trace.path, line + "\n",
-                    java.nio.file.StandardOpenOption.CREATE,
-                    java.nio.file.StandardOpenOption.APPEND)
-            }
+            appendPanelOwnerTrace(trace, line)
         }
         panelOwnerTrace = PanelOwnerTrace(path, filename, listener)
         Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.CONTAINER_EVENT_MASK)
@@ -218,13 +277,11 @@ internal object NativeDifferentialPreviewE2EBridge {
         val evidence = "schema=markflow-preview-owner-trace/v1\n" +
             "phase=$phase\nobserved_panels=" + trace.observed.size + "\n" +
             lines.joinToString("\n", postfix = "\n")
-        Files.writeString(trace.path,
+        appendPanelOwnerTrace(trace,
             "timestamp_ms=" + System.currentTimeMillis() +
                 "\tevent=snapshot\tphase=" + phase +
                 "\tobserved_panels=" + trace.observed.size + "\n" +
-                lines.joinToString("\n", postfix = "\n"),
-            java.nio.file.StandardOpenOption.CREATE,
-            java.nio.file.StandardOpenOption.APPEND)
+                lines.joinToString("\n"))
         return evidence
     }
 
@@ -233,6 +290,21 @@ internal object NativeDifferentialPreviewE2EBridge {
         val evidence = snapshotReferencePanelOwnerTrace("final")
         val trace = checkNotNull(panelOwnerTrace)
         Toolkit.getDefaultToolkit().removeAWTEventListener(trace.listener)
+        // The two-open diagnostic must not retain additional CEF listeners.
+        trace.observed.forEach { entry ->
+            entry.browser.get()?.let { browser ->
+                runCatching {
+                    browser.getJBCefClient().removeLifeSpanHandler(
+                        entry.lifeSpanHandler, browser.getCefBrowser())
+                }.onFailure { error ->
+                    appendPanelOwnerTrace(trace,
+                        "timestamp_ms=" + System.currentTimeMillis() +
+                            "\tevent=handler-removal-failed" +
+                            "\tpanel_identity=" + entry.panelId +
+                            "\terror_class=" + error.javaClass.name)
+                }
+            }
+        }
         panelOwnerTrace = null
         return evidence
     }
