@@ -184,10 +184,21 @@ internal object NativeControlledReferencePreviewE2EBridge {
                 "Controlled JCEF fixture must not instantiate the bundled FileEditor"
             }
         } else {
-            check(fileIsOpen && sourceEditor.project === project &&
-                FileDocumentManager.getInstance().getFile(sourceEditor.document) === file &&
-                sourceEditor.contentComponent.isShowing
-            ) { "Corpus reference must bind an existing visible native source Editor" }
+            val editorProjectSame = sourceEditor.project === project
+            val editorFile = FileDocumentManager.getInstance().getFile(sourceEditor.document)
+            val editorFileSame = editorFile === file
+            val editorShowing = sourceEditor.contentComponent.isShowing
+            check(fileIsOpen && editorProjectSame && editorFileSame && editorShowing) {
+                "Corpus reference must bind an existing visible native source Editor: " +
+                    "fileIsOpen=" + fileIsOpen +
+                    " projectSame=" + editorProjectSame +
+                    " documentFileSame=" + editorFileSame +
+                    " editorShowing=" + editorShowing +
+                    " targetFile=" + file.path +
+                    " editorFile=" + (editorFile?.path ?: "NONE") +
+                    " targetFileIdentity=" + System.identityHashCode(file) +
+                    " editorFileIdentity=" + (editorFile?.let(System::identityHashCode) ?: 0)
+            }
         }
         val document = ReadAction.compute<Document, RuntimeException> {
             checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
