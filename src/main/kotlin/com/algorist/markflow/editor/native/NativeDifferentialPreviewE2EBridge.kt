@@ -264,7 +264,7 @@ internal object NativeDifferentialPreviewE2EBridge {
                                 "\tevent=eager-create-return" +
                                 "\titeration=" + trace.iteration +
                                 "\tpanel_identity=" + panelId +
-                                "\tresult=" + if (attempt.isSuccess) "RETURNED" else "FAILED" +
+                                "\tresult=" + (if (attempt.isSuccess) "RETURNED" else "FAILED") +
                                 "\tjbcef_disposed_after_request=" + owner.isDisposed +
                                 "\tcef_native_id_after_request=" + cefNativeId(owner) +
                                 "\terror=" + trace.eagerCreateFailure)
