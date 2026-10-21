@@ -373,7 +373,10 @@ jobs:
 
 
   jcef-lifecycle-stress:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress }}
+    # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
+    # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
+    # workflow_dispatch modes continue to be available for stress_50.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress) || (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer') }}
     needs: [ package ]
     name: Bundled JCEF lifecycle diagnostic (50 stress / 2 preflight)
     runs-on: ubuntu-24.04
@@ -450,10 +453,12 @@ jobs:
       - name: Run isolated bundled JCEF lifecycle diagnostic
         shell: bash
         env:
-          JCEF_STRESS_RENDER_MODE: ${{ inputs.jcef_lifecycle_render_mode || 'osr' }}
-          JCEF_STRESS_EXECUTION_MODE: ${{ inputs.jcef_lifecycle_execution_mode || 'remote' }}
-          JCEF_STRESS_OPEN_MODE: ${{ inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
-          JCEF_STRESS_ITERATION_MODE: ${{ inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+          # The opt-in #453 PR lane always proves controlled_provider / 2 / Remote / OSR.
+          # Do not allow dispatch inputs to reinterpret a PR diagnosis as 50-run proof.
+          JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'preflight_2' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
         run: |
           set -euo pipefail
           [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
