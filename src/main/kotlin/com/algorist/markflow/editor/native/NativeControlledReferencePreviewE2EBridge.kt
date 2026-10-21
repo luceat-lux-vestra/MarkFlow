@@ -448,8 +448,13 @@ internal object NativeControlledReferencePreviewE2EBridge {
             }
         } else {
             val document = state.sourceEditor.document
+            val targetDocument = ReadAction.compute<Document, RuntimeException> {
+                checkNotNull(FileDocumentManager.getInstance().getDocument(state.file)) {
+                    "Corpus source file lost its authoritative Document at finish"
+                }
+            }
             check(FileEditorManager.getInstance(state.project).isFileOpen(state.file) &&
-                FileDocumentManager.getInstance().getFile(document) === state.file &&
+                targetDocument === document &&
                 document.modificationStamp == state.sourceStamp &&
                 !FileDocumentManager.getInstance().isDocumentUnsaved(document) &&
                 sha256(Files.readAllBytes(Path.of(requireNotNull(state.project.basePath), state.file.name))) ==
