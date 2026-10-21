@@ -137,6 +137,10 @@ class MarkFlowStarterControlledJcefPreflightTest {
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(ControlledCorpusVisualRemote::class)
                 val reference = driver.utility(ControlledJcefRemote::class)
+                // Install the platform table-inlay suppression before creating the native Editor.
+                driver.withContext(OnDispatcher.EDT) {
+                    visual.prepareEditorChromeBeforeOpen()
+                }
                 val editor = markFlow.openMarkdown(filename)
                 val remote = editor.editor
                 var failure: Throwable? = null
@@ -527,6 +531,7 @@ class MarkFlowStarterControlledJcefPreflightTest {
     plugin = "com.algorist.markflow",
 )
 private interface ControlledCorpusVisualRemote {
+    fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
     fun contentScreenY(editor: Editor): Int
