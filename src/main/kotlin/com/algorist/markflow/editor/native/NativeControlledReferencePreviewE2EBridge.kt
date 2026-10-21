@@ -14,6 +14,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.IdeGlassPane
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
@@ -450,7 +451,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
             !Files.exists(target) && !Files.exists(identity)
         ) { "DOM probe output must be unique inside owned evidence" }
         val nonce = UUID.randomUUID().toString()
-        val query = JBCefJSQuery.create(state.panel)
+        val query = JBCefJSQuery.create(state.panel as JBCefBrowserBase)
         Disposer.register(state.panel, query)
         query.addHandler { wire ->
             try {
