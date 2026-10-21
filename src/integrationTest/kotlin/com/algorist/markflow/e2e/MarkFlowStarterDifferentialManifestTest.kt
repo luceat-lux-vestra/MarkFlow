@@ -137,12 +137,14 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         // Isolated controlled-reference migration proof. Never substitute this for
         // reviewed full acceptance or silently turn on a second reference renderer.
-        val controlledCaseId = System.getProperty("markflow.differential.controlledCaseId")
-            ?.takeIf { it.isNotBlank() }
-        if (controlledCaseId != null) {
-            check(contract == "capture" && controlledCaseId == "md-atx-headings-h1-h6" &&
-                selectedIds.contains(controlledCaseId)) {
-                "Controlled manifest pilot requires the explicit H1-H6 capture case"
+        val controlledCaseIds = System.getProperty("markflow.differential.controlledCaseId")
+            ?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim() }?.toSet()
+        if (controlledCaseIds != null) {
+            check(contract == "capture" && controlledCaseIds.isNotEmpty() &&
+                controlledCaseIds.all {
+                    it in setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
+                } && selectedIds.containsAll(controlledCaseIds)) {
+                "Controlled manifest DOM pilot requires selected H1-H6 / minimal Mermaid cases"
             }
         }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
@@ -258,7 +260,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialManifestVisualRemote::class)
                 val preview = driver.utility(DifferentialManifestPreviewRemote::class)
-                val ownedReference = if (controlledCaseId != null) {
+                val ownedReference = if (controlledCaseIds != null) {
                     driver.utility(DifferentialOwnedReferenceRemote::class)
                 } else null
                 val rendererLifecycle = driver.utility(DifferentialRendererLifecycleRemote::class)
@@ -518,7 +520,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         // First migrate the source-bound lifecycle inside the existing manifest
                         // runner without replacing its old DOM geometry or acceptance ledger.
                         // This reference is closed natively before any platform Preview opens.
-                        if (entry.id == controlledCaseId) {
+                        if (controlledCaseIds?.contains(entry.id) == true) {
                             val owned = requireNotNull(ownedReference)
                             val ownedDest = dest.resolve("controlled-reference")
                             Files.createDirectories(ownedDest)
@@ -567,8 +569,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                         !Files.exists(current) -> false
                                         else -> {
                                             val text = Files.readString(current)
-                                            if (text.contains("Heading level 1") &&
-                                                text.contains("Paragraph after H6.")) {
+                                            if ((entry.id == "md-atx-headings-h1-h6" &&
+                                                    text.contains("Heading level 1") &&
+                                                    text.contains("Paragraph after H6.")) ||
+                                                (entry.id == "mermaid-flowchart-minimal" &&
+                                                    text.contains("Rendered correctly?"))) {
                                                 Files.writeString(ownedDest.resolve("dom-proof.txt"),
                                                     "first_heading=true\nlast_paragraph=true\n")
                                                 true
@@ -599,6 +604,87 @@ class MarkFlowStarterDifferentialManifestTest {
                                 },
                                 checker = { it }
                             )
+
+                            // Additional browser-bound geometry evidence; the historical
+                            // Driver-selected platform Preview path remains diagnostic only.
+                            fun captureOwnedProbe(name: String, script: String, schema: String) {
+                                var current: Path? = null
+                                var attempts = 0
+                                waitFor(
+                                    message = "Source-bound controlled JCEF $name: " + entry.id,
+                                    timeout = 30.seconds,
+                                    getter = {
+                                        val path = current
+                                        when {
+                                            path == null -> {
+                                                attempts++
+                                                val next = ownedDest.resolve("$name-$attempts.txt")
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    owned.requestDomProbe(name, script, next.toString())
+                                                }
+                                                current = next
+                                                false
+                                            }
+                                            !Files.exists(Path.of(path.toString() + ".identity")) -> false
+                                            else -> {
+                                                val text = Files.readString(path)
+                                                val identity = Files.readString(
+                                                    Path.of(path.toString() + ".identity")
+                                                )
+                                                val claims = listOf(
+                                                    "probe_name=$name", "case_id=" + entry.id,
+                                                    "source_sha256=$expectedSha",
+                                                    "query_browser_bound=true", "status=OK"
+                                                ) + created.lineSequence().filter {
+                                                    it.startsWith("browser_identity=") ||
+                                                        it.startsWith("cef_identity=") ||
+                                                        it.startsWith("cef_native_id=")
+                                                }.toList()
+                                                check(claims.all { claim ->
+                                                    identity.lineSequence().any { it == claim }
+                                                }) { "Controlled DOM callback not from created browser/source" }
+                                                if (!text.startsWith(schema + "\n")) {
+                                                    current = null
+                                                    false
+                                                } else {
+                                                    Files.writeString(ownedDest.resolve("$name.txt"),
+                                                        text + "\n")
+                                                    Files.writeString(ownedDest.resolve("$name.identity"),
+                                                        identity)
+                                                    true
+                                                }
+                                            }
+                                        }
+                                    },
+                                    checker = { it }
+                                )
+                            }
+                            if (entry.id == "md-atx-headings-h1-h6") {
+                                captureOwnedProbe(
+                                    "heading-dom-geometry", headingReferenceDomProbe,
+                                    "schema=markflow-reference-heading-dom-geometry/v1"
+                                )
+                                captureOwnedProbe(
+                                    "following-paragraph-dom-geometry", followingParagraphDomProbe,
+                                    "schema=markflow-reference-paragraph-text-range/v1"
+                                )
+                            } else {
+                                check(entry.id == "mermaid-flowchart-minimal")
+                                captureOwnedProbe(
+                                    "mermaid-svg-dom-geometry",
+                                    mermaidReferenceSvgProbe("Rendered correctly?"),
+                                    "schema=markflow-reference-mermaid-svg-dom-geometry/v1"
+                                )
+                            }
+                            val probeSnapshot = driver.withContext(OnDispatcher.EDT) {
+                                owned.snapshot()
+                            }
+                            Files.writeString(ownedDest.resolve("dom-probes-complete.txt"),
+                                probeSnapshot)
+                            check(probeSnapshot.contains("dom_probe_pending=false\n") &&
+                                probeSnapshot.contains("dom_probe_completed=" +
+                                    (if (entry.id == "md-atx-headings-h1-h6") 2 else 1) + "\n")
+                            ) { "Controlled DOM callback barrier incomplete" }
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
                             check(disposed.contains("jbcef_disposed=true\n"))
@@ -3189,6 +3275,7 @@ private interface DifferentialOwnedReferenceRemote {
     fun snapshot(): String
     fun bounds(): String
     fun requestRenderedText(probePath: String)
+    fun requestDomProbe(probeName: String, script: String, outputPath: String)
     fun close(): String
     fun finish(): String
 }

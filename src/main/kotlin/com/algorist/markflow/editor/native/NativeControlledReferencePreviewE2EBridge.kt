@@ -14,12 +14,16 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.IdeGlassPane
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.intellij.plugins.markdown.settings.MarkdownSettings
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
 import java.awt.BorderLayout
 import java.awt.Rectangle
+import java.net.URLDecoder
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -64,6 +68,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val abortRequested = AtomicBoolean(false)
         val abortScheduled = AtomicBoolean(false)
         val callbackFailure = AtomicReference<String?>(null)
+        val domProbePending = AtomicBoolean(false)
+        val domProbeCompleted = AtomicInteger(0)
         var disposalRequested = false
         private val journalLock = Any()
 
@@ -108,6 +114,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "panel_showing=" + panel.component.isShowing,
             "panel_width=" + panel.component.width,
             "panel_height=" + panel.component.height,
+            "dom_probe_pending=" + domProbePending.get(),
+            "dom_probe_completed=" + domProbeCompleted.get(),
             "callback_failure=" + (callbackFailure.get() ?: "NONE"),
         ).joinToString("\n", postfix = "\n")
     }
@@ -414,6 +422,98 @@ internal object NativeControlledReferencePreviewE2EBridge {
         }
     }
 
+
+    /**
+     * Execute DOM JavaScript in the exact owned CefBrowser, not Driver's global
+     * JCEF selector. The callback emits immutable source/browser identity and
+     * the output. The IDE EDT must not block on this asynchronous JCEF result.
+     */
+    fun requestDomProbe(probeName: String, script: String, outputPath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(probeName in setOf(
+            "heading-dom-geometry", "following-paragraph-dom-geometry",
+            "mermaid-svg-dom-geometry"
+        )) { "Unapproved controlled DOM probe" }
+        require(script.isNotBlank()) { "Empty controlled DOM probe" }
+        val state = checkNotNull(active) { "No active controlled reference" }
+        check(state.sourceEditor != null && state.sourceSha256 != null &&
+            state.created.get() && !state.disposalRequested &&
+            !state.cef.isClosing && !state.cef.isClosed &&
+            state.callbackFailure.get() == null
+        ) { "DOM probe outside source-bound native browser lifetime" }
+        check(state.domProbePending.compareAndSet(false, true)) {
+            "Overlapping DOM queries have ambiguous callback ownership"
+        }
+        val target = Path.of(outputPath).toAbsolutePath().normalize()
+        val identity = Path.of(target.toString() + ".identity")
+        check(target.startsWith(state.journal.parent) &&
+            !Files.exists(target) && !Files.exists(identity)
+        ) { "DOM probe output must be unique inside owned evidence" }
+        val nonce = UUID.randomUUID().toString()
+        val query = JBCefJSQuery.create(state.panel)
+        Disposer.register(state.panel, query)
+        query.addHandler { wire ->
+            try {
+                check(active === state && state.created.get() &&
+                    !state.disposalRequested && !state.cef.isClosing &&
+                    !state.cef.isClosed
+                ) { "Controlled DOM callback outside exact browser lifetime" }
+                val fields = wire.split('\t', limit = 3)
+                check(fields.size == 3 && fields[0] == nonce) {
+                    "Controlled DOM callback nonce mismatch"
+                }
+                check(fields[1] == "OK") {
+                    "Controlled DOM JavaScript error: " +
+                        URLDecoder.decode(fields[2], Charsets.UTF_8)
+                }
+                val payload = URLDecoder.decode(fields[2], Charsets.UTF_8)
+                check(payload.isNotBlank()) { "Empty controlled DOM callback" }
+                Files.writeString(target, payload, StandardOpenOption.CREATE_NEW)
+                Files.writeString(
+                    identity,
+                    "schema=markflow-controlled-jcef-dom-callback/v1\n" +
+                        "probe_name=$probeName\n" +
+                        "case_id=" + state.file.name.removeSuffix(".md") + "\n" +
+                        "source_sha256=" + state.sourceSha256 + "\n" +
+                        "browser_identity=" + System.identityHashCode(state.panel) + "\n" +
+                        "cef_identity=" + System.identityHashCode(state.cef) + "\n" +
+                        "cef_native_id=" + state.cef.identifier + "\n" +
+                        "query_browser_bound=true\n" +
+                        "nonce=$nonce\n" +
+                        "status=OK\n",
+                    StandardOpenOption.CREATE_NEW,
+                )
+                state.domProbeCompleted.incrementAndGet()
+                state.record("dom-probe-return-" + probeName)
+            } catch (error: Exception) {
+                state.callbackFailure.compareAndSet(null,
+                    "DOM_PROBE_" + error.javaClass.name +
+                        "_" + (error.message ?: "UNKNOWN").take(120))
+                state.record("dom-probe-failed-" + probeName)
+            } finally {
+                state.domProbePending.set(false)
+            }
+            null
+        }
+        state.record("dom-probe-request-" + probeName)
+        val javascript = """
+            (() => {
+              const nonce = '$nonce';
+              let status = 'OK';
+              let result;
+              try {
+                result = String(($script));
+              } catch (error) {
+                status = 'ERROR';
+                result = String(error && (error.stack || error));
+              }
+              const wire = nonce + '\t' + status + '\t' + encodeURIComponent(result);
+              ${query.inject("wire")}
+            })();
+        """.trimIndent()
+        state.cef.executeJavaScript(javascript, state.cef.url, 0)
+    }
+
     /** Must be invoked after onAfterCreated, not after a fixed delay. */
     fun close(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -422,6 +522,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "Cannot dispose before native creation or after native close"
         }
         check(state.callbackFailure.get() == null) { "CEF callback diagnostic failed" }
+        check(!state.domProbePending.get()) { "Cannot close with pending DOM callback" }
         check(!state.disposalRequested) { "Repeated controlled JCEF dispose" }
         disposeOwnedReference(state, "normal-close")
         return state.snapshot()
@@ -431,6 +532,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
     fun finish(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val state = checkNotNull(active)
+        check(!state.domProbePending.get()) { "DOM callback pending at finish" }
         check(state.disposalRequested && state.created.get() && state.closed.get()) {
             "Controlled JCEF browser never reached native onBeforeClose"
         }

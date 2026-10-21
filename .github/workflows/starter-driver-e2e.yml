@@ -511,7 +511,7 @@ jobs:
     # JCEF case. Diagnostic only; no release-acceptance or stable gate promotion.
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
     needs: [ package ]
-    name: Manifest runner controlled JCEF H1 corpus (unreviewed)
+    name: Manifest runner controlled JCEF heading + Mermaid DOM (unreviewed)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -583,52 +583,70 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-manifest-one-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
-      - name: Run one exact source-bound Manifest case
+      - name: Run two exact source-bound Manifest DOM cases
         shell: bash
         run: |
           set -euo pipefail
-          case_id=md-atx-headings-h1-h6
-          pass_dir="build/e2e-evidence/derived-content/differential-manifest/$case_id"
-          owned="$pass_dir/controlled-reference"
+          case_ids=md-atx-headings-h1-h6,mermaid-flowchart-minimal
           rm -rf build/e2e-evidence/derived-content/differential-manifest \
                  build/test-results/integrationTest build/reports/tests/integrationTest
           timeout --signal=TERM --kill-after=30s 30m \
             ./gradlew integrationTest -x buildPlugin \
               -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
-              -PdifferentialContract=capture -PdifferentialCaseIds="$case_id" \
-              -PdifferentialControlledCaseId="$case_id" \
+              -PdifferentialContract=capture -PdifferentialCaseIds="$case_ids" \
+              -PdifferentialControlledCaseId="$case_ids" \
               --stacktrace \
               --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest.boundedManifestCasesCaptureActualReferenceAndNative
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Owned manifest pilot mutated the exact packaged plugin ZIP"
+            echo "::error::Controlled manifest run changed the packaged plugin"
             exit 1
           }
-          [ -s "$pass_dir/identity.txt" ] && [ -s "$owned/result.txt" ]
-          grep -Fxq "source_head=$STARTER_SOURCE_SHA" "$pass_dir/identity.txt"
-          grep -Fxq 'case_id=md-atx-headings-h1-h6' "$pass_dir/identity.txt"
-          grep -Fxq 'result=CAPTURED_UNVERIFIED' "$owned/result.txt"
-          grep -Fxq 'native_closed=true' "$owned/result.txt"
-          grep -Fxq 'full_differential_acceptance=false' "$owned/result.txt"
-          cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md || {
-            echo "::error::Owned manifest pilot changed exact corpus source bytes"
-            exit 1
-          }
-          for name in open.txt native-created.txt dom-proof.txt intellij-preview.png \
-              native-closed.txt native-events.tsv native-close.marker; do
-            [ -s "$owned/$name" ] || {
-              echo "::error::Owned manifest pilot missing evidence: $name"
-              exit 1
-            }
+          for case_id in md-atx-headings-h1-h6 mermaid-flowchart-minimal; do
+            pass_dir="build/e2e-evidence/derived-content/differential-manifest/$case_id"
+            owned="$pass_dir/controlled-reference"
+            [ -s "$pass_dir/identity.txt" ] && [ -s "$owned/result.txt" ]
+            grep -Fxq "source_head=$STARTER_SOURCE_SHA" "$pass_dir/identity.txt"
+            grep -Fxq "case_id=$case_id" "$pass_dir/identity.txt"
+            grep -Fxq 'result=CAPTURED_UNVERIFIED' "$owned/result.txt"
+            grep -Fxq 'native_closed=true' "$owned/result.txt"
+            grep -Fxq 'full_differential_acceptance=false' "$owned/result.txt"
+            for name in open.txt native-created.txt dom-proof.txt intellij-preview.png \
+                native-closed.txt native-events.tsv native-close.marker dom-probes-complete.txt; do
+              [ -s "$owned/$name" ] || {
+                echo "::error::Controlled $case_id missing $name"
+                exit 1
+              }
+            done
+            grep -Fxq 'on_before_close=true' "$owned/native-close.marker"
+            grep -Fxq 'native_before_close=true' "$owned/native-closed.txt"
+            grep -Fxq 'cef_closed=true' "$owned/native-closed.txt"
+            grep -Fxq 'dom_probe_pending=false' "$owned/native-closed.txt"
+            grep -Fxq 'callback_failure=NONE' "$owned/native-closed.txt"
+            for key in cef_identity browser_identity; do
+              identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+              [ -n "$identity" ] && grep -Fxq "$identity" "$owned/native-close.marker"
+            done
+            if [ "$case_id" = md-atx-headings-h1-h6 ]; then
+              cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md
+              probes='heading-dom-geometry following-paragraph-dom-geometry'
+              grep -Fxq 'dom_probe_completed=2' "$owned/dom-probes-complete.txt"
+            else
+              probes='mermaid-svg-dom-geometry'
+              grep -Fxq 'dom_probe_completed=1' "$owned/dom-probes-complete.txt"
+            fi
+            for probe in $probes; do
+              [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
+              grep -Fxq "probe_name=$probe" "$owned/$probe.identity"
+              grep -Fxq "case_id=$case_id" "$owned/$probe.identity"
+              grep -Fxq 'query_browser_bound=true' "$owned/$probe.identity"
+              grep -Fxq 'status=OK' "$owned/$probe.identity"
+              for key in cef_identity browser_identity cef_native_id; do
+                identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+                [ -n "$identity" ] && grep -Fxq "$identity" "$owned/$probe.identity"
+              done
+            done
           done
-          grep -Fxq 'on_before_close=true' "$owned/native-close.marker"
-          grep -Fxq 'native_before_close=true' "$owned/native-closed.txt"
-          grep -Fxq 'cef_closed=true' "$owned/native-closed.txt"
-          grep -Fxq 'callback_failure=NONE' "$owned/native-closed.txt"
-          for key in cef_identity browser_identity; do
-            identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
-            [ -n "$identity" ] && grep -Fxq "$identity" "$owned/native-close.marker"
-          done
-          echo 'One Manifest-owned reference closed natively; evidence remains unreviewed.'
+          echo 'Two native-closed browser identities and three DOM callbacks; unreviewed.'
 
       - name: Upload Manifest-owned corpus evidence
         if: ${{ always() }}
