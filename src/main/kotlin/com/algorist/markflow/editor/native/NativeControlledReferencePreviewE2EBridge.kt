@@ -2,6 +2,7 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -10,21 +11,22 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.WindowManager
+import com.intellij.openapi.wm.IdeGlassPane
 import com.intellij.ui.jcef.JBCefBrowser
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.intellij.plugins.markdown.settings.MarkdownSettings
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
 import java.awt.BorderLayout
-import java.awt.Dialog
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import javax.swing.JDialog
-import javax.swing.WindowConstants
+import javax.swing.JLayeredPane
+import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
  * #353 opt-in Starter diagnostic ONLY. Not registered as an IntelliJ extension.
@@ -46,12 +48,15 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val file: VirtualFile,
         val panel: JBCefBrowser,
         val cef: CefBrowser,
-        val dialog: JDialog,
+        val overlay: JPanel,
+        val layeredPane: JLayeredPane,
         val journal: Path,
         val closeMarker: Path,
     ) {
         val created = AtomicBoolean(false)
         val closed = AtomicBoolean(false)
+        val abortRequested = AtomicBoolean(false)
+        val abortScheduled = AtomicBoolean(false)
         val callbackFailure = AtomicReference<String?>(null)
         var disposalRequested = false
         private val journalLock = Any()
@@ -89,7 +94,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "cef_closed=" + cef.isClosed,
             "jbcef_disposed=" + panel.isDisposed,
             "dispose_requested=" + disposalRequested,
-            "dialog_showing=" + dialog.isShowing,
+            "host_showing=" + overlay.isShowing,
+            "host_ide_glass_pane=" + (SwingUtilities.getRootPane(overlay)?.glassPane is IdeGlassPane),
             "panel_showing=" + panel.component.isShowing,
             "panel_width=" + panel.component.width,
             "panel_height=" + panel.component.height,
@@ -122,8 +128,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
         check(!FileEditorManager.getInstance(project).isFileOpen(file)) {
             "Controlled JCEF fixture must not instantiate the bundled FileEditor"
         }
-        val document = checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
-            "Controlled JCEF fixture has no Document"
+        val document = ReadAction.compute<Document, RuntimeException> {
+            checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
+                "Controlled JCEF fixture has no Document"
+            }
         }
         check(!FileDocumentManager.getInstance().isDocumentUnsaved(document)) {
             "Controlled fixture was edited before reference rendering"
@@ -152,21 +160,43 @@ internal object NativeControlledReferencePreviewE2EBridge {
         }
         Files.createDirectories(requireNotNull(journal.parent))
         Files.createDirectories(requireNotNull(marker.parent))
+        // The bundled panel installs JBSplitter painters via IdeGlassPaneUtil.
+        // A bare JDialog supplies a JPanel glass pane; the live IDE frame does not.
+        val owner = WindowManager.getInstance().getFrame(project)
+            ?: error("No IDE frame for the controlled reference")
+        val layeredPane = owner.layeredPane
+        check(owner.rootPane.glassPane is IdeGlassPane && layeredPane.isShowing) {
+            "Controlled JCEF must use a visible IDE-owned glass pane"
+        }
+        val width = minOf(1200, layeredPane.width - 32)
+        val height = minOf(800, layeredPane.height - 32)
+        check(width > 100 && height > 100) { "IDE viewport too small for controlled JCEF" }
+
         val markdownPanel = provider.createHtmlPanel(project, file)
         val panel = markdownPanel as? JBCefBrowser
             ?: error("Bundled Markdown panel is not a JBCefBrowser")
-        check(panel.javaClass.name == JCEF_PANEL) { "Unexpected bundled panel type" }
+        if (panel.javaClass.name != JCEF_PANEL) {
+            Disposer.dispose(panel) // not attached, native create not requested
+            error("Unexpected bundled Markdown panel type: " + panel.javaClass.name)
+        }
         val cef = panel.getCefBrowser()
-        val owner = WindowManager.getInstance().getFrame(project)
-            ?: error("No IDE owner frame for visible controlled JCEF reference")
-        val dialog = JDialog(owner, "MarkFlow #353 controlled JCEF reference", Dialog.ModalityType.MODELESS)
-        val state = OwnedReference(project, file, panel, cef, dialog, journal, marker)
+        val overlay = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            add(panel.component, BorderLayout.CENTER)
+            setBounds(
+                (layeredPane.width - width) / 2,
+                (layeredPane.height - height) / 2,
+                width, height,
+            )
+        }
+        val state = OwnedReference(project, file, panel, cef, overlay, layeredPane, journal, marker)
         val handler = object : CefLifeSpanHandlerAdapter() {
             override fun onAfterCreated(browser: CefBrowser) {
                 if (browser !== cef || !state.created.compareAndSet(false, true)) {
                     state.callbackFailure.compareAndSet(null, "UNEXPECTED_ON_AFTER_CREATED")
                 }
                 state.record("on-after-created", browser)
+                if (state.abortRequested.get()) scheduleInitFailureCleanup(state)
             }
 
             override fun onBeforeClose(browser: CefBrowser) {
@@ -192,20 +222,61 @@ internal object NativeControlledReferencePreviewE2EBridge {
         // exact-CEF handler before attaching the component to a visible owner.
         panel.getJBCefClient().addLifeSpanHandler(handler, cef)
         state.record("handler-installed")
-        dialog.defaultCloseOperation = WindowConstants.DO_NOTHING_ON_CLOSE
-        dialog.contentPane.layout = BorderLayout()
-        dialog.contentPane.add(panel.component, BorderLayout.CENTER)
-        dialog.setSize(1200, 800)
-        dialog.setLocationRelativeTo(owner)
         active = state
-        state.record("component-attached")
-        dialog.isVisible = true
-        check(panel.component.isShowing) { "Controlled reference is not visible in IDE" }
-        // This is the same provider preprocessing and setHtml interface used
-        // in MarkdownPreviewFileEditor.doUpdateHtml, not raw Markdown-as-HTML.
-        markdownPanel.setHtml(html, 0, 0, file)
-        state.record("html-submitted")
-        return state.snapshot()
+        try {
+            // One attachment to the existing IDE root (with its IdeGlassPane).
+            layeredPane.add(overlay, JLayeredPane.POPUP_LAYER)
+            layeredPane.revalidate()
+            layeredPane.repaint()
+            state.record("component-attached")
+            check(SwingUtilities.getRootPane(panel.component) === owner.rootPane &&
+                panel.component.isShowing
+            ) { "Controlled JCEF component is not showing under the IDE root pane" }
+            // Use the bundled Markdown provider's HTML, not raw Markdown.
+            markdownPanel.setHtml(html, 0, 0, file)
+            state.record("html-submitted")
+            return state.snapshot()
+        } catch (failure: Throwable) {
+            // Native creation may be in flight. Do not close prematurely.
+            state.abortRequested.set(true)
+            state.record("initialization-failed-" + failure.javaClass.simpleName)
+            scheduleInitFailureCleanup(state)
+            throw failure
+        }
+    }
+
+    /**
+     * Initialization can fail while Remote JCEF native creation is pending.
+     * Await the exact onAfterCreated callback before scheduling EDT disposal.
+     * An uncreated browser remains a test failure; never fabricate close proof.
+     */
+    private fun scheduleInitFailureCleanup(state: OwnedReference) {
+        if (!state.abortRequested.get() || !state.created.get() ||
+            !state.abortScheduled.compareAndSet(false, true)) return
+        ApplicationManager.getApplication().invokeLater {
+            if (active === state && !state.disposalRequested) {
+                runCatching { disposeOwnedReference(state, "initialization-failure") }
+                    .onFailure { failure ->
+                        state.callbackFailure.compareAndSet(
+                            null, "INITIALIZATION_CLEANUP_" + failure.javaClass.name
+                        )
+                        state.record("initialization-cleanup-failed")
+                    }
+            }
+        }
+    }
+
+    private fun disposeOwnedReference(state: OwnedReference, reason: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(state.created.get()) { "Cannot dispose before native onAfterCreated" }
+        check(!state.disposalRequested) { "Controlled browser already disposed" }
+        state.disposalRequested = true
+        state.record("dispose-request-" + reason)
+        state.layeredPane.remove(state.overlay)
+        state.layeredPane.revalidate()
+        state.layeredPane.repaint()
+        Disposer.dispose(state.panel)
+        state.record("disposed-wrapper")
     }
 
     fun snapshot(): String {
@@ -256,12 +327,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
         }
         check(state.callbackFailure.get() == null) { "CEF callback diagnostic failed" }
         check(!state.disposalRequested) { "Repeated controlled JCEF dispose" }
-        state.disposalRequested = true
-        state.record("dispose-request")
-        state.dialog.contentPane.remove(state.panel.component)
-        Disposer.dispose(state.panel)
-        state.dialog.dispose()
-        state.record("disposed-wrapper")
+        disposeOwnedReference(state, "normal-close")
         return state.snapshot()
     }
 
@@ -275,8 +341,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
         check(Files.exists(state.closeMarker) && state.cef.isClosed && state.panel.isDisposed) {
             "Controlled JCEF browser did not complete native and wrapper close"
         }
-        check(!state.dialog.isDisplayable && state.callbackFailure.get() == null) {
-            "Controlled JCEF owner window or callback state is invalid"
+        check(state.overlay.parent == null && !state.overlay.isDisplayable &&
+            state.callbackFailure.get() == null && !state.abortRequested.get()
+        ) {
+            "Controlled JCEF overlay or callback state is invalid"
         }
         check(!FileEditorManager.getInstance(state.project).isFileOpen(state.file)) {
             "Controlled reference accidentally opened a platform FileEditor"

@@ -116,6 +116,8 @@ class MarkFlowStarterControlledJcefPreflightTest {
                     Files.writeString(dest.resolve("open.txt"), opened)
                     check(opened.contains("provider=com.intellij.markdown.jcef.preview.JCEFHtmlPanelProvider\n") &&
                         opened.contains("scope=TEST_ONLY_NOT_BUNDLED_FILE_EDITOR\n") &&
+                        opened.contains("host_ide_glass_pane=true\n") &&
+                        opened.contains("host_showing=true\n") &&
                         opened.contains("callback_failure=NONE\n")) {
                         "Controlled provider did not create the real bundled renderer"
                     }

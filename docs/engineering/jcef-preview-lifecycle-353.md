@@ -185,13 +185,14 @@ the definition of full differential acceptance.
   `JBCefBrowserBase.isCefBrowserCreated()`: **unresolved**.
 - #453 hardening audit `visual-gate` condition verification:
   **unresolved**.
-- No code fix, new stress execution, merge, or 1.0 release authorization
-  is claimed by this record.
+- No **validated** lifecycle fix, full stress pass, merge, or 1.0 release
+  authorization is claimed by this record.
 
 Candidate files:
 - `src/main/kotlin/com/algorist/markflow/editor/native/NativeControlledReferencePreviewE2EBridge.kt`:
-  one explicitly owned bundled JCEF panel in a visible IDE-owned dialog,
-  asynchronous identity-scoped native lifecycle callbacks, fail-closed
+  one explicitly owned bundled JCEF panel over the real IDE frame's
+  layered pane (retaining its IdeGlassPane), asynchronous
+  identity-scoped native lifecycle callbacks, fail-closed
   marker and text capture, creation-before-disposal barrier and close proof.
 - `src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterControlledJcefPreflightTest.kt`:
   independently opt-in two-opening preflight, real DOM text and viewport
@@ -200,11 +201,34 @@ Candidate files:
   `controlled_provider` restricted to `preflight_2` / Remote JCEF / OSR;
   keeps old reproducer and release gates unchanged.
 
-**This is a code candidate, not a green run.** Static review and CI
-classification are required next. It cannot authorize the historical 50-run
+**This is a code candidate, not a green run.** Runtime verification is
+required after the hosting fix. It cannot authorize the historical 50-run
 or 89-case PASS, even if the controlled-provider preflight becomes green.
 
-Next checkpoint: collect and classify authoritative candidate CI results,
-including plugin-verifier and hardening checks. Repair one deterministic
-failure class per subsequent checkpoint; never hide the old reproducer. Do not bundle implementation, CI repair, merge and
-post-merge bookkeeping into one user command.
+### Controlled-provider preflight #39551473031 — failed at UI host init
+
+[workflow_dispatch #39551473031](https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/39551473031)
+ran on exact `3cbce7d4a786dfac74218825eb7a8db0859cf9c8`
+with `controlled_provider / preflight_2 / remote / osr`. Result: FAIL.
+First native browser reached `onAfterCreated` (CEF native ID 11, Java
+CEF identity 340075824); zero iterations completed. The IDE failed in
+`JBSplitter.addNotify -> OnePixelDivider.init -> IdeGlassPaneUtil.find`
+because a vanilla `JDialog` had a `JPanel` glass pane. HTML readiness,
+visible paint and normal close barrier were **not reached**. The native
+`onBeforeClose` during IDE shutdown is **not** a successful iteration.
+Artifacts: `starter-jcef-lifecycle-stress-39551473031`.
+
+A separate threading assertion implicated the fixture's
+`FileDocumentManager.getDocument` outside a read action. The replacement
+candidate hosts the test-owned panel directly in the existing IDE frame's
+`JLayeredPane`, asserts its actual `IdeGlassPane`, wraps the document
+lookup in a read action, and defers **abort-path disposal** until native
+`onAfterCreated` (never synthesizes close evidence). This is a
+test-harness fix, **not** a fix or proof for the original upstream race.
+
+Next checkpoint: verify the replacement HEAD's compile and CI status,
+then re-run exactly one controlled-provider `preflight_2` workflow
+dispatch on that HEAD. The diagnostic API warning checks may remain red
+during root-cause validation by agreement; preserve their evidence rather
+than suppressing actual native lifecycle failures. Do not merge or claim
+50-run / 89-case PASS before their independent acceptance.
