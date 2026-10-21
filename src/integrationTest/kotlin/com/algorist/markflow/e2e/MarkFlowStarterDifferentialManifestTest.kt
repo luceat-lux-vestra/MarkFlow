@@ -759,8 +759,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             heartbeat("case-owned-reference-complete", entry.id)
                             if (controlledFullCorpus) {
                                 states[entry.id] = "CAPTURED_UNVERIFIED"
-                                heartbeat("case-complete", entry.id)
-                                continue
+                                heartbeat("case-controlled-evidence-complete", entry.id)
                             }
                         }
                         if (controlledFullCorpus && !entry.comparable) {
@@ -773,9 +772,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                     "result=CAPTURED_UNVERIFIED\n"
                             )
                             states[entry.id] = "CAPTURED_UNVERIFIED"
-                            heartbeat("case-complete", entry.id)
-                            continue
+                            heartbeat("case-controlled-no-reference", entry.id)
                         }
+                        if (!controlledFullCorpus) {
                         var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
                         var reference: Rectangle? = null
                         if (entry.comparable) {
@@ -1901,6 +1900,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-evidence-complete", entry.id)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
+                        }
                     } catch (cause: Throwable) {
                         caseFailure = cause
                         heartbeat("case-failed", entry.id)
@@ -2055,6 +2055,18 @@ class MarkFlowStarterDifferentialManifestTest {
                             if (cleanupError != null) {
                                 states[entry.id] = "CAPTURE_FAILED"
                                 heartbeat("case-failed", entry.id)
+                                Files.writeString(
+                                    dest.resolve("cleanup-failure.txt"),
+                                    "schema=markflow-manifest-cleanup-failure/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "reason=" + cleanupError.javaClass.name + ": " +
+                                            (cleanupError.message ?: "NO_MESSAGE") + "\n" +
+                                        "controlled_native_close=" +
+                                            Files.exists(dest.resolve(
+                                                "controlled-reference/native-close.marker"
+                                            )) + "\n" +
+                                        cleanupError.stackTraceToString() + "\n"
+                                )
                                 val original = caseFailure
                                 if (original == null || toleratedStructuralFailure) {
                                     deferredDriverFailure = cleanupError
