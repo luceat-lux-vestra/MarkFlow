@@ -6,7 +6,7 @@
 - Owners: @luceat-lux-vestra
 - Related issues/PRs: #52, #78, #81, #82, #83, #84, #99, #139, #140, #141, PR #142
 
-> Current implementation note (2026-10-13): the renderer-continuity decision remains authoritative, while the version references in the original Context/#144 adoption record remain historical baselines. Completed #222 migrated Mermaid from `11.17.2` to `12.0.0`; subsequent reviewed renderer updates now retain Mermaid `12.1.0` and KaTeX `^0.19.0`, with one production engine/root per capability and MarkFlow's classic look + Dagre layout contract kept explicit.
+> Current implementation note (2026-10-13): the renderer-continuity decision remains authoritative, while the version references in the original Context/#144 adoption record remain historical baselines. Completed #222 migrated Mermaid from `11.17.2` to `12.0.0`; subsequent reviewed renderer updates now retain Mermaid `12.2.0` and KaTeX `^0.19.0`, with one production engine/root per capability and MarkFlow's classic look + Dagre layout contract kept explicit.
 
 ## Context
 

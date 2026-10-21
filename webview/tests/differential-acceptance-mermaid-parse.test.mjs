@@ -11,7 +11,7 @@ import {createServer} from "vite";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const webviewRoot = resolve(repoRoot, "webview");
 const packageJson = JSON.parse(readFileSync(resolve(webviewRoot, "package.json"), "utf8"));
-assert.equal(packageJson.dependencies.mermaid, "12.1.0", "Mermaid upgrade requires a fresh #354 detector audit");
+assert.equal(packageJson.dependencies.mermaid, "12.2.0", "Mermaid upgrade requires a fresh #354 detector audit");
 
 const cases = ["agentflow", "swimlanes", "radar", "treemap", "cynefin", "treeview", "usecase", "info", "ishikawa", "wardley", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "eventmodeling", "flowchart-elk", "architecture", "block", "c4", "class", "er", "flowchart", "gantt", "journey", "mindmap", "packet", "pie", "git", "kanban", "quadrant", "requirement", "sankey", "sequence", "state", "timeline", "venn", "xychart"];
 const fixtureFiles = new Map([["git", "mermaid-gitgraph.md"]]);
@@ -72,7 +72,7 @@ function chromeExecutable() {
   throw new Error("Chromium/Chrome is required for Mermaid acceptance; set CHROME_BIN or install Chrome. Do not skip this test.");
 }
 
-test("Mermaid 12.1.0 renders thirty-seven detectors and three supplemental blocks in Chromium", {timeout: 90000}, async () => {
+test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental blocks in Chromium", {timeout: 90000}, async () => {
   const chrome = chromeExecutable();
   const profile = mkdtempSync(join(tmpdir(), "markflow-mermaid-"));
   const server = await createServer({

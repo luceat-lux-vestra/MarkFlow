@@ -19,7 +19,7 @@ const allowedStates = new Set(["covered", "gap"]);
 const allowedBoolean = new Set(["yes", "no"]);
 const allowedInteractions = new Set(["none", "click", "navigate"]);
 
-const expectedMermaidVersion = "12.1.0";
+const expectedMermaidVersion = "12.2.0";
 const expectedMermaidDetectors = new Set(["agentflow", "architecture", "block", "c4", "class", "cynefin", "er", "eventmodeling", "flowchart", "flowchart-elk", "gantt", "git", "info", "ishikawa", "journey", "kanban", "mindmap", "packet", "pie", "quadrant", "radar", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "requirement", "sankey", "sequence", "state", "swimlanes", "timeline", "treeview", "treemap", "usecase", "venn", "wardley", "xychart"]);
 const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "autolink-email", "blank-lines-whitespace", "blockquote", "closing-atx-heading", "code-span-delimiter-edge", "combined-emphasis", "emphasis", "entity-character-reference", "escaped-punctuation", "fence-length-info", "fenced-code-backtick", "fenced-code-tilde", "footnote-extension", "gfm-autolink-literal", "hard-break", "image-syntax", "indented-code", "inline-code", "inline-image-title", "inline-link", "inline-link-title", "inline-raw-html", "katex-display", "katex-inline", "list-marker-variants", "local-image-resource", "mermaid-fenced-block", "nested-list", "ordered-list", "paragraph", "raw-html-hostile", "raw-html-safe", "reference-definition", "reference-image", "reference-link", "setext-headings", "soft-break", "strikethrough", "strong", "table-alignment", "table-basic", "table-escaped-pipe", "tabs-indentation", "task-list", "thematic-break", "tight-loose-lists", "unordered-list"]);
 
@@ -227,7 +227,7 @@ test("49 Markdown visual anchors are explicit, source-identical and reviewed", (
   }
 });
 
-test("Mermaid 12.1.0 accepted detector surface stays classified and example files stay declared", () => {
+test("Mermaid 12.2.0 accepted detector surface stays classified and example files stay declared", () => {
   const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
   assert.equal(packageJson.dependencies?.mermaid, expectedMermaidVersion, "Mermaid version changed; re-audit detector coverage before updating the corpus snapshot");
 
@@ -259,7 +259,7 @@ test("Mermaid 12.1.0 accepted detector surface stays classified and example file
 });
 
 
-test("Mermaid 12.1.0 runtime sizing matrix covers all detectors and checked-in config keys", () => {
+test("Mermaid 12.2.0 runtime sizing matrix covers all detectors and checked-in config keys", () => {
   const source = readFileSync(resolve(corpusRoot, "mermaid-runtime-config-matrix.tsv"), "utf8");
   assert.equal(source.includes("\r"), false, "Mermaid config matrix must use LF line endings");
   assert.equal(source.endsWith("\n"), true, "Mermaid config matrix must end with newline");
