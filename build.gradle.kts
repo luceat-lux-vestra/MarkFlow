@@ -494,6 +494,10 @@ intellijPlatformTesting {
             providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
                 systemProperty("markflow.differential.caseIds", ids)
             }
+            // Explicit, bounded source-bound JCEF migration proof; not full acceptance.
+            providers.gradleProperty("differentialControlledCaseId").orNull?.let { id ->
+                systemProperty("markflow.differential.controlledCaseId", id)
+            }
             // Explicitly distinguish bounded Stage D capture from the opt-in
             // full-corpus #353 evidence contract. The latter still fails closed
             // until exact retained artifacts receive an explicit reviewed ledger.
