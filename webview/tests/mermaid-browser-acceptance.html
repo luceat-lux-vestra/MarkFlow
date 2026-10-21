@@ -28,7 +28,7 @@
         const version = svg.querySelector("text.version")?.textContent?.trim() ?? "";
         if (svg.getAttribute("width") !== "100%" ||
             !/max-width:\s*400px(?:;|$)/.test(svg.getAttribute("style") ?? "") ||
-            !/^v12\.1\.0(?:-tiny)?$/.test(version)) {
+            !/^v12\.2\.0(?:-tiny)?$/.test(version)) {
           throw new Error("info: SVG lacks expected version label or upstream sizing attributes");
         }
       } else {
