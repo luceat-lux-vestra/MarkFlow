@@ -7,6 +7,7 @@ import com.algorist.markflow.settings.MarkFlowPresentationSettingsSink
 import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.google.gson.GsonBuilder
 import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
@@ -37,6 +38,7 @@ internal object NoJcefNativeEditingProbe {
     const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
 
     private val started = AtomicBoolean(false)
+    private val log = Logger.getInstance(NoJcefNativeEditingProbe::class.java)
 
     fun startIfRequested(project: Project): Boolean {
         val output = System.getProperty(OUTPUT_PROPERTY)?.takeIf(String::isNotBlank) ?: return false
@@ -54,6 +56,8 @@ internal object NoJcefNativeEditingProbe {
     ) {
         private val gson = GsonBuilder().setPrettyPrinting().create()
         private val cases = mutableListOf<CaseResult>()
+        // Included in the existing CI evidence.json; no new cases or success criteria.
+        private val editTrace = mutableListOf<String>()
         private var tempRoot: Path? = null
         private var fileEditor: TextEditor? = null
         private var provider: FileEditorProvider? = null
@@ -117,29 +121,63 @@ internal object NoJcefNativeEditingProbe {
                 case("authoritative-native-edit-undo-redo-save") {
                     val editor = requireNotNull(fileEditor)
                     val document = fixture.document
-                    check(editor.editor.document === document)
+                    requireEditState(
+                        "document-identity",
+                        editor.editor.document === document,
+                        "editor_identity=${System.identityHashCode(editor.editor.document)} " +
+                            "fixture_identity=${System.identityHashCode(document)}",
+                    )
                     val sourceBefore = document.text
                     val inserted = "native-without-jcef "
+                    traceEdit("write-command-start", "source_length=${sourceBefore.length}")
                     WriteCommandAction.writeCommandAction(project)
                         .withName("MarkFlow No-JCEF Native Edit Proof")
                         .run<RuntimeException> {
                             document.insertString(0, inserted)
                         }
+                    traceEdit("write-command-returned", "document_length=${document.textLength}")
                     val sourceAfter = inserted + sourceBefore
-                    check(document.text == sourceAfter)
-                    check(FileDocumentManager.getInstance().isDocumentUnsaved(document))
+                    requireEditState(
+                        "insert-text",
+                        document.text == sourceAfter,
+                        "actual_length=${document.textLength} expected_length=${sourceAfter.length}",
+                    )
+                    val dirtyAfterInsert = FileDocumentManager.getInstance().isDocumentUnsaved(document)
+                    requireEditState("insert-dirty", dirtyAfterInsert, "dirty=$dirtyAfterInsert")
 
                     val undoManager = UndoManager.getInstance(project)
-                    check(undoManager.isUndoAvailable(editor))
+                    val undoAvailable = undoManager.isUndoAvailable(editor)
+                    requireEditState("undo-available", undoAvailable, "undo_available=$undoAvailable")
+                    traceEdit("undo-start", "document_length=${document.textLength}")
                     undoManager.undo(editor)
-                    check(document.text == sourceBefore)
-                    check(undoManager.isRedoAvailable(editor))
+                    traceEdit("undo-returned", "document_length=${document.textLength}")
+                    requireEditState(
+                        "undo-restored-source",
+                        document.text == sourceBefore,
+                        "actual_length=${document.textLength} expected_length=${sourceBefore.length}",
+                    )
+                    val redoAvailable = undoManager.isRedoAvailable(editor)
+                    requireEditState("redo-available", redoAvailable, "redo_available=$redoAvailable")
+                    traceEdit("redo-start", "document_length=${document.textLength}")
                     undoManager.redo(editor)
-                    check(document.text == sourceAfter)
+                    traceEdit("redo-returned", "document_length=${document.textLength}")
+                    requireEditState(
+                        "redo-restored-edit",
+                        document.text == sourceAfter,
+                        "actual_length=${document.textLength} expected_length=${sourceAfter.length}",
+                    )
 
+                    traceEdit("save-start", "document_length=${document.textLength}")
                     FileDocumentManager.getInstance().saveDocument(document)
-                    check(!FileDocumentManager.getInstance().isDocumentUnsaved(document))
-                    check(Files.readString(fixture.path, StandardCharsets.UTF_8) == sourceAfter)
+                    traceEdit("save-returned", "document_length=${document.textLength}")
+                    val dirtyAfterSave = FileDocumentManager.getInstance().isDocumentUnsaved(document)
+                    requireEditState("save-clean", !dirtyAfterSave, "dirty=$dirtyAfterSave")
+                    val diskText = Files.readString(fixture.path, StandardCharsets.UTF_8)
+                    requireEditState(
+                        "saved-file-content",
+                        diskText == sourceAfter,
+                        "disk_length=${diskText.length} expected_length=${sourceAfter.length}",
+                    )
                     "sameDocument=true dirty=true undo=true redo=true save=true"
                 }
 
@@ -212,6 +250,17 @@ internal object NoJcefNativeEditingProbe {
             provider = null
         }
 
+        private fun traceEdit(step: String, detail: String) {
+            val entry = "step=$step $detail"
+            editTrace += entry
+            log.info("No-JCEF native edit proof: $entry")
+        }
+
+        private fun requireEditState(step: String, passed: Boolean, detail: String) {
+            traceEdit(step, "passed=$passed $detail")
+            check(passed) { "No-JCEF native edit ${step} failed: $detail" }
+        }
+
         private fun case(id: String, block: () -> String) {
             check(cases.none { it.id == id }) { "duplicate no-JCEF evidence case id: $id" }
             val result = try {
@@ -237,6 +286,7 @@ internal object NoJcefNativeEditingProbe {
                             ideBuild = ApplicationInfo.getInstance().build.asString(),
                             verdict = verdict,
                             cases = cases,
+                            editTrace = editTrace.toList(),
                         )
                     ),
                     StandardCharsets.UTF_8,
@@ -271,6 +321,7 @@ internal object NoJcefNativeEditingProbe {
         val ideBuild: String,
         val verdict: String,
         val cases: List<CaseResult>,
+        val editTrace: List<String>,
     )
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
