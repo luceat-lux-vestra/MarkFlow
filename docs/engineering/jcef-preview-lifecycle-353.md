@@ -232,3 +232,30 @@ dispatch on that HEAD. The diagnostic API warning checks may remain red
 during root-cause validation by agreement; preserve their evidence rather
 than suppressing actual native lifecycle failures. Do not merge or claim
 50-run / 89-case PASS before their independent acceptance.
+
+
+### Controlled provider two-open proof and 50-open stress candidate — 2026-10-21
+
+[PR run #39561980199](https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/39561980199),
+exact HEAD `474b6f840d9694c08b7dd7ca36c28e209d587573`: the independent
+`controlled_provider / preflight_2 / remote / osr` job **PASS**.
+Both independent bundled-provider native browsers reached `onAfterCreated`,
+rendered both fixture DOM anchors and nonblank viewports, then completed
+disposal, exact-browser `onBeforeClose` and `cef_closed=true` before
+the next open. Zero retries; source fixture unchanged.
+
+The follow-up candidate extends **this same test-owned provider path** to
+`stress_50`, preserving the existing 20-second per-stage deadlines, per-cycle
+native event journal, DOM and paint evidence, close marker, wrapper disposal,
+and source immutability checks. New checks require 50 **distinct native IDs**,
+CEF/wrapper identity-matched close markers, a per-iteration progress record
+and `completed=50` before PASS. The old two-open preflight remains
+independently selectable. The #453 PR lane moves to the 50-open
+controlled-provider run; manual `workflow_dispatch` modes remain available.
+
+**The controlled-provider 50-open result is NOT YET VERIFIED.** Even if this
+candidate passes, it does not establish that the original
+`MarkdownPreviewFileEditor` duplicate-attach lifecycle is fixed, nor
+does it constitute the original platform-editor 50-run stress or 89-case
+full differential acceptance. Do not suppress the original failure evidence,
+increase the native-close deadline, or merge on this basis alone.

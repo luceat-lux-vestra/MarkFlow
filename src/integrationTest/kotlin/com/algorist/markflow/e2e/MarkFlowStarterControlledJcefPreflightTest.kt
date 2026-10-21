@@ -23,10 +23,10 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * #353 independent, two-iteration controlled-provider CANDIDATE.
- * Deliberately not a pass for the original platform Markdown file-editor
- * stress reproducer, 50-cycle lifecycle gate or 89-case full differential.
- * Kept separately opt-in to avoid changing the existing test verdict.
+ * #353 independent, test-owned bundled JCEF provider lifecycle candidate.
+ * The 2-open preflight and the 50-open stress are independently opt-in.
+ * Even 50 successful controlled-provider cycles cannot clear the original
+ * platform FileEditor stress reproducer or 89-case full differential.
  */
 class MarkFlowStarterControlledJcefPreflightTest {
     private val filename = "JCEF-LIFECYCLE-STRESS.md"
@@ -52,7 +52,15 @@ class MarkFlowStarterControlledJcefPreflightTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_PREFLIGHT", matches = "1")
-    fun twoIndependentBundledProviderPanelsCloseNatively() {
+    fun twoIndependentBundledProviderPanelsCloseNatively() = runControlled(2, "preflight_2")
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_STRESS_50", matches = "1")
+    fun fiftyIndependentBundledProviderPanelsCloseNatively() = runControlled(50, "stress_50")
+
+    private fun runControlled(iterations: Int, mode: String) {
+        require((iterations == 2 && mode == "preflight_2") ||
+            (iterations == 50 && mode == "stress_50")) { "Unsupported controlled JCEF run contract" }
         val root = Path.of("").toAbsolutePath().normalize()
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
@@ -66,14 +74,21 @@ class MarkFlowStarterControlledJcefPreflightTest {
         System.getenv("STARTER_SOURCE_SHA")?.takeIf(String::isNotBlank)?.let {
             check(it == sourceHead) { "Controlled JCEF plugin checkout drifted" }
         }
-        val output = root.resolve("build/e2e-evidence/derived-content/jcef-controlled-preflight")
+        val evidenceDir = if (iterations == 2) "jcef-controlled-preflight" else "jcef-controlled-stress"
+        val contractSchema = if (iterations == 2) "markflow-controlled-jcef-preflight/v1"
+            else "markflow-controlled-jcef-stress/v1"
+        val output = root.resolve("build/e2e-evidence/derived-content/$evidenceDir")
         Files.createDirectories(output)
         Files.writeString(
             output.resolve("run-contract.txt"),
-            "schema=markflow-controlled-jcef-preflight/v1\n" +
+            "schema=$contractSchema\n" +
                 "source_head=$sourceHead\nide_version=$version\n" +
                 "scope=CONTROLLED_PROVIDER_ONLY_NOT_PLATFORM_FILE_EDITOR\n" +
-                "mode=preflight_2\niterations=2\nretries=0\nfull_differential_acceptance=false\n",
+                "mode=$mode\niterations=$iterations\nretries=0\nfull_differential_acceptance=false\n",
+        )
+        Files.writeString(
+            output.resolve("progress.txt"),
+            "source_head=$sourceHead\nmode=$mode\nexpected=$iterations\ncompleted=0\n",
         )
         val sandbox = Files.createTempDirectory("markflow-353-controlled-jcef-")
         val project = sandbox.resolve("project")
@@ -85,8 +100,10 @@ class MarkFlowStarterControlledJcefPreflightTest {
             val original = fixture.toByteArray(StandardCharsets.UTF_8)
             Files.write(fixturePath, original)
             var completed = 0
+            val observedNativeIds = mutableSetOf<Int>()
             Starter.newContext(
-                testName = "markflow-353-controlled-jcef-provider-preflight",
+                testName = if (iterations == 2) "markflow-353-controlled-jcef-provider-preflight"
+                    else "markflow-353-controlled-jcef-provider-stress-50",
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
                     .useRelease(version),
             ).apply {
@@ -105,7 +122,7 @@ class MarkFlowStarterControlledJcefPreflightTest {
                 val preview = driver.utility(ControlledJcefRemote::class)
                 val robot = Robot()
                 val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
-                for (number in 1..2) {
+                for (number in 1..iterations) {
                     val dest = output.resolve("iteration-" + number.toString().padStart(3, '0'))
                     Files.createDirectories(dest)
                     val journal = dest.resolve("native-events.tsv")
@@ -137,6 +154,12 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         created.contains("panel_showing=true\n") &&
                         created.contains("callback_failure=NONE\n"))
                     Files.writeString(dest.resolve("native-created.txt"), created)
+                    val nativeId = created.lineSequence()
+                        .single { it.startsWith("cef_native_id=") }
+                        .substringAfter('=').toInt()
+                    check(nativeId > 0 && observedNativeIds.add(nativeId)) {
+                        "Controlled JCEF reused a native browser ID in iteration $number: $nativeId"
+                    }
 
                     // The actual CEF getText callback must contain BOTH fixture
                     // anchors. A visible Swing shell or blank Chromium page
@@ -209,6 +232,18 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         getter = { Files.exists(closeMarker) },
                         checker = { it },
                     )
+                    val nativeMarker = Files.readString(closeMarker)
+                    val expectedCefIdentity = created.lineSequence()
+                        .single { it.startsWith("cef_identity=") }
+                    val expectedWrapperIdentity = created.lineSequence()
+                        .single { it.startsWith("browser_identity=") }
+                    check(nativeMarker.lineSequence().any { it == "on_before_close=true" } &&
+                        nativeMarker.lineSequence().any { it == expectedCefIdentity } &&
+                        nativeMarker.lineSequence().any { it == expectedWrapperIdentity }
+                    ) { "Native close marker identity mismatch in iteration $number" }
+                    Files.writeString(dest.resolve("native-close-proof.txt"),
+                        "native_id=$nativeId\n" + nativeMarker)
+
                     waitFor(
                         message = "Owned JCEF Java wrapper observes native closed in iteration $number",
                         timeout = 20.seconds,
@@ -228,13 +263,18 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         "Owned JCEF renderer mutated the source fixture"
                     }
                     completed++
+                    Files.writeString(
+                        output.resolve("progress.txt"),
+                        "source_head=$sourceHead\nmode=$mode\nexpected=$iterations\ncompleted=$completed\n",
+                    )
                 }
             }
-            check(completed == 2) { "Controlled preflight did not complete both native lifecycles" }
+            check(completed == iterations) { "Controlled JCEF completed $completed/$iterations native lifecycles" }
+            check(observedNativeIds.size == iterations) { "Native browser IDs were not unique" }
             Files.writeString(
                 output.resolve("result.txt"),
                 "result=PASS\nscope=CONTROLLED_PROVIDER_ONLY_NOT_PLATFORM_FILE_EDITOR\n" +
-                    "mode=preflight_2\ncompleted=2\nfull_differential_acceptance=false\n",
+                    "mode=$mode\ncompleted=$completed\nfull_differential_acceptance=false\n",
             )
         } finally {
             sandbox.toFile().deleteRecursively()

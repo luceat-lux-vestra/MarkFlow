@@ -453,12 +453,14 @@ jobs:
       - name: Run isolated bundled JCEF lifecycle diagnostic
         shell: bash
         env:
-          # The opt-in #453 PR lane always proves controlled_provider / 2 / Remote / OSR.
-          # Do not allow dispatch inputs to reinterpret a PR diagnosis as 50-run proof.
+          # #453's 2-open controlled preflight passed on 474b6f8.
+          # The next PR candidate independently tests 50 native closes.
+          # Manual dispatch still supports the preflight_2 and original
+          # FileEditor stress modes; the PR lane never claims FileEditor proof.
           JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
           JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
           JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
-          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'preflight_2' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'stress_50' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
         run: |
           set -euo pipefail
           [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
@@ -495,13 +497,21 @@ jobs:
           fi
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          controlled_preflight=0
+          controlled_stress_50=0
           if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
-            [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 && "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
-              echo "::error::Controlled provider candidate requires preflight_2 / remote / osr"
+            [[ "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+              echo "::error::Controlled provider candidate requires Remote JCEF / OSR"
               exit 1
             }
             suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
-            pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+            if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+              controlled_preflight=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+            else
+              controlled_stress_50=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-stress
+            fi
           fi
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
@@ -522,7 +532,7 @@ jobs:
           fi
           test_status=0
           set +e
-          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT=1 MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -573,6 +583,7 @@ jobs:
           path: |
             build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
             build/e2e-evidence/derived-content/jcef-controlled-preflight/**
+            build/e2e-evidence/derived-content/jcef-controlled-stress/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             out/ide-tests/**/log/**
