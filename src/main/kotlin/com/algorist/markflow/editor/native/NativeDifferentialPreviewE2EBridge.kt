@@ -18,6 +18,7 @@ import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.openapi.util.registry.Registry
+import org.cef.CefClient
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.cef.handler.CefLoadHandlerAdapter
@@ -993,6 +994,21 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
+     * #353: use the public CEF readiness source called by the pinned platform
+     * JBCefBrowserBase instead of its @ApiStatus.Internal convenience method.
+     * This is a current-state probe, so registering a lifespan listener late
+     * cannot manufacture native creation evidence. The native identifier is
+     * assigned onAfterCreated in Remote JCEF; require it to be valid too.
+     *
+     * Nonstandard delegate-backed implementations are not presumed ready:
+     * unknown readiness must fail closed, never be inferred from Swing paint.
+     */
+    private fun referenceNativeBrowserCreated(browser: JBCefBrowser): Boolean {
+        val cef = browser.getCefBrowser()
+        return CefClient.isNativeBrowserCreated(cef) && cef.identifier > 0
+    }
+
+    /**
      * Read-only identity of the active *bundled* Markdown Preview browser.
      * The diagnostic can distinguish repeated native browser creation from
      * accidental session reuse without changing the production lifecycle.
@@ -1011,7 +1027,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             "panel_identity=" + System.identityHashCode(panel),
             "browser_identity=" + System.identityHashCode(browser),
             "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
-            "native_browser_created=" + browser.isCefBrowserCreated,
+            "native_browser_created=" + referenceNativeBrowserCreated(browser),
             "cef_browser_closing=" + browser.getCefBrowser().isClosing,
             "cef_browser_closed=" + browser.getCefBrowser().isClosed,
             "jbcef_disposed=" + browser.isDisposed,
@@ -1103,7 +1119,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             }
         }
         trace("load-handler-registration-start",
-            "native_created=" + browser.isCefBrowserCreated)
+            "native_created=" + referenceNativeBrowserCreated(browser))
         browser.getJBCefClient().addLoadHandler(handler, cefBrowser)
         referenceLoadTrace = ReferenceLoadTrace(browser, handler, path)
         trace("load-handler-registered")
@@ -1121,7 +1137,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panel = checkNotNull(previewPanel(preview)) { "No bundled Preview for DOM text probe" }
         val browser = panel as? JBCefBrowser
             ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
-        check(!browser.isDisposed && browser.isCefBrowserCreated) {
+        check(!browser.isDisposed && referenceNativeBrowserCreated(browser)) {
             "Cannot request rendered text before native browser creation"
         }
         val cef = browser.getCefBrowser()
