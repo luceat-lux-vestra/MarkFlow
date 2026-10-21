@@ -179,30 +179,32 @@ internal object NativeControlledReferencePreviewE2EBridge {
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root.resolve(filename))
         ) { "Controlled JCEF fixture has no VirtualFile" }
         val fileIsOpen = FileEditorManager.getInstance(project).isFileOpen(file)
+        val document = ReadAction.compute<Document, RuntimeException> {
+            checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
+                "Controlled JCEF fixture has no Document"
+            }
+        }
         if (sourceEditor == null) {
             check(!fileIsOpen) {
                 "Controlled JCEF fixture must not instantiate the bundled FileEditor"
             }
         } else {
             val editorProjectSame = sourceEditor.project === project
+            val editorDocumentSame = sourceEditor.document === document
             val editorFile = FileDocumentManager.getInstance().getFile(sourceEditor.document)
-            val editorFileSame = editorFile === file
             val editorShowing = sourceEditor.contentComponent.isShowing
-            check(fileIsOpen && editorProjectSame && editorFileSame && editorShowing) {
+            check(fileIsOpen && editorProjectSame && editorDocumentSame && editorShowing) {
                 "Corpus reference must bind an existing visible native source Editor: " +
                     "fileIsOpen=" + fileIsOpen +
                     " projectSame=" + editorProjectSame +
-                    " documentFileSame=" + editorFileSame +
+                    " documentSame=" + editorDocumentSame +
                     " editorShowing=" + editorShowing +
                     " targetFile=" + file.path +
                     " editorFile=" + (editorFile?.path ?: "NONE") +
+                    " targetDocumentIdentity=" + System.identityHashCode(document) +
+                    " editorDocumentIdentity=" + System.identityHashCode(sourceEditor.document) +
                     " targetFileIdentity=" + System.identityHashCode(file) +
                     " editorFileIdentity=" + (editorFile?.let(System::identityHashCode) ?: 0)
-            }
-        }
-        val document = ReadAction.compute<Document, RuntimeException> {
-            checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
-                "Controlled JCEF fixture has no Document"
             }
         }
         check(!FileDocumentManager.getInstance().isDocumentUnsaved(document)) {
