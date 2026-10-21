@@ -372,6 +372,140 @@ jobs:
 
 
 
+  jcef-corpus-one-pilot:
+    # #353: one real manifest pair using the separately owned bundled JCEF panel.
+    # This is a diagnostic CAPTURED_UNVERIFIED pilot, not 89-case acceptance.
+    # Do not merge it into the 50-open native lifecycle stress job.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
+    needs: [ package ]
+    name: Controlled JCEF first corpus pair (unreviewed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Controlled corpus pilot source checkout drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -s "$manifest" ] && [ -s build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive="$(field plugin_archive)"
+          [[ "$archive" = *.zip && "$archive" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-corpus-one
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-corpus-one-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run exactly one manifest-bound controlled reference pair
+        shell: bash
+        env:
+          MARKFLOW_CONTROLLED_JCEF_CORPUS_ONE: '1'
+        run: |
+          set -euo pipefail
+          pass_dir=build/e2e-evidence/derived-content/jcef-corpus-one
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          timeout --signal=TERM --kill-after=30s 25m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              --stacktrace \
+              --tests com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest.capturesOneCorpusPairWithControlledNativeLifecycle
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Controlled corpus pilot mutated the product plugin ZIP"
+            exit 1
+          }
+          [ -s "$pass_dir/run-contract.txt" ] && [ -s "$pass_dir/result.txt" ]
+          grep -Fxq "source_head=$STARTER_SOURCE_SHA" "$pass_dir/run-contract.txt"
+          grep -Fxq 'case_id=md-atx-headings-h1-h6' "$pass_dir/run-contract.txt"
+          grep -Fxq 'full_differential_acceptance=false' "$pass_dir/run-contract.txt"
+          grep -Fxq 'result=CAPTURED_UNVERIFIED' "$pass_dir/result.txt"
+          grep -Fxq 'native_closed=true' "$pass_dir/result.txt"
+          for name in source.md markflow.png intellij-preview.png dom-proof.txt \
+              open.txt native-created.txt native-closed.txt \
+              native-events.tsv native-close.marker; do
+            [ -s "$pass_dir/$name" ] || {
+              echo "::error::Controlled corpus pilot missing evidence: $name"
+              exit 1
+            }
+          done
+          cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md || {
+            echo "::error::Controlled corpus pilot did not preserve exact manifest bytes"
+            exit 1
+          }
+          grep -Fxq 'on_before_close=true' "$pass_dir/native-close.marker"
+          grep -Fxq 'native_before_close=true' "$pass_dir/native-closed.txt"
+          grep -Fxq 'cef_closed=true' "$pass_dir/native-closed.txt"
+          grep -Fxq 'callback_failure=NONE' "$pass_dir/native-closed.txt"
+          echo "One real corpus pair captured with exact native close; acceptance remains unreviewed."
+
+      - name: Upload controlled corpus pilot evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-corpus-one-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/jcef-corpus-one/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-corpus-one-xvfb.log
+
   jcef-lifecycle-stress:
     # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
     # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
