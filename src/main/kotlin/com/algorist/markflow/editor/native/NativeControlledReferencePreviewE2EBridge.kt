@@ -3,6 +3,7 @@ package com.algorist.markflow.editor.native
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -22,6 +23,7 @@ import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JLayeredPane
@@ -52,6 +54,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val layeredPane: JLayeredPane,
         val journal: Path,
         val closeMarker: Path,
+        val sourceEditor: Editor?,
+        val sourceSha256: String?,
+        val sourceLine: Int,
+        val sourceStamp: Long?,
     ) {
         val created = AtomicBoolean(false)
         val closed = AtomicBoolean(false)
@@ -82,7 +88,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
 
         fun snapshot(): String = listOf(
             "schema=markflow-controlled-reference-jcef/v1",
-            "scope=TEST_ONLY_NOT_BUNDLED_FILE_EDITOR",
+            "scope=" + (if (sourceEditor == null) "TEST_ONLY_NOT_BUNDLED_FILE_EDITOR"
+                else "CONTROLLED_CORPUS_EXISTING_NATIVE_EDITOR"),
+            "source_sha256=" + (sourceSha256 ?: "NOT_APPLICABLE"),
+            "source_line_zero_based=" + sourceLine,
             "provider=" + JCEF_PROVIDER,
             "panel=" + panel.javaClass.name,
             "browser_identity=" + System.identityHashCode(panel),
@@ -106,14 +115,58 @@ internal object NativeControlledReferencePreviewE2EBridge {
     private var active: OwnedReference? = null
 
     /**
-     * No open FileEditor is allowed for this fixture: otherwise JetBrains may
-     * silently create the second browser via its existing init/componentShown
-     * path, invalidating this experiment.
+     * Original isolated lifecycle fixture: no FileEditor may own this file.
+     * Keep this contract unchanged so its 50/50 evidence remains comparable.
      */
-    fun open(filename: String, journalPath: String, closeMarkerPath: String): String {
+    fun open(filename: String, journalPath: String, closeMarkerPath: String): String =
+        openOwned(filename, journalPath, closeMarkerPath, null, null, 0)
+
+    /**
+     * #353 first 89-case integration seam: an independent bundled Markdown
+     * reference for an already-open *native source Editor*. The caller must
+     * provide the exact manifest case ID and source SHA, not an arbitrary path.
+     * This does not yet change the full manifest runner or certify parity.
+     *
+     * Once this owned reference is created the caller must wait for native
+     * creation, rendered content and visible paint, then await onBeforeClose,
+     * cef.isClosed and finish() before opening the next case.
+     */
+    fun openCorpusReference(
+        editor: Editor, caseId: String, expectedSourceSha256: String, sourceLine: Int,
+        journalPath: String, closeMarkerPath: String,
+    ): String {
+        require(Regex("[A-Za-z0-9][A-Za-z0-9._-]*").matches(caseId)) {
+            "Invalid differential corpus case ID"
+        }
+        require(Regex("[0-9a-f]{64}").matches(expectedSourceSha256)) {
+            "Missing exact differential corpus source SHA-256"
+        }
+        return openOwned(
+            "$caseId.md", journalPath, closeMarkerPath,
+            editor, expectedSourceSha256, sourceLine,
+        )
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
+            "%02x".format(it.toInt() and 0xff)
+        }
+
+    private fun openOwned(
+        filename: String, journalPath: String, closeMarkerPath: String,
+        sourceEditor: Editor?, expectedSourceSha256: String?, sourceLine: Int,
+    ): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         check(active == null) { "Previous controlled reference has not completed native close" }
-        require(filename == "JCEF-LIFECYCLE-STRESS.md") { "Unapproved controlled fixture" }
+        if (sourceEditor == null) {
+            require(filename == "JCEF-LIFECYCLE-STRESS.md") { "Unapproved controlled fixture" }
+            check(expectedSourceSha256 == null && sourceLine == 0)
+        } else {
+            check(expectedSourceSha256 != null) { "Corpus reference requires source identity" }
+            check(filename != "JCEF-LIFECYCLE-STRESS.md") {
+                "Corpus reference must not weaken isolated stress fixture"
+            }
+        }
 
         val matching = ProjectManager.getInstance().openProjects.filter { project ->
             val root = project.basePath ?: return@filter false
@@ -125,8 +178,16 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val file = checkNotNull(
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root.resolve(filename))
         ) { "Controlled JCEF fixture has no VirtualFile" }
-        check(!FileEditorManager.getInstance(project).isFileOpen(file)) {
-            "Controlled JCEF fixture must not instantiate the bundled FileEditor"
+        val fileIsOpen = FileEditorManager.getInstance(project).isFileOpen(file)
+        if (sourceEditor == null) {
+            check(!fileIsOpen) {
+                "Controlled JCEF fixture must not instantiate the bundled FileEditor"
+            }
+        } else {
+            check(fileIsOpen && sourceEditor.project === project &&
+                FileDocumentManager.getInstance().getFile(sourceEditor.document) === file &&
+                sourceEditor.contentComponent.isShowing
+            ) { "Corpus reference must bind an existing visible native source Editor" }
         }
         val document = ReadAction.compute<Document, RuntimeException> {
             checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
@@ -136,6 +197,22 @@ internal object NativeControlledReferencePreviewE2EBridge {
         check(!FileDocumentManager.getInstance().isDocumentUnsaved(document)) {
             "Controlled fixture was edited before reference rendering"
         }
+        val sourceStamp = if (sourceEditor != null) {
+            check(sourceEditor.document === document) {
+                "Corpus reference Document differs from the authoritative native Editor"
+            }
+            require(sourceLine in 0 until document.lineCount) {
+                "Corpus reference source line is outside the Document"
+            }
+            val actualSha = sha256(Files.readAllBytes(root.resolve(filename)))
+            check(actualSha == expectedSourceSha256) {
+                "Corpus reference bytes differ from the manifest source SHA-256"
+            }
+            check(document.text == Files.readString(root.resolve(filename))) {
+                "Corpus reference Document differs from the saved manifest fixture"
+            }
+            document.modificationStamp
+        } else null
 
         val provider = MarkdownHtmlPanelProvider.createFromInfo(
             MarkdownSettings.getInstance(project).previewPanelProviderInfo
@@ -149,7 +226,9 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val html = ReadAction.compute<String, RuntimeException> {
             provider.sourceTextPreprocessor.preprocessText(project, document, file)
         }
-        check(html.contains("<html") && html.contains("Minimal reference preview lifecycle")) {
+        check(html.contains("<html") &&
+            (sourceEditor != null || html.contains("Minimal reference preview lifecycle"))
+        ) {
             "Bundled Markdown HTML preprocessing did not run"
         }
 
@@ -189,7 +268,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
                 width, height,
             )
         }
-        val state = OwnedReference(project, file, panel, cef, overlay, layeredPane, journal, marker)
+        val state = OwnedReference(
+            project, file, panel, cef, overlay, layeredPane, journal, marker,
+            sourceEditor, expectedSourceSha256, sourceLine, sourceStamp,
+        )
         val handler = object : CefLifeSpanHandlerAdapter() {
             override fun onAfterCreated(browser: CefBrowser) {
                 if (browser !== cef || !state.created.compareAndSet(false, true)) {
@@ -233,7 +315,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
                 panel.component.isShowing
             ) { "Controlled JCEF component is not showing under the IDE root pane" }
             // Use the bundled Markdown provider's HTML, not raw Markdown.
-            markdownPanel.setHtml(html, 0, 0, file)
+            val sourceOffset = if (sourceEditor == null) 0 else document.getLineStartOffset(sourceLine)
+            markdownPanel.setHtml(html, sourceOffset, sourceLine, file)
             state.record("html-submitted")
             return state.snapshot()
         } catch (failure: Throwable) {
@@ -346,8 +429,19 @@ internal object NativeControlledReferencePreviewE2EBridge {
         ) {
             "Controlled JCEF overlay or callback state is invalid"
         }
-        check(!FileEditorManager.getInstance(state.project).isFileOpen(state.file)) {
-            "Controlled reference accidentally opened a platform FileEditor"
+        if (state.sourceEditor == null) {
+            check(!FileEditorManager.getInstance(state.project).isFileOpen(state.file)) {
+                "Controlled reference accidentally opened a platform FileEditor"
+            }
+        } else {
+            val document = state.sourceEditor.document
+            check(FileEditorManager.getInstance(state.project).isFileOpen(state.file) &&
+                FileDocumentManager.getInstance().getFile(document) === state.file &&
+                document.modificationStamp == state.sourceStamp &&
+                !FileDocumentManager.getInstance().isDocumentUnsaved(document) &&
+                sha256(Files.readAllBytes(Path.of(requireNotNull(state.project.basePath), state.file.name))) ==
+                    state.sourceSha256
+            ) { "Corpus reference changed or lost the authoritative source Editor" }
         }
         val evidence = state.snapshot()
         state.record("finish")
