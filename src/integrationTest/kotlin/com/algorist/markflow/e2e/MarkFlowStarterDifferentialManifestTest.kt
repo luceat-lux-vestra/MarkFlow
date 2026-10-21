@@ -135,6 +135,16 @@ class MarkFlowStarterDifferentialManifestTest {
             check(reviewCases.isEmpty() && selected.size == inventory.size)
             check(selected.map { it.id }.toSet() == inventory.map { it.id }.toSet())
         }
+        // Isolated controlled-reference migration proof. Never substitute this for
+        // reviewed full acceptance or silently turn on a second reference renderer.
+        val controlledCaseId = System.getProperty("markflow.differential.controlledCaseId")
+            ?.takeIf { it.isNotBlank() }
+        if (controlledCaseId != null) {
+            check(contract == "capture" && controlledCaseId == "md-atx-headings-h1-h6" &&
+                selectedIds.contains(controlledCaseId)) {
+                "Controlled manifest pilot requires the explicit H1-H6 capture case"
+            }
+        }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let {
                 val actual = it.inputStream.bufferedReader().readText().trim()
@@ -248,6 +258,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialManifestVisualRemote::class)
                 val preview = driver.utility(DifferentialManifestPreviewRemote::class)
+                val ownedReference = if (controlledCaseId != null) {
+                    driver.utility(DifferentialOwnedReferenceRemote::class)
+                } else null
                 val rendererLifecycle = driver.utility(DifferentialRendererLifecycleRemote::class)
                 val rendererBaseline = driver.withContext(OnDispatcher.EDT) {
                     rendererLifecycle.liveRuntimeCount()
@@ -502,6 +515,123 @@ class MarkFlowStarterDifferentialManifestTest {
                             }) { "E18 scroll probe altered the authoritative source/caret" }
                         }
                         heartbeat("case-native-evidence-complete", entry.id)
+                        // First migrate the source-bound lifecycle inside the existing manifest
+                        // runner without replacing its old DOM geometry or acceptance ledger.
+                        // This reference is closed natively before any platform Preview opens.
+                        if (entry.id == controlledCaseId) {
+                            val owned = requireNotNull(ownedReference)
+                            val ownedDest = dest.resolve("controlled-reference")
+                            Files.createDirectories(ownedDest)
+                            val journal = ownedDest.resolve("native-events.tsv")
+                            val closeMarker = ownedDest.resolve("native-close.marker")
+                            val expectedSha = sha(entry.bytes)
+                            val opened = driver.withContext(OnDispatcher.EDT) {
+                                owned.openCorpusReference(
+                                    remoteEditor, entry.id, expectedSha, entry.line,
+                                    journal.toString(), closeMarker.toString()
+                                )
+                            }
+                            Files.writeString(ownedDest.resolve("open.txt"), opened)
+                            check(opened.contains("scope=CONTROLLED_CORPUS_EXISTING_NATIVE_EDITOR\n") &&
+                                opened.contains("source_sha256=$expectedSha\n"))
+                            waitFor(
+                                message = "Manifest-owned JCEF native creation: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    owned.snapshot().contains("native_created=true\n")
+                                } },
+                                checker = { it }
+                            )
+                            val created = driver.withContext(OnDispatcher.EDT) { owned.snapshot() }
+                            Files.writeString(ownedDest.resolve("native-created.txt"), created)
+                            check(created.lineSequence().single {
+                                it.startsWith("cef_native_id=")
+                            }.substringAfter('=').toInt() > 0)
+                            var probe: Path? = null
+                            var requests = 0
+                            waitFor(
+                                message = "Manifest-owned H1-H6 DOM text: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = {
+                                    val current = probe
+                                    when {
+                                        current == null -> {
+                                            requests++
+                                            val next = ownedDest.resolve("dom-$requests.txt")
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                owned.requestRenderedText(next.toString())
+                                            }
+                                            probe = next
+                                            false
+                                        }
+                                        !Files.exists(current) -> false
+                                        else -> {
+                                            val text = Files.readString(current)
+                                            if (text.contains("Heading level 1") &&
+                                                text.contains("Paragraph after H6.")) {
+                                                Files.writeString(ownedDest.resolve("dom-proof.txt"),
+                                                    "first_heading=true\nlast_paragraph=true\n")
+                                                true
+                                            } else {
+                                                probe = null
+                                                false
+                                            }
+                                        }
+                                    }
+                                },
+                                checker = { it }
+                            )
+                            val bounds = driver.withContext(OnDispatcher.EDT) {
+                                owned.bounds().split(',').map(String::toInt)
+                            }
+                            check(bounds.size == 4)
+                            val image = robot.createScreenCapture(
+                                Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                            )
+                            check(ImageIO.write(image, "png",
+                                ownedDest.resolve("intellij-preview.png").toFile()))
+                            check(diagnostics.referenceHasVisibleContent(image)) {
+                                "Manifest-owned bundled JCEF reference is blank"
+                            }
+                            val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
+                            Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
+                            check(disposed.contains("jbcef_disposed=true\n"))
+                            waitFor(
+                                message = "Manifest-owned native onBeforeClose: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { Files.exists(closeMarker) },
+                                checker = { it }
+                            )
+                            val closeProof = Files.readString(closeMarker)
+                            check(closeProof.lineSequence().any { it == "on_before_close=true" } &&
+                                created.lineSequence().filter { it.startsWith("cef_identity=") ||
+                                    it.startsWith("browser_identity=") }.all { identity ->
+                                    closeProof.lineSequence().any { it == identity }
+                                })
+                            waitFor(
+                                message = "Manifest-owned CEF fully closed: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    owned.snapshot().contains("cef_closed=true\n")
+                                } },
+                                checker = { it }
+                            )
+                            val finished = driver.withContext(OnDispatcher.EDT) { owned.finish() }
+                            Files.writeString(ownedDest.resolve("native-closed.txt"), finished)
+                            check(finished.contains("native_before_close=true\n") &&
+                                finished.contains("cef_closed=true\n") &&
+                                finished.contains("callback_failure=NONE\n"))
+                            check(markFlow.source(editor) == source &&
+                                markFlow.modificationStamp(editor) == stamp &&
+                                !markFlow.isDirty(editor) &&
+                                Files.readAllBytes(project.resolve(entry.id + ".md"))
+                                    .contentEquals(entry.bytes))
+                            Files.writeString(ownedDest.resolve("result.txt"),
+                                "result=CAPTURED_UNVERIFIED\ncase_id=${entry.id}\n" +
+                                    "source_sha256=$expectedSha\nnative_closed=true\n" +
+                                    "full_differential_acceptance=false\n")
+                            heartbeat("case-owned-reference-complete", entry.id)
+                        }
                         var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
                         var reference: Rectangle? = null
                         if (entry.comparable) {
@@ -3039,6 +3169,22 @@ private interface DifferentialManifestVisualRemote {
     plugin = "com.algorist.markflow")
 private interface DifferentialRendererLifecycleRemote {
     fun liveRuntimeCount(): Int
+}
+
+@Remote(
+    value = "com.algorist.markflow.editor.native.NativeControlledReferencePreviewE2EBridge",
+    plugin = "com.algorist.markflow",
+)
+private interface DifferentialOwnedReferenceRemote {
+    fun openCorpusReference(
+        editor: Editor, caseId: String, expectedSourceSha256: String, sourceLine: Int,
+        journalPath: String, closeMarkerPath: String,
+    ): String
+    fun snapshot(): String
+    fun bounds(): String
+    fun requestRenderedText(probePath: String)
+    fun close(): String
+    fun finish(): String
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeDifferentialPreviewE2EBridge",
