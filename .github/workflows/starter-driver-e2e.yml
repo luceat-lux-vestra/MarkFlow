@@ -129,7 +129,7 @@ jobs:
             echo "plugin_archive=$archive_name"
             echo "plugin_sha256=$digest"
             echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,full-differential-acceptance,jcef-lifecycle-stress"
+            echo "scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance,full-differential-acceptance,jcef-lifecycle-stress,jcef-manifest-one"
           } | tee build/e2e-package/manifest.txt
 
       - name: Upload exact Starter plugin artifact
@@ -505,6 +505,146 @@ jobs:
             out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-jcef-corpus-one-xvfb.log
+
+  jcef-manifest-one-pilot:
+    # #353: run the actual differential-manifest runner with one explicit owned
+    # JCEF case. Diagnostic only; no release-acceptance or stable gate promotion.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
+    needs: [ package ]
+    name: Manifest runner controlled JCEF H1 corpus (unreviewed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Owned manifest corpus source HEAD drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -s "$manifest" ] && [ -s build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          [[ ",$(field scenario_sets)," == *,jcef-manifest-one,* ]]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive="$(field plugin_archive)"
+          [[ "$archive" = *.zip && "$archive" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-manifest-one
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-manifest-one-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run one exact source-bound Manifest case
+        shell: bash
+        run: |
+          set -euo pipefail
+          case_id=md-atx-headings-h1-h6
+          pass_dir="build/e2e-evidence/derived-content/differential-manifest/$case_id"
+          owned="$pass_dir/controlled-reference"
+          rm -rf build/e2e-evidence/derived-content/differential-manifest \
+                 build/test-results/integrationTest build/reports/tests/integrationTest
+          timeout --signal=TERM --kill-after=30s 30m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              -PdifferentialContract=capture -PdifferentialCaseIds="$case_id" \
+              -PdifferentialControlledCaseId="$case_id" \
+              --stacktrace \
+              --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest.boundedManifestCasesCaptureActualReferenceAndNative
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Owned manifest pilot mutated the exact packaged plugin ZIP"
+            exit 1
+          }
+          [ -s "$pass_dir/identity.txt" ] && [ -s "$owned/result.txt" ]
+          grep -Fxq "source_head=$STARTER_SOURCE_SHA" "$pass_dir/identity.txt"
+          grep -Fxq 'case_id=md-atx-headings-h1-h6' "$pass_dir/identity.txt"
+          grep -Fxq 'result=CAPTURED_UNVERIFIED' "$owned/result.txt"
+          grep -Fxq 'native_closed=true' "$owned/result.txt"
+          grep -Fxq 'full_differential_acceptance=false' "$owned/result.txt"
+          cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md || {
+            echo "::error::Owned manifest pilot changed exact corpus source bytes"
+            exit 1
+          }
+          for name in open.txt native-created.txt dom-proof.txt intellij-preview.png \
+              native-closed.txt native-events.tsv native-close.marker; do
+            [ -s "$owned/$name" ] || {
+              echo "::error::Owned manifest pilot missing evidence: $name"
+              exit 1
+            }
+          done
+          grep -Fxq 'on_before_close=true' "$owned/native-close.marker"
+          grep -Fxq 'native_before_close=true' "$owned/native-closed.txt"
+          grep -Fxq 'cef_closed=true' "$owned/native-closed.txt"
+          grep -Fxq 'callback_failure=NONE' "$owned/native-closed.txt"
+          for key in cef_identity browser_identity; do
+            identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+            [ -n "$identity" ] && grep -Fxq "$identity" "$owned/native-close.marker"
+          done
+          echo 'One Manifest-owned reference closed natively; evidence remains unreviewed.'
+
+      - name: Upload Manifest-owned corpus evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-manifest-one-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
 
   jcef-lifecycle-stress:
     # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
