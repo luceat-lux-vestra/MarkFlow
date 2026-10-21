@@ -80,6 +80,11 @@ internal object NativeDifferentialPreviewE2EBridge {
         val filename: String,
         val listener: AWTEventListener,
         val observed: MutableList<ObservedPanelOwner> = mutableListOf(),
+        var iteration: Int = 0,
+        var eagerNativeCreate: Boolean = false,
+        var eagerCreateAttempts: Int = 0,
+        var eagerCreateReturns: Int = 0,
+        var eagerCreateFailure: String = "NONE",
     )
     private var panelOwnerTrace: PanelOwnerTrace? = null
 
@@ -219,12 +224,51 @@ internal object NativeDifferentialPreviewE2EBridge {
                     appendPanelOwnerTrace(trace,
                         "timestamp_ms=" + System.currentTimeMillis() +
                             "\tevent=owner-handler-registered" +
+                            "\titeration=" + trace.iteration +
                             "\tpanel_identity=" + panelId +
                             "\tcef_identity=" + cefId +
                             "\tcef_native_id=" + cefNativeId(owner) +
                             "\tjbcef_disposed_at_registration=" + owner.isDisposed +
                             "\tcef_closing=" + cef.isClosing +
                             "\tcef_closed=" + cef.isClosed)
+                    // IDEA 2026.2.3 detaches using remove(panel.component)
+                    // immediately before Disposer.dispose(panel). This AWT
+                    // callback is synchronous with the component mutation.
+                    // Request immediate creation here without waiting on EDT.
+                    // This does not promise native creation completion.
+                    if (trace.iteration == 2 && trace.eagerNativeCreate &&
+                        trace.eagerCreateAttempts == 0
+                    ) {
+                        trace.eagerCreateAttempts++
+                        appendPanelOwnerTrace(trace,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                "\tevent=eager-create-request" +
+                                "\titeration=" + trace.iteration +
+                                "\tfirst_observed_event=" + eventName +
+                                "\tpanel_identity=" + panelId +
+                                "\tcef_identity=" + cefId +
+                                "\tjbcef_disposed_before_request=" + owner.isDisposed +
+                                "\tcef_closing_before_request=" + cef.isClosing +
+                                "\tcef_native_id_before_request=" + cefNativeId(owner))
+                        val attempt = runCatching {
+                            check(!owner.isDisposed && !cef.isClosing) {
+                                "First observed bundled Preview is already disposing"
+                            }
+                            owner.createImmediately()
+                        }
+                        if (attempt.isSuccess) trace.eagerCreateReturns++
+                        else trace.eagerCreateFailure =
+                            attempt.exceptionOrNull()?.javaClass?.simpleName ?: "UNKNOWN"
+                        appendPanelOwnerTrace(trace,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                "\tevent=eager-create-return" +
+                                "\titeration=" + trace.iteration +
+                                "\tpanel_identity=" + panelId +
+                                "\tresult=" + if (attempt.isSuccess) "RETURNED" else "FAILED" +
+                                "\tjbcef_disposed_after_request=" + owner.isDisposed +
+                                "\tcef_native_id_after_request=" + cefNativeId(owner) +
+                                "\terror=" + trace.eagerCreateFailure)
+                    }
                     true
                 } else {
                     false
@@ -253,6 +297,25 @@ internal object NativeDifferentialPreviewE2EBridge {
         Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.CONTAINER_EVENT_MASK)
     }
 
+    /**
+     * #353 opt-in counterfactual: keep iteration 001 as the unmodified control.
+     * Only iteration 002 may request eager creation, and only for the first
+     * real platform panel resolved on an AWT container event.
+     */
+    fun configureReferencePanelOwnerTraceIteration(iteration: Int, eagerNativeCreate: Boolean) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val trace = checkNotNull(panelOwnerTrace) { "Panel owner trace was not armed" }
+        require(iteration in 1..2)
+        require(!eagerNativeCreate || iteration == 2)
+        trace.iteration = iteration
+        trace.eagerNativeCreate = eagerNativeCreate
+        appendPanelOwnerTrace(trace,
+            "timestamp_ms=" + System.currentTimeMillis() +
+                "\tevent=iteration-start" +
+                "\titeration=" + iteration +
+                "\teager_native_create=" + eagerNativeCreate)
+    }
+
     fun snapshotReferencePanelOwnerTrace(phase: String): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val trace = checkNotNull(panelOwnerTrace) { "Panel owner trace was not armed" }
@@ -276,11 +339,16 @@ internal object NativeDifferentialPreviewE2EBridge {
         }
         val evidence = "schema=markflow-preview-owner-trace/v1\n" +
             "phase=$phase\nobserved_panels=" + trace.observed.size + "\n" +
+            "eager_create_attempts=" + trace.eagerCreateAttempts + "\n" +
+            "eager_create_returns=" + trace.eagerCreateReturns + "\n" +
+            "eager_create_failure=" + trace.eagerCreateFailure + "\n" +
             lines.joinToString("\n", postfix = "\n")
         appendPanelOwnerTrace(trace,
             "timestamp_ms=" + System.currentTimeMillis() +
                 "\tevent=snapshot\tphase=" + phase +
-                "\tobserved_panels=" + trace.observed.size + "\n" +
+                "\tobserved_panels=" + trace.observed.size +
+                "\teager_create_attempts=" + trace.eagerCreateAttempts +
+                "\teager_create_returns=" + trace.eagerCreateReturns + "\n" +
                 lines.joinToString("\n"))
         return evidence
     }

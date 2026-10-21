@@ -76,9 +76,11 @@ class MarkFlowStarterJcefLifecycleStressTest {
         require(executionMode == "remote" || executionMode == "in_process")
         val initialOpenMode = System.getenv("MARKFLOW_JCEF_STRESS_OPEN_MODE") ?: "editor_only_roundtrip"
         require(initialOpenMode == "editor_only_roundtrip" ||
-            initialOpenMode == "direct_split" || initialOpenMode == "hidden_attach_then_split")
+            initialOpenMode == "direct_split" || initialOpenMode == "hidden_attach_then_split" ||
+            initialOpenMode == "direct_split_eager_create")
         val splitOpen = initialOpenMode == "direct_split" ||
-            initialOpenMode == "hidden_attach_then_split"
+            initialOpenMode == "hidden_attach_then_split" ||
+            initialOpenMode == "direct_split_eager_create"
         // 2-iteration preflight is opt-in for either split counterfactual.
         // The default remains
         // the full 50-iteration lifecycle stress contract; no arbitrary count.
@@ -88,6 +90,10 @@ class MarkFlowStarterJcefLifecycleStressTest {
         }
         require(iterationMode != "preflight_2" || splitOpen) {
             "Two-iteration preflight requires a split counterfactual opening mode"
+        }
+        require(initialOpenMode != "direct_split_eager_create" ||
+            iterationMode == "preflight_2") {
+            "Eager native creation experiment is limited to two diagnostic opens"
         }
         val iterations = if (iterationMode == "preflight_2") 2 else 50
         val expectedRemote = executionMode == "remote"
@@ -178,10 +184,11 @@ class MarkFlowStarterJcefLifecycleStressTest {
                 }
                 val robot = Robot()
                 val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
-                // Opt-in only: 2 direct-split opens are enough to identify the
-                // first overwritten platform panel before a 50-run experiment.
+                // Keep direct_split as the control. The eager-create mode alters
+                // only the second open's first observed platform JCEF panel.
+                val eagerCounterfactual = initialOpenMode == "direct_split_eager_create"
                 val traceOwner = iterationMode == "preflight_2" &&
-                    initialOpenMode == "direct_split"
+                    (initialOpenMode == "direct_split" || eagerCounterfactual)
                 if (traceOwner) {
                     driver.withContext(OnDispatcher.EDT) {
                         preview.startReferencePanelOwnerTrace(
@@ -204,6 +211,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                             StandardOpenOption.CREATE, StandardOpenOption.APPEND)
                     }
 
+                    if (traceOwner) {
+                        driver.withContext(OnDispatcher.EDT) {
+                            preview.configureReferencePanelOwnerTraceIteration(
+                                number, eagerCounterfactual && number == 2
+                            )
+                        }
+                    }
                     record("open-start")
                     try {
                         // Close the whole FileEditor after every iteration so the
@@ -632,6 +646,13 @@ class MarkFlowStarterJcefLifecycleStressTest {
                     }
                     Files.writeString(output.resolve("panel-ownership-final.txt"),
                         finalOwnerState, StandardCharsets.UTF_8)
+                    if (eagerCounterfactual && deferredFailure == null) {
+                        check(finalOwnerState.contains("eager_create_attempts=1\n") &&
+                            finalOwnerState.contains("eager_create_returns=1\n") &&
+                            finalOwnerState.contains("eager_create_failure=NONE\n")) {
+                            "EAGER_CREATE_NOT_EXECUTED: counterfactual did not reach first panel"
+                        }
+                    }
                 }
                 // As in Full Differential, defer a fatal exception until the
                 // Starter IDE shutdown boundary so diagnostics aren't gathered
@@ -678,6 +699,7 @@ private interface JcefStressPreviewRemote {
     fun referenceBrowserIdentity(editor: Editor): String
     fun previewLifecycleEvidence(editor: Editor): String
     fun startReferencePanelOwnerTrace(filename: String, outputPath: String)
+    fun configureReferencePanelOwnerTraceIteration(iteration: Int, eagerNativeCreate: Boolean)
     fun snapshotReferencePanelOwnerTrace(phase: String): String
     fun finishReferencePanelOwnerTrace(): String
     fun prepareReferenceSplitAtOpen(editor: Editor): String

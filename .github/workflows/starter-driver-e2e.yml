@@ -49,12 +49,13 @@ on:
           - in_process
         default: remote
       jcef_lifecycle_open_mode:
-        description: 'Diagnostic editor path: EditorOnly, direct split, or hidden attach before split'
+        description: 'Diagnostic editor path: EditorOnly, direct split, eager native create, or hidden attach'
         required: false
         type: choice
         options:
           - editor_only_roundtrip
           - direct_split
+          - direct_split_eager_create
           - hidden_attach_then_split
         default: editor_only_roundtrip
 
@@ -466,7 +467,7 @@ jobs:
             echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
             exit 1
           }
-          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
             echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
             exit 1
           }
@@ -476,11 +477,15 @@ jobs:
           }
           expected_iterations=50
           if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
-            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
+            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
               echo "::error::Two-iteration preflight requires a split counterfactual"
               exit 1
             }
             expected_iterations=2
+          fi
+          if [[ "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create && "$JCEF_STRESS_ITERATION_MODE" != preflight_2 ]]; then
+            echo "::error::Eager native creation counterfactual is limited to preflight_2"
+            exit 1
           fi
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
