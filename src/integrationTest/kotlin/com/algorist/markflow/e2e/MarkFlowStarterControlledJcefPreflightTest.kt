@@ -1,6 +1,7 @@
 package com.algorist.markflow.e2e
 
 import com.intellij.driver.client.Remote
+import com.intellij.driver.sdk.Editor
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
@@ -18,6 +19,7 @@ import java.awt.Robot
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import javax.imageio.ImageIO
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -57,6 +59,244 @@ class MarkFlowStarterControlledJcefPreflightTest {
     @Test
     @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_STRESS_50", matches = "1")
     fun fiftyIndependentBundledProviderPanelsCloseNatively() = runControlled(50, "stress_50")
+
+
+    /**
+     * #353 one real reviewed-corpus fixture: SOURCE-BOUND paired evidence only.
+     * Not 89-case acceptance; does not alter existing 2/50-stress behavior.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_CORPUS_ONE", matches = "1")
+    fun capturesOneCorpusPairWithControlledNativeLifecycle() {
+        val root = Path.of("").toAbsolutePath().normalize()
+        val caseId = "md-atx-headings-h1-h6"
+        val filename = "$caseId.md"
+        val row = Files.readAllLines(root.resolve("fixtures/differential-acceptance/corpus.tsv"))
+            .drop(1).map { it.split('\t') }.single { it[0] == caseId }
+        check(row.size == 12 && row[3] == "supported" && row[6] == "exact-source" &&
+            row[8] == "yes") { "Pilot case is no longer a source-identical comparable fixture" }
+        val fixture = root.resolve(row[5]).normalize()
+        check(fixture.startsWith(root) && Files.isRegularFile(fixture))
+        val original = Files.readAllBytes(fixture)
+        val source = String(original, StandardCharsets.UTF_8)
+        check(source.toByteArray(StandardCharsets.UTF_8).contentEquals(original))
+        val anchor = Files.readAllLines(
+            root.resolve("fixtures/differential-acceptance/markdown-anchors.tsv"),
+        ).drop(1).map { it.split('\t', limit = 3) }.single { it[0] == caseId }
+        val line = anchor[1].toInt()
+        check(source.split('\n').getOrNull(line) == anchor[2]) {
+            "Pilot source-line anchor drifted"
+        }
+        val sha = MessageDigest.getInstance("SHA-256").digest(original)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
+        check(version == "2026.2.3")
+        val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
+        val head = ProcessBuilder("git", "rev-parse", "HEAD")
+            .directory(root.toFile()).start().let {
+                val result = it.inputStream.bufferedReader().readText().trim()
+                check(it.waitFor() == 0 && result.matches(Regex("[0-9a-f]{40}")))
+                result
+            }
+        System.getenv("STARTER_SOURCE_SHA")?.takeIf(String::isNotBlank)?.let {
+            check(it == head) { "Pilot source and Starter checkout differ" }
+        }
+        val evidence = root.resolve("build/e2e-evidence/derived-content/jcef-corpus-one")
+        Files.createDirectories(evidence)
+        Files.writeString(evidence.resolve("source.md"), source)
+        Files.writeString(evidence.resolve("run-contract.txt"),
+            "schema=markflow-controlled-corpus-pilot/v1\n" +
+                "source_head=$head\ncase_id=$caseId\nsource_sha256=$sha\n" +
+                "source_line_zero_based=$line\nretries=0\n" +
+                "scope=ONE_ACTUAL_CORPUS_PAIR_UNREVIEWED\nfull_differential_acceptance=false\n")
+        val sandbox = Files.createTempDirectory("markflow-353-corpus-pilot-")
+        val project = sandbox.resolve("project")
+        try {
+            val base = root.resolve("src/integrationTest/resources/projects/markdown-smoke")
+            check(base.toFile().copyRecursively(project.toFile(), overwrite = true))
+            val corpusFile = project.resolve(filename)
+            check(!Files.exists(corpusFile))
+            Files.write(corpusFile, original)
+            Starter.newContext(
+                testName = "markflow-353-owned-corpus-one-pilot",
+                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
+                    .useRelease(version),
+            ).apply {
+                PluginConfigurator(this).installPluginFromPath(plugin)
+            }.applyVMOptionsPatch {
+                addSystemProperty("ide.browser.jcef.enabled", true)
+                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+                addSystemProperty("idea.trust.all.projects", true)
+                addSystemProperty("jb.consents.confirmation.enabled", false)
+                addSystemProperty("sun.java2d.uiScale", "1.0")
+                addSystemProperty("ide.ui.scale", "1.0")
+            }.runIdeWithDriver(runTimeout = 12.minutes).useDriverAndCloseIde {
+                waitForIndicators(5.minutes)
+                val driver = this
+                val markFlow = MarkFlowIdeDriver(driver)
+                val visual = driver.utility(ControlledCorpusVisualRemote::class)
+                val reference = driver.utility(ControlledJcefRemote::class)
+                val editor = markFlow.openMarkdown(filename)
+                val remote = editor.editor
+                var failure: Throwable? = null
+                try {
+                    markFlow.assertProductionProjectionAttached(editor)
+                    check(markFlow.source(editor) == source)
+                    val stamp = markFlow.modificationStamp(editor)
+                    driver.withContext(OnDispatcher.EDT) { visual.prepare(remote) }
+                    fun screenshot(rect: Rectangle, filename: String): Boolean {
+                        val robot = Robot()
+                        robot.waitForIdle()
+                        return ImageIO.write(
+                            robot.createScreenCapture(rect), "png",
+                            evidence.resolve(filename).toFile(),
+                        )
+                    }
+                    val native = driver.withContext(OnDispatcher.EDT) {
+                        Rectangle(
+                            visual.contentScreenX(remote), visual.contentScreenY(remote),
+                            visual.contentWidth(remote), visual.contentHeight(remote),
+                        )
+                    }
+                    check(native.width > 100 && native.height > 100)
+                    check(screenshot(native, "markflow.png"))
+                    val journal = evidence.resolve("native-events.tsv")
+                    val closeMarker = evidence.resolve("native-close.marker")
+                    val opened = driver.withContext(OnDispatcher.EDT) {
+                        reference.openCorpusReference(
+                            remote, caseId, sha, line, journal.toString(),
+                            closeMarker.toString(),
+                        )
+                    }
+                    Files.writeString(evidence.resolve("open.txt"), opened)
+                    check(opened.contains("scope=CONTROLLED_CORPUS_EXISTING_NATIVE_EDITOR\n") &&
+                        opened.contains("source_sha256=$sha\n") &&
+                        opened.contains("callback_failure=NONE\n"))
+                    waitFor(
+                        message = "Owned corpus native browser created",
+                        timeout = 20.seconds,
+                        getter = { driver.withContext(OnDispatcher.EDT) {
+                            reference.snapshot().contains("native_created=true\n")
+                        } },
+                        checker = { it },
+                    )
+                    val created = driver.withContext(OnDispatcher.EDT) { reference.snapshot() }
+                    Files.writeString(evidence.resolve("native-created.txt"), created)
+                    check(created.lineSequence().single {
+                        it.startsWith("cef_native_id=")
+                    }.substringAfter('=').toInt() > 0)
+                    var probe: Path? = null
+                    var requests = 0
+                    waitFor(
+                        message = "Owned corpus actual rendered DOM text",
+                        timeout = 20.seconds,
+                        getter = {
+                            val current = probe
+                            when {
+                                current == null -> {
+                                    requests++
+                                    val next = evidence.resolve("dom-$requests.txt")
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        reference.requestRenderedText(next.toString())
+                                    }
+                                    probe = next
+                                    false
+                                }
+                                !Files.exists(current) -> false
+                                else -> {
+                                    val text = Files.readString(current)
+                                    if (text.contains("Heading level 1") &&
+                                        text.contains("Paragraph after H6.")) {
+                                        Files.writeString(
+                                            evidence.resolve("dom-proof.txt"),
+                                            "first_heading=true\nlast_paragraph=true\n",
+                                        )
+                                        true
+                                    } else {
+                                        probe = null
+                                        false
+                                    }
+                                }
+                            }
+                        },
+                        checker = { it },
+                    )
+                    val xywh = driver.withContext(OnDispatcher.EDT) {
+                        reference.bounds().split(',').map(String::toInt)
+                    }
+                    check(xywh.size == 4)
+                    val referenceRect = Rectangle(xywh[0], xywh[1], xywh[2], xywh[3])
+                    val nonblank = MarkFlowStarterDifferentialPreviewSmokeTest()
+                    waitFor(
+                        message = "Owned corpus genuine bundled reference painted",
+                        timeout = 20.seconds,
+                        getter = {
+                            val ok = screenshot(referenceRect, "intellij-preview.png")
+                            check(ok)
+                            nonblank.referenceHasVisibleContent(
+                                requireNotNull(ImageIO.read(
+                                    evidence.resolve("intellij-preview.png").toFile()
+                                ))
+                            )
+                        },
+                        checker = { it },
+                    )
+                    val closedRequest = driver.withContext(OnDispatcher.EDT) { reference.close() }
+                    Files.writeString(evidence.resolve("wrapper-disposed.txt"), closedRequest)
+                    check(closedRequest.contains("jbcef_disposed=true\n"))
+                    waitFor(
+                        message = "Owned corpus native onBeforeClose",
+                        timeout = 20.seconds,
+                        getter = { Files.exists(closeMarker) },
+                        checker = { it },
+                    )
+                    val marker = Files.readString(closeMarker)
+                    val cefIdentity = created.lineSequence().single {
+                        it.startsWith("cef_identity=")
+                    }
+                    val browserIdentity = created.lineSequence().single {
+                        it.startsWith("browser_identity=")
+                    }
+                    check(marker.lineSequence().any { it == cefIdentity } &&
+                        marker.lineSequence().any { it == browserIdentity } &&
+                        marker.lineSequence().any { it == "on_before_close=true" })
+                    waitFor(
+                        message = "Owned corpus native browser fully closed",
+                        timeout = 20.seconds,
+                        getter = { driver.withContext(OnDispatcher.EDT) {
+                            reference.snapshot().contains("cef_closed=true\n")
+                        } },
+                        checker = { it },
+                    )
+                    val finished = driver.withContext(OnDispatcher.EDT) { reference.finish() }
+                    Files.writeString(evidence.resolve("native-closed.txt"), finished)
+                    check(finished.contains("native_before_close=true\n") &&
+                        finished.contains("callback_failure=NONE\n"))
+                    check(markFlow.source(editor) == source &&
+                        markFlow.modificationStamp(editor) == stamp &&
+                        !markFlow.isDirty(editor) &&
+                        Files.readAllBytes(corpusFile).contentEquals(original))
+                    Files.writeString(evidence.resolve("result.txt"),
+                        "result=CAPTURED_UNVERIFIED\ncase_id=$caseId\n" +
+                            "native_closed=true\nfull_differential_acceptance=false\n")
+                } catch (cause: Throwable) {
+                    failure = cause
+                    throw cause
+                } finally {
+                    val cleanupError = runCatching {
+                        markFlow.closeMarkdown(remote, filename)
+                    }.exceptionOrNull()
+                    if (cleanupError != null) {
+                        if (failure == null) throw cleanupError
+                        failure.addSuppressed(cleanupError)
+                    }
+                }
+            }
+        } finally {
+            sandbox.toFile().deleteRecursively()
+        }
+    }
 
     private fun runControlled(iterations: Int, mode: String) {
         require((iterations == 2 && mode == "preflight_2") ||
@@ -283,11 +523,27 @@ class MarkFlowStarterControlledJcefPreflightTest {
 }
 
 @Remote(
+    value = "com.algorist.markflow.editor.native.NativeVisualAcceptanceE2EBridge",
+    plugin = "com.algorist.markflow",
+)
+private interface ControlledCorpusVisualRemote {
+    fun prepare(editor: Editor): String
+    fun contentScreenX(editor: Editor): Int
+    fun contentScreenY(editor: Editor): Int
+    fun contentWidth(editor: Editor): Int
+    fun contentHeight(editor: Editor): Int
+}
+
+@Remote(
     value = "com.algorist.markflow.editor.native.NativeControlledReferencePreviewE2EBridge",
     plugin = "com.algorist.markflow",
 )
 private interface ControlledJcefRemote {
     fun open(filename: String, journalPath: String, closeMarkerPath: String): String
+    fun openCorpusReference(
+        editor: Editor, caseId: String, expectedSourceSha256: String, sourceLine: Int,
+        journalPath: String, closeMarkerPath: String,
+    ): String
     fun snapshot(): String
     fun bounds(): String
     fun requestRenderedText(probePath: String)
