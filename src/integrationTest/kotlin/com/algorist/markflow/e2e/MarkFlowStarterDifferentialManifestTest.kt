@@ -585,14 +585,20 @@ class MarkFlowStarterDifferentialManifestTest {
                                 owned.bounds().split(',').map(String::toInt)
                             }
                             check(bounds.size == 4)
-                            val image = robot.createScreenCapture(
-                                Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                            waitFor(
+                                message = "Manifest-owned bundled JCEF first paint: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = {
+                                    robot.waitForIdle()
+                                    val image = robot.createScreenCapture(
+                                        Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                                    )
+                                    check(ImageIO.write(image, "png",
+                                        ownedDest.resolve("intellij-preview.png").toFile()))
+                                    diagnostics.referenceHasVisibleContent(image)
+                                },
+                                checker = { it }
                             )
-                            check(ImageIO.write(image, "png",
-                                ownedDest.resolve("intellij-preview.png").toFile()))
-                            check(diagnostics.referenceHasVisibleContent(image)) {
-                                "Manifest-owned bundled JCEF reference is blank"
-                            }
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
                             check(disposed.contains("jbcef_disposed=true\n"))
