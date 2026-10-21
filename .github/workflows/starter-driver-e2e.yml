@@ -49,7 +49,7 @@ on:
           - in_process
         default: remote
       jcef_lifecycle_open_mode:
-        description: 'Diagnostic editor path: EditorOnly, direct split, eager native create, or hidden attach'
+        description: 'Diagnostic editor path or test-only controlled bundled JCEF provider'
         required: false
         type: choice
         options:
@@ -57,6 +57,7 @@ on:
           - direct_split
           - direct_split_eager_create
           - hidden_attach_then_split
+          - controlled_provider
         default: editor_only_roundtrip
 
 permissions:
@@ -467,7 +468,7 @@ jobs:
             echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
             exit 1
           }
-          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
             echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
             exit 1
           }
@@ -477,7 +478,7 @@ jobs:
           }
           expected_iterations=50
           if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
-            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split ]] || {
+            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
               echo "::error::Two-iteration preflight requires a split counterfactual"
               exit 1
             }
@@ -489,6 +490,14 @@ jobs:
           fi
           suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
+            [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 && "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+              echo "::error::Controlled provider candidate requires preflight_2 / remote / osr"
+              exit 1
+            }
+            suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
+            pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+          fi
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
           # JCEF's native RemoteLoadHandler already supports targeted tracing.
@@ -508,7 +517,7 @@ jobs:
           fi
           test_status=0
           set +e
-          MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT=1 MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -558,6 +567,7 @@ jobs:
           retention-days: 14
           path: |
             build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
+            build/e2e-evidence/derived-content/jcef-controlled-preflight/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             out/ide-tests/**/log/**

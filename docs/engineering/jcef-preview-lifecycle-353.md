@@ -118,9 +118,9 @@ Vendor report must preserve this fact/hypothesis separation.
   standalone lifecycle reproduction once established. No upstream report
   has been filed by this investigation.
 
-## MarkFlow-first recovery path — proposed, NOT implemented or validated
+## MarkFlow-first recovery path — candidate implementation, NOT validated
 
-**Decision for the next semantic slice:** a *test-only, explicitly owned
+**Candidate created in this branch:** a *test-only, explicitly owned
 reference renderer* using the real bundled Markdown JCEF provider, separate
 from the platform-managed split Preview file editor.
 
@@ -188,7 +188,23 @@ the definition of full differential acceptance.
 - No code fix, new stress execution, merge, or 1.0 release authorization
   is claimed by this record.
 
-Next checkpoint: implement only the bounded, test-only controlled-provider
-candidate and its immediate invariant checks, then STOP for independent CI
-classification. Do not bundle implementation, CI repair, merge and
+Candidate files:
+- `src/main/kotlin/com/algorist/markflow/editor/native/NativeControlledReferencePreviewE2EBridge.kt`:
+  one explicitly owned bundled JCEF panel in a visible IDE-owned dialog,
+  asynchronous identity-scoped native lifecycle callbacks, fail-closed
+  marker and text capture, creation-before-disposal barrier and close proof.
+- `src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterControlledJcefPreflightTest.kt`:
+  independently opt-in two-opening preflight, real DOM text and viewport
+  paint, native callback and source immutability proof.
+- `.github/workflows/starter-driver-e2e.yml`: opt-in dispatch mode
+  `controlled_provider` restricted to `preflight_2` / Remote JCEF / OSR;
+  keeps old reproducer and release gates unchanged.
+
+**This is a code candidate, not a green run.** Static review and CI
+classification are required next. It cannot authorize the historical 50-run
+or 89-case PASS, even if the controlled-provider preflight becomes green.
+
+Next checkpoint: collect and classify authoritative candidate CI results,
+including plugin-verifier and hardening checks. Repair one deterministic
+failure class per subsequent checkpoint; never hide the old reproducer. Do not bundle implementation, CI repair, merge and
 post-merge bookkeeping into one user command.
