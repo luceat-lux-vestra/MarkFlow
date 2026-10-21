@@ -511,9 +511,9 @@ jobs:
     # JCEF case. Diagnostic only; no release-acceptance or stable gate promotion.
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
     needs: [ package ]
-    name: Manifest runner controlled JCEF heading + Mermaid DOM (unreviewed)
+    name: Manifest runner controlled JCEF full 89 corpus (unreviewed)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 100
     steps:
       - name: Fetch exact candidate source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -583,72 +583,88 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-manifest-one-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
-      - name: Run two exact source-bound Manifest DOM cases
+      - name: Run full sequential Controlled JCEF manifest capture (89 cases)
         shell: bash
         run: |
           set -euo pipefail
-          case_ids=md-atx-headings-h1-h6,mermaid-flowchart-minimal
           rm -rf build/e2e-evidence/derived-content/differential-manifest \
                  build/test-results/integrationTest build/reports/tests/integrationTest
-          timeout --signal=TERM --kill-after=30s 30m \
+          timeout --signal=TERM --kill-after=30s 90m \
             ./gradlew integrationTest -x buildPlugin \
               -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
-              -PdifferentialContract=capture -PdifferentialCaseIds="$case_ids" \
-              -PdifferentialControlledCaseId="$case_ids" \
-              --stacktrace \
+              -PdifferentialContract=controlled-capture --stacktrace \
               --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest.boundedManifestCasesCaptureActualReferenceAndNative
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Controlled manifest mutated the exact packaged plugin"
+            echo "::error::Controlled manifest capture mutated the exact packaged plugin"
             exit 1
           }
-          for case_id in md-atx-headings-h1-h6 mermaid-flowchart-minimal; do
-            pass_dir="build/e2e-evidence/derived-content/differential-manifest/$case_id"
-            owned="$pass_dir/controlled-reference"
-            [ -s "$pass_dir/identity.txt" ] && [ -s "$owned/result.txt" ]
-            grep -Fxq "source_head=$STARTER_SOURCE_SHA" "$pass_dir/identity.txt"
-            grep -Fxq "case_id=$case_id" "$pass_dir/identity.txt"
-            grep -Fxq 'result=CAPTURED_UNVERIFIED' "$owned/result.txt"
-            grep -Fxq 'native_closed=true' "$owned/result.txt"
-            grep -Fxq 'full_differential_acceptance=false' "$owned/result.txt"
-            for name in open.txt native-created.txt dom-proof.txt intellij-preview.png \
-                native-closed.txt native-events.tsv native-close.marker dom-probes-complete.txt; do
-              [ -s "$owned/$name" ] || {
-                echo "::error::Controlled $case_id missing $name"
-                exit 1
-              }
-            done
-            grep -Fxq 'on_before_close=true' "$owned/native-close.marker"
-            grep -Fxq 'native_before_close=true' "$owned/native-closed.txt"
-            grep -Fxq 'cef_closed=true' "$owned/native-closed.txt"
-            grep -Fxq 'dom_probe_pending=false' "$owned/native-closed.txt"
-            grep -Fxq 'callback_failure=NONE' "$owned/native-closed.txt"
-            for key in cef_identity browser_identity; do
-              identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
-              [ -n "$identity" ] && grep -Fxq "$identity" "$owned/native-close.marker"
-            done
-            if [ "$case_id" = md-atx-headings-h1-h6 ]; then
-              cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md
-              probes='heading-dom-geometry following-paragraph-dom-geometry'
-              expected=2
-            else
-              probes='mermaid-svg-dom-geometry'
-              expected=1
-            fi
-            count="$(sed -n 's/^dom_probe_completed=//p' "$owned/dom-probes-complete.txt")"
-            [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge "$expected" ]
-            for probe in $probes; do
-              [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
-              grep -Fxq "probe_name=$probe" "$owned/$probe.identity"
-              grep -Fxq "case_id=$case_id" "$owned/$probe.identity"
-              grep -Fxq 'query_browser_bound=true' "$owned/$probe.identity"
-              grep -Fxq 'status=OK' "$owned/$probe.identity"
-              for key in cef_identity browser_identity cef_native_id; do
-                identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
-                [ -n "$identity" ] && grep -Fxq "$identity" "$owned/$probe.identity"
-              done
-            done
-          done
-          echo 'Two native-closed browser identities and three DOM callbacks; captures unreviewed.'
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("build/e2e-evidence/derived-content/differential-manifest")
+          summary = json.loads((root / "summary.json").read_text())
+          assert summary["expanded_cases"] == 89
+          assert summary["selected_cases"] == 89
+          assert summary["captured_unverified"] == 89
+          assert summary["capture_failed"] == 0
+          assert summary["not_executed"] == 0
+          assert summary["candidate_structural_failure_count"] == 0
+          assert summary["full_differential_acceptance"] is False
+          assert summary["release_eligible"] is False
+          cases = summary["cases"]
+          assert len(cases) == 89 and len({row["case_id"] for row in cases}) == 89
+          noncomparable = 0
+          for row in cases:
+              case_id = row["case_id"]
+              assert row["capture_status"] == "CAPTURED_UNVERIFIED", case_id
+              folder = root / case_id
+              identity = dict(line.split("=", 1) for line in
+                              (folder / "identity.txt").read_text().splitlines()
+                              if "=" in line)
+              source = (folder / "source.md").read_bytes()
+              assert identity["case_id"] == case_id
+              assert identity["source_sha256"] == hashlib.sha256(source).hexdigest()
+              assert (folder / "markflow.png").stat().st_size > 100
+              if identity["intellij_preview"] == "no":
+                  noncomparable += 1
+                  assert row["classification"] == "degraded"
+                  assert (folder / "reference-disposition.txt").is_file()
+                  assert not (folder / "controlled-reference").exists()
+                  continue
+              assert identity["intellij_preview"] == "yes"
+              owned = folder / "controlled-reference"
+              assert (owned / "intellij-preview.png").stat().st_size > 100
+              assert "result=CAPTURED_UNVERIFIED" in (owned / "result.txt").read_text()
+              created = dict(line.split("=", 1) for line in
+                             (owned / "native-created.txt").read_text().splitlines()
+                             if "=" in line)
+              closed = (owned / "native-closed.txt").read_text()
+              marker = (owned / "native-close.marker").read_text()
+              assert "cef_closed=true" in closed
+              assert "callback_failure=NONE" in closed
+              assert "on_before_close=true" in marker
+              for key in ("cef_identity", "browser_identity"):
+                  assert f"{key}={created[key]}" in marker
+              names = (["heading-dom-geometry", "following-paragraph-dom-geometry"]
+                       if case_id == "md-atx-headings-h1-h6" else
+                       ["mermaid-svg-dom-geometry"]
+                       if case_id == "mermaid-flowchart-minimal" else
+                       ["generic-dom-geometry"])
+              for name in names:
+                  assert (owned / f"{name}.txt").stat().st_size > 0
+                  evidence = (owned / f"{name}.identity").read_text()
+                  assert f"probe_name={name}" in evidence
+                  assert f"case_id={case_id}" in evidence
+                  assert f"source_sha256={identity['source_sha256']}" in evidence
+                  assert "query_browser_bound=true" in evidence
+                  assert "status=OK" in evidence
+                  for key in ("cef_identity", "browser_identity", "cef_native_id"):
+                      assert f"{key}={created[key]}" in evidence
+          assert noncomparable == 1
+          print("Full unreviewed capture: 89 native sources, 88 source-bound JCEF references, all callbacks and native closes verified")
+          PY
 
       - name: Upload Manifest-owned corpus evidence
         if: ${{ always() }}
