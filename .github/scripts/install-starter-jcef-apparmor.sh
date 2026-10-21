@@ -31,7 +31,7 @@ if [[ "${1:-}" == --self-test ]]; then
 fi
 [[ "${1:-}" == "" ]] || exit 1
 case "${STARTER_SHARD:-}" in
-  derived-content|full-differential-acceptance|jcef-lifecycle-stress|jcef-corpus-one) ;;
+  derived-content|full-differential-acceptance|jcef-lifecycle-stress|jcef-corpus-one|jcef-manifest-one) ;;
   *) exit 1 ;;
 esac
 [[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == X64 ]] || exit 1
