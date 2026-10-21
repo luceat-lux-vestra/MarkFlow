@@ -629,10 +629,12 @@ jobs:
             if [ "$case_id" = md-atx-headings-h1-h6 ]; then
               cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md
               probes='heading-dom-geometry following-paragraph-dom-geometry'
-              grep -Eq '^dom_probe_completed=([2-9]|[1-9][0-9]+)
+              count="$(sed -n 's/^dom_probe_completed=//p' "$owned/dom-probes-complete.txt")"
+              [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge 2 ]
             else
               probes='mermaid-svg-dom-geometry'
-              grep -Eq '^dom_probe_completed=[1-9][0-9]*
+              count="$(sed -n 's/^dom_probe_completed=//p' "$owned/dom-probes-complete.txt")"
+              [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -ge 1 ]
             fi
             for probe in $probes; do
               [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
