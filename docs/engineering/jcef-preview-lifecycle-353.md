@@ -1,6 +1,6 @@
 # #353 — bundled Markdown JCEF lifecycle: evidence and local recovery plan
 
-Status: **OPEN / diagnostic; no release-grade 50-run or 89-case acceptance**  
+Status: **OPEN / controlled-provider 50/50 PASS; original FileEditor and 89-case acceptance OPEN**  
 Evidence captured: 2026-10-20–21  
 Platform: IntelliJ IDEA Ultimate 2026.2.3, IntelliJ source ref `idea/262.10968.63`  
 Diagnostic PR: [#453](https://github.com/luceat-lux-vestra/MarkFlow/pull/453)  
@@ -253,9 +253,67 @@ and `completed=50` before PASS. The old two-open preflight remains
 independently selectable. The #453 PR lane moves to the 50-open
 controlled-provider run; manual `workflow_dispatch` modes remain available.
 
-**The controlled-provider 50-open result is NOT YET VERIFIED.** Even if this
+**At the time of candidate creation, the controlled-provider 50-open result was NOT YET VERIFIED.** Even if this
 candidate passes, it does not establish that the original
 `MarkdownPreviewFileEditor` duplicate-attach lifecycle is fixed, nor
 does it constitute the original platform-editor 50-run stress or 89-case
 full differential acceptance. Do not suppress the original failure evidence,
 increase the native-close deadline, or merge on this basis alone.
+
+
+### Controlled-provider 50/50 proof and API decision before 89-case acceptance — 2026-10-21
+
+**Authoritative proof (controlled provider ONLY):** [Starter Driver E2E run #39569231308](https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/39569231308), artifact
+\`starter-jcef-lifecycle-stress-39569231308\` (ID \`12332621733\`).
+Exact source HEAD \`fe5c8941a6ef006647dd67f3bdd97ba16da38e3a\`,
+IDE Ultimate \`2026.2.3\`, \`controlled_provider / stress_50 / remote / osr\`,
+plugin SHA256 \`5a7b527e6f1ac06ca7d6d20dfaebd4f120aa2b7d916f1d114ee28f1a1e1327f1\`.
+Artifact \`run-contract.txt\`, \`progress.txt\` and \`result.txt\` say
+\`iterations=50\`, \`completed=50\`, \`retries=0\`, \`result=PASS\`.
+Independent per-iteration artifact readback: 50 distinct native CEF IDs (11–60);
+50 matching \`onAfterCreated\` / \`onBeforeClose\` events, identity-matched
+close markers, disposed Java wrappers and \`cef_closed=true\`; both DOM
+anchors and screenshot for every iteration; no callback failures.
+Observed request-to-\`onBeforeClose\` delays: 10 ms min, 13 ms median,
+91 ms max (**not** a performance guarantee). Native close completed
+before each successive open. This supersedes the earlier *candidate*
+status above, **not** the original FileEditor failure. No 89-case verdict,
+product-path fix, upstream root cause or release approval follows from it.
+
+**API boundary: analyze/replace BEFORE wiring the 89-case oracle.**
+The current [Build run #39569231421](https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/39569231421)
+still fails Plugin Verifier (\`INTERNAL_API_USAGES\`, 3 calls) and Qodana
+(\`UnstableApiUsage\`, 1 call), separately from successful native stress.
+
+| Dependency | Exact usage | Decision and remaining proof |
+| --- | --- | --- |
+| Internal \`JBCefBrowserBase.isCefBrowserCreated()\` | \`NativeDifferentialPreviewE2EBridge.kt\` in \`referenceBrowserIdentity\`, \`installReferenceLoadTrace\`, \`requestReferenceRenderedTextProbe\` | Replace readiness gates with exact-browser native \`onAfterCreated\` evidence and fail-closed callback/DOM checks; preserve diagnostic semantics. **Not yet proven equivalent** for the original platform-owned editor: handler registration may occur after creation. Do not infer native readiness from visible Swing/DOM or a guessed native ID sentinel. |
+| Experimental \`MarkdownHtmlPanelProvider.createHtmlPanel(project, file)\` | \`NativeControlledReferencePreviewE2EBridge.kt\`, constructing the actual bundled \`MarkdownJCEFHtmlPanel\` | No verified stable *same-renderer* factory identified. The documented generic \`JBCefBrowser\` factory is **not** a drop-in bundled Markdown oracle: it does not by itself preserve preprocessing, bundled CSS/JS, resources or rendering semantics. Either find and validate an equivalent supported factory or isolate the experimental dependency in test-only diagnostics without changing production/runtime acceptance truth. **Removal is blocked until equivalence is proved.** |
+
+The [IntelliJ JCEF SDK](https://plugins.jetbrains.com/docs/intellij/embedded-browser-jcef.html)
+documents public \`JBCefBrowser\`, \`getCefBrowser()\`, client/lifespan
+handlers, and disposal patterns; it does **not** establish that a bare
+browser is equivalent to the bundled Markdown provider. The pinned
+[Markdown provider](https://github.com/JetBrains/intellij-community/blob/idea/262.10968.63/plugins/markdown/core/src/org/intellij/plugins/markdown/ui/preview/MarkdownHtmlPanelProvider.java)
+remains the reference for API compatibility. Do not silence inspections,
+change timeouts, skip native close or substitute a different renderer
+merely to turn CI green.
+
+**Next bounded checkpoints:**
+1. Prove an exact-browser public lifecycle signal for all three Internal
+   call sites, including late-registration cases; replace together and
+   rerun the affected original diagnostic before considering those warnings cleared.
+2. Establish a supported same-renderer factory **or** a truthful, isolated
+   test-only dependency strategy for the Experimental call. Following *any*
+   changed factory/ownership code, rerun the controlled 2-open and uninterrupted
+   50-open suites on that exact HEAD with the same fail-closed evidence contract.
+3. Only then wire the stable reference owner into all 89 differential cases:
+   actual reference vs MarkFlow render/DOM/viewport/resource comparison,
+   one owned native browser at a time, 89/89 evidence, no skip/retry,
+   authoritative PR CI that fails on missing or incomplete evidence.
+4. Independently verify the real MarkFlow user Preview lifecycle; a test-only
+   oracle cannot close #353. Finish Plugin Verifier/Qodana, hardening,
+   full CI and release gates on the final implementation HEAD.
+
+Keep the failed original \`MarkdownPreviewFileEditor\` run and the
+successful controlled-provider artifact for side-by-side regressions.
