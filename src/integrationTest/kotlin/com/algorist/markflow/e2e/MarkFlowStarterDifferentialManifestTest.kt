@@ -75,7 +75,7 @@ class MarkFlowStarterDifferentialManifestTest {
         // contracts. Never infer release approval from a successful bounded
         // source-identical capture of only a bounded subset of 89 expanded cases.
         val contract = System.getProperty("markflow.differential.contract") ?: "capture"
-        require(contract == "capture" || contract == "acceptance") {
+        require(contract in setOf("capture", "acceptance", "controlled-capture")) {
             "Unknown differential contract: $contract"
         }
         // Expand one sequential real-IDE session rather than adding CI shards.
@@ -87,7 +87,7 @@ class MarkFlowStarterDifferentialManifestTest {
             ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
             ",mermaid-flowchart-large--block-02"
         val explicitCaseIds = System.getProperty("markflow.differential.caseIds")
-        val selectedIds = if (contract == "acceptance") {
+        val selectedIds = if (contract == "acceptance" || contract == "controlled-capture") {
             check(explicitCaseIds == null) {
                 "Full #353 acceptance cannot be reduced with differentialCaseIds"
             }
@@ -137,14 +137,27 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         // Isolated controlled-reference migration proof. Never substitute this for
         // reviewed full acceptance or silently turn on a second reference renderer.
-        val controlledCaseIds = System.getProperty("markflow.differential.controlledCaseId")
+        val controlledFullCorpus = contract == "controlled-capture"
+        val pilotIds = System.getProperty("markflow.differential.controlledCaseId")
             ?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim() }?.toSet()
-        if (controlledCaseIds != null) {
-            check(contract == "capture" && controlledCaseIds.isNotEmpty() &&
-                controlledCaseIds.all {
+        check(!controlledFullCorpus || pilotIds == null) {
+            "Full controlled corpus must not be reduced to a pilot subset"
+        }
+        val controlledCaseIds = if (controlledFullCorpus) {
+            inventory.filter { it.comparable }.map { it.id }.toSet()
+        } else pilotIds
+        if (pilotIds != null) {
+            check(contract == "capture" && pilotIds.isNotEmpty() &&
+                pilotIds.all {
                     it in setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
-                } && selectedIds.containsAll(controlledCaseIds)) {
+                } && selectedIds.containsAll(pilotIds)) {
                 "Controlled manifest DOM pilot requires selected H1-H6 / minimal Mermaid cases"
+            }
+        }
+        if (controlledFullCorpus) {
+            check(selected.size == 89 && controlledCaseIds?.size == 88 &&
+                inventory.count { !it.comparable } == 1) {
+                "89-case controlled scope or Manifest preview classification changed"
             }
         }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
@@ -227,10 +240,10 @@ class MarkFlowStarterDifferentialManifestTest {
             }
             heartbeat("starter-launch")
             Starter.newContext(
-                testName = if (contract == "acceptance") {
-                    "markflow-353-full-manifest-real-pairs"
-                } else {
-                    "markflow-353-bounded-manifest-real-pairs"
+                testName = when (contract) {
+                    "acceptance" -> "markflow-353-full-manifest-real-pairs"
+                    "controlled-capture" -> "markflow-353-full-controlled-manifest"
+                    else -> "markflow-353-bounded-manifest-real-pairs"
                 },
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
             ).apply {
@@ -252,7 +265,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 // for the bounded PR capture, but the complete 89-case acceptance corpus cannot
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
                 // leaving cleanup headroom under the workflow's 85-minute outer timeout.
-                runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes,
+                runTimeout = if (contract != "capture") 75.minutes else 12.minutes,
             ).useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 heartbeat("ide-ready")
@@ -549,6 +562,9 @@ class MarkFlowStarterDifferentialManifestTest {
                             check(created.lineSequence().single {
                                 it.startsWith("cef_native_id=")
                             }.substringAfter('=').toInt() > 0)
+                            if (!controlledFullCorpus || entry.id in
+                                setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
+                            ) {
                             var probe: Path? = null
                             var requests = 0
                             waitFor(
@@ -586,6 +602,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 },
                                 checker = { it }
                             )
+                            }
                             val bounds = driver.withContext(OnDispatcher.EDT) {
                                 owned.bounds().split(',').map(String::toInt)
                             }
@@ -668,12 +685,26 @@ class MarkFlowStarterDifferentialManifestTest {
                                     "following-paragraph-dom-geometry", followingParagraphDomProbe,
                                     "schema=markflow-reference-paragraph-text-range/v1"
                                 )
-                            } else {
-                                check(entry.id == "mermaid-flowchart-minimal")
+                            } else if (entry.id == "mermaid-flowchart-minimal") {
                                 captureOwnedProbe(
                                     "mermaid-svg-dom-geometry",
                                     mermaidReferenceSvgProbe("Rendered correctly?"),
                                     "schema=markflow-reference-mermaid-svg-dom-geometry/v1"
+                                )
+                            } else {
+                                check(controlledFullCorpus)
+                                captureOwnedProbe(
+                                    "generic-dom-geometry",
+                                    controlledReferenceGenericDomProbe(entry.domain == "mermaid"),
+                                    "schema=markflow-controlled-reference-generic-dom/v1"
+                                )
+                                Files.writeString(
+                                    ownedDest.resolve("dom-proof.txt"),
+                                    "schema=markflow-controlled-reference-dom-proof/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "source_sha256=$expectedSha\n" +
+                                        "probe_name=generic-dom-geometry\n" +
+                                        "result=CAPTURED_UNVERIFIED\n"
                                 )
                             }
                             val probeSnapshot = driver.withContext(OnDispatcher.EDT) {
@@ -726,6 +757,24 @@ class MarkFlowStarterDifferentialManifestTest {
                                     "source_sha256=$expectedSha\nnative_closed=true\n" +
                                     "full_differential_acceptance=false\n")
                             heartbeat("case-owned-reference-complete", entry.id)
+                            if (controlledFullCorpus) {
+                                states[entry.id] = "CAPTURED_UNVERIFIED"
+                                heartbeat("case-complete", entry.id)
+                                continue
+                            }
+                        }
+                        if (controlledFullCorpus && !entry.comparable) {
+                            Files.writeString(
+                                dest.resolve("reference-disposition.txt"),
+                                "schema=markflow-differential-reference-disposition/v1\n" +
+                                    "case_id=" + entry.id + "\n" +
+                                    "classification=" + entry.classification + "\n" +
+                                    "intellij_preview=NOT_APPLICABLE_BY_MANIFEST\n" +
+                                    "result=CAPTURED_UNVERIFIED\n"
+                            )
+                            states[entry.id] = "CAPTURED_UNVERIFIED"
+                            heartbeat("case-complete", entry.id)
+                            continue
                         }
                         var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
                         var reference: Rectangle? = null
@@ -1898,6 +1947,23 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // MarkdownPreviewFileEditor disposes its JCEF-backed panel from the
                                 // componentHidden lifecycle callback; prove that detach completed
                                 // before closing the owning TextEditorWithPreview.
+                                if (controlledFullCorpus) {
+                                    check(driver.withContext(OnDispatcher.EDT) {
+                                        preview.nativeShowing(remote) &&
+                                            !preview.referencePanelAttached(remote)
+                                    }) {
+                                        "Controlled reference left a platform Preview open: " + entry.id
+                                    }
+                                    Files.writeString(
+                                        dest.resolve("reference-lifecycle.txt"),
+                                        "schema=markflow-controlled-reference-cleanup/v1\n" +
+                                            "case_id=" + entry.id + "\n" +
+                                            "platform_preview_opened=false\n" +
+                                            "native_close_barrier=" +
+                                                (if (entry.comparable) "FINISHED" else "NOT_APPLICABLE") +
+                                            "\n"
+                                    )
+                                } else {
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),
                                     "phase=before-hide\n" +
@@ -1969,6 +2035,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                     }) {
                                         "Diagnostic-only case lost native layout before close: " + entry.id
                                     }
+                                }
                                 }
                                 markFlow.closeMarkdown(remote, entry.id + ".md")
                                 waitFor(
@@ -2445,6 +2512,44 @@ class MarkFlowStarterDifferentialManifestTest {
      * is not an oracle. Relative bounding coordinates are invariant under a
      * shared browser scroll displacement (unlike viewport screenshot offsets).
      */
+
+    /**
+     * Browser-bound generic DOM evidence. A diagram case must have a visible
+     * SVG; full visual parity remains subject to independent human review.
+     */
+    private fun controlledReferenceGenericDomProbe(expectMermaidSvg: Boolean): String = """
+        (() => {
+          const body = document.body;
+          if (!body || !document.documentElement) return 'FAIL: missing body';
+          const box = body.getBoundingClientRect();
+          const visibleSvgs = Array.from(body.querySelectorAll('svg')).filter(svg => {
+            const rect = svg.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          }).length;
+          if (!Number.isFinite(box.width) || box.width <= 0 ||
+              !Number.isFinite(box.height) || box.height <= 0 ||
+              body.children.length === 0 ||
+              (document.documentElement.outerHTML || '').length < 100) {
+            return 'FAIL: controlled DOM empty or geometrically invalid';
+          }
+          if ($expectMermaidSvg && visibleSvgs === 0) {
+            return 'FAIL: source Mermaid SVG not rendered';
+          }
+          return [
+            'schema=markflow-controlled-reference-generic-dom/v1',
+            'document_ready_state=' + document.readyState,
+            'body_child_count=' + body.children.length,
+            'body_text_characters=' + (body.textContent || '').length,
+            'visible_svg_count=' + visibleSvgs,
+            'body_css_width=' + box.width.toFixed(3),
+            'body_css_height=' + box.height.toFixed(3),
+            'viewport_width=' + window.innerWidth,
+            'viewport_height=' + window.innerHeight,
+            'html_length=' + document.documentElement.outerHTML.length
+          ].join('\n');
+        })()
+    """.trimIndent()
+
     /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
     private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
         require(sourceLabel == "Rendered correctly?" ||

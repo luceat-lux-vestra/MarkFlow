@@ -433,7 +433,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(probeName in setOf(
             "heading-dom-geometry", "following-paragraph-dom-geometry",
-            "mermaid-svg-dom-geometry"
+            "mermaid-svg-dom-geometry", "generic-dom-geometry"
         )) { "Unapproved controlled DOM probe" }
         require(script.isNotBlank()) { "Empty controlled DOM probe" }
         val state = checkNotNull(active) { "No active controlled reference" }
