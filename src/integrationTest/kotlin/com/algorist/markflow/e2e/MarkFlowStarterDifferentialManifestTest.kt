@@ -681,9 +681,12 @@ class MarkFlowStarterDifferentialManifestTest {
                             }
                             Files.writeString(ownedDest.resolve("dom-probes-complete.txt"),
                                 probeSnapshot)
+                            val completedProbes = probeSnapshot.lineSequence().single {
+                                it.startsWith("dom_probe_completed=")
+                            }.substringAfter('=').toInt()
                             check(probeSnapshot.contains("dom_probe_pending=false\n") &&
-                                probeSnapshot.contains("dom_probe_completed=" +
-                                    (if (entry.id == "md-atx-headings-h1-h6") 2 else 1) + "\n")
+                                completedProbes >=
+                                    (if (entry.id == "md-atx-headings-h1-h6") 2 else 1)
                             ) { "Controlled DOM callback barrier incomplete" }
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)

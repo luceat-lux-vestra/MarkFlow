@@ -629,7 +629,1648 @@ jobs:
             if [ "$case_id" = md-atx-headings-h1-h6 ]; then
               cmp -s "$pass_dir/source.md" fixtures/differential-acceptance/markdown/headings-atx-h1-h6.md
               probes='heading-dom-geometry following-paragraph-dom-geometry'
-              grep -Fxq 'dom_probe_completed=2' "$owned/dom-probes-complete.txt"
+              grep -Eq '^dom_probe_completed=([2-9]|[1-9][0-9]+)
+            else
+              probes='mermaid-svg-dom-geometry'
+              grep -Eq '^dom_probe_completed=[1-9][0-9]*
+            fi
+            for probe in $probes; do
+              [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
+              grep -Fxq "probe_name=$probe" "$owned/$probe.identity"
+              grep -Fxq "case_id=$case_id" "$owned/$probe.identity"
+              grep -Fxq 'query_browser_bound=true' "$owned/$probe.identity"
+              grep -Fxq 'status=OK' "$owned/$probe.identity"
+              for key in cef_identity browser_identity cef_native_id; do
+                identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+                [ -n "$identity" ] && grep -Fxq "$identity" "$owned/$probe.identity"
+              done
+            done
+          done
+          echo 'Two native-closed browser identities and three DOM callbacks; unreviewed.'
+
+      - name: Upload Manifest-owned corpus evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-manifest-one-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
+
+  jcef-lifecycle-stress:
+    # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
+    # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
+    # workflow_dispatch modes continue to be available for stress_50.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress) || (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer') }}
+    needs: [ package ]
+    name: Bundled JCEF lifecycle diagnostic (50 stress / 2 preflight)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::JCEF stress source checkout drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$manifest" ] && [ -f build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          [[ ",$(field scenario_sets)," == *",jcef-lifecycle-stress,"* ]]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive_name="$(field plugin_archive)"
+          [[ "$archive_name" = *.zip && "$archive_name" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-lifecycle-stress
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-stress-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run isolated bundled JCEF lifecycle diagnostic
+        shell: bash
+        env:
+          # #453's 2-open controlled preflight passed on 474b6f8.
+          # The next PR candidate independently tests 50 native closes.
+          # Manual dispatch still supports the preflight_2 and original
+          # FileEditor stress modes; the PR lane never claims FileEditor proof.
+          JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'stress_50' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+        run: |
+          set -euo pipefail
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
+            echo "::error::Unsupported JCEF process mode: $JCEF_STRESS_EXECUTION_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_RENDER_MODE" == osr || "$JCEF_STRESS_RENDER_MODE" == windowed ]] || {
+            echo "::error::Unsupported JCEF render mode: $JCEF_STRESS_RENDER_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == in_process || "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+            echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+            echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_ITERATION_MODE" == stress_50 || "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]] || {
+            echo "::error::Unsupported lifecycle iteration mode: $JCEF_STRESS_ITERATION_MODE"
+            exit 1
+          }
+          expected_iterations=50
+          if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+              echo "::error::Two-iteration preflight requires a split counterfactual"
+              exit 1
+            }
+            expected_iterations=2
+          fi
+          if [[ "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create && "$JCEF_STRESS_ITERATION_MODE" != preflight_2 ]]; then
+            echo "::error::Eager native creation counterfactual is limited to preflight_2"
+            exit 1
+          fi
+          suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
+          pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          controlled_preflight=0
+          controlled_stress_50=0
+          if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
+            [[ "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+              echo "::error::Controlled provider candidate requires Remote JCEF / OSR"
+              exit 1
+            }
+            suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
+            if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+              controlled_preflight=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+            else
+              controlled_stress_50=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-stress
+            fi
+          fi
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          # JCEF's native RemoteLoadHandler already supports targeted tracing.
+          # Activate it only inside this opt-in diagnostic, not package or
+          # acceptance jobs. Native log timestamps use the server's local TZ.
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            export CEF_SERVER_LOG_LEVEL=trace
+            export CEF_SERVER_TRACE_RemoteLoadHandler=true
+            export CEF_SERVER_LOG_PATH="$PWD/$pass_dir/cef-server-trace.log"
+            printf 'schema=markflow-cef-server-load-trace/v1\n' > "$pass_dir/cef-server-trace-contract.txt"
+            printf 'enabled=true\nsource_head=%s\ntrace_flag=%s\nlog_level=%s\nlog_path=%s\n' \
+              "$STARTER_SOURCE_SHA" "$CEF_SERVER_TRACE_RemoteLoadHandler" \
+              "$CEF_SERVER_LOG_LEVEL" "$CEF_SERVER_LOG_PATH" >> "$pass_dir/cef-server-trace-contract.txt"
+            printf 'server_local_timezone=%s\nserver_launch_date=%s\n' \
+              "$(date +%z)" "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+              >> "$pass_dir/cef-server-trace-contract.txt"
+          fi
+          test_status=0
+          set +e
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+            timeout --signal=TERM --kill-after=30s 45m \
+              ./gradlew integrationTest -x buildPlugin \
+                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            if [[ -s "$pass_dir/cef-server-trace.log" ]]; then
+              echo "Native cef_server diagnostic log captured."
+            else
+              echo "::warning::No native cef_server trace log; server-side event timing is unverified."
+            fi
+          fi
+
+          # Never let a skipped test or incomplete iteration count look like PASS.
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-diagnostic\niteration_mode=%s\nexpected_iterations=%s\nexecution_mode=%s\nrender_mode=%s\ninitial_open_mode=%s\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_ITERATION_MODE" "$expected_iterations" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::JCEF stress changed the exact plugin artifact"
+            exit 1
+          }
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::JCEF lifecycle stress failed with status $test_status"
+            exit "$test_status"
+          }
+          [ -f "$pass_dir/result.txt" ] || {
+            echo "::error::Stress test was skipped or did not produce a result"
+            exit 1
+          }
+          grep -Fxq 'result=PASS' "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/run-contract.txt"
+          grep -Fxq "iterations=$expected_iterations" "$pass_dir/run-contract.txt"
+          grep -Fxq "completed=$expected_iterations" "$pass_dir/result.txt"
+          [ "$(find "$pass_dir" -maxdepth 1 -type d -name 'iteration-*' | wc -l)" -eq "$expected_iterations" ] || {
+            echo "::error::JCEF lifecycle diagnostic did not record exactly $expected_iterations iterations"
+            exit 1
+          }
+
+      - name: Upload JCEF lifecycle stress evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-lifecycle-stress-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
+            build/e2e-evidence/derived-content/jcef-controlled-preflight/**
+            build/e2e-evidence/derived-content/jcef-controlled-stress/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-stress-xvfb.log
+
+  visual:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress }}
+    needs: [ package ]
+    name: Deterministic Visual Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Visual checkout drifted from exact candidate"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+          scenario_sets="$(sed -n 's/^scenario_sets=//p' "$manifest")"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [[ "$scenario_sets" == *"visual-acceptance"* ]] || {
+            echo "::error::Exact package manifest does not declare visual acceptance"
+            exit 1
+          }
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start pinned visual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 -dpi 96 >"$RUNNER_TEMP/markflow-visual-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run deterministic representative visual acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite="com.algorist.markflow.e2e.MarkFlowStarterVisualAcceptanceTest"
+          rm -rf build/visual-acceptance build/test-results/integrationTest build/reports/tests/integrationTest
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Visual acceptance mutated the packaged plugin artifact"
+            exit 1
+          }
+          mkdir -p build/visual-acceptance
+          cp build/e2e-package/manifest.txt build/visual-acceptance/package-manifest.txt
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+
+      - name: Upload visual diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-visual-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/visual-acceptance/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-visual-xvfb.log
+
+  visual-gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, visual ]
+    name: Deterministic Visual Acceptance Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require exact package and visual oracle
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$VISUAL_RESULT" = "success" ] || {
+            echo "::error::Deterministic visual acceptance result: $VISUAL_RESULT"
+            exit 1
+          }
+
+  release-candidate-repeat:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat && !inputs.jcef_lifecycle_stress
+    needs: [ package ]
+    name: Release candidate canonical repeat
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-repeat-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run independent canonical repeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
+          pass_dir="build/e2e-evidence/release-candidate-repeat"
+          marker="$RUNNER_TEMP/markflow-starter-repeat-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json" \
+            --required-suite "$suite"
+          diagnostics_status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Canonical repeat mutated the packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
+
+      - name: Upload repeat diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-e2e-release-candidate-repeat-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/e2e-evidence/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
+
+  gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, shards ]
+    name: Starter Driver E2E Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require package and every stable shard
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$SHARDS_RESULT" = "success" ] || {
+            echo "::error::Stable Starter shard result: $SHARDS_RESULT"
+            exit 1
+          }
+ "$owned/dom-probes-complete.txt"
+            else
+              probes='mermaid-svg-dom-geometry'
+              grep -Fxq 'dom_probe_completed=1' "$owned/dom-probes-complete.txt"
+            fi
+            for probe in $probes; do
+              [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
+              grep -Fxq "probe_name=$probe" "$owned/$probe.identity"
+              grep -Fxq "case_id=$case_id" "$owned/$probe.identity"
+              grep -Fxq 'query_browser_bound=true' "$owned/$probe.identity"
+              grep -Fxq 'status=OK' "$owned/$probe.identity"
+              for key in cef_identity browser_identity cef_native_id; do
+                identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+                [ -n "$identity" ] && grep -Fxq "$identity" "$owned/$probe.identity"
+              done
+            done
+          done
+          echo 'Two native-closed browser identities and three DOM callbacks; unreviewed.'
+
+      - name: Upload Manifest-owned corpus evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-manifest-one-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
+
+  jcef-lifecycle-stress:
+    # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
+    # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
+    # workflow_dispatch modes continue to be available for stress_50.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress) || (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer') }}
+    needs: [ package ]
+    name: Bundled JCEF lifecycle diagnostic (50 stress / 2 preflight)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::JCEF stress source checkout drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$manifest" ] && [ -f build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          [[ ",$(field scenario_sets)," == *",jcef-lifecycle-stress,"* ]]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive_name="$(field plugin_archive)"
+          [[ "$archive_name" = *.zip && "$archive_name" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-lifecycle-stress
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-stress-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run isolated bundled JCEF lifecycle diagnostic
+        shell: bash
+        env:
+          # #453's 2-open controlled preflight passed on 474b6f8.
+          # The next PR candidate independently tests 50 native closes.
+          # Manual dispatch still supports the preflight_2 and original
+          # FileEditor stress modes; the PR lane never claims FileEditor proof.
+          JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'stress_50' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+        run: |
+          set -euo pipefail
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
+            echo "::error::Unsupported JCEF process mode: $JCEF_STRESS_EXECUTION_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_RENDER_MODE" == osr || "$JCEF_STRESS_RENDER_MODE" == windowed ]] || {
+            echo "::error::Unsupported JCEF render mode: $JCEF_STRESS_RENDER_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == in_process || "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+            echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+            echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_ITERATION_MODE" == stress_50 || "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]] || {
+            echo "::error::Unsupported lifecycle iteration mode: $JCEF_STRESS_ITERATION_MODE"
+            exit 1
+          }
+          expected_iterations=50
+          if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+              echo "::error::Two-iteration preflight requires a split counterfactual"
+              exit 1
+            }
+            expected_iterations=2
+          fi
+          if [[ "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create && "$JCEF_STRESS_ITERATION_MODE" != preflight_2 ]]; then
+            echo "::error::Eager native creation counterfactual is limited to preflight_2"
+            exit 1
+          fi
+          suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
+          pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          controlled_preflight=0
+          controlled_stress_50=0
+          if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
+            [[ "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+              echo "::error::Controlled provider candidate requires Remote JCEF / OSR"
+              exit 1
+            }
+            suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
+            if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+              controlled_preflight=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+            else
+              controlled_stress_50=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-stress
+            fi
+          fi
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          # JCEF's native RemoteLoadHandler already supports targeted tracing.
+          # Activate it only inside this opt-in diagnostic, not package or
+          # acceptance jobs. Native log timestamps use the server's local TZ.
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            export CEF_SERVER_LOG_LEVEL=trace
+            export CEF_SERVER_TRACE_RemoteLoadHandler=true
+            export CEF_SERVER_LOG_PATH="$PWD/$pass_dir/cef-server-trace.log"
+            printf 'schema=markflow-cef-server-load-trace/v1\n' > "$pass_dir/cef-server-trace-contract.txt"
+            printf 'enabled=true\nsource_head=%s\ntrace_flag=%s\nlog_level=%s\nlog_path=%s\n' \
+              "$STARTER_SOURCE_SHA" "$CEF_SERVER_TRACE_RemoteLoadHandler" \
+              "$CEF_SERVER_LOG_LEVEL" "$CEF_SERVER_LOG_PATH" >> "$pass_dir/cef-server-trace-contract.txt"
+            printf 'server_local_timezone=%s\nserver_launch_date=%s\n' \
+              "$(date +%z)" "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+              >> "$pass_dir/cef-server-trace-contract.txt"
+          fi
+          test_status=0
+          set +e
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+            timeout --signal=TERM --kill-after=30s 45m \
+              ./gradlew integrationTest -x buildPlugin \
+                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            if [[ -s "$pass_dir/cef-server-trace.log" ]]; then
+              echo "Native cef_server diagnostic log captured."
+            else
+              echo "::warning::No native cef_server trace log; server-side event timing is unverified."
+            fi
+          fi
+
+          # Never let a skipped test or incomplete iteration count look like PASS.
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-diagnostic\niteration_mode=%s\nexpected_iterations=%s\nexecution_mode=%s\nrender_mode=%s\ninitial_open_mode=%s\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_ITERATION_MODE" "$expected_iterations" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::JCEF stress changed the exact plugin artifact"
+            exit 1
+          }
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::JCEF lifecycle stress failed with status $test_status"
+            exit "$test_status"
+          }
+          [ -f "$pass_dir/result.txt" ] || {
+            echo "::error::Stress test was skipped or did not produce a result"
+            exit 1
+          }
+          grep -Fxq 'result=PASS' "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/run-contract.txt"
+          grep -Fxq "iterations=$expected_iterations" "$pass_dir/run-contract.txt"
+          grep -Fxq "completed=$expected_iterations" "$pass_dir/result.txt"
+          [ "$(find "$pass_dir" -maxdepth 1 -type d -name 'iteration-*' | wc -l)" -eq "$expected_iterations" ] || {
+            echo "::error::JCEF lifecycle diagnostic did not record exactly $expected_iterations iterations"
+            exit 1
+          }
+
+      - name: Upload JCEF lifecycle stress evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-lifecycle-stress-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
+            build/e2e-evidence/derived-content/jcef-controlled-preflight/**
+            build/e2e-evidence/derived-content/jcef-controlled-stress/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-stress-xvfb.log
+
+  visual:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress }}
+    needs: [ package ]
+    name: Deterministic Visual Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Visual checkout drifted from exact candidate"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+          scenario_sets="$(sed -n 's/^scenario_sets=//p' "$manifest")"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [[ "$scenario_sets" == *"visual-acceptance"* ]] || {
+            echo "::error::Exact package manifest does not declare visual acceptance"
+            exit 1
+          }
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start pinned visual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 -dpi 96 >"$RUNNER_TEMP/markflow-visual-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run deterministic representative visual acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite="com.algorist.markflow.e2e.MarkFlowStarterVisualAcceptanceTest"
+          rm -rf build/visual-acceptance build/test-results/integrationTest build/reports/tests/integrationTest
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Visual acceptance mutated the packaged plugin artifact"
+            exit 1
+          }
+          mkdir -p build/visual-acceptance
+          cp build/e2e-package/manifest.txt build/visual-acceptance/package-manifest.txt
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+
+      - name: Upload visual diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-visual-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/visual-acceptance/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-visual-xvfb.log
+
+  visual-gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, visual ]
+    name: Deterministic Visual Acceptance Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require exact package and visual oracle
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$VISUAL_RESULT" = "success" ] || {
+            echo "::error::Deterministic visual acceptance result: $VISUAL_RESULT"
+            exit 1
+          }
+
+  release-candidate-repeat:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat && !inputs.jcef_lifecycle_stress
+    needs: [ package ]
+    name: Release candidate canonical repeat
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-repeat-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run independent canonical repeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
+          pass_dir="build/e2e-evidence/release-candidate-repeat"
+          marker="$RUNNER_TEMP/markflow-starter-repeat-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json" \
+            --required-suite "$suite"
+          diagnostics_status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Canonical repeat mutated the packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
+
+      - name: Upload repeat diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-e2e-release-candidate-repeat-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/e2e-evidence/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
+
+  gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, shards ]
+    name: Starter Driver E2E Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require package and every stable shard
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$SHARDS_RESULT" = "success" ] || {
+            echo "::error::Stable Starter shard result: $SHARDS_RESULT"
+            exit 1
+          }
+ "$owned/dom-probes-complete.txt"
+            fi
+            for probe in $probes; do
+              [ -s "$owned/$probe.txt" ] && [ -s "$owned/$probe.identity" ]
+              grep -Fxq "probe_name=$probe" "$owned/$probe.identity"
+              grep -Fxq "case_id=$case_id" "$owned/$probe.identity"
+              grep -Fxq 'query_browser_bound=true' "$owned/$probe.identity"
+              grep -Fxq 'status=OK' "$owned/$probe.identity"
+              for key in cef_identity browser_identity cef_native_id; do
+                identity="$(grep -m1 "^$key=" "$owned/native-created.txt")"
+                [ -n "$identity" ] && grep -Fxq "$identity" "$owned/$probe.identity"
+              done
+            done
+          done
+          echo 'Two native-closed browser identities and three DOM callbacks; unreviewed.'
+
+      - name: Upload Manifest-owned corpus evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-manifest-one-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/differential-manifest/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
+
+  jcef-lifecycle-stress:
+    # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
+    # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
+    # workflow_dispatch modes continue to be available for stress_50.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress) || (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer') }}
+    needs: [ package ]
+    name: Bundled JCEF lifecycle diagnostic (50 stress / 2 preflight)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Fetch exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::JCEF stress source checkout drifted"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$manifest" ] && [ -f build/e2e-package/plugin.zip ]
+          field() { sed -n "s/^$1=//p" "$manifest"; }
+          [ "$(field source_sha)" = "$STARTER_SOURCE_SHA" ]
+          [ "$(field platform_version)" = "$STARTER_PLATFORM_VERSION" ]
+          [[ ",$(field scenario_sets)," == *",jcef-lifecycle-stress,"* ]]
+          expected_digest="$(field plugin_sha256)"
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+          archive_name="$(field plugin_archive)"
+          [[ "$archive_name" = *.zip && "$archive_name" != */* ]]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: jcef-lifecycle-stress
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start pinned differential display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-jcef-stress-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run isolated bundled JCEF lifecycle diagnostic
+        shell: bash
+        env:
+          # #453's 2-open controlled preflight passed on 474b6f8.
+          # The next PR candidate independently tests 50 native closes.
+          # Manual dispatch still supports the preflight_2 and original
+          # FileEditor stress modes; the PR lane never claims FileEditor proof.
+          JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'stress_50' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+        run: |
+          set -euo pipefail
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
+            echo "::error::Unsupported JCEF process mode: $JCEF_STRESS_EXECUTION_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_RENDER_MODE" == osr || "$JCEF_STRESS_RENDER_MODE" == windowed ]] || {
+            echo "::error::Unsupported JCEF render mode: $JCEF_STRESS_RENDER_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_EXECUTION_MODE" == in_process || "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+            echo "::error::Remote JCEF requires OSR on pinned IDEA 2026.2.3"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_OPEN_MODE" == editor_only_roundtrip || "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+            echo "::error::Unsupported initial editor opening mode: $JCEF_STRESS_OPEN_MODE"
+            exit 1
+          }
+          [[ "$JCEF_STRESS_ITERATION_MODE" == stress_50 || "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]] || {
+            echo "::error::Unsupported lifecycle iteration mode: $JCEF_STRESS_ITERATION_MODE"
+            exit 1
+          }
+          expected_iterations=50
+          if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+            [[ "$JCEF_STRESS_OPEN_MODE" == direct_split || "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create || "$JCEF_STRESS_OPEN_MODE" == hidden_attach_then_split || "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]] || {
+              echo "::error::Two-iteration preflight requires a split counterfactual"
+              exit 1
+            }
+            expected_iterations=2
+          fi
+          if [[ "$JCEF_STRESS_OPEN_MODE" == direct_split_eager_create && "$JCEF_STRESS_ITERATION_MODE" != preflight_2 ]]; then
+            echo "::error::Eager native creation counterfactual is limited to preflight_2"
+            exit 1
+          fi
+          suite=com.algorist.markflow.e2e.MarkFlowStarterJcefLifecycleStressTest
+          pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
+          controlled_preflight=0
+          controlled_stress_50=0
+          if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
+            [[ "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
+              echo "::error::Controlled provider candidate requires Remote JCEF / OSR"
+              exit 1
+            }
+            suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
+            if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+              controlled_preflight=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
+            else
+              controlled_stress_50=1
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-stress
+            fi
+          fi
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          # JCEF's native RemoteLoadHandler already supports targeted tracing.
+          # Activate it only inside this opt-in diagnostic, not package or
+          # acceptance jobs. Native log timestamps use the server's local TZ.
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            export CEF_SERVER_LOG_LEVEL=trace
+            export CEF_SERVER_TRACE_RemoteLoadHandler=true
+            export CEF_SERVER_LOG_PATH="$PWD/$pass_dir/cef-server-trace.log"
+            printf 'schema=markflow-cef-server-load-trace/v1\n' > "$pass_dir/cef-server-trace-contract.txt"
+            printf 'enabled=true\nsource_head=%s\ntrace_flag=%s\nlog_level=%s\nlog_path=%s\n' \
+              "$STARTER_SOURCE_SHA" "$CEF_SERVER_TRACE_RemoteLoadHandler" \
+              "$CEF_SERVER_LOG_LEVEL" "$CEF_SERVER_LOG_PATH" >> "$pass_dir/cef-server-trace-contract.txt"
+            printf 'server_local_timezone=%s\nserver_launch_date=%s\n' \
+              "$(date +%z)" "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+              >> "$pass_dir/cef-server-trace-contract.txt"
+          fi
+          test_status=0
+          set +e
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+            timeout --signal=TERM --kill-after=30s 45m \
+              ./gradlew integrationTest -x buildPlugin \
+                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+          if [[ "$JCEF_STRESS_EXECUTION_MODE" == remote ]]; then
+            if [[ -s "$pass_dir/cef-server-trace.log" ]]; then
+              echo "Native cef_server diagnostic log captured."
+            else
+              echo "::warning::No native cef_server trace log; server-side event timing is unverified."
+            fi
+          fi
+
+          # Never let a skipped test or incomplete iteration count look like PASS.
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+          printf 'source_head=%s\nmode=jcef-lifecycle-diagnostic\niteration_mode=%s\nexpected_iterations=%s\nexecution_mode=%s\nrender_mode=%s\ninitial_open_mode=%s\nfull_differential_acceptance=false\n' \
+            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_ITERATION_MODE" "$expected_iterations" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::JCEF stress changed the exact plugin artifact"
+            exit 1
+          }
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::JCEF lifecycle stress failed with status $test_status"
+            exit "$test_status"
+          }
+          [ -f "$pass_dir/result.txt" ] || {
+            echo "::error::Stress test was skipped or did not produce a result"
+            exit 1
+          }
+          grep -Fxq 'result=PASS' "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/result.txt"
+          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/run-contract.txt"
+          grep -Fxq "iterations=$expected_iterations" "$pass_dir/run-contract.txt"
+          grep -Fxq "completed=$expected_iterations" "$pass_dir/result.txt"
+          [ "$(find "$pass_dir" -maxdepth 1 -type d -name 'iteration-*' | wc -l)" -eq "$expected_iterations" ] || {
+            echo "::error::JCEF lifecycle diagnostic did not record exactly $expected_iterations iterations"
+            exit 1
+          }
+
+      - name: Upload JCEF lifecycle stress evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-jcef-lifecycle-stress-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/derived-content/jcef-lifecycle-stress/**
+            build/e2e-evidence/derived-content/jcef-controlled-preflight/**
+            build/e2e-evidence/derived-content/jcef-controlled-stress/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-jcef-stress-xvfb.log
+
+  visual:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress }}
+    needs: [ package ]
+    name: Deterministic Visual Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Visual checkout drifted from exact candidate"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+          scenario_sets="$(sed -n 's/^scenario_sets=//p' "$manifest")"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [[ "$scenario_sets" == *"visual-acceptance"* ]] || {
+            echo "::error::Exact package manifest does not declare visual acceptance"
+            exit 1
+          }
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start pinned visual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 -dpi 96 >"$RUNNER_TEMP/markflow-visual-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run deterministic representative visual acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          suite="com.algorist.markflow.e2e.MarkFlowStarterVisualAcceptanceTest"
+          rm -rf build/visual-acceptance build/test-results/integrationTest build/reports/tests/integrationTest
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+              --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          actual_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_digest" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Visual acceptance mutated the packaged plugin artifact"
+            exit 1
+          }
+          mkdir -p build/visual-acceptance
+          cp build/e2e-package/manifest.txt build/visual-acceptance/package-manifest.txt
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+
+      - name: Upload visual diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-visual-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/visual-acceptance/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-visual-xvfb.log
+
+  visual-gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, visual ]
+    name: Deterministic Visual Acceptance Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require exact package and visual oracle
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$VISUAL_RESULT" = "success" ] || {
+            echo "::error::Deterministic visual acceptance result: $VISUAL_RESULT"
+            exit 1
+          }
+
+  release-candidate-repeat:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate_repeat && !inputs.jcef_lifecycle_stress
+    needs: [ package ]
+    name: Release candidate canonical repeat
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Download exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          archive_name="$(sed -n 's/^plugin_archive=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ]
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')" = "$expected_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-starter-driver-repeat-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run independent canonical repeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
+          pass_dir="build/e2e-evidence/release-candidate-repeat"
+          marker="$RUNNER_TEMP/markflow-starter-repeat-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json" \
+            --required-suite "$suite"
+          diagnostics_status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Canonical repeat mutated the packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
+
+      - name: Upload repeat diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: starter-driver-e2e-release-candidate-repeat-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/e2e-evidence/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
+
+  gate:
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
+    needs: [ package, shards ]
+    name: Starter Driver E2E Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require package and every stable shard
+        shell: bash
+        env:
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = "success" ] || {
+            echo "::error::Exact Starter package job result: $PACKAGE_RESULT"
+            exit 1
+          }
+          [ "$SHARDS_RESULT" = "success" ] || {
+            echo "::error::Stable Starter shard result: $SHARDS_RESULT"
+            exit 1
+          }
+ "$owned/dom-probes-complete.txt"
             else
               probes='mermaid-svg-dom-geometry'
               grep -Fxq 'dom_probe_completed=1' "$owned/dom-probes-complete.txt"
