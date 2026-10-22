@@ -996,6 +996,27 @@ jobs:
             test -s "$pass_dir/iteration-002/barrier-before.txt"
             test -s "$pass_dir/iteration-002/barrier-after.txt"
             test -s "$pass_dir/iteration-002/synchronous-rpc.txt"
+
+            summarize_barrier() {
+              local iteration="$1"
+              local phase="$2"
+              local barrier="$pass_dir/iteration-$iteration/barrier-$phase.txt"
+              echo "JCEF_SYNC_COMPARE_BARRIER iteration=$iteration phase=$phase"
+              awk '
+                /^(target_cid|target_bid|target_native_id|target_client_present|target_browser_present)=/ { print; next }
+                /^cef_memory=$/ { section="memory"; next }
+                /^server_factories=$/ { section="factories"; next }
+                /^server_details=$/ { section=""; next }
+                section == "memory" && /^pid=/ { print "cef_memory " $0; next }
+                section == "factories" && /Factory</ { print "server_factory " $0 }
+              ' "$barrier"
+            }
+            summarize_barrier 001 before
+            summarize_barrier 001 after
+            summarize_barrier 002 before
+            summarize_barrier 002 after
+            echo "JCEF_SYNC_COMPARE_RPC iteration=002"
+            awk '/^(bid|cid|rpc_returned|native_close_proved)=/ { print }'               "$pass_dir/iteration-002/synchronous-rpc.txt"
           fi
           grep -Fxq "iterations=$expected_iterations" "$pass_dir/run-contract.txt"
           grep -Fxq "completed=$expected_iterations" "$pass_dir/result.txt"
@@ -1087,6 +1108,7 @@ jobs:
             build/e2e-evidence/derived-content/jcef-controlled-preflight/**
             build/e2e-evidence/derived-content/jcef-controlled-stress/**
             build/e2e-evidence/derived-content/jcef-controlled-dom-stress/**
+            build/e2e-evidence/derived-content/jcef-controlled-sync-compare/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             out/ide-tests/**/log/**
