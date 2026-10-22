@@ -646,6 +646,21 @@ jobs:
               if [ -s "$progress_file" ]; then
                 while IFS= read -r current; do
                   printf 'CONTROLLED_CORPUS_PROGRESS %s\n' "$current"
+                  # Keep the original machine-readable progress event unchanged.
+                  # A separate concise live line makes the current ordinal
+                  # immediately visible while the full 89-case job is running.
+                  IFS=$'\t' read -r timestamp phase case_id position <<< "$current"
+                  case "$phase" in
+                    case-start)
+                      printf 'CONTROLLED_CORPUS_CASE START %s id=%s\n' "$position" "$case_id"
+                      ;;
+                    case-cleanup-complete)
+                      printf 'CONTROLLED_CORPUS_CASE COMPLETE %s id=%s\n' "$position" "$case_id"
+                      ;;
+                    case-failed)
+                      printf 'CONTROLLED_CORPUS_CASE FAIL %s id=%s\n' "$position" "$case_id"
+                      ;;
+                  esac
                   next_line=$((next_line + 1))
                 done < <(tail -n +"$next_line" "$progress_file")
               fi

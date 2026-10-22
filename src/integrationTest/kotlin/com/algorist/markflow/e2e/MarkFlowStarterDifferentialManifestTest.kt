@@ -180,12 +180,18 @@ class MarkFlowStarterDifferentialManifestTest {
                 val candidate = Path.of(raw)
                 if (candidate.isAbsolute) candidate.normalize() else root.resolve(candidate).normalize()
             }
+        // Keep the first three TSV columns stable for the existing watchdog.
+        // The fourth is the selected-corpus ordinal, so a live PR log can show
+        // exactly which case is running even if the IDE fails before artifacts upload.
+        var currentCaseNumber = 0
+        val totalCaseCount = selected.size
         fun heartbeat(phase: String, caseId: String = "-") {
             val target = progressFile ?: return
             target.parent?.let { parent -> Files.createDirectories(parent) }
             Files.writeString(
                 target,
-                System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId + "\n",
+                System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId +
+                    "\tcase=" + currentCaseNumber + "/" + totalCaseCount + "\n",
                 StandardCharsets.UTF_8,
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND,
@@ -304,7 +310,8 @@ class MarkFlowStarterDifferentialManifestTest {
                     preview.rasterScrollNegativeControls()
                 }) { "Stage E18 scroll-reachability negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
-                for (entry in selected) {
+                for ((index, entry) in selected.withIndex()) {
+                    currentCaseNumber = index + 1
                     val dest = output.resolve(entry.id)
                     states[entry.id] = "CAPTURE_FAILED"
                     heartbeat("case-start", entry.id)
