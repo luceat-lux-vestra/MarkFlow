@@ -562,6 +562,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
         state.cef.executeJavaScript(javascript, state.cef.url, 0)
     }
 
+    /** Effective Starter/IDE override, captured before the controlled preview is opened. */
+    fun jcefJsQueryPoolDefaultSize(): String =
+        System.getProperty("ide.browser.jcef.jsQueryPoolSize") ?: "UNSET"
+
     /**
      * #353 counterfactual for the Remote JCEF client-dispose asymmetry that still
      * exists in upstream 262/263/dev: detach every registered message router via

@@ -275,12 +275,15 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                // Keep IntelliJ's default global JSQuery pool (0).
-                // The bundled MarkdownJCEFHtmlPanel configures 20 slots on its OWN
-                // JBCefClient before native browser creation; no global override needed.
-            // #353 acceptance: distinguish absent FileEditor listener registration
-            // from no stale JCEF panels found. Logging is off in normal IDE use.
-            addSystemProperty("markflow.353.lifecycle.trace", "true")
+                if (controlledFullCorpus) {
+                    // Starter.calculateVmOptions() injects 10_000 before custom patches.
+                    // Replace it by key so the controlled 89-case lane matches normal IDE
+                    // registry default 0; MarkdownJCEFHtmlPanel then owns its 20-slot pool.
+                    addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
+                }
+                // #353 acceptance: distinguish absent FileEditor listener registration
+                // from no stale JCEF panels found. Logging is off in normal IDE use.
+                addSystemProperty("markflow.353.lifecycle.trace", "true")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
@@ -305,6 +308,22 @@ class MarkFlowStarterDifferentialManifestTest {
                 val ownedReference = if (controlledCaseIds != null) {
                     driver.utility(DifferentialOwnedReferenceRemote::class)
                 } else null
+                if (controlledFullCorpus) {
+                    val actualPoolDefault = driver.withContext(OnDispatcher.DEFAULT) {
+                        requireNotNull(ownedReference).jcefJsQueryPoolDefaultSize()
+                    }
+                    check(actualPoolDefault == "0") {
+                        "Starter JCEF JSQuery pool override survived custom VM patch: " +
+                            actualPoolDefault
+                    }
+                    Files.writeString(
+                        output.resolve("jcef-js-query-pool-default.txt"),
+                        "schema=markflow-jcef-js-query-pool-default/v1\n" +
+                            "system_property=$actualPoolDefault\n" +
+                            "starter_injected_default=10000\n" +
+                            "markdown_client_pool=20\n",
+                    )
+                }
                 val rendererLifecycle = driver.utility(DifferentialRendererLifecycleRemote::class)
                 val rendererBaseline = driver.withContext(OnDispatcher.EDT) {
                     rendererLifecycle.liveRuntimeCount()
@@ -3698,6 +3717,7 @@ private interface DifferentialOwnedReferenceRemote {
     fun bounds(): String
     fun requestRenderedText(probePath: String)
     fun requestDomProbe(probeName: String, script: String, outputPath: String)
+    fun jcefJsQueryPoolDefaultSize(): String
     fun nativeCloseBarrierSnapshot(phase: String): String
     fun removeRemoteMessageRoutersBeforeClose(): String
     fun prepareSynchronousNativeClose()
