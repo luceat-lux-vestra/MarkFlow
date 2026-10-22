@@ -12,6 +12,13 @@
         <postStartupActivity implementation="com.algorist.markflow.renderer.jcef.NativeDerivedPresentationProbeProjectActivity"/>
     </extensions>
 
+    <!-- #353: pinned IDEA Markdown Preview stale-panel recovery. Loaded only with JCEF. -->
+    <projectListeners>
+        <listener
+                class="com.algorist.markflow.editor.native.MarkdownPreviewLifecycleGuard"
+                topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
+
     <extensions defaultExtensionNs="com.algorist.markflow">
         <derivedRendererRuntimeFactory implementation="com.algorist.markflow.renderer.jcef.JcefDerivedRendererRuntimeFactory"/>
     </extensions>
