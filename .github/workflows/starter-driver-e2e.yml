@@ -20,7 +20,12 @@ on:
         type: boolean
         default: false
       jcef_lifecycle_stress:
-        description: 'Run opt-in bundled JCEF lifecycle diagnostic (#353); stress_50 is default'
+        description: 'Manually run bundled JCEF lifecycle diagnostic (#353); not part of PR CI'
+        required: false
+        type: boolean
+        default: false
+      jcef_lifecycle_dom_stress:
+        description: 'Also run controlled-provider DOM-query 50-cycle diagnostic (requires controlled_provider, remote, OSR, stress_50)'
         required: false
         type: boolean
         default: false
@@ -749,10 +754,9 @@ jobs:
             ${{ runner.temp }}/markflow-353-controlled-corpus-resources.tsv
 
   jcef-lifecycle-stress:
-    # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
-    # Normal PR gates remain unchanged; other PRs stay opt-out. The manual
-    # workflow_dispatch modes continue to be available for stress_50.
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress) || (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer') }}
+    # #353: the original 50-cycle baseline and DOM-query 50-cycle are optional
+    # manual diagnostics. Only the full sequential 89-case corpus gates PR #453.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress }}
     needs: [ package ]
     name: Bundled JCEF lifecycle diagnostic (50 stress / 2 preflight)
     runs-on: ubuntu-24.04
@@ -829,16 +833,22 @@ jobs:
       - name: Run isolated bundled JCEF lifecycle diagnostic
         shell: bash
         env:
-          # #453's 2-open controlled preflight passed on 474b6f8.
-          # The next PR candidate independently tests 50 native closes.
-          # Manual dispatch still supports the preflight_2 and original
-          # FileEditor stress modes; the PR lane never claims FileEditor proof.
-          JCEF_STRESS_RENDER_MODE: ${{ github.event_name == 'pull_request' && 'osr' || inputs.jcef_lifecycle_render_mode || 'osr' }}
-          JCEF_STRESS_EXECUTION_MODE: ${{ github.event_name == 'pull_request' && 'remote' || inputs.jcef_lifecycle_execution_mode || 'remote' }}
-          JCEF_STRESS_OPEN_MODE: ${{ github.event_name == 'pull_request' && 'controlled_provider' || inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
-          JCEF_STRESS_ITERATION_MODE: ${{ github.event_name == 'pull_request' && 'stress_50' || inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+          # Manual-only diagnostic; source and artifact must match this dispatch HEAD.
+          JCEF_STRESS_RENDER_MODE: ${{ inputs.jcef_lifecycle_render_mode || 'osr' }}
+          JCEF_STRESS_EXECUTION_MODE: ${{ inputs.jcef_lifecycle_execution_mode || 'remote' }}
+          JCEF_STRESS_OPEN_MODE: ${{ inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
+          JCEF_STRESS_ITERATION_MODE: ${{ inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
+          JCEF_DOM_STRESS_REQUESTED: ${{ inputs.jcef_lifecycle_dom_stress }}
         run: |
           set -euo pipefail
+          if [[ "$JCEF_DOM_STRESS_REQUESTED" == true ]] && \
+             { [[ "$JCEF_STRESS_OPEN_MODE" != controlled_provider ]] || \
+               [[ "$JCEF_STRESS_EXECUTION_MODE" != remote ]] || \
+               [[ "$JCEF_STRESS_RENDER_MODE" != osr ]] || \
+               [[ "$JCEF_STRESS_ITERATION_MODE" != stress_50 ]]; }; then
+            echo "::error::DOM-query 50-cycle requires controlled_provider / remote / osr / stress_50"
+            exit 1
+          fi
           [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
             echo "::error::Unsupported JCEF process mode: $JCEF_STRESS_EXECUTION_MODE"
             exit 1
@@ -949,11 +959,10 @@ jobs:
             exit 1
           }
 
-      # Retain the original 50/50 provider test above as an independent baseline.
-      # Ready #453 additionally probes JBCefJSQuery native memory in its own IDE session.
+      # Optional explicit manual companion to the original 50-cycle baseline.
       # This diagnostic is not the 89-case acceptance and never changes the release gate.
       - name: Probe 50 JCEF DOM-query lifecycles with live RSS evidence
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_lifecycle_stress && inputs.jcef_lifecycle_dom_stress }}
         shell: bash
         run: |
           set -euo pipefail

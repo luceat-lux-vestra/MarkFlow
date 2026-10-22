@@ -254,6 +254,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
                 addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+            // #353 acceptance: distinguish absent FileEditor listener registration
+            // from no stale JCEF panels found. Logging is off in normal IDE use.
+            addSystemProperty("markflow.353.lifecycle.trace", "true")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {

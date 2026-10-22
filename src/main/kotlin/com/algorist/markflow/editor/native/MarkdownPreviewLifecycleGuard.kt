@@ -35,10 +35,21 @@ import javax.swing.JPanel
 internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
     private val tracked = mutableMapOf<VirtualFile, MutableList<PanelOwner>>()
 
+    init {
+        trace("listener-created", "NONE", "build=" + ApplicationInfo.getInstance().build.asString())
+    }
+
     override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
-        if (!MarkFlowFileSupport.isMarkFlowTarget(file) || !pinnedIdeaBuild()) return
+        if (!MarkFlowFileSupport.isMarkFlowTarget(file)) return
+        trace("file-opened", file.name, "build=" + ApplicationInfo.getInstance().build.asString())
+        if (!pinnedIdeaBuild()) {
+            trace("unsupported-build", file.name, "monitoring=false")
+            return
+        }
         val owners = tracked.getOrPut(file) { mutableListOf() }
-        source.getEditors(file).forEach { candidate ->
+        val editors = source.getEditors(file)
+        trace("file-editors", file.name, "editors=" + editors.size)
+        editors.forEach { candidate ->
             val split = candidate as? TextEditorWithPreview ?: return@forEach
             if (split.javaClass.name != BUNDLED_SPLIT_EDITOR ||
                 split.previewEditor.javaClass.name != BUNDLED_PREVIEW_EDITOR
@@ -48,12 +59,22 @@ internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
                 owners.any { it.wrapper === wrapper }
             ) return@forEach
             owners += PanelOwner(wrapper, file.name)
+            trace(
+                "owner-registered", file.name,
+                "wrapper=" + System.identityHashCode(wrapper) +
+                    " children=" + wrapper.componentCount,
+            )
         }
+        trace("file-opened-scanned", file.name, "owners=" + owners.size)
         if (owners.isEmpty()) tracked.remove(file)
     }
 
     override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
-        tracked.remove(file)?.forEach(PanelOwner::stop)
+        val owners = tracked.remove(file)
+        if (MarkFlowFileSupport.isMarkFlowTarget(file)) {
+            trace("file-closed", file.name, "owners=" + (owners?.size ?: 0))
+        }
+        owners?.forEach(PanelOwner::stop)
     }
 
     private class PanelOwner(val wrapper: JPanel, private val fileName: String) {
@@ -61,8 +82,25 @@ internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
         private var sweepScheduled = false
 
         private val listener = object : ContainerAdapter() {
-            override fun componentAdded(e: ContainerEvent) = scheduleSweep()
-            override fun componentRemoved(e: ContainerEvent) = scheduleSweep()
+            override fun componentAdded(e: ContainerEvent) {
+                trace(
+                    "component-added", fileName,
+                    "wrapper=" + System.identityHashCode(wrapper) +
+                        " child=" + System.identityHashCode(e.child) +
+                        " children=" + wrapper.componentCount,
+                )
+                scheduleSweep()
+            }
+
+            override fun componentRemoved(e: ContainerEvent) {
+                trace(
+                    "component-removed", fileName,
+                    "wrapper=" + System.identityHashCode(wrapper) +
+                        " child=" + System.identityHashCode(e.child) +
+                        " children=" + wrapper.componentCount,
+                )
+                scheduleSweep()
+            }
         }
 
         init {
@@ -82,20 +120,48 @@ internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
         private fun sweep() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             try {
+                val current = (wrapper.layout as? BorderLayout)
+                    ?.getLayoutComponent(BorderLayout.CENTER)
+                val orphanChildren = wrapper.components.filter { it !== current }
+                val bundledOrphans = orphanChildren.mapNotNull(::findBundledBrowser)
+                trace(
+                    "sweep", fileName,
+                    "wrapper=" + System.identityHashCode(wrapper) +
+                        " children=" + wrapper.componentCount +
+                        " active=" + (current?.let(System::identityHashCode) ?: "NONE") +
+                        " detached_children=" + orphanChildren.size +
+                        " bundled_orphans=" + bundledOrphans.size,
+                )
                 val recovered = StaleMarkdownPreviewPanelPolicy.reclaim(
                     wrapper,
                     resolver = ::findBundledBrowser,
                     release = { browser ->
+                        val cef = browser.cefBrowser
+                        trace(
+                            "dispose-request", fileName,
+                            "browser=" + System.identityHashCode(browser) +
+                                " cef=" + System.identityHashCode(cef) +
+                                " cef_native_id=" + runCatching { cef.identifier }.getOrDefault(-1) +
+                                " already_disposed=" + browser.isDisposed,
+                        )
                         if (!browser.isDisposed) Disposer.dispose(browser)
+                        trace(
+                            "dispose-return", fileName,
+                            "browser=" + System.identityHashCode(browser) +
+                                " disposed=" + browser.isDisposed +
+                                " cef_closed=" + cef.isClosed,
+                        )
                     },
                 )
                 if (recovered > 0) {
+                    trace("recovered", fileName, "count=$recovered")
                     LOG.warn(
                         "Recovered $recovered detached bundled Markdown JCEF panel(s) " +
                             "for $fileName on IDEA 262.10968.63",
                     )
                 }
             } catch (failure: Throwable) {
+                trace("sweep-failed", fileName, "error=" + failure.javaClass.name)
                 LOG.warn("Detached bundled Markdown JCEF panel recovery failed for $fileName", failure)
             }
         }
@@ -103,11 +169,17 @@ internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
         fun stop() {
             ApplicationManager.getApplication().assertIsDispatchThread()
             if (stopped) return
+            trace(
+                "owner-stopping", fileName,
+                "wrapper=" + System.identityHashCode(wrapper) +
+                    " children=" + wrapper.componentCount,
+            )
             wrapper.removeContainerListener(listener)
             // At file close the platform still owns the last CENTER panel.
             // Reclaim only older, no-longer-CENTER panels.
             sweep()
             stopped = true
+            trace("owner-stopped", fileName, "wrapper=" + System.identityHashCode(wrapper))
         }
     }
 
@@ -115,6 +187,13 @@ internal class MarkdownPreviewLifecycleGuard : FileEditorManagerListener {
         ApplicationInfo.getInstance().build.asString().endsWith("262.10968.63")
 
     companion object {
+        private fun trace(event: String, fileName: String, detail: String) {
+            // Opt-in only for the exact 89-case process: ordinary IDE sessions
+            // retain warning-only recovery logging, without trace volume.
+            if (!java.lang.Boolean.getBoolean("markflow.353.lifecycle.trace")) return
+            LOG.warn("MARKFLOW_JCEF_GUARD event=$event file=$fileName $detail")
+        }
+
         private const val BUNDLED_SPLIT_EDITOR =
             "org.intellij.plugins.markdown.ui.preview.MarkdownEditorWithPreview"
         private const val BUNDLED_PREVIEW_EDITOR =
