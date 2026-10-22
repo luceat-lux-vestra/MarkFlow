@@ -187,6 +187,8 @@ class MarkFlowStarterDifferentialManifestTest {
                 target,
                 System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId + "\n",
                 StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND,
             )
         }
         heartbeat("test-start")
@@ -559,6 +561,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             val journal = ownedDest.resolve("native-events.tsv")
                             val closeMarker = ownedDest.resolve("native-close.marker")
                             val expectedSha = sha(entry.bytes)
+                            heartbeat("case-owned-reference-open-start", entry.id)
                             val opened = driver.withContext(OnDispatcher.EDT) {
                                 owned.openCorpusReference(
                                     remoteEditor, entry.id, expectedSha, entry.line,
@@ -581,6 +584,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             check(created.lineSequence().single {
                                 it.startsWith("cef_native_id=")
                             }.substringAfter('=').toInt() > 0)
+                            heartbeat("case-owned-reference-native-created", entry.id)
                             if (!controlledFullCorpus || entry.id in
                                 setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
                             ) {
@@ -630,6 +634,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             // screenshot must never be promoted to CAPTURED_UNVERIFIED.
                             // Probe that *same* CEF only on failure to distinguish a
                             // rendered but off-screen DOM from a stalled renderer.
+                            heartbeat("case-owned-reference-first-paint-start", entry.id)
                             val firstPaintFailure = runCatching {
                                 waitFor(
                                     message = "Manifest-owned bundled JCEF first paint: " + entry.id,
@@ -646,6 +651,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                     checker = { it }
                                 )
                             }.exceptionOrNull()
+                            if (firstPaintFailure == null) {
+                                heartbeat("case-owned-reference-first-paint-complete", entry.id)
+                            } else {
+                                heartbeat("case-owned-reference-first-paint-failed", entry.id)
+                            }
                             if (firstPaintFailure != null) {
                                 val diagnostic = ownedDest.resolve("first-paint-failure.txt")
                                 Files.writeString(
@@ -864,6 +874,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 completedProbes >=
                                     (if (entry.id == "md-atx-headings-h1-h6") 2 else 1)
                             ) { "Controlled DOM callback barrier incomplete" }
+                            heartbeat("case-owned-reference-close-start", entry.id)
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
                             check(disposed.contains("jbcef_disposed=true\n"))
@@ -892,6 +903,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             check(finished.contains("native_before_close=true\n") &&
                                 finished.contains("cef_closed=true\n") &&
                                 finished.contains("callback_failure=NONE\n"))
+                            heartbeat("case-owned-reference-native-close-complete", entry.id)
                             check(markFlow.source(editor) == source &&
                                 markFlow.modificationStamp(editor) == stamp &&
                                 !markFlow.isDirty(editor) &&

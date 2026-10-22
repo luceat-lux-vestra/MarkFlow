@@ -596,21 +596,63 @@ jobs:
           progress_file="$RUNNER_TEMP/markflow-353-controlled-corpus-progress.tsv"
           export MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"
           rm -f "$progress_file"
+          # Lightweight diagnostics are printed live: the hosted runner can stop
+          # before an always() artifact upload. These probes never alter the test gate.
+          resource_file="$RUNNER_TEMP/markflow-353-controlled-corpus-resources.tsv"
+          : > "$resource_file"
+          resource_sample() {
+            local phase="$1" utc cg suffix current peak limit events host_available disk_available processes
+            utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            cg=/sys/fs/cgroup
+            suffix="$(awk -F: '$1 == "0" {print $3; exit}' /proc/self/cgroup 2>/dev/null || :)"
+            if [ -n "$suffix" ] && [ "$suffix" != "/" ] && [ -d "$cg$suffix" ]; then
+              cg="$cg$suffix"
+            fi
+            current=NA
+            peak=NA
+            limit=NA
+            if [ -r "$cg/memory.current" ]; then IFS= read -r current < "$cg/memory.current" || :; fi
+            if [ -r "$cg/memory.peak" ]; then IFS= read -r peak < "$cg/memory.peak" || :; fi
+            if [ -r "$cg/memory.max" ]; then IFS= read -r limit < "$cg/memory.max" || :; fi
+            events=NA
+            if [ -r "$cg/memory.events" ]; then
+              events="$(awk '$1 == "high" || $1 == "max" || $1 == "oom" || $1 == "oom_kill" || $1 == "oom_group_kill" {printf "%s:%s,", $1, $2}' "$cg/memory.events" 2>/dev/null)" || events=NA
+              [ -n "$events" ] || events=NA
+            fi
+            host_available="$(awk '$1 == "MemAvailable:" {print $2; exit}' /proc/meminfo 2>/dev/null)" || host_available=NA
+            disk_available="$(df -Pk . 2>/dev/null | awk 'NR == 2 {print $4}')" || disk_available=NA
+            processes="$(ps -eo pid=,rss=,comm= 2>/dev/null | awk '
+              $3 ~ /(java|jcef|cef|chrome|chromium|Xvfb|gradle)/ {
+                count++; total += $2
+                if ($2 > largest) { largest=$2; pid=$1; comm=$3 }
+              }
+              END {
+                printf "process_count=%d process_rss_sum_kib=%.0f largest_pid=%s largest_comm=%s largest_rss_kib=%.0f",
+                  count, total, (pid == "" ? "NA" : pid), (comm == "" ? "NA" : comm), largest
+              }
+            ')" || processes="process_stats=NA"
+            printf 'CONTROLLED_CORPUS_RESOURCE phase=%s utc=%s cgroup=%s memory_current_bytes=%s memory_peak_bytes=%s memory_limit_bytes=%s memory_events=%s host_available_kib=%s disk_available_kib=%s %s\n' \
+              "$phase" "$utc" "$cg" "$current" "$peak" "$limit" "$events" "$host_available" "$disk_available" "$processes" | tee -a "$resource_file"
+          }
           (
-            previous=""
+            next_line=1
+            tick=0
             while :; do
               if [ -s "$progress_file" ]; then
-                current="$(tail -n 1 "$progress_file")"
-                if [ "$current" != "$previous" ]; then
-                  echo "CONTROLLED_CORPUS_PROGRESS $current"
-                  previous="$current"
-                fi
+                while IFS= read -r current; do
+                  printf 'CONTROLLED_CORPUS_PROGRESS %s\n' "$current"
+                  next_line=$((next_line + 1))
+                done < <(tail -n +"$next_line" "$progress_file")
               fi
+              if (( tick % 3 == 0 )); then
+                resource_sample periodic || echo 'CONTROLLED_CORPUS_RESOURCE sample_failed'
+              fi
+              tick=$((tick + 1))
               sleep 5
             done
           ) &
           monitor_pid=$!
-          trap 'kill "$monitor_pid" 2>/dev/null || :; wait "$monitor_pid" 2>/dev/null || :; if [ -s "$progress_file" ]; then echo "CONTROLLED_CORPUS_FINAL_PROGRESS $(tail -n 1 "$progress_file")"; fi' EXIT
+          trap 'resource_sample final || :; kill "$monitor_pid" 2>/dev/null || :; wait "$monitor_pid" 2>/dev/null || :; if [ -s "$progress_file" ]; then echo "CONTROLLED_CORPUS_FINAL_PROGRESS $(tail -n 1 "$progress_file")"; fi' EXIT
           timeout --signal=TERM --kill-after=30s 90m \
             ./gradlew integrationTest -x buildPlugin \
               -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -704,6 +746,7 @@ jobs:
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
             ${{ runner.temp }}/markflow-353-controlled-corpus-progress.tsv
+            ${{ runner.temp }}/markflow-353-controlled-corpus-resources.tsv
 
   jcef-lifecycle-stress:
     # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
