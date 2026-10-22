@@ -685,7 +685,9 @@ grep -Fq 'output.resolve("acceptance.json")' "$manifest_test" ||
   die "Full #353 acceptance no longer emits a distinct final reviewed verdict"
 grep -Fq '\"full_differential_acceptance\":true' "$manifest_test" ||
   die "Full #353 final verdict cannot signal reviewed full-corpus acceptance"
-grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes' "$manifest_test" ||
+grep -Fq 'require(contract in setOf("capture", "acceptance", "controlled-capture"))' "$manifest_test" ||
+  die "Full #353 must retain an explicit bounded, acceptance, and controlled-capture contract allowlist"
+grep -Fq 'runTimeout = if (contract != "capture") 75.minutes else 12.minutes' "$manifest_test" ||
   die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
   die "Full #353 Starter launch lost its distinct diagnostic identity"
@@ -762,11 +764,13 @@ visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_goldens/README.md" ] || die "visual golden policy documentation is missing"
 grep -Fq 'name: Deterministic Visual Acceptance' "$starter_workflow" || die "Starter workflow has no separate deterministic visual job"
 grep -Fq 'name: Deterministic Visual Acceptance Gate' "$starter_workflow" || die "Starter workflow has no separate visual acceptance gate"
+# Opt-in lifecycle-only workflow_dispatch probes skip aggregate gates; Ready PRs
+# and ordinary release entries still require both fail-closed gate contexts.
 for gated_job in visual-gate gate; do
   actual_guard="$(awk -v wanted="$gated_job" '
     $0 == "  " wanted ":" { getline; print; exit }
   ' "$starter_workflow")"
-  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
+  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
 done
 # The ARM64 visual sweep was measured against reviewed Ubuntu 24.04 x64
 # golden images. Derived KaTeX/Mermaid exceeded the fail-closed pixel budget;
