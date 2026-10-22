@@ -131,11 +131,9 @@ class MarkFlowStarterControlledJcefPreflightTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                // IDEA 262.10968.63: JSQueryPool eagerly creates one native CefMessageRouter
-                // per slot, for EACH JBCefClient. The bundled Markdown preview reserves 20;
-                // 10000 creates 500x more native routers and masks real lifecycle behavior.
-                // Retain post-browser-created JSQuery callback support without oversizing.
-                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "20")
+                // Keep IntelliJ's default global JSQuery pool (0).
+                // The bundled MarkdownJCEFHtmlPanel configures 20 slots on its OWN
+                // JBCefClient before native browser creation; no global override needed.
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
@@ -379,11 +377,9 @@ class MarkFlowStarterControlledJcefPreflightTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                // IDEA 262.10968.63: JSQueryPool eagerly creates one native CefMessageRouter
-                // per slot, for EACH JBCefClient. The bundled Markdown preview reserves 20;
-                // 10000 creates 500x more native routers and masks real lifecycle behavior.
-                // Retain post-browser-created JSQuery callback support without oversizing.
-                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "20")
+                // Keep IntelliJ's default global JSQuery pool (0).
+                // The bundled MarkdownJCEFHtmlPanel configures 20 slots on its OWN
+                // JBCefClient before native browser creation; no global override needed.
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")

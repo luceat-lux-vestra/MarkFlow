@@ -476,8 +476,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
             !Files.exists(target) && !Files.exists(identity)
         ) { "DOM probe output must be unique inside owned evidence" }
         val nonce = UUID.randomUUID().toString()
+        // The bundled Markdown JCEF panel reserves 20 JSQuery slots on its
+        // client. Do not force a process-wide pool across unrelated clients.
         val query = JBCefJSQuery.create(state.panel as JBCefBrowserBase)
-        Disposer.register(state.panel, query)
+        Disposer.register(state.panel, query) // fallback if native close races callback
         query.addHandler { wire ->
             try {
                 check(active === state && state.created.get() &&
@@ -518,6 +520,22 @@ internal object NativeControlledReferencePreviewE2EBridge {
                 state.record("dom-probe-failed-" + probeName)
             } finally {
                 state.domProbePending.set(false)
+                // JCEF router callbacks are not the correct place to remove
+                // their own message router. Release after callback dispatch on
+                // EDT instead of retaining every handler until browser close.
+                // The parent panel remains the fallback owner if close wins.
+                ApplicationManager.getApplication().invokeLater {
+                    if (!query.isDisposed) {
+                        runCatching { Disposer.dispose(query) }
+                            .onSuccess { state.record("dom-query-disposed-" + probeName) }
+                            .onFailure { failure ->
+                                state.callbackFailure.compareAndSet(
+                                    null, "DOM_QUERY_DISPOSE_" + failure.javaClass.name,
+                                )
+                                state.record("dom-query-dispose-failed-" + probeName)
+                            }
+                    }
+                }
             }
             null
         }
