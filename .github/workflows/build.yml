@@ -587,6 +587,30 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
+      # Trusted-base routing is intentionally unavailable to the introducing PR.
+      # Exercise its untrusted candidate implementation separately from authority.
+      - name: Validate exact-head PR evidence routing contract
+        if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          expected_sha="${{ github.event.pull_request.head.sha }}"
+          [ "$actual_sha" = "$expected_sha" ] || {
+            echo "::error::Routing self-test checkout drift: expected=$expected_sha actual=$actual_sha"
+            exit 1
+          }
+          python3 -I .github/scripts/pr-ci-evidence-scope.py --self-test
+          expected=$'run_native=true\nrun_starter=true'
+          actual="$(printf 'modified\t.github/workflows/build.yml\t\n' |
+            python3 -I .github/scripts/pr-ci-evidence-scope.py --expected-count 1)"
+          [ "$actual" = "$expected" ] || {
+            echo "::error::Routing CLI did not conservatively select both authorities."
+            printf 'actual route: %s\n' "$actual"
+            exit 1
+          }
+          echo "Exact-head PR routing self-test, negative fixtures, and CLI integration passed."
+
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
