@@ -626,20 +626,78 @@ class MarkFlowStarterDifferentialManifestTest {
                                 owned.bounds().split(',').map(String::toInt)
                             }
                             check(bounds.size == 4)
-                            waitFor(
-                                message = "Manifest-owned bundled JCEF first paint: " + entry.id,
-                                timeout = 20.seconds,
-                                getter = {
-                                    robot.waitForIdle()
-                                    val image = robot.createScreenCapture(
-                                        Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                            // Preserve the genuine first-paint failure. A blank real CEF
+                            // screenshot must never be promoted to CAPTURED_UNVERIFIED.
+                            // Probe that *same* CEF only on failure to distinguish a
+                            // rendered but off-screen DOM from a stalled renderer.
+                            val firstPaintFailure = runCatching {
+                                waitFor(
+                                    message = "Manifest-owned bundled JCEF first paint: " + entry.id,
+                                    timeout = 20.seconds,
+                                    getter = {
+                                        robot.waitForIdle()
+                                        val image = robot.createScreenCapture(
+                                            Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                                        )
+                                        check(ImageIO.write(image, "png",
+                                            ownedDest.resolve("intellij-preview.png").toFile()))
+                                        diagnostics.referenceHasVisibleContent(image)
+                                    },
+                                    checker = { it }
+                                )
+                            }.exceptionOrNull()
+                            if (firstPaintFailure != null) {
+                                val diagnostic = ownedDest.resolve("first-paint-failure.txt")
+                                Files.writeString(
+                                    diagnostic,
+                                    "schema=markflow-controlled-jcef-first-paint-failure/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "source_sha256=$expectedSha\n" +
+                                        "first_paint=FAIL\n" +
+                                        "reason=" + firstPaintFailure.javaClass.name + ": " +
+                                            firstPaintFailure.message + "\n" +
+                                        "phase=before-dom-diagnostic\n" +
+                                        driver.withContext(OnDispatcher.EDT) { owned.snapshot() }
+                                )
+                                // A failed diagnostic is *not* a recovery path: retain
+                                // both its error and the original first-paint exception.
+                                val domFailure = runCatching {
+                                    val probePath = ownedDest.resolve(
+                                        "first-paint-dom-diagnostic.txt"
                                     )
-                                    check(ImageIO.write(image, "png",
-                                        ownedDest.resolve("intellij-preview.png").toFile()))
-                                    diagnostics.referenceHasVisibleContent(image)
-                                },
-                                checker = { it }
-                            )
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        owned.requestDomProbe(
+                                            "generic-dom-geometry",
+                                            controlledReferenceGenericDomProbe(
+                                                entry.domain == "mermaid"
+                                            ),
+                                            probePath.toString()
+                                        )
+                                    }
+                                    waitFor(
+                                        message = "Failed-paint exact CEF DOM callback: " + entry.id,
+                                        timeout = 8.seconds,
+                                        getter = {
+                                            Files.exists(probePath) &&
+                                                Files.exists(
+                                                    Path.of(probePath.toString() + ".identity")
+                                                )
+                                        },
+                                        checker = { it }
+                                    )
+                                }.exceptionOrNull()
+                                Files.writeString(
+                                    diagnostic,
+                                    "phase=after-dom-diagnostic\n" +
+                                        "diagnostic_result=" +
+                                            (if (domFailure == null) "CALLBACK_RECORDED" else
+                                                "FAILED_" + domFailure.javaClass.name) + "\n" +
+                                        driver.withContext(OnDispatcher.EDT) { owned.snapshot() },
+                                    StandardCharsets.UTF_8,
+                                    java.nio.file.StandardOpenOption.APPEND
+                                )
+                                throw firstPaintFailure
+                            }
 
                             // Additional browser-bound geometry evidence; the historical
                             // Driver-selected platform Preview path remains diagnostic only.
@@ -2603,6 +2661,13 @@ class MarkFlowStarterDifferentialManifestTest {
             'visible_svg_count=' + visibleSvgs,
             'body_css_width=' + box.width.toFixed(3),
             'body_css_height=' + box.height.toFixed(3),
+            'document_scroll_height=' + document.documentElement.scrollHeight,
+            'window_scroll_x=' + window.scrollX,
+            'window_scroll_y=' + window.scrollY,
+            'first_child_top=' + body.children[0].getBoundingClientRect().top.toFixed(3),
+            'first_child_bottom=' + body.children[0].getBoundingClientRect().bottom.toFixed(3),
+            'body_display=' + getComputedStyle(body).display,
+            'body_visibility=' + getComputedStyle(body).visibility,
             'viewport_width=' + window.innerWidth,
             'viewport_height=' + window.innerHeight,
             'html_length=' + document.documentElement.outerHTML.length
