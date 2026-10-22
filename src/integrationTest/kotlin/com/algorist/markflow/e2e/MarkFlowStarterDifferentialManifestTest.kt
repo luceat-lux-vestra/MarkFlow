@@ -305,6 +305,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseStamp: Long? = null
                     var caseFailure: Throwable? = null
                     var caseReferenceCloseMarker: Path? = null
+                    var controlledPlatformPreviewBaseline: String? = null
                     var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
@@ -330,6 +331,24 @@ class MarkFlowStarterDifferentialManifestTest {
                         markFlow.resetToSingleCaret(editor, source.length)
                         driver.withContext(OnDispatcher.EDT) {
                             preview.showNativeAtSourceLine(remoteEditor, entry.line)
+                        }
+                        if (controlledFullCorpus) {
+                            val before = driver.withContext(OnDispatcher.EDT) {
+                                check(preview.nativeShowing(remoteEditor)) {
+                                    "Controlled corpus must start with visible native Editor"
+                                }
+                                preview.previewLifecycleEvidence(remoteEditor)
+                            }
+                            Files.writeString(
+                                dest.resolve("platform-preview-before-controlled.txt"), before
+                            )
+                            check(before.lineSequence().any {
+                                it == "panel_component_showing=false"
+                            }) {
+                                "Platform Preview visibly active before controlled capture: " +
+                                    entry.id
+                            }
+                            controlledPlatformPreviewBaseline = before
                         }
                         waitFor(
                             message = "Native derived capture readiness: " + entry.id,
@@ -1948,21 +1967,50 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // componentHidden lifecycle callback; prove that detach completed
                                 // before closing the owning TextEditorWithPreview.
                                 if (controlledFullCorpus) {
-                                    check(driver.withContext(OnDispatcher.EDT) {
-                                        preview.nativeShowing(remote) &&
-                                            !preview.referencePanelAttached(remote)
-                                    }) {
-                                        "Controlled reference left a platform Preview open: " + entry.id
+                                    val before = checkNotNull(controlledPlatformPreviewBaseline) {
+                                        "Missing pre-controlled platform Preview ownership snapshot"
                                     }
+                                    val (nativeVisible, after) =
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeShowing(remote) to
+                                                preview.previewLifecycleEvidence(remote)
+                                        }
                                     Files.writeString(
                                         dest.resolve("reference-lifecycle.txt"),
-                                        "schema=markflow-controlled-reference-cleanup/v1\n" +
+                                        "schema=markflow-controlled-reference-cleanup/v2\n" +
                                             "case_id=" + entry.id + "\n" +
-                                            "platform_preview_opened=false\n" +
+                                            "native_editor_showing=$nativeVisible\n" +
                                             "native_close_barrier=" +
                                                 (if (entry.comparable) "FINISHED" else "NOT_APPLICABLE") +
-                                            "\n"
+                                            "\nphase=before-controlled\n" + before +
+                                            "phase=after-controlled\n" + after
                                     )
+                                    fun field(snapshot: String, key: String): String =
+                                        snapshot.lineSequence().single {
+                                            it.startsWith("$key=")
+                                        }.substringAfter('=')
+                                    // A Markdown FileEditor can eagerly retain a Preview panel
+                                    // even while SHOW_EDITOR is selected. A non-null panel is
+                                    // NOT evidence of a newly opened browser. Prove that
+                                    // Controlled JCEF did not change that pre-existing owner:
+                                    // layout, panel identity, wrapper identity and child counts
+                                    // must remain exact, and no Preview panel may be showing.
+                                    val ownershipKeys = listOf(
+                                        "layout", "preview_disposed", "panel_attached",
+                                        "panel_identity", "panel_class", "wrapper_identity",
+                                        "wrapper_direct_child_count", "wrapper_active_child_count",
+                                        "wrapper_unowned_child_count"
+                                    )
+                                    check(nativeVisible &&
+                                        field(after, "panel_component_showing") == "false" &&
+                                        ownershipKeys.all { key ->
+                                            field(before, key) == field(after, key)
+                                        }
+                                    ) {
+                                        "Controlled case changed platform Preview ownership or " +
+                                            "left it visible: " + entry.id +
+                                            "; see reference-lifecycle.txt"
+                                    }
                                 } else {
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),

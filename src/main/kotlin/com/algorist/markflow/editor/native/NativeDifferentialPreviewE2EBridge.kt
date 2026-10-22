@@ -1221,6 +1221,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "preview_disposed=" + previewDisposed(preview),
             "preview_component_showing=" + preview.component.isShowing,
             "panel_attached=" + (panel != null),
+            "panel_identity=" +
+                (panel?.let { System.identityHashCode(it).toString() } ?: "NONE"),
             "panel_class=" + (panel?.javaClass?.name ?: "NONE"),
             "panel_component_showing=" + (panelComponent?.isShowing ?: false),
             "wrapper_identity=" + System.identityHashCode(wrapper),
