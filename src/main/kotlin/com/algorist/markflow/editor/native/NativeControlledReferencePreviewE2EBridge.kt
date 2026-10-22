@@ -72,6 +72,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val domProbePending = AtomicBoolean(false)
         val domProbeCompleted = AtomicInteger(0)
         var disposalRequested = false
+        @Volatile var nativeCloseTarget: JcefNativeCloseBarrier.Target? = null
+        @Volatile var synchronousClosePrepared = false
         private val journalLock = Any()
 
         fun record(event: String, callback: CefBrowser? = null) {
@@ -558,11 +560,49 @@ internal object NativeControlledReferencePreviewE2EBridge {
         state.cef.executeJavaScript(javascript, state.cef.url, 0)
     }
 
+    /** Read a synchronous native server snapshot off EDT, without changing its state. */
+    fun nativeCloseBarrierSnapshot(phase: String): String {
+        ApplicationManager.getApplication().assertIsNonDispatchThread()
+        val state = checkNotNull(active)
+        check(state.created.get())
+        val target = state.nativeCloseTarget ?: JcefNativeCloseBarrier.capture(state.cef).also {
+            state.nativeCloseTarget = it
+        }
+        return JcefNativeCloseBarrier.snapshot(state.cef, target, phase)
+    }
+
+    /** Detach the visible component before the optional synchronous native close. */
+    fun prepareSynchronousNativeClose() {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val state = checkNotNull(active)
+        check(state.created.get() && !state.closed.get() &&
+            !state.domProbePending.get() && !state.disposalRequested &&
+            !state.synchronousClosePrepared)
+        state.layeredPane.remove(state.overlay)
+        state.layeredPane.revalidate()
+        state.layeredPane.repaint()
+        state.synchronousClosePrepared = true
+        state.record("sync-close-component-detached")
+    }
+
+    /** One test-only synchronous Thrift RPC; never block the IDE EDT. */
+    fun requestSynchronousNativeClose(): String {
+        ApplicationManager.getApplication().assertIsNonDispatchThread()
+        val state = checkNotNull(active)
+        check(state.synchronousClosePrepared && !state.disposalRequested)
+        val target = checkNotNull(state.nativeCloseTarget)
+        val result = JcefNativeCloseBarrier.requestSynchronousClose(state.cef, target)
+        state.record("sync-close-rpc-returned")
+        return result
+    }
+
     /** Must be invoked after onAfterCreated, not after a fixed delay. */
     fun close(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val state = checkNotNull(active)
-        check(state.created.get() && !state.closed.get()) {
+        check(state.created.get() &&
+            (!state.closed.get() || state.synchronousClosePrepared)
+        ) {
             "Cannot dispose before native creation or after native close"
         }
         check(state.callbackFailure.get() == null) { "CEF callback diagnostic failed" }

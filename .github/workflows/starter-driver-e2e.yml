@@ -24,6 +24,11 @@ on:
         required: false
         type: boolean
         default: false
+      jcef_lifecycle_sync_compare:
+        description: 'Manual two-cycle async/sync native close A/B (controlled_provider, remote, OSR, preflight_2)'
+        required: false
+        type: boolean
+        default: false
       jcef_lifecycle_dom_stress:
         description: 'Also run controlled-provider DOM-query 50-cycle diagnostic (requires controlled_provider, remote, OSR, stress_50)'
         required: false
@@ -854,6 +859,7 @@ jobs:
           JCEF_STRESS_OPEN_MODE: ${{ inputs.jcef_lifecycle_open_mode || 'editor_only_roundtrip' }}
           JCEF_STRESS_ITERATION_MODE: ${{ inputs.jcef_lifecycle_iteration_mode || 'stress_50' }}
           JCEF_DOM_STRESS_REQUESTED: ${{ inputs.jcef_lifecycle_dom_stress }}
+          JCEF_SYNC_COMPARE_REQUESTED: ${{ inputs.jcef_lifecycle_sync_compare }}
         run: |
           set -euo pipefail
           if [[ "$JCEF_DOM_STRESS_REQUESTED" == true ]] && \
@@ -862,6 +868,15 @@ jobs:
                [[ "$JCEF_STRESS_RENDER_MODE" != osr ]] || \
                [[ "$JCEF_STRESS_ITERATION_MODE" != stress_50 ]]; }; then
             echo "::error::DOM-query 50-cycle requires controlled_provider / remote / osr / stress_50"
+            exit 1
+          fi
+          if [[ "$JCEF_SYNC_COMPARE_REQUESTED" == true ]] && \
+             { [[ "$JCEF_STRESS_OPEN_MODE" != controlled_provider ]] || \
+               [[ "$JCEF_STRESS_EXECUTION_MODE" != remote ]] || \
+               [[ "$JCEF_STRESS_RENDER_MODE" != osr ]] || \
+               [[ "$JCEF_STRESS_ITERATION_MODE" != preflight_2 ]] || \
+               [[ "$JCEF_DOM_STRESS_REQUESTED" == true ]]; }; then
+            echo "::error::Sync close A/B requires controlled_provider / remote / osr / preflight_2 without DOM stress"
             exit 1
           fi
           [[ "$JCEF_STRESS_EXECUTION_MODE" == remote || "$JCEF_STRESS_EXECUTION_MODE" == in_process ]] || {
@@ -900,13 +915,19 @@ jobs:
           pass_dir=build/e2e-evidence/derived-content/jcef-lifecycle-stress
           controlled_preflight=0
           controlled_stress_50=0
+          controlled_sync_compare=0
+          result_mode="$JCEF_STRESS_ITERATION_MODE"
           if [[ "$JCEF_STRESS_OPEN_MODE" == controlled_provider ]]; then
             [[ "$JCEF_STRESS_EXECUTION_MODE" == remote && "$JCEF_STRESS_RENDER_MODE" == osr ]] || {
               echo "::error::Controlled provider candidate requires Remote JCEF / OSR"
               exit 1
             }
             suite=com.algorist.markflow.e2e.MarkFlowStarterControlledJcefPreflightTest
-            if [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
+            if [[ "$JCEF_SYNC_COMPARE_REQUESTED" == true ]]; then
+              controlled_sync_compare=1
+              result_mode=sync_compare_2
+              pass_dir=build/e2e-evidence/derived-content/jcef-controlled-sync-compare
+            elif [[ "$JCEF_STRESS_ITERATION_MODE" == preflight_2 ]]; then
               controlled_preflight=1
               pass_dir=build/e2e-evidence/derived-content/jcef-controlled-preflight
             else
@@ -933,7 +954,7 @@ jobs:
           fi
           test_status=0
           set +e
-          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
+          MARKFLOW_CONTROLLED_JCEF_PREFLIGHT="$controlled_preflight" MARKFLOW_CONTROLLED_JCEF_STRESS_50="$controlled_stress_50" MARKFLOW_CONTROLLED_JCEF_SYNC_COMPARISON="$controlled_sync_compare" MARKFLOW_JCEF_LIFECYCLE_STRESS=1 MARKFLOW_JCEF_STRESS_RENDER_MODE="$JCEF_STRESS_RENDER_MODE" MARKFLOW_JCEF_STRESS_EXECUTION_MODE="$JCEF_STRESS_EXECUTION_MODE" MARKFLOW_JCEF_STRESS_OPEN_MODE="$JCEF_STRESS_OPEN_MODE" MARKFLOW_JCEF_STRESS_ITERATION_MODE="$JCEF_STRESS_ITERATION_MODE" \
             timeout --signal=TERM --kill-after=30s 45m \
               ./gradlew integrationTest -x buildPlugin \
                 -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -951,7 +972,7 @@ jobs:
           # Never let a skipped test or incomplete iteration count look like PASS.
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
           printf 'source_head=%s\nmode=jcef-lifecycle-diagnostic\niteration_mode=%s\nexpected_iterations=%s\nexecution_mode=%s\nrender_mode=%s\ninitial_open_mode=%s\nfull_differential_acceptance=false\n' \
-            "$STARTER_SOURCE_SHA" "$JCEF_STRESS_ITERATION_MODE" "$expected_iterations" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
+            "$STARTER_SOURCE_SHA" "$result_mode" "$expected_iterations" "$JCEF_STRESS_EXECUTION_MODE" "$JCEF_STRESS_RENDER_MODE" "$JCEF_STRESS_OPEN_MODE" > "$pass_dir/workflow-contract.txt"
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
             echo "::error::JCEF stress changed the exact plugin artifact"
             exit 1
@@ -965,8 +986,17 @@ jobs:
             exit 1
           }
           grep -Fxq 'result=PASS' "$pass_dir/result.txt"
-          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/result.txt"
-          grep -Fxq "mode=$JCEF_STRESS_ITERATION_MODE" "$pass_dir/run-contract.txt"
+          grep -Fxq "mode=$result_mode" "$pass_dir/result.txt"
+          grep -Fxq "mode=$result_mode" "$pass_dir/run-contract.txt"
+          if [[ "$controlled_sync_compare" == 1 ]]; then
+            grep -Fxq 'native_close_barrier_proved=2' "$pass_dir/result.txt"
+            grep -Fxq 'sync_rpc_requested=1' "$pass_dir/result.txt"
+            test -s "$pass_dir/iteration-001/barrier-before.txt"
+            test -s "$pass_dir/iteration-001/barrier-after.txt"
+            test -s "$pass_dir/iteration-002/barrier-before.txt"
+            test -s "$pass_dir/iteration-002/barrier-after.txt"
+            test -s "$pass_dir/iteration-002/synchronous-rpc.txt"
+          fi
           grep -Fxq "iterations=$expected_iterations" "$pass_dir/run-contract.txt"
           grep -Fxq "completed=$expected_iterations" "$pass_dir/result.txt"
           [ "$(find "$pass_dir" -maxdepth 1 -type d -name 'iteration-*' | wc -l)" -eq "$expected_iterations" ] || {

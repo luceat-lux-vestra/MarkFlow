@@ -60,6 +60,11 @@ class MarkFlowStarterControlledJcefPreflightTest {
     @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_STRESS_50", matches = "1")
     fun fiftyIndependentBundledProviderPanelsCloseNatively() = runControlled(50, "stress_50")
 
+    /** Manual A/B in one IDE: ordinary async close, then synchronous RPC close. */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_SYNC_COMPARISON", matches = "1")
+    fun comparesAsyncAndSyncRemoteNativeClose() = runControlled(2, "sync_compare_2")
+
     // This comparison is a separate, 50-cycle, DOM-query-only diagnostic. It
     // does not replace the original stress_50 or certify 89-case acceptance.
     @Test
@@ -310,11 +315,12 @@ class MarkFlowStarterControlledJcefPreflightTest {
     }
 
     private fun runControlled(iterations: Int, mode: String) {
-        require((iterations == 2 && mode == "preflight_2") ||
+        require((iterations == 2 && mode in setOf("preflight_2", "sync_compare_2")) ||
             (iterations == 50 && mode in setOf("stress_50", "stress_dom_50"))) {
             "Unsupported controlled JCEF run contract"
         }
         val domStress = mode == "stress_dom_50"
+        val syncComparison = mode == "sync_compare_2"
         val root = Path.of("").toAbsolutePath().normalize()
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
@@ -330,11 +336,13 @@ class MarkFlowStarterControlledJcefPreflightTest {
         }
         val evidenceDir = when (mode) {
             "preflight_2" -> "jcef-controlled-preflight"
+            "sync_compare_2" -> "jcef-controlled-sync-compare"
             "stress_50" -> "jcef-controlled-stress"
             else -> "jcef-controlled-dom-stress"
         }
         val contractSchema = when (mode) {
             "preflight_2" -> "markflow-controlled-jcef-preflight/v1"
+            "sync_compare_2" -> "markflow-controlled-jcef-sync-compare/v1"
             "stress_50" -> "markflow-controlled-jcef-stress/v1"
             else -> "markflow-controlled-jcef-dom-stress/v1"
         }
@@ -523,6 +531,26 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         ) { "JBCefJSQuery content or exact-browser identity mismatch: $number" }
                         domQueryCompleted++
                     }
+                    if (syncComparison) {
+                        val before = driver.withContext(OnDispatcher.DEFAULT) {
+                            preview.nativeCloseBarrierSnapshot("before-close")
+                        }
+                        Files.writeString(dest.resolve("barrier-before.txt"), before)
+                        check(before.contains("target_client_present=true\n") &&
+                            before.contains("target_browser_present=true\n")) {
+                            "CEF server does not own the live browser in iteration $number"
+                        }
+                        if (number == 2) {
+                            driver.withContext(OnDispatcher.EDT) {
+                                preview.prepareSynchronousNativeClose()
+                            }
+                            val rpc = driver.withContext(OnDispatcher.DEFAULT) {
+                                preview.requestSynchronousNativeClose()
+                            }
+                            Files.writeString(dest.resolve("synchronous-rpc.txt"), rpc)
+                            check(rpc.contains("rpc_returned=true\n"))
+                        }
+                    }
                     val closing = driver.withContext(OnDispatcher.EDT) { preview.close() }
                     Files.writeString(dest.resolve("wrapper-disposed.txt"), closing)
                     check(closing.contains("dispose_requested=true\n") &&
@@ -557,6 +585,23 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         },
                         checker = { it },
                     )
+                    if (syncComparison) {
+                        var finalSnapshot: String? = null
+                        waitFor(
+                            message = "Target CID/BID absent on CEF server: iteration $number",
+                            timeout = 20.seconds,
+                            getter = {
+                                val readback = driver.withContext(OnDispatcher.DEFAULT) {
+                                    preview.nativeCloseBarrierSnapshot("after-close")
+                                }
+                                finalSnapshot = readback
+                                readback.contains("target_client_present=false\n") &&
+                                    readback.contains("target_browser_present=false\n")
+                            },
+                            checker = { it },
+                        )
+                        Files.writeString(dest.resolve("barrier-after.txt"), checkNotNull(finalSnapshot))
+                    }
                     val finished = driver.withContext(OnDispatcher.EDT) { preview.finish() }
                     Files.writeString(dest.resolve("native-closed.txt"), finished)
                     check(finished.contains("native_before_close=true\n") &&
@@ -581,7 +626,8 @@ class MarkFlowStarterControlledJcefPreflightTest {
                 output.resolve("result.txt"),
                 "result=PASS\nscope=CONTROLLED_PROVIDER_ONLY_NOT_PLATFORM_FILE_EDITOR\n" +
                     "mode=$mode\ncompleted=$completed\nfull_differential_acceptance=false\n" +
-                        (if (domStress) "dom_query_completed=$domQueryCompleted\n" else ""),
+                        (if (domStress) "dom_query_completed=$domQueryCompleted\n" else "") +
+                        (if (syncComparison) "native_close_barrier_proved=2\nsync_rpc_requested=1\n" else ""),
             )
         } finally {
             sandbox.toFile().deleteRecursively()
@@ -618,4 +664,7 @@ private interface ControlledJcefRemote {
     fun requestStressDomProbe(outputPath: String)
     fun close(): String
     fun finish(): String
+    fun nativeCloseBarrierSnapshot(phase: String): String
+    fun prepareSynchronousNativeClose()
+    fun requestSynchronousNativeClose(): String
 }
