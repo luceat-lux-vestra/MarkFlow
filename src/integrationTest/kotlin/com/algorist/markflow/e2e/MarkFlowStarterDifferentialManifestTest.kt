@@ -686,12 +686,80 @@ class MarkFlowStarterDifferentialManifestTest {
                                         checker = { it }
                                     )
                                 }.exceptionOrNull()
+                                // The captured OS pixels and the exact CEF's
+                                // JavaScript may disagree. Record that distinction
+                                // instead of relabeling a blank screen as a PASS.
+                                val bitmap = ImageIO.read(
+                                    ownedDest.resolve("intellij-preview.png").toFile()
+                                )
+                                check(bitmap != null &&
+                                    bitmap.width == bounds[2] && bitmap.height == bounds[3]) {
+                                    "Failed first-paint screenshot is unreadable"
+                                }
+                                val baseRgb = bitmap.getRGB(0, 0)
+                                var uniformPixels = true
+                                pixelScan@ for (y in 0 until bitmap.height) {
+                                    for (x in 0 until bitmap.width) {
+                                        if (bitmap.getRGB(x, y) != baseRgb) {
+                                            uniformPixels = false
+                                            break@pixelScan
+                                        }
+                                    }
+                                }
+                                val probePath = ownedDest.resolve(
+                                    "first-paint-dom-diagnostic.txt"
+                                )
+                                val probeIdentityPath = Path.of(
+                                    probePath.toString() + ".identity"
+                                )
+                                val probeContents = if (domFailure == null &&
+                                    Files.isRegularFile(probePath) &&
+                                    Files.isRegularFile(probeIdentityPath)) {
+                                    Files.readString(probePath)
+                                } else ""
+                                val identityContents = if (Files.isRegularFile(probeIdentityPath)) {
+                                    Files.readString(probeIdentityPath)
+                                } else ""
+                                val sourceBoundDom = domFailure == null &&
+                                    probeContents.startsWith(
+                                        "schema=markflow-controlled-reference-generic-dom/v1\n"
+                                    ) && identityContents.lineSequence().any {
+                                        it == "case_id=" + entry.id
+                                    } && identityContents.lineSequence().any {
+                                        it == "source_sha256=$expectedSha"
+                                    } && identityContents.lineSequence().any {
+                                        it == "browser_identity=" + created.lineSequence().single {
+                                            line -> line.startsWith("browser_identity=")
+                                        }.substringAfter('=')
+                                    } && identityContents.contains("status=OK\n")
+                                val priorPaintedSameSource = selected.filter {
+                                    it.id != entry.id &&
+                                        states[it.id] == "CAPTURED_UNVERIFIED" &&
+                                        it.bytes.contentEquals(entry.bytes)
+                                }.map { it.id }
+                                val visualClassification = when {
+                                    uniformPixels && sourceBoundDom ->
+                                        "UNIFORM_OS_SURFACE_WITH_LIVE_SOURCE_BOUND_DOM"
+                                    uniformPixels -> "UNIFORM_OS_SURFACE_DOM_NOT_PROVEN"
+                                    sourceBoundDom -> "NONUNIFORM_OS_SURFACE_WITH_LIVE_DOM"
+                                    else -> "FIRST_PAINT_FAILED_UNCLASSIFIED"
+                                }
                                 Files.writeString(
                                     diagnostic,
                                     "phase=after-dom-diagnostic\n" +
                                         "diagnostic_result=" +
                                             (if (domFailure == null) "CALLBACK_RECORDED" else
                                                 "FAILED_" + domFailure.javaClass.name) + "\n" +
+                                        "visual_classification=$visualClassification\n" +
+                                        "os_screenshot_width=" + bitmap.width + "\n" +
+                                        "os_screenshot_height=" + bitmap.height + "\n" +
+                                        "os_screenshot_uniform_rgb=" +
+                                            (if (uniformPixels) Integer.toHexString(baseRgb)
+                                             else "NONUNIFORM") + "\n" +
+                                        "source_bound_dom_proven=$sourceBoundDom\n" +
+                                        "previously_painted_same_source_cases=" +
+                                            (if (priorPaintedSameSource.isEmpty()) "NONE" else
+                                                priorPaintedSameSource.joinToString(",")) + "\n" +
                                         driver.withContext(OnDispatcher.EDT) { owned.snapshot() },
                                     StandardCharsets.UTF_8,
                                     java.nio.file.StandardOpenOption.APPEND
