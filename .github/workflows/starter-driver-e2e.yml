@@ -507,8 +507,9 @@ jobs:
             ${{ runner.temp }}/markflow-jcef-corpus-one-xvfb.log
 
   jcef-manifest-one-pilot:
-    # #353: run the actual differential-manifest runner with one explicit owned
-    # JCEF case. Diagnostic only; no release-acceptance or stable gate promotion.
+    # #353: retain a single ordered 89-case controlled evidence lane.
+    # Capture is unreviewed and never substitutes for the acceptance ledger.
+    # The Ready PR must fail closed if this evidence job fails or is interrupted.
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
     needs: [ package ]
     name: Manifest runner controlled JCEF full 89 corpus (unreviewed)
@@ -589,6 +590,27 @@ jobs:
           set -euo pipefail
           rm -rf build/e2e-evidence/derived-content/differential-manifest \
                  build/test-results/integrationTest build/reports/tests/integrationTest
+          # The GitHub runner may terminate before its always() artifact upload.
+          # Keep the last authoritative case/phase visible in the job log, without
+          # skipping a case, creating shards, or changing failure semantics.
+          progress_file="$RUNNER_TEMP/markflow-353-controlled-corpus-progress.tsv"
+          export MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"
+          rm -f "$progress_file"
+          (
+            previous=""
+            while :; do
+              if [ -s "$progress_file" ]; then
+                current="$(tail -n 1 "$progress_file")"
+                if [ "$current" != "$previous" ]; then
+                  echo "CONTROLLED_CORPUS_PROGRESS $current"
+                  previous="$current"
+                fi
+              fi
+              sleep 5
+            done
+          ) &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || :; wait "$monitor_pid" 2>/dev/null || :; if [ -s "$progress_file" ]; then echo "CONTROLLED_CORPUS_FINAL_PROGRESS $(tail -n 1 "$progress_file")"; fi' EXIT
           timeout --signal=TERM --kill-after=30s 90m \
             ./gradlew integrationTest -x buildPlugin \
               -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
@@ -681,6 +703,7 @@ jobs:
             out/ide-tests/**/log/**
             build/idea-sandbox/**/log/idea.log
             ${{ runner.temp }}/markflow-jcef-manifest-one-xvfb.log
+            ${{ runner.temp }}/markflow-353-controlled-corpus-progress.tsv
 
   jcef-lifecycle-stress:
     # #353: unblock independent lifecycle proof on the exact diagnostic PR HEAD.
@@ -1175,16 +1198,18 @@ jobs:
 
   gate:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || !inputs.jcef_lifecycle_stress) }}
-    needs: [ package, shards ]
+    needs: [ package, shards, jcef-manifest-one-pilot ]
     name: Starter Driver E2E Gate
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
-      - name: Require package and every stable shard
+      - name: Require package, stable shards, and PR #453 controlled full corpus
         shell: bash
         env:
           PACKAGE_RESULT: ${{ needs.package.result }}
           SHARDS_RESULT: ${{ needs.shards.result }}
+          CONTROLLED_CORPUS_RESULT: ${{ needs.jcef-manifest-one-pilot.result }}
+          MUST_CHECK_CONTROLLED_CORPUS: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 }}
         run: |
           set -euo pipefail
           [ "$PACKAGE_RESULT" = "success" ] || {
@@ -1195,3 +1220,9 @@ jobs:
             echo "::error::Stable Starter shard result: $SHARDS_RESULT"
             exit 1
           }
+          if [ "$MUST_CHECK_CONTROLLED_CORPUS" = true ]; then
+            [ "$CONTROLLED_CORPUS_RESULT" = success ] || {
+              echo "::error::PR #453 full 89-case controlled corpus result: $CONTROLLED_CORPUS_RESULT"
+              exit 1
+            }
+          fi
