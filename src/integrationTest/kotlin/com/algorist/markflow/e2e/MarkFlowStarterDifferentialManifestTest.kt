@@ -3680,6 +3680,9 @@ private interface DifferentialOwnedReferenceRemote {
     fun bounds(): String
     fun requestRenderedText(probePath: String)
     fun requestDomProbe(probeName: String, script: String, outputPath: String)
+    fun nativeCloseBarrierSnapshot(phase: String): String
+    fun prepareSynchronousNativeClose()
+    fun requestSynchronousNativeClose(): String
     fun close(): String
     fun finish(): String
 }
