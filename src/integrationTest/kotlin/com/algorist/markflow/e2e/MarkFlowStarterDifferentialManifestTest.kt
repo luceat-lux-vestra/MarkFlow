@@ -253,7 +253,11 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+                // IDEA 262.10968.63: JSQueryPool eagerly creates one native CefMessageRouter
+                // per slot, for EACH JBCefClient. The bundled Markdown preview reserves 20;
+                // 10000 creates 500x more native routers and masks real lifecycle behavior.
+                // Retain post-browser-created JSQuery callback support without oversizing.
+                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "20")
             // #353 acceptance: distinguish absent FileEditor listener registration
             // from no stale JCEF panels found. Logging is off in normal IDE use.
             addSystemProperty("markflow.353.lifecycle.trace", "true")
