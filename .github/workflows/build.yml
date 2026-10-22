@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 65
     outputs:
       docs_only: ${{ steps.change-scope.outputs.docs_only }}
+      run_native: ${{ steps.evidence-scope.outputs.run_native }}
+      run_starter: ${{ steps.evidence-scope.outputs.run_starter }}
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -131,6 +133,57 @@ jobs:
 
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "docs-only fast path: $docs_only"
+
+      - name: Route specialized PR evidence using trusted base
+        id: evidence-scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -uo pipefail
+          run_native=true
+          run_starter=true
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" = "edited" ]; then
+            run_native=false
+            run_starter=false
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            tmp="$(mktemp -d)"
+            trap 'rm -rf "$tmp"' EXIT
+            if ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::warning::Unknown changed-file count; schedule both proofs."
+            elif ! gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/contents/.github/scripts/pr-ci-evidence-scope.py?ref=$BASE_SHA" \
+              --jq '.content' | tr -d '\n' | base64 --decode > "$tmp/router.py"; then
+              echo "::warning::Trusted router unavailable; schedule both proofs."
+            elif ! python3 "$tmp/router.py" --self-test; then
+              echo "::warning::Trusted router fixture failed; schedule both proofs."
+            elif ! gh api --paginate -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
+              echo "::warning::PR files API unavailable; schedule both proofs."
+            elif python3 "$tmp/router.py" --expected-count "$EXPECTED_COUNT" \
+              < "$tmp/files" > "$tmp/routes" && \
+              [ "$(wc -l < "$tmp/routes")" -eq 2 ]; then
+              native_line="$(grep -E '^run_native=(true|false)$' "$tmp/routes" || true)"
+              starter_line="$(grep -E '^run_starter=(true|false)$' "$tmp/routes" || true)"
+              if [ -n "$native_line" ] && [ -n "$starter_line" ]; then
+                run_native="${native_line#*=}"
+                run_starter="${starter_line#*=}"
+              else
+                echo "::warning::Malformed router outputs; schedule both proofs."
+              fi
+            else
+              echo "::warning::Router failed; schedule both proofs."
+            fi
+          fi
+          echo "run_native=$run_native" >> "$GITHUB_OUTPUT"
+          echo "run_starter=$run_starter" >> "$GITHUB_OUTPUT"
+          echo "Specialized evidence route: native=$run_native starter=$run_starter"
 
   build:
     name: Build
