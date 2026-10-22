@@ -144,7 +144,7 @@ class MarkFlowStarterDifferentialManifestTest {
         } else {
             "async"
         }
-        check(controlledCloseMode in setOf("async", "sync")) {
+        check(controlledCloseMode in setOf("async", "sync", "router_cleanup")) {
             "Unsupported controlled-corpus close mode: $controlledCloseMode"
         }
         val pilotIds = System.getProperty("markflow.differential.controlledCaseId")
@@ -928,6 +928,24 @@ class MarkFlowStarterDifferentialManifestTest {
                                 check(beforeBarrier.contains("target_client_present=true\n") &&
                                     beforeBarrier.contains("target_browser_present=true\n")) {
                                     "CEF server lost live browser before close: " + entry.id
+                                }
+                                if (controlledCloseMode == "router_cleanup") {
+                                    val cleanup = driver.withContext(OnDispatcher.DEFAULT) {
+                                        owned.removeRemoteMessageRoutersBeforeClose()
+                                    }
+                                    Files.writeString(
+                                        ownedDest.resolve("router-cleanup.txt"),
+                                        cleanup,
+                                    )
+                                    val removed = cleanup.lineSequence().single {
+                                        it.startsWith("removed_count=")
+                                    }.substringAfter('=').toInt()
+                                    check(removed >= 20 &&
+                                        cleanup.contains("remaining_count=0\n") &&
+                                        cleanup.contains("server_path=Client_RemoveMessageRouter\n")
+                                    ) {
+                                        "Remote JCEF router cleanup did not prove detach: " + entry.id
+                                    }
                                 }
                                 if (controlledCloseMode == "sync") {
                                     driver.withContext(OnDispatcher.EDT) {
@@ -3681,6 +3699,7 @@ private interface DifferentialOwnedReferenceRemote {
     fun requestRenderedText(probePath: String)
     fun requestDomProbe(probeName: String, script: String, outputPath: String)
     fun nativeCloseBarrierSnapshot(phase: String): String
+    fun removeRemoteMessageRoutersBeforeClose(): String
     fun prepareSynchronousNativeClose()
     fun requestSynchronousNativeClose(): String
     fun close(): String

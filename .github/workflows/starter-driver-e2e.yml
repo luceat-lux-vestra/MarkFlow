@@ -27,6 +27,7 @@ on:
           - disabled
           - async
           - sync
+          - router_cleanup
         default: disabled
       jcef_lifecycle_stress:
         description: 'Manually run bundled JCEF lifecycle diagnostic (#353); not part of PR CI'
@@ -609,7 +610,7 @@ jobs:
           MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_controlled_corpus_close_mode || 'async' }}
         run: |
           set -euo pipefail
-          [[ "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == async || "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == sync ]] || {
+          [[ "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == async || "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == sync || "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == router_cleanup ]] || {
             echo "::error::Unsupported controlled-corpus close mode: $MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE"
             exit 1
           }
@@ -711,7 +712,7 @@ jobs:
 
           root = Path("build/e2e-evidence/derived-content/differential-manifest")
           close_mode = os.environ["MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE"]
-          assert close_mode in {"async", "sync"}
+          assert close_mode in {"async", "sync", "router_cleanup"}
           assert (root / "controlled-close-mode.txt").read_text().splitlines() == [
               "schema=markflow-controlled-corpus-close-mode/v1",
               f"mode={close_mode}",
@@ -767,6 +768,17 @@ jobs:
                   assert "rpc_returned=true" in sync_rpc.read_text()
               else:
                   assert not sync_rpc.exists()
+              router_cleanup = owned / "router-cleanup.txt"
+              if close_mode == "router_cleanup":
+                  cleanup_text = router_cleanup.read_text()
+                  assert "schema=markflow-jcef-remote-router-cleanup/v1" in cleanup_text
+                  assert "remaining_count=0" in cleanup_text
+                  assert "server_path=Client_RemoveMessageRouter" in cleanup_text
+                  removed = int(next(line.split("=", 1)[1] for line in cleanup_text.splitlines()
+                                     if line.startswith("removed_count=")))
+                  assert removed >= 20
+              else:
+                  assert not router_cleanup.exists()
               created = dict(line.split("=", 1) for line in
                              (owned / "native-created.txt").read_text().splitlines()
                              if "=" in line)

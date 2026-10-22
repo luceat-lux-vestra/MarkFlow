@@ -16,7 +16,9 @@ import com.intellij.openapi.wm.IdeGlassPane
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
+import com.jetbrains.cef.remote.browser.RemoteBrowser
 import org.cef.browser.CefBrowser
+import org.cef.browser.CefMessageRouter
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.intellij.plugins.markdown.settings.MarkdownSettings
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
@@ -558,6 +560,46 @@ internal object NativeControlledReferencePreviewE2EBridge {
             })();
         """.trimIndent()
         state.cef.executeJavaScript(javascript, state.cef.url, 0)
+    }
+
+    /**
+     * #353 counterfactual for the Remote JCEF client-dispose asymmetry that still
+     * exists in upstream 262/263/dev: detach every registered message router via
+     * RemoteClient.removeMessageRouter() before owner disposal so the native
+     * Client_RemoveMessageRouter path removes process-global router configs.
+     */
+    fun removeRemoteMessageRoutersBeforeClose(): String {
+        ApplicationManager.getApplication().assertIsNonDispatchThread()
+        val state = checkNotNull(active) { "No active controlled reference" }
+        check(state.created.get() && !state.disposalRequested &&
+            !state.cef.isClosing && !state.cef.isClosed &&
+            !state.domProbePending.get()
+        ) { "Router cleanup requires a live idle controlled JCEF browser" }
+
+        val remote = state.cef as? RemoteBrowser ?: error("Expected Remote JCEF browser")
+        val owner = remote.owner
+        val field = owner.javaClass.getDeclaredField("msgRouters").apply {
+            isAccessible = true
+        }
+        val routers = (field.get(owner) as? java.util.Vector<*>)?.toList()
+            ?: error("RemoteClient.msgRouters has unexpected type")
+        val typed = routers.map {
+            it as? CefMessageRouter ?: error("Unexpected RemoteClient message router: " + it)
+        }
+        check(typed.size >= 20) {
+            "Bundled Markdown JCEF client must expose its 20-slot JS query pool"
+        }
+
+        typed.forEach(owner::removeMessageRouter)
+        val remaining = (field.get(owner) as java.util.Vector<*>).size
+        check(remaining == 0) { "RemoteClient message-router detach incomplete: $remaining" }
+        state.record("remote-message-routers-detached")
+
+        return "schema=markflow-jcef-remote-router-cleanup/v1\n" +
+            "cid=" + remote.cid + "\n" +
+            "removed_count=" + typed.size + "\n" +
+            "remaining_count=$remaining\n" +
+            "server_path=Client_RemoveMessageRouter\n"
     }
 
     /** Read a synchronous native server snapshot off EDT, without changing its state. */
