@@ -138,6 +138,15 @@ class MarkFlowStarterDifferentialManifestTest {
         // Isolated controlled-reference migration proof. Never substitute this for
         // reviewed full acceptance or silently turn on a second reference renderer.
         val controlledFullCorpus = contract == "controlled-capture"
+        val controlledCloseMode = if (controlledFullCorpus) {
+            System.getenv("MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE")
+                ?.takeIf { it.isNotBlank() } ?: "async"
+        } else {
+            "async"
+        }
+        check(controlledCloseMode in setOf("async", "sync")) {
+            "Unsupported controlled-corpus close mode: $controlledCloseMode"
+        }
         val pilotIds = System.getProperty("markflow.differential.controlledCaseId")
             ?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim() }?.toSet()
         check(!controlledFullCorpus || pilotIds == null) {
@@ -174,6 +183,13 @@ class MarkFlowStarterDifferentialManifestTest {
         check(version == "2026.2.3")
         val output = root.resolve("build/e2e-evidence/derived-content/differential-manifest")
         Files.createDirectories(output)
+        if (controlledFullCorpus) {
+            Files.writeString(
+                output.resolve("controlled-close-mode.txt"),
+                "schema=markflow-controlled-corpus-close-mode/v1\n" +
+                    "mode=$controlledCloseMode\n",
+            )
+        }
         val progressFile = System.getenv("MARKFLOW_DIFFERENTIAL_PROGRESS_FILE")
             ?.takeIf { it.isNotBlank() }
             ?.let { raw ->
@@ -597,6 +613,20 @@ class MarkFlowStarterDifferentialManifestTest {
                                 it.startsWith("cef_native_id=")
                             }.substringAfter('=').toInt() > 0)
                             heartbeat("case-owned-reference-native-created", entry.id)
+                            if (controlledFullCorpus) {
+                                val liveBarrier = driver.withContext(OnDispatcher.DEFAULT) {
+                                    owned.nativeCloseBarrierSnapshot("live")
+                                }
+                                Files.writeString(
+                                    ownedDest.resolve("barrier-live.txt"),
+                                    liveBarrier,
+                                )
+                                check(liveBarrier.contains("target_client_present=true\n") &&
+                                    liveBarrier.contains("target_browser_present=true\n")) {
+                                    "CEF server does not own newly created browser: " + entry.id
+                                }
+                                heartbeat("case-owned-reference-barrier-live", entry.id)
+                            }
                             if (!controlledFullCorpus || entry.id in
                                 setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
                             ) {
@@ -887,6 +917,34 @@ class MarkFlowStarterDifferentialManifestTest {
                                     (if (entry.id == "md-atx-headings-h1-h6") 2 else 1)
                             ) { "Controlled DOM callback barrier incomplete" }
                             heartbeat("case-owned-reference-close-start", entry.id)
+                            if (controlledFullCorpus) {
+                                val beforeBarrier = driver.withContext(OnDispatcher.DEFAULT) {
+                                    owned.nativeCloseBarrierSnapshot("before-close")
+                                }
+                                Files.writeString(
+                                    ownedDest.resolve("barrier-before.txt"),
+                                    beforeBarrier,
+                                )
+                                check(beforeBarrier.contains("target_client_present=true\n") &&
+                                    beforeBarrier.contains("target_browser_present=true\n")) {
+                                    "CEF server lost live browser before close: " + entry.id
+                                }
+                                if (controlledCloseMode == "sync") {
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        owned.prepareSynchronousNativeClose()
+                                    }
+                                    val rpc = driver.withContext(OnDispatcher.DEFAULT) {
+                                        owned.requestSynchronousNativeClose()
+                                    }
+                                    Files.writeString(
+                                        ownedDest.resolve("synchronous-rpc.txt"),
+                                        rpc,
+                                    )
+                                    check(rpc.contains("rpc_returned=true\n")) {
+                                        "Synchronous Browser_Close RPC did not return: " + entry.id
+                                    }
+                                }
+                            }
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
                             check(disposed.contains("jbcef_disposed=true\n"))
@@ -910,6 +968,26 @@ class MarkFlowStarterDifferentialManifestTest {
                                 } },
                                 checker = { it }
                             )
+                            if (controlledFullCorpus) {
+                                var finalBarrier: String? = null
+                                waitFor(
+                                    message = "Manifest-owned CID/BID removed: " + entry.id,
+                                    timeout = 20.seconds,
+                                    getter = {
+                                        val readback = driver.withContext(OnDispatcher.DEFAULT) {
+                                            owned.nativeCloseBarrierSnapshot("after-close")
+                                        }
+                                        finalBarrier = readback
+                                        readback.contains("target_client_present=false\n") &&
+                                            readback.contains("target_browser_present=false\n")
+                                    },
+                                    checker = { it },
+                                )
+                                Files.writeString(
+                                    ownedDest.resolve("barrier-after.txt"),
+                                    requireNotNull(finalBarrier),
+                                )
+                            }
                             val finished = driver.withContext(OnDispatcher.EDT) { owned.finish() }
                             Files.writeString(ownedDest.resolve("native-closed.txt"), finished)
                             check(finished.contains("native_before_close=true\n") &&
@@ -924,6 +1002,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             Files.writeString(ownedDest.resolve("result.txt"),
                                 "result=CAPTURED_UNVERIFIED\ncase_id=${entry.id}\n" +
                                     "source_sha256=$expectedSha\nnative_closed=true\n" +
+                                    "close_mode=$controlledCloseMode\n" +
                                     "full_differential_acceptance=false\n")
                             heartbeat("case-owned-reference-complete", entry.id)
                             if (controlledFullCorpus) {

@@ -43,7 +43,7 @@ internal object JcefNativeCloseBarrier {
 
     fun snapshot(browser: CefBrowser, target: Target, phase: String): String {
         ApplicationManager.getApplication().assertIsNonDispatchThread()
-        check(phase == "before-close" || phase == "after-close")
+        check(phase in setOf("live", "before-close", "after-close"))
         val remote = browser as? RemoteBrowser ?: error("Expected Remote JCEF browser")
         check(remote.bid == target.bid && remote.nativeBrowserIdentifier == target.nativeId) {
             "Barrier lost exact native browser identity"

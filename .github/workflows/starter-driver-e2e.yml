@@ -19,6 +19,15 @@ on:
         required: false
         type: boolean
         default: false
+      jcef_controlled_corpus_close_mode:
+        description: 'Manual full 89-case controlled corpus close mode (#353)'
+        required: false
+        type: choice
+        options:
+          - disabled
+          - async
+          - sync
+        default: disabled
       jcef_lifecycle_stress:
         description: 'Manually run bundled JCEF lifecycle diagnostic (#353); not part of PR CI'
         required: false
@@ -520,7 +529,7 @@ jobs:
     # #353: retain a single ordered 89-case controlled evidence lane.
     # Capture is unreviewed and never substitutes for the acceptance ledger.
     # The Ready PR must fail closed if this evidence job fails or is interrupted.
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.number == 453 && github.head_ref == 'test/353-jcef-lifecycle-stress-reproducer' && github.event.pull_request.draft == false) || (github.event_name == 'workflow_dispatch' && inputs.jcef_controlled_corpus_close_mode != 'disabled' && !inputs.jcef_lifecycle_stress) }}
     needs: [ package ]
     name: Manifest runner controlled JCEF full 89 corpus (unreviewed)
     runs-on: ubuntu-24.04
@@ -596,8 +605,15 @@ jobs:
 
       - name: Run full sequential Controlled JCEF manifest capture (89 cases)
         shell: bash
+        env:
+          MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.jcef_controlled_corpus_close_mode || 'async' }}
         run: |
           set -euo pipefail
+          [[ "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == async || "$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE" == sync ]] || {
+            echo "::error::Unsupported controlled-corpus close mode: $MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE"
+            exit 1
+          }
+          echo "CONTROLLED_CORPUS_CLOSE_MODE mode=$MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE"
           rm -rf build/e2e-evidence/derived-content/differential-manifest \
                  build/test-results/integrationTest build/reports/tests/integrationTest
           # The GitHub runner may terminate before its always() artifact upload.
@@ -690,9 +706,16 @@ jobs:
           python3 - <<'PY'
           import hashlib
           import json
+          import os
           from pathlib import Path
 
           root = Path("build/e2e-evidence/derived-content/differential-manifest")
+          close_mode = os.environ["MARKFLOW_CONTROLLED_CORPUS_CLOSE_MODE"]
+          assert close_mode in {"async", "sync"}
+          assert (root / "controlled-close-mode.txt").read_text().splitlines() == [
+              "schema=markflow-controlled-corpus-close-mode/v1",
+              f"mode={close_mode}",
+          ]
           summary = json.loads((root / "summary.json").read_text())
           assert summary["expanded_cases"] == 89
           assert summary["selected_cases"] == 89
@@ -725,7 +748,25 @@ jobs:
               assert identity["intellij_preview"] == "yes"
               owned = folder / "controlled-reference"
               assert (owned / "intellij-preview.png").stat().st_size > 100
-              assert "result=CAPTURED_UNVERIFIED" in (owned / "result.txt").read_text()
+              result_text = (owned / "result.txt").read_text()
+              assert "result=CAPTURED_UNVERIFIED" in result_text
+              assert f"close_mode={close_mode}" in result_text
+              for phase in ("live", "before", "after"):
+                  barrier_text = (owned / f"barrier-{phase}.txt").read_text()
+                  assert "schema=markflow-jcef-native-close-barrier/v1" in barrier_text
+                  assert "server_factories=" in barrier_text
+                  assert "cef_memory=" in barrier_text
+                  if phase == "after":
+                      assert "target_client_present=false" in barrier_text
+                      assert "target_browser_present=false" in barrier_text
+                  else:
+                      assert "target_client_present=true" in barrier_text
+                      assert "target_browser_present=true" in barrier_text
+              sync_rpc = owned / "synchronous-rpc.txt"
+              if close_mode == "sync":
+                  assert "rpc_returned=true" in sync_rpc.read_text()
+              else:
+                  assert not sync_rpc.exists()
               created = dict(line.split("=", 1) for line in
                              (owned / "native-created.txt").read_text().splitlines()
                              if "=" in line)
