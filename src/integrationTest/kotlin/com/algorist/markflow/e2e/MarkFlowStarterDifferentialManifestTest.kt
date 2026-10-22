@@ -275,12 +275,6 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                if (controlledFullCorpus) {
-                    // Starter.calculateVmOptions() injects 10_000 before custom patches.
-                    // Replace it by key so the controlled 89-case lane matches normal IDE
-                    // registry default 0; MarkdownJCEFHtmlPanel then owns its 20-slot pool.
-                    addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
-                }
                 // #353 acceptance: distinguish absent FileEditor listener registration
                 // from no stale JCEF panels found. Logging is off in normal IDE use.
                 addSystemProperty("markflow.353.lifecycle.trace", "true")
@@ -298,7 +292,16 @@ class MarkFlowStarterDifferentialManifestTest {
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
                 // leaving cleanup headroom under the workflow's 85-minute outer timeout.
                 runTimeout = if (contract != "capture") 75.minutes else 12.minutes,
-            ).useDriverAndCloseIde {
+            ) {
+                if (controlledFullCorpus) {
+                    // Starter.calculateVmOptions() injects 10_000 before per-run patches.
+                    // Replace it after Starter defaults are assembled so this diagnostic
+                    // matches normal IDE registry default 0 and Markdown's own 20-slot pool.
+                    addVMOptionsPatch {
+                        addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
+                    }
+                }
+            }.useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 heartbeat("ide-ready")
                 val driver = this
