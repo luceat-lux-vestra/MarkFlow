@@ -437,11 +437,36 @@ internal object NativeControlledReferencePreviewE2EBridge {
         )) { "Unapproved controlled DOM probe" }
         require(script.isNotBlank()) { "Empty controlled DOM probe" }
         val state = checkNotNull(active) { "No active controlled reference" }
-        check(state.sourceEditor != null && state.sourceSha256 != null &&
-            state.created.get() && !state.disposalRequested &&
+        check(state.sourceEditor != null && state.sourceSha256 != null) {
+            "Corpus DOM probe requires a source-bound native Editor"
+        }
+        requestDomProbeOnExactBrowser(state, probeName, script, outputPath)
+    }
+
+    /**
+     * Separate #353 diagnostic only. Exercise the same JBCefJSQuery implementation
+     * in the test-owned 50-cycle fixture; never relax corpus source binding.
+     */
+    fun requestStressDomProbe(outputPath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val state = checkNotNull(active) { "No active controlled reference" }
+        check(state.sourceEditor == null && state.sourceSha256 == null &&
+            state.file.name == "JCEF-LIFECYCLE-STRESS.md"
+        ) { "DOM resource stress requires the original independent lifecycle fixture" }
+        requestDomProbeOnExactBrowser(
+            state, "lifecycle-dom-text",
+            "document.body && document.body.innerText || ''", outputPath,
+        )
+    }
+
+    private fun requestDomProbeOnExactBrowser(
+        state: OwnedReference, probeName: String, script: String, outputPath: String,
+    ) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(state.created.get() && !state.disposalRequested &&
             !state.cef.isClosing && !state.cef.isClosed &&
             state.callbackFailure.get() == null
-        ) { "DOM probe outside source-bound native browser lifetime" }
+        ) { "DOM probe outside exact native browser lifetime" }
         check(state.domProbePending.compareAndSet(false, true)) {
             "Overlapping DOM queries have ambiguous callback ownership"
         }
@@ -475,7 +500,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
                     "schema=markflow-controlled-jcef-dom-callback/v1\n" +
                         "probe_name=$probeName\n" +
                         "case_id=" + state.file.name.removeSuffix(".md") + "\n" +
-                        "source_sha256=" + state.sourceSha256 + "\n" +
+                        "source_sha256=" + (state.sourceSha256 ?: "NOT_APPLICABLE") + "\n" +
                         "browser_identity=" + System.identityHashCode(state.panel) + "\n" +
                         "cef_identity=" + System.identityHashCode(state.cef) + "\n" +
                         "cef_native_id=" + state.cef.identifier + "\n" +

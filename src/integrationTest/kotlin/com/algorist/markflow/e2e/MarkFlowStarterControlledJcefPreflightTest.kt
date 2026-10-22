@@ -60,6 +60,11 @@ class MarkFlowStarterControlledJcefPreflightTest {
     @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_STRESS_50", matches = "1")
     fun fiftyIndependentBundledProviderPanelsCloseNatively() = runControlled(50, "stress_50")
 
+    // This comparison is a separate, 50-cycle, DOM-query-only diagnostic. It
+    // does not replace the original stress_50 or certify 89-case acceptance.
+    @Test
+    @EnabledIfEnvironmentVariable(named = "MARKFLOW_CONTROLLED_JCEF_DOM_RESOURCE_STRESS_50", matches = "1")
+    fun fiftyTestOwnedJcefDomQueriesCloseNatively() = runControlled(50, "stress_dom_50")
 
     /**
      * #353 one real reviewed-corpus fixture: SOURCE-BOUND paired evidence only.
@@ -304,7 +309,10 @@ class MarkFlowStarterControlledJcefPreflightTest {
 
     private fun runControlled(iterations: Int, mode: String) {
         require((iterations == 2 && mode == "preflight_2") ||
-            (iterations == 50 && mode == "stress_50")) { "Unsupported controlled JCEF run contract" }
+            (iterations == 50 && mode in setOf("stress_50", "stress_dom_50"))) {
+            "Unsupported controlled JCEF run contract"
+        }
+        val domStress = mode == "stress_dom_50"
         val root = Path.of("").toAbsolutePath().normalize()
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
@@ -318,9 +326,16 @@ class MarkFlowStarterControlledJcefPreflightTest {
         System.getenv("STARTER_SOURCE_SHA")?.takeIf(String::isNotBlank)?.let {
             check(it == sourceHead) { "Controlled JCEF plugin checkout drifted" }
         }
-        val evidenceDir = if (iterations == 2) "jcef-controlled-preflight" else "jcef-controlled-stress"
-        val contractSchema = if (iterations == 2) "markflow-controlled-jcef-preflight/v1"
-            else "markflow-controlled-jcef-stress/v1"
+        val evidenceDir = when (mode) {
+            "preflight_2" -> "jcef-controlled-preflight"
+            "stress_50" -> "jcef-controlled-stress"
+            else -> "jcef-controlled-dom-stress"
+        }
+        val contractSchema = when (mode) {
+            "preflight_2" -> "markflow-controlled-jcef-preflight/v1"
+            "stress_50" -> "markflow-controlled-jcef-stress/v1"
+            else -> "markflow-controlled-jcef-dom-stress/v1"
+        }
         val output = root.resolve("build/e2e-evidence/derived-content/$evidenceDir")
         Files.createDirectories(output)
         Files.writeString(
@@ -328,7 +343,8 @@ class MarkFlowStarterControlledJcefPreflightTest {
             "schema=$contractSchema\n" +
                 "source_head=$sourceHead\nide_version=$version\n" +
                 "scope=CONTROLLED_PROVIDER_ONLY_NOT_PLATFORM_FILE_EDITOR\n" +
-                "mode=$mode\niterations=$iterations\nretries=0\nfull_differential_acceptance=false\n",
+                "mode=$mode\niterations=$iterations\nretries=0\nfull_differential_acceptance=false\n" +
+                    (if (domStress) "dom_query_required=50\n" else ""),
         )
         Files.writeString(
             output.resolve("progress.txt"),
@@ -344,10 +360,14 @@ class MarkFlowStarterControlledJcefPreflightTest {
             val original = fixture.toByteArray(StandardCharsets.UTF_8)
             Files.write(fixturePath, original)
             var completed = 0
+            var domQueryCompleted = 0
             val observedNativeIds = mutableSetOf<Int>()
             Starter.newContext(
-                testName = if (iterations == 2) "markflow-353-controlled-jcef-provider-preflight"
-                    else "markflow-353-controlled-jcef-provider-stress-50",
+                testName = when (mode) {
+                    "preflight_2" -> "markflow-353-controlled-jcef-provider-preflight"
+                    "stress_50" -> "markflow-353-controlled-jcef-provider-stress-50"
+                    else -> "markflow-353-controlled-jcef-dom-stress-50"
+                },
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
                     .useRelease(version),
             ).apply {
@@ -464,6 +484,41 @@ class MarkFlowStarterControlledJcefPreflightTest {
                         checker = { it },
                     )
 
+                    if (domStress) {
+                        // Native first paint and the existing CefBrowser.getText proof
+                        // already passed. Exercise the exact JBCefJSQuery callback path
+                        // and bind its result to this browser before requesting close.
+                        val outputFile = dest.resolve("jcef-js-query-dom.txt")
+                        val identityFile = Path.of(outputFile.toString() + ".identity")
+                        driver.withContext(OnDispatcher.EDT) {
+                            preview.requestStressDomProbe(outputFile.toString())
+                        }
+                        waitFor(
+                            message = "Test-owned exact JCEF DOM query: iteration $number",
+                            timeout = 20.seconds,
+                            getter = {
+                                Files.isRegularFile(outputFile) && Files.isRegularFile(identityFile)
+                            },
+                            checker = { it },
+                        )
+                        val text = Files.readString(outputFile)
+                        val identity = Files.readString(identityFile)
+                        val expectedCefIdentity = created.lineSequence().single {
+                            it.startsWith("cef_identity=")
+                        }
+                        val expectedWrapperIdentity = created.lineSequence().single {
+                            it.startsWith("browser_identity=")
+                        }
+                        check(text.contains(anchorA) && text.contains(anchorB) &&
+                            identity.lineSequence().any { it == expectedCefIdentity } &&
+                            identity.lineSequence().any { it == expectedWrapperIdentity } &&
+                            identity.contains("probe_name=lifecycle-dom-text\n") &&
+                            identity.contains("source_sha256=NOT_APPLICABLE\n") &&
+                            identity.contains("query_browser_bound=true\n") &&
+                            identity.contains("status=OK\n")
+                        ) { "JBCefJSQuery content or exact-browser identity mismatch: $number" }
+                        domQueryCompleted++
+                    }
                     val closing = driver.withContext(OnDispatcher.EDT) { preview.close() }
                     Files.writeString(dest.resolve("wrapper-disposed.txt"), closing)
                     check(closing.contains("dispose_requested=true\n") &&
@@ -514,11 +569,15 @@ class MarkFlowStarterControlledJcefPreflightTest {
                 }
             }
             check(completed == iterations) { "Controlled JCEF completed $completed/$iterations native lifecycles" }
+            check(!domStress || domQueryCompleted == iterations) {
+                "Controlled JCEF DOM query completed $domQueryCompleted/$iterations callbacks"
+            }
             check(observedNativeIds.size == iterations) { "Native browser IDs were not unique" }
             Files.writeString(
                 output.resolve("result.txt"),
                 "result=PASS\nscope=CONTROLLED_PROVIDER_ONLY_NOT_PLATFORM_FILE_EDITOR\n" +
-                    "mode=$mode\ncompleted=$completed\nfull_differential_acceptance=false\n",
+                    "mode=$mode\ncompleted=$completed\nfull_differential_acceptance=false\n" +
+                        (if (domStress) "dom_query_completed=$domQueryCompleted\n" else ""),
             )
         } finally {
             sandbox.toFile().deleteRecursively()
@@ -552,6 +611,7 @@ private interface ControlledJcefRemote {
     fun snapshot(): String
     fun bounds(): String
     fun requestRenderedText(probePath: String)
+    fun requestStressDomProbe(outputPath: String)
     fun close(): String
     fun finish(): String
 }
