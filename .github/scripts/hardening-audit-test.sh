@@ -97,6 +97,11 @@ copy_root "$unrouted_native"
 perl -0pi -e "s/needs\.headEvidence\.outputs\.run_native == 'true'/true/" "$unrouted_native/.github/workflows/build.yml"
 expect_fail "$unrouted_native" policy_producers "conditional evidence 'nativeEvidence' is not gated by trusted-base route"
 
+missing_self_repository_waiver="$TMP/missing-self-repository-waiver"
+copy_root "$missing_self_repository_waiver"
+perl -0pi -e 's/^(    uses: \.\/\.github\/workflows\/native-runtime-evidence\.yml) # zizmor: ignore\[self-repository\]$/$1/m' "$missing_self_repository_waiver/.github/workflows/build.yml"
+expect_fail "$missing_self_repository_waiver" policy_producers "conditional evidence 'nativeEvidence' lost reviewed self-repository compatibility annotation"
+
 missing_native_result="$TMP/missing-native-result"
 copy_root "$missing_native_result"
 perl -0pi -e 's/          NATIVE_RESULT: \$\{\{ needs\.nativeEvidence\.result \}\}/          NATIVE_RESULT: success/' "$missing_native_result/.github/workflows/build.yml"

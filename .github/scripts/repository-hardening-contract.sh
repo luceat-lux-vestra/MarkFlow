@@ -861,6 +861,14 @@ fi
 
 
 build_workflow=".github/workflows/build.yml"
+# The $/ self-repository spelling is valid on GitHub but unsupported by
+# actionlint v1.7.12 (rhysd/actionlint#711). Its local reusable workflow checks
+# must remain active; zizmor may ignore only these exact two known invocations.
+waivers="$(grep -Fc '# zizmor: ignore[self-repository]' "$build_workflow" || true)"
+[ "$waivers" = "2" ] || die "reviewed local reusable workflow compatibility exceptions must total exactly two"
+for called in native-runtime-evidence starter-driver-e2e; do
+  grep -Fq "uses: ./.github/workflows/$called.yml # zizmor: ignore[self-repository]" "$build_workflow" || die "$called lost its scoped compatibility guard"
+done
 docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"

@@ -296,6 +296,12 @@ check_policy_producers() {
     if ! printf '%s\n' "$proof_block" | grep -Fq "uses: ./$callee"; then
       finding policy_producers "conditional evidence '$proof' does not call its canonical workflow"; clean=0
     fi
+    # actionlint v1.7.12 cannot parse GitHub's newer $/ path (upstream #711).
+    # Keep its strong local workflow-call checks intact, and permit only the
+    # two reviewed path-scoped zizmor self-repository compatibility exceptions.
+    if ! printf '%s\n' "$proof_block" | grep -Fq "uses: ./$callee # zizmor: ignore[self-repository]"; then
+      finding policy_producers "conditional evidence '$proof' lost reviewed self-repository compatibility annotation"; clean=0
+    fi
     if ! printf '%s\n' "$proof_block" | grep -Fq "needs.headEvidence.outputs.$route == 'true'"; then
       finding policy_producers "conditional evidence '$proof' is not gated by trusted-base route"; clean=0
     fi
@@ -303,6 +309,10 @@ check_policy_producers() {
       finding policy_producers "Merge Gate does not inspect conditional evidence '$proof' result"; clean=0
     fi
   done
+  waiver_count="$(grep -Fc '# zizmor: ignore[self-repository]' "$wf" || true)"
+  if [ "$waiver_count" -ne 2 ]; then
+    finding policy_producers "exactly two reviewed self-repository compatibility annotations are required"; clean=0
+  fi
   for proof in HEAD_RESULT ACTIVE_PR NATIVE_ROUTE STARTER_ROUTE NATIVE_RESULT STARTER_RESULT; do
     if ! printf '%s\n' "$block" | grep -Fq "$proof:"; then
       finding policy_producers "Merge Gate lost routing environment '$proof'"; clean=0

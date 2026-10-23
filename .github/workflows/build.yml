@@ -843,7 +843,10 @@ jobs:
     name: Native Runtime Evidence
     needs: [ headEvidence ]
     if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_native == 'true' }}
-    uses: ./.github/workflows/native-runtime-evidence.yml
+    # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
+    # See rhysd/actionlint#711; preserve local reusable workflow validation.
+    # Only this exact same-commit call defers zizmor's self-repository migration.
+    uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
       pull-requests: read
@@ -852,7 +855,10 @@ jobs:
     name: Starter Driver E2E
     needs: [ headEvidence ]
     if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_starter == 'true' }}
-    uses: ./.github/workflows/starter-driver-e2e.yml
+    # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
+    # See rhysd/actionlint#711; preserve local reusable workflow validation.
+    # Only this exact same-commit call defers zizmor's self-repository migration.
+    uses: ./.github/workflows/starter-driver-e2e.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
 
