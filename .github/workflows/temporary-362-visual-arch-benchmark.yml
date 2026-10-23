@@ -172,7 +172,8 @@ jobs:
           [ "$source_sha" = "$BENCHMARK_SOURCE_SHA" ]
           [ "$platform_version" = "$BENCHMARK_PLATFORM_VERSION" ]
           [ "$(sha256sum build/benchmark-package/plugin.zip | awk '{print $1}')" = "$expected_sha" ]
-          mkdir -p build/distributions
+          mkdir -p build/e2e-package build/distributions
+          cp build/benchmark-package/plugin.zip build/e2e-package/plugin.zip
           cp build/benchmark-package/plugin.zip build/distributions/markflow-benchmark.zip
           echo "E2E_PLUGIN_PATH=build/distributions/markflow-benchmark.zip" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_sha" >> "$GITHUB_ENV"
