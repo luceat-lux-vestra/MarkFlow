@@ -70,7 +70,7 @@ policy_array_has_unique_contexts() {
 check_policy_shape() {
   local clean=1 class other context workflow job wf jobname staged_count required_count component_count aggregate_workflow
 
-  for class in required staged_required advisory release_only merge_gate_components; do
+  for class in required staged_required advisory release_only merge_gate_components conditional_evidence; do
     if ! jq -e --arg class "$class" '.[$class] | type == "array"' "$POLICY" >/dev/null; then
       finding policy_shape "policy field '$class' is not an array"; clean=0
     elif ! policy_array_has_unique_contexts "$class"; then
@@ -96,6 +96,15 @@ check_policy_shape() {
   required_count="$(jq '.required | length' "$POLICY")"
   [ "$required_count" -eq 1 ] || { finding policy_shape "policy must declare exactly one live required context"; clean=0; }
   jq -e '.required[0].context == "Merge Gate"' "$POLICY" >/dev/null || { finding policy_shape "the sole live required context must be 'Merge Gate'"; clean=0; }
+
+  if ! jq -e '
+    (.conditional_evidence | length == 2)
+    and (.conditional_evidence | map(.job) == ["nativeEvidence","starterEvidence"])
+    and (.conditional_evidence | map(.route_output) == ["run_native","run_starter"])
+    and (.conditional_evidence | map(.callee) == [".github/workflows/native-runtime-evidence.yml",".github/workflows/starter-driver-e2e.yml"])
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "conditional Native/Starter proof definitions drifted"; clean=0
+  fi
 
   component_count="$(jq '.merge_gate_components | length' "$POLICY")"
   [ "$component_count" -eq 6 ] || { finding policy_shape "Merge Gate must declare exactly six authoritative components"; clean=0; }
@@ -244,7 +253,7 @@ check_policy_producers() {
 
   needs="$(job_field "$wf" "$job" needs)"
   actual_needs="$(printf '%s' "$needs" | tr -d ' []')"
-  expected_needs="$(jq -r '[.merge_gate_components[].job] | join(",")' "$POLICY")"
+  expected_needs="$(jq -r '(["headEvidence"] + [.merge_gate_components[].job] + [.conditional_evidence[].job]) | join(",")' "$POLICY")"
   if [ "$actual_needs" != "$expected_needs" ]; then
     finding policy_producers "Merge Gate needs do not exactly match authoritative component jobs"; clean=0
   fi
@@ -277,6 +286,32 @@ check_policy_producers() {
     fi
   done < <(jq -r '.merge_gate_components[] | [.context, .workflow, .job] | @tsv' "$POLICY")
 
+  for proof in nativeEvidence starterEvidence; do
+    callee="$(jq -r --arg job "$proof" '.conditional_evidence[] | select(.job == $job) | .callee' "$POLICY")"
+    route="$(jq -r --arg job "$proof" '.conditional_evidence[] | select(.job == $job) | .route_output' "$POLICY")"
+    if [ -z "$callee" ] || [ -z "$route" ] || ! job_exists "$wf" "$proof"; then
+      finding policy_producers "conditional evidence '$proof' is missing"; clean=0; continue
+    fi
+    proof_block="$(job_block "$wf" "$proof")"
+    if ! printf '%s\n' "$proof_block" | grep -Fq "uses: ./$callee"; then
+      finding policy_producers "conditional evidence '$proof' does not call its canonical workflow"; clean=0
+    fi
+    if ! printf '%s\n' "$proof_block" | grep -Fq "needs.headEvidence.outputs.$route == 'true'"; then
+      finding policy_producers "conditional evidence '$proof' is not gated by trusted-base route"; clean=0
+    fi
+    if ! printf '%s\n' "$block" | grep -Fq "needs.$proof.result"; then
+      finding policy_producers "Merge Gate does not inspect conditional evidence '$proof' result"; clean=0
+    fi
+  done
+  for proof in HEAD_RESULT ACTIVE_PR NATIVE_ROUTE STARTER_ROUTE NATIVE_RESULT STARTER_RESULT; do
+    if ! printf '%s\n' "$block" | grep -Fq "$proof:"; then
+      finding policy_producers "Merge Gate lost routing environment '$proof'"; clean=0
+    fi
+  done
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "$expected" ]; then'; then
+    finding policy_producers "Merge Gate no longer enforces conditional result and allowed skip"; clean=0
+  fi
+
   if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "success" ]; then'; then
     finding policy_producers "Merge Gate does not fail closed on non-success component results"; clean=0
   fi
@@ -284,7 +319,7 @@ check_policy_producers() {
     finding policy_producers "Merge Gate does not enforce aggregate failure state"; clean=0
   fi
 
-  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' directly and fail-closed aggregates all six authoritative component jobs"
+  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' aggregates six unconditional jobs plus route-selected native/Starter evidence"
   return 0
 }
 

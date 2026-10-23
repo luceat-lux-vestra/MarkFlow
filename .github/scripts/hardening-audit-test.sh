@@ -89,8 +89,18 @@ expect_fail "$continue_component" policy_producers "component 'Test' continues o
 
 missing_component="$TMP/missing-component"
 copy_root "$missing_component"
-perl -0pi -e 's/needs: \[ build, test, inspectCode, verify, metadataSafety, dependencyReview \]/needs: [ build, test, inspectCode, verify, metadataSafety ]/' "$missing_component/.github/workflows/build.yml"
+perl -0pi -e 's/needs: \[ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence \]/needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, nativeEvidence, starterEvidence ]/' "$missing_component/.github/workflows/build.yml"
 expect_fail "$missing_component" policy_producers "needs do not exactly match authoritative component jobs"
+
+unrouted_native="$TMP/unrouted-native"
+copy_root "$unrouted_native"
+perl -0pi -e "s/needs\.headEvidence\.outputs\.run_native == 'true'/true/" "$unrouted_native/.github/workflows/build.yml"
+expect_fail "$unrouted_native" policy_producers "conditional evidence 'nativeEvidence' is not gated by trusted-base route"
+
+missing_native_result="$TMP/missing-native-result"
+copy_root "$missing_native_result"
+perl -0pi -e 's/          NATIVE_RESULT: \$\{\{ needs\.nativeEvidence\.result \}\}/          NATIVE_RESULT: success/' "$missing_native_result/.github/workflows/build.yml"
+expect_fail "$missing_native_result" policy_producers "does not inspect conditional evidence 'nativeEvidence' result"
 
 no_always="$TMP/no-always"
 copy_root "$no_always"
@@ -104,7 +114,7 @@ expect_fail "$aggregate_continue" policy_producers "Merge Gate must not continue
 
 noop="$TMP/noop"
 copy_root "$noop"
-perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
+perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
 expect_fail "$noop" policy_producers "fake or no-op job"
 
 missing_result_check="$TMP/missing-result-check"
