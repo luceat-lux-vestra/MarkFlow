@@ -953,8 +953,9 @@ grep -Fq 'github.event.action == '"'"'edited'"'"'' <<<"$head_evidence_job" || di
 for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
   grep -Fq "\"$component\"" <<<"$head_evidence_job" || die "head validation reuse does not require successful $component evidence"
 done
-grep -Fq '    needs: [ headEvidence ]' "$build_workflow" || die "Build component does not depend on head validation evidence"
-[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "5" ] || die "Build/Test/Inspect/Verify/Dependency Review must each depend on head validation evidence"
+# The integrated DAG has seven head-bound jobs, not five. Enforce each
+# producer's exact dependency so adding another head-bound caller cannot
+# invalidate the contract or mask a missing dependency elsewhere.
 
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
 grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' <<<"$head_evidence_job" || die "head evidence does not export its trusted docs-only classification"
@@ -967,13 +968,51 @@ grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build w
 grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
 [ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "0" ] || die "independent validation jobs must not wait for Build"
-for job in build test inspectCode verify dependencyReview; do
-  dependency="$(awk -v wanted="$job" '
-    $0 == "  " wanted ":" { on=1; next }
-    on && /^  [A-Za-z]/ { exit }
-    on && /^    needs:/ { print; exit }
-  ' "$build_workflow")"
-  [ "$dependency" = '    needs: [ headEvidence ]' ] || die "$job bypasses or serializes the required head evidence"
+assert_head_evidence_dependencies() {
+  local workflow="$1" job dependency
+  for job in build test inspectCode verify dependencyReview nativeEvidence starterEvidence; do
+    dependency="$(awk -v wanted="$job" '
+      $0 == "  " wanted ":" { on=1; next }
+      on && /^  [A-Za-z0-9_-]+:/ { exit }
+      on && /^    needs:/ { print; exit }
+    ' "$workflow")"
+    [ "$dependency" = '    needs: [ headEvidence ]' ] ||
+      die "$job bypasses or serializes the required head evidence"
+  done
+}
+
+assert_head_evidence_dependencies "$build_workflow"
+
+# Negative controls: remove the required dependency from each authoritative
+# job separately. Every omission must be detected, even when other jobs retain
+# their correct headEvidence dependency.
+for head_bound_job in build test inspectCode verify dependencyReview nativeEvidence starterEvidence; do
+  fixture="$trigger_fixture_dir/missing-head-${head_bound_job}.yml"
+  cp "$build_workflow" "$fixture"
+  python3 -I - "$fixture" "$head_bound_job" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+job = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+start_matches = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == f"  {job}:"]
+if len(start_matches) != 1:
+    raise SystemExit(f"unexpected job layout for {job}")
+start = start_matches[0]
+stop = next((i for i in range(start + 1, len(lines))
+             if re.fullmatch(r"  [A-Za-z0-9_-]+:\r?\n?", lines[i])), len(lines))
+needs = [i for i in range(start + 1, stop)
+         if lines[i].rstrip("\r\n") == "    needs: [ headEvidence ]"]
+if len(needs) != 1:
+    raise SystemExit(f"missing/duplicated dependency for {job}")
+del lines[needs[0]]
+path.write_text("".join(lines), encoding="utf-8")
+PY
+  if ( assert_head_evidence_dependencies "$fixture" ) 2>/dev/null; then
+    die "head validation dependency guard accepted missing headEvidence for $head_bound_job"
+  fi
 done
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a docs-only success path"
 [ "$(grep -Fc '      - name: Metadata-only event fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a metadata-only success path"
