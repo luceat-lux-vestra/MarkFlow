@@ -51,7 +51,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   paired-visual:
-    name: Original visual oracle and provenance (${{ matrix.arch }})
+    name: Original visual oracle and provenance (${{ matrix.variant }})
     needs: [package]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
@@ -59,8 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {arch: x64, runner: ubuntu-24.04}
-          - {arch: arm64, runner: ubuntu-24.04-arm}
+          - {arch: x64, runner: ubuntu-24.04, variant: x64-reference}
+          - {arch: arm64, runner: ubuntu-24.04-arm, variant: arm-original}
+          - {arch: arm64, runner: ubuntu-24.04-arm, variant: arm-font-match}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -90,6 +91,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1
           ldconfig -p | grep -F libEGL.so.1
+      - name: Match ARM Arial to exact x64 Liberation Sans font
+        if: matrix.variant == 'arm-font-match'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$RUNNER_ARCH" = ARM64 ] && [ "$(uname -m)" = aarch64 ]
+          sudo apt-get install -y --no-install-recommends fonts-liberation
+          fc-cache -f
+          mapfile -t candidates < <(fc-match -f '%{family}|%{style}|%{file}\n' Arial)
+          [ "${#candidates[@]}" -eq 1 ]
+          IFS='|' read -r family style font_path <<< "${candidates[0]}"
+          [ "$family" = 'Liberation Sans' ] && [ "$style" = 'Regular' ] || {
+            echo "::error::ARM Arial mapping is not x64 Liberation Sans Regular: ${candidates[0]}"
+            exit 1
+          }
+          [ -f "$font_path" ]
+          actual_sha="$(sha256sum "$font_path" | awk '{print $1}')"
+          expected_sha=4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144
+          [ "$actual_sha" = "$expected_sha" ] || {
+            echo "::error::ARM Liberation Sans font bytes differ from immutable x64 reference: $actual_sha"
+            exit 1
+          }
+          echo "CONTROL_FONT_MATCHED Arial=$family/$style sha256=$actual_sha"
       - name: Record font file resolution, hashes and host identities
         shell: bash
         run: |
@@ -98,6 +122,7 @@ jobs:
           {
             echo "source_sha=$SOURCE_SHA"
             echo "arch=${{ matrix.arch }}"
+            echo "variant=${{ matrix.variant }}"
             echo "image=${ImageOS:-unknown}/${ImageVersion:-unknown}"
             echo "uname=$(uname -m)"
             echo "runner_arch=$RUNNER_ARCH"
@@ -113,6 +138,37 @@ jobs:
               sha256sum "$path"
             done
           } | tee build/visual-acceptance/provenance/host.txt
+      - name: Verify unmodified baseline vs matched font controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$(fc-match -f '%{family}|%{style}|%{file}' Arial)"
+          IFS='|' read -r family style font_path <<< "$identity"
+          [ -f "$font_path" ] || { echo "::error::Unresolvable Arial font"; exit 1; }
+          actual_sha="$(sha256sum "$font_path" | awk '{print $1}')"
+          case "${{ matrix.variant }}" in
+            x64-reference|arm-font-match)
+              expected_family='Liberation Sans'
+              expected_sha=4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144
+              ;;
+            arm-original)
+              expected_family='DejaVu Sans'
+              expected_sha=ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280
+              ;;
+            *) echo "::error::Unexpected matrix variant"; exit 1;;
+          esac
+          [ "$family" = "$expected_family" ] && [ "$actual_sha" = "$expected_sha" ] || {
+            echo "::error::Font-control identity drift variant=${{ matrix.variant }} expected=$expected_family/$expected_sha actual=$family/$actual_sha"
+            exit 1
+          }
+          {
+            echo "variant=${{ matrix.variant }}"
+            echo "arch=${{ matrix.arch }}"
+            echo "aria_family=$family"
+            echo "aria_style=$style"
+            echo "aria_file=$font_path"
+            echo "aria_sha256=$actual_sha"
+          } | tee build/visual-acceptance/provenance/font-control.txt
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: markflow-362-plugin-${{ github.run_id }}
@@ -155,7 +211,7 @@ jobs:
           echo "visual_exit=$result" | tee build/visual-acceptance/provenance/visual-status.txt
           [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ]
           [ "$result" -eq 0 ] || {
-            echo "::error::Strict golden mismatch on ${{ matrix.arch }} (original failure retained)"
+            echo "::error::Strict golden mismatch on ${{ matrix.variant }} (original failure retained)"
             tail -n 40 build/visual-acceptance/gradle.log
             exit "$result"
           }
@@ -192,7 +248,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: markflow-362-visual-${{ matrix.arch }}-${{ github.run_id }}
+          name: markflow-362-visual-${{ matrix.variant }}-${{ github.run_id }}
           retention-days: 14
           if-no-files-found: warn
           path: |

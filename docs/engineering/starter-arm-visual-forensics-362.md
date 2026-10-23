@@ -13,3 +13,17 @@ ARM golden mismatch remains a **real failing test**; `always()` artifact upload 
 **Inference boundary:** renderer-returned HTML/SVG is not computed browser DOM/CSS. Differences in intermediate HTML/SVG, raster PNG and Swing screen will identify where divergence first occurs, not by themselves prove a particular font/CEF backend caused it. The follow-up checkpoint must inspect the paired artifacts, then decide whether computed CSS/DOM instrumentation is required. Do not change goldens or relax thresholds.
 
 Remove this temporary workflow and optional capture before any ordinary production merge.
+
+## 2026-10-23 Checkpoint 16 — controlled Arial/Liberation Sans hypothesis
+
+The next candidate keeps the **unchanged x64 reference** and the **unchanged ARM64 baseline** and adds a **third ARM64-only font-matched worker** to the same push-triggered matrix. All three use the identical candidate source and plugin ZIP artifact, original five-case strict test, 1920x1080@96 DPI, JBR/IDE, and retained before/after raster captures.
+
+| Variant | Host | Intended Arial resolution |
+|---|---|---|
+| `x64-reference` | `ubuntu-24.04` | Liberation Sans Regular, SHA-256 `4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144` |
+| `arm-original` | `ubuntu-24.04-arm` | DejaVu Sans Book, SHA-256 `ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280` |
+| `arm-font-match` | `ubuntu-24.04-arm` | Installs only `fonts-liberation` beyond baseline EGL, refreshes fontconfig, then requires the **exact same Liberation Sans SHA-256** as x64 |
+
+A **fail-closed font fingerprint guard** checks the selected `fc-match Arial` family and file digest in all three variants. The original ARM baseline never installs Liberation. Distinct artifact names preserve each variant's host provenance, source/config, Mermaid SVG, KaTeX HTML, raster PNG and final x64 golden comparison. An ARM visual failure is retained as a failure, not converted to PASS. If image packages change and the font-control SHA changes, the controlled experiment fails rather than making an unsupported causal claim.
+
+**Hypothesis only:** Arial fallback may explain Mermaid's prior 656x63 vs 656x65 SVG geometry. Matching it is not expected to necessarily fix KaTeX alpha rasterization. Evaluate Mermaid DOM/SVG geometry and KaTeX alpha **separately** before deciding a next step. No production runner, golden, tolerance, Qodana/89-case gate, or PR #453/#461 change is authorized.
