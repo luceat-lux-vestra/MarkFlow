@@ -57,7 +57,10 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             .toAbsolutePath().normalize()
         Files.createDirectories(output)
 
+        val timing = StarterLifecycleTimingProbe("differential-preview-smoke",
+            Path.of("build/e2e-evidence/derived-content/differential-preview-smoke"))
         try {
+            timing.begin()
             Starter.newContext(
                 testName = "markflow-353-platform-preview-raw-pair",
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
@@ -73,6 +76,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 addSystemProperty("ide.ui.scale", "1.0")
             }.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
+                timing.ideReady()
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialVisualBridgeRemote::class)
@@ -221,8 +225,11 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 // Produce diagnostic images/metrics without declaring visual parity.
                 writeDiagnosticPair(output, sha256(expectedBytes), sourceLine)
                 markFlow.close(editor)
+                timing.scenarioComplete()
             }
+            timing.success()
         } finally {
+            timing.report()
             sandbox.toFile().deleteRecursively()
         }
     }
