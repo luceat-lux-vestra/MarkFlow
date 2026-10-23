@@ -1,17 +1,7 @@
 name: Starter Driver E2E
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/workflows/starter-driver-e2e.yml'
-      - '.github/scripts/check-starter-driver-diagnostics.py'
-      - 'build.gradle.kts'
-      - 'gradle/libs.versions.toml'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'src/integrationTest/**'
-      - 'src/main/**'
+  workflow_call:
   workflow_dispatch:
     inputs:
       release_candidate_repeat:

@@ -39,6 +39,15 @@ assert_pr_only_source_trigger() {
   fi
 }
 
+assert_reusable_source_trigger() {
+  local workflow="$1" label="$2"
+  grep -Eq '^  workflow_call:([[:space:]]|$)' "$workflow" || die "$label missing workflow_call"
+  grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$workflow" || die "$label lost manual recovery"
+  if grep -Eq '^  (pull_request|pull_request_target|push):([[:space:]]|$)' "$workflow"; then
+    die "$label cannot duplicate top-level PR/push workflow triggers"
+  fi
+}
+
 # Negative controls use rewindable temporary regular files because each
 # guard performs multiple grep passes (a process substitution pipe is consumed).
 trigger_fixture_dir="$(mktemp -d)"
@@ -46,6 +55,16 @@ trap 'rm -rf "$trigger_fixture_dir"' EXIT
 printf 'on:\n  pull_request:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/valid.yml"
 printf 'on:\n  pull_request:\n  push: # regression\n  workflow_dispatch:\n' > "$trigger_fixture_dir/push.yml"
 printf 'on:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/missing-pr.yml"
+printf 'on:\n  workflow_call:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/call-valid.yml"
+printf 'on:\n  workflow_call:\n  pull_request:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/call-extra-pr.yml"
+printf 'on:\n  workflow_dispatch:\n' > "$trigger_fixture_dir/call-missing.yml"
+assert_reusable_source_trigger "$trigger_fixture_dir/call-valid.yml" "call fixture"
+if ( assert_reusable_source_trigger "$trigger_fixture_dir/call-extra-pr.yml" "double PR fixture" ) 2>/dev/null; then
+  die "reusable guard accepted duplicate top-level PR execution"
+fi
+if ( assert_reusable_source_trigger "$trigger_fixture_dir/call-missing.yml" "missing call fixture" ) 2>/dev/null; then
+  die "reusable guard accepted missing workflow_call"
+fi
 assert_pr_only_source_trigger "$trigger_fixture_dir/valid.yml" "PR-only fixture"
 if ( assert_pr_only_source_trigger "$trigger_fixture_dir/push.yml" "forbidden push fixture" ) 2>/dev/null; then
   die "PR-only trigger guard accepted a reintroduced push event"
@@ -146,16 +165,44 @@ fi
 
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
-  count="$(grep -Fc -- "- 'gradle/**'" "$workflow" || true)"
-  [ "$count" = "1" ] || die "$label must watch gradle/** exactly once on pull_request"
+  count="$(grep -oF '"gradle/**"' "$workflow" | wc -l)"
+  [ "$count" = "1" ] || die "$label must classify gradle/** exactly once"
 }
 
 assert_webview_dependency_trigger() {
-  local workflow="$1" label="$2" package_count lock_count
-  package_count="$(grep -Fc -- "- 'webview/package.json'" "$workflow" || true)"
-  lock_count="$(grep -Fc -- "- 'webview/package-lock.json'" "$workflow" || true)"
-  [ "$package_count" = "1" ] || die "$label must watch webview/package.json exactly once on pull_request"
-  [ "$lock_count" = "1" ] || die "$label must watch webview/package-lock.json exactly once on pull_request"
+  local workflow="$1" label="$2"
+  # Check the actual source-routing lists, not the number of textual mentions.
+  # Fixtures and documentation may legitimately repeat these strings.
+  python3 -I - "$workflow" <<'PY' || die "$label must route package.json and package-lock.json to both native and Starter proofs"
+import ast
+import sys
+from pathlib import Path
+
+tree = ast.parse(Path(sys.argv[1]).read_text(encoding="utf-8"))
+authorities = {}
+for statement in tree.body:
+    if not isinstance(statement, ast.Assign):
+        continue
+    for target in statement.targets:
+        if not isinstance(target, ast.Name) or target.id not in ("NATIVE", "STARTER"):
+            continue
+        if target.id in authorities:
+            raise SystemExit(f"duplicate classifier authority: {target.id}")
+        try:
+            paths = ast.literal_eval(statement.value)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError) as exc:
+            raise SystemExit(f"{target.id} is not a static literal: {exc}")
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise SystemExit(f"{target.id} must be a literal list of paths")
+        authorities[target.id] = paths
+
+for authority in ("NATIVE", "STARTER"):
+    if authority not in authorities:
+        raise SystemExit(f"missing {authority} routing authority")
+    for dependency in ("webview/package.json", "webview/package-lock.json"):
+        if authorities[authority].count(dependency) != 1:
+            raise SystemExit(f"{authority} must include exactly one {dependency}")
+PY
 }
 
 assert_gradle_managed_node() {
@@ -197,14 +244,52 @@ assert_gradle_managed_node ".github/workflows/release.yml" "Release workflow"
 assert_gradle_managed_node ".github/workflows/starter-driver-e2e.yml" "Starter Driver workflow"
 assert_gradle_managed_node ".github/workflows/native-runtime-evidence.yml" "Native Runtime Evidence workflow"
 
-assert_gradle_catalog_trigger ".github/workflows/native-runtime-evidence.yml" "Native Runtime Evidence workflow"
+canonical_router=".github/scripts/pr-ci-evidence-scope.py"
+python3 -I "$canonical_router" --self-test || die "canonical evidence router fixtures failed"
+assert_gradle_catalog_trigger "$canonical_router" "canonical PR classifier"
 
 for workflow in \
   ".github/workflows/starter-driver-e2e.yml" \
   ".github/workflows/native-runtime-evidence.yml"; do
-  assert_pr_only_source_trigger "$workflow" "$(basename "$workflow")"
-  assert_webview_dependency_trigger "$workflow" "$(basename "$workflow")"
+  assert_reusable_source_trigger "$workflow" "$(basename "$workflow")"
 done
+assert_webview_dependency_trigger "$canonical_router" "canonical PR classifier"
+
+# Negative controls remove each dependency from either literal authority list,
+# leaving the classifier's self-test/example strings unchanged. A textual-count
+# check can accidentally pass; the actual scope check must refuse every case.
+for authority in NATIVE STARTER; do
+  for dependency in webview/package.json webview/package-lock.json; do
+    fixture="$trigger_fixture_dir/router-missing-${authority}-${dependency##*/}.py"
+    cp "$canonical_router" "$fixture"
+    python3 -I - "$fixture" "$authority" "$dependency" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+authority, dependency = sys.argv[2:]
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+needle = '"' + dependency + '"'
+matches = [i for i, line in enumerate(lines) if line.startswith(authority + " = [")]
+if len(matches) != 1 or lines[matches[0]].count(needle) != 1:
+    raise SystemExit("unexpected classifier list layout; cannot construct negative control")
+i = matches[0]
+line = lines[i]
+if needle + "," in line:
+    lines[i] = line.replace(needle + ",", "", 1)
+elif "," + needle in line:
+    lines[i] = line.replace("," + needle, "", 1)
+else:
+    raise SystemExit("cannot remove required classifier route")
+path.write_text("".join(lines), encoding="utf-8")
+PY
+    if ( assert_webview_dependency_trigger "$fixture" "missing $authority/$dependency" ) 2>/dev/null; then
+      die "canonical classifier guard accepted missing $authority/$dependency"
+    fi
+  done
+done
+
+grep -Fq '".github/workflows/build.yml"' "$canonical_router" || die "topology edits must route both authorities"
 
 native_evidence_workflow=".github/workflows/native-runtime-evidence.yml"
 grep -q '^  workflow_dispatch:$' "$native_evidence_workflow" || die "Native runtime evidence has no manual exact-SHA recovery trigger"
@@ -329,7 +414,7 @@ grep -Fq 'run_attempt=$GITHUB_RUN_ATTEMPT' "$full_differential_workflow" ||
 starter_diagnostics=".github/scripts/check-starter-driver-diagnostics.py"
 [ -f "$starter_diagnostics" ] || die "Starter/Driver diagnostics gate is missing"
 python3 "$starter_diagnostics" --self-test >/dev/null || die "Starter/Driver diagnostics self-test failed"
-grep -Fq ".github/scripts/check-starter-driver-diagnostics.py" "$starter_workflow" || die "Starter workflow does not trigger on diagnostics-gate changes"
+grep -Fq '".github/scripts/check-starter-driver-diagnostics.py"' "$canonical_router" || die "Starter diagnostics changes are not routed"
 grep -q 'check-starter-driver-diagnostics.py --self-test' "$starter_workflow" || die "Starter workflow does not execute diagnostics negative controls"
 if grep -q 'repeat_count:' "$starter_workflow"; then
   die "Starter workflow must not repeat the full acceptance suite in ordinary CI"
@@ -761,6 +846,8 @@ visual_goldens="src/integrationTest/resources/visual-goldens"
 [ -f "$visual_test" ] || die "deterministic visual acceptance test is missing"
 [ -f "$visual_goldens/README.md" ] || die "visual golden policy documentation is missing"
 grep -Fq 'name: Deterministic Visual Acceptance' "$starter_workflow" || die "Starter workflow has no separate deterministic visual job"
+grep -Fq 'name: Native runtime evidence gate' "$native_evidence_workflow" || die "native reusable proof gate missing"
+grep -Fq 'Native evidence requested but no probe selected' "$native_evidence_workflow" || die "native reusable proof gate permits zero selected probes"
 grep -Fq 'name: Deterministic Visual Acceptance Gate' "$starter_workflow" || die "Starter workflow has no separate visual acceptance gate"
 for gated_job in visual-gate gate; do
   actual_guard="$(awk -v wanted="$gated_job" '
@@ -837,6 +924,14 @@ fi
 
 
 build_workflow=".github/workflows/build.yml"
+# The $/ self-repository spelling is valid on GitHub but unsupported by
+# actionlint v1.7.12 (rhysd/actionlint#711). Its local reusable workflow checks
+# must remain active; zizmor may ignore only these exact two known invocations.
+waivers="$(grep -Fc '# zizmor: ignore[self-repository]' "$build_workflow" || true)"
+[ "$waivers" = "2" ] || die "reviewed local reusable workflow compatibility exceptions must total exactly two"
+for called in native-runtime-evidence starter-driver-e2e; do
+  grep -Fq "uses: ./.github/workflows/$called.yml # zizmor: ignore[self-repository]" "$build_workflow" || die "$called lost its scoped compatibility guard"
+done
 docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"
@@ -858,8 +953,9 @@ grep -Fq 'github.event.action == '"'"'edited'"'"'' <<<"$head_evidence_job" || di
 for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
   grep -Fq "\"$component\"" <<<"$head_evidence_job" || die "head validation reuse does not require successful $component evidence"
 done
-grep -Fq '    needs: [ headEvidence ]' "$build_workflow" || die "Build component does not depend on head validation evidence"
-[ "$(grep -Fc '    needs: [ headEvidence ]' "$build_workflow" || true)" = "5" ] || die "Build/Test/Inspect/Verify/Dependency Review must each depend on head validation evidence"
+# The integrated DAG has seven head-bound jobs, not five. Enforce each
+# producer's exact dependency so adding another head-bound caller cannot
+# invalidate the contract or mask a missing dependency elsewhere.
 
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
 grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' <<<"$head_evidence_job" || die "head evidence does not export its trusted docs-only classification"
@@ -872,13 +968,51 @@ grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build w
 grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
 [ "$(grep -Fc '    needs: [ build ]' "$build_workflow" || true)" = "0" ] || die "independent validation jobs must not wait for Build"
-for job in build test inspectCode verify dependencyReview; do
-  dependency="$(awk -v wanted="$job" '
-    $0 == "  " wanted ":" { on=1; next }
-    on && /^  [A-Za-z]/ { exit }
-    on && /^    needs:/ { print; exit }
-  ' "$build_workflow")"
-  [ "$dependency" = '    needs: [ headEvidence ]' ] || die "$job bypasses or serializes the required head evidence"
+assert_head_evidence_dependencies() {
+  local workflow="$1" job dependency
+  for job in build test inspectCode verify dependencyReview nativeEvidence starterEvidence; do
+    dependency="$(awk -v wanted="$job" '
+      $0 == "  " wanted ":" { on=1; next }
+      on && /^  [A-Za-z0-9_-]+:/ { exit }
+      on && /^    needs:/ { print; exit }
+    ' "$workflow")"
+    [ "$dependency" = '    needs: [ headEvidence ]' ] ||
+      die "$job bypasses or serializes the required head evidence"
+  done
+}
+
+assert_head_evidence_dependencies "$build_workflow"
+
+# Negative controls: remove the required dependency from each authoritative
+# job separately. Every omission must be detected, even when other jobs retain
+# their correct headEvidence dependency.
+for head_bound_job in build test inspectCode verify dependencyReview nativeEvidence starterEvidence; do
+  fixture="$trigger_fixture_dir/missing-head-${head_bound_job}.yml"
+  cp "$build_workflow" "$fixture"
+  python3 -I - "$fixture" "$head_bound_job" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+job = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+start_matches = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == f"  {job}:"]
+if len(start_matches) != 1:
+    raise SystemExit(f"unexpected job layout for {job}")
+start = start_matches[0]
+stop = next((i for i in range(start + 1, len(lines))
+             if re.fullmatch(r"  [A-Za-z0-9_-]+:\r?\n?", lines[i])), len(lines))
+needs = [i for i in range(start + 1, stop)
+         if lines[i].rstrip("\r\n") == "    needs: [ headEvidence ]"]
+if len(needs) != 1:
+    raise SystemExit(f"missing/duplicated dependency for {job}")
+del lines[needs[0]]
+path.write_text("".join(lines), encoding="utf-8")
+PY
+  if ( assert_head_evidence_dependencies "$fixture" ) 2>/dev/null; then
+    die "head validation dependency guard accepted missing headEvidence for $head_bound_job"
+  fi
 done
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a docs-only success path"
 [ "$(grep -Fc '      - name: Metadata-only event fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a metadata-only success path"
@@ -944,7 +1078,7 @@ merge_gate_job="$(awk '
 ' "$build_workflow")"
 [ -n "$merge_gate_job" ] || die "Merge Gate job could not be located"
 grep -q '^    name: Merge Gate$' <<<"$merge_gate_job" || die "Merge Gate required context name drifted"
-grep -Fq 'needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]' <<<"$merge_gate_job" || die "Merge Gate component dependency set drifted"
+grep -Fq 'needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]' <<<"$merge_gate_job" || die "Merge Gate component dependency set drifted"
 grep -Fq 'if: ${{ always() }}' <<<"$merge_gate_job" || die "Merge Gate does not use always()"
 grep -Fq 'needs.build.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Build result"
 grep -Fq 'needs.test.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Test result"
@@ -952,6 +1086,11 @@ grep -Fq 'needs.inspectCode.result' <<<"$merge_gate_job" || die "Merge Gate does
 grep -Fq 'needs.verify.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Verify plugin result"
 grep -Fq 'needs.metadataSafety.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect PR Metadata Safety result"
 grep -Fq 'needs.dependencyReview.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Dependency Review result"
+for proof in nativeEvidence starterEvidence; do
+  grep -Fq "needs.$proof.result" <<<"$merge_gate_job" || die "Merge Gate does not inspect $proof"
+done
+grep -Fq 'needs.headEvidence.result' <<<"$merge_gate_job" || die "Merge Gate does not verify head router"
+grep -Fq 'if [ "$result" != "$expected" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not verify conditional job result"
 grep -Fq 'if [ "$result" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not fail closed on non-success component results"
 grep -Fq '[ "$failed" -eq 0 ]' <<<"$merge_gate_job" || die "Merge Gate does not enforce aggregate failure state"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"

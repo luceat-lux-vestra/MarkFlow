@@ -70,7 +70,7 @@ policy_array_has_unique_contexts() {
 check_policy_shape() {
   local clean=1 class other context workflow job wf jobname staged_count required_count component_count aggregate_workflow
 
-  for class in required staged_required advisory release_only merge_gate_components; do
+  for class in required staged_required advisory release_only merge_gate_components conditional_evidence; do
     if ! jq -e --arg class "$class" '.[$class] | type == "array"' "$POLICY" >/dev/null; then
       finding policy_shape "policy field '$class' is not an array"; clean=0
     elif ! policy_array_has_unique_contexts "$class"; then
@@ -96,6 +96,15 @@ check_policy_shape() {
   required_count="$(jq '.required | length' "$POLICY")"
   [ "$required_count" -eq 1 ] || { finding policy_shape "policy must declare exactly one live required context"; clean=0; }
   jq -e '.required[0].context == "Merge Gate"' "$POLICY" >/dev/null || { finding policy_shape "the sole live required context must be 'Merge Gate'"; clean=0; }
+
+  if ! jq -e '
+    (.conditional_evidence | length == 2)
+    and (.conditional_evidence | map(.job) == ["nativeEvidence","starterEvidence"])
+    and (.conditional_evidence | map(.route_output) == ["run_native","run_starter"])
+    and (.conditional_evidence | map(.callee) == [".github/workflows/native-runtime-evidence.yml",".github/workflows/starter-driver-e2e.yml"])
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "conditional Native/Starter proof definitions drifted"; clean=0
+  fi
 
   component_count="$(jq '.merge_gate_components | length' "$POLICY")"
   [ "$component_count" -eq 6 ] || { finding policy_shape "Merge Gate must declare exactly six authoritative components"; clean=0; }
@@ -244,7 +253,7 @@ check_policy_producers() {
 
   needs="$(job_field "$wf" "$job" needs)"
   actual_needs="$(printf '%s' "$needs" | tr -d ' []')"
-  expected_needs="$(jq -r '[.merge_gate_components[].job] | join(",")' "$POLICY")"
+  expected_needs="$(jq -r '(["headEvidence"] + [.merge_gate_components[].job] + [.conditional_evidence[].job]) | join(",")' "$POLICY")"
   if [ "$actual_needs" != "$expected_needs" ]; then
     finding policy_producers "Merge Gate needs do not exactly match authoritative component jobs"; clean=0
   fi
@@ -277,6 +286,42 @@ check_policy_producers() {
     fi
   done < <(jq -r '.merge_gate_components[] | [.context, .workflow, .job] | @tsv' "$POLICY")
 
+  for proof in nativeEvidence starterEvidence; do
+    callee="$(jq -r --arg job "$proof" '.conditional_evidence[] | select(.job == $job) | .callee' "$POLICY")"
+    route="$(jq -r --arg job "$proof" '.conditional_evidence[] | select(.job == $job) | .route_output' "$POLICY")"
+    if [ -z "$callee" ] || [ -z "$route" ] || ! job_exists "$wf" "$proof"; then
+      finding policy_producers "conditional evidence '$proof' is missing"; clean=0; continue
+    fi
+    proof_block="$(job_block "$wf" "$proof")"
+    if ! printf '%s\n' "$proof_block" | grep -Fq "uses: ./$callee"; then
+      finding policy_producers "conditional evidence '$proof' does not call its canonical workflow"; clean=0
+    fi
+    # actionlint v1.7.12 cannot parse GitHub's newer $/ path (upstream #711).
+    # Keep its strong local workflow-call checks intact, and permit only the
+    # two reviewed path-scoped zizmor self-repository compatibility exceptions.
+    if ! printf '%s\n' "$proof_block" | grep -Fq "uses: ./$callee # zizmor: ignore[self-repository]"; then
+      finding policy_producers "conditional evidence '$proof' lost reviewed self-repository compatibility annotation"; clean=0
+    fi
+    if ! printf '%s\n' "$proof_block" | grep -Fq "needs.headEvidence.outputs.$route == 'true'"; then
+      finding policy_producers "conditional evidence '$proof' is not gated by trusted-base route"; clean=0
+    fi
+    if ! printf '%s\n' "$block" | grep -Fq "needs.$proof.result"; then
+      finding policy_producers "Merge Gate does not inspect conditional evidence '$proof' result"; clean=0
+    fi
+  done
+  waiver_count="$(grep -Fc '# zizmor: ignore[self-repository]' "$wf" || true)"
+  if [ "$waiver_count" -ne 2 ]; then
+    finding policy_producers "exactly two reviewed self-repository compatibility annotations are required"; clean=0
+  fi
+  for proof in HEAD_RESULT ACTIVE_PR NATIVE_ROUTE STARTER_ROUTE NATIVE_RESULT STARTER_RESULT; do
+    if ! printf '%s\n' "$block" | grep -Fq "$proof:"; then
+      finding policy_producers "Merge Gate lost routing environment '$proof'"; clean=0
+    fi
+  done
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "$expected" ]; then'; then
+    finding policy_producers "Merge Gate no longer enforces conditional result and allowed skip"; clean=0
+  fi
+
   if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "success" ]; then'; then
     finding policy_producers "Merge Gate does not fail closed on non-success component results"; clean=0
   fi
@@ -284,7 +329,7 @@ check_policy_producers() {
     finding policy_producers "Merge Gate does not enforce aggregate failure state"; clean=0
   fi
 
-  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' directly and fail-closed aggregates all six authoritative component jobs"
+  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' aggregates six unconditional jobs plus route-selected native/Starter evidence"
   return 0
 }
 
@@ -327,19 +372,73 @@ check_workflow_permissions() {
   [ "$clean" -eq 1 ] && info workflow_permissions "workflow defaults are read-only/empty and all writes are job-local"; return 0
 }
 
+# Collect only jobs defined under the workflow's top-level jobs mapping.
+workflow_jobs() {
+  awk '/^jobs:[[:space:]]*$/{in_jobs=1; next} in_jobs && /^[^[:space:]#]/{exit} in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/{line=$0; sub(/^  /,"",line); sub(/:[[:space:]]*$/, "", line); print line}' "$1"
+}
+
+positive_job_timeout() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -gt 0 ]
+}
+
 check_workflow_security() {
-  local clean=1 wf jobs job timeout checkout_count persist_count
+  local clean=1 wf jobs job timeout checkout_count persist_count uses callee callee_jobs callee_job callee_timeout
   while IFS= read -r wf; do
     if ! grep -qE '^concurrency:' "$wf"; then finding workflow_security "$(basename "$wf") has no concurrency policy"; clean=0; fi
     checkout_count="$(grep -cE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*actions/checkout@' "$wf" || true)"; persist_count="$(grep -cE '^[[:space:]]*persist-credentials:[[:space:]]*false[[:space:]]*$' "$wf" || true)"
     if [ "$checkout_count" -ne "$persist_count" ]; then finding workflow_security "$(basename "$wf") does not set persist-credentials:false for every checkout"; clean=0; fi
-    jobs="$(awk '/^jobs:[[:space:]]*$/{in_jobs=1; next} in_jobs && /^[^[:space:]#]/{exit} in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/{line=$0; sub(/^  /,"",line); sub(/:[[:space:]]*$/, "", line); print line}' "$wf")"
+    jobs="$(workflow_jobs "$wf")"
     while IFS= read -r job; do
-      [ -n "$job" ] || continue; timeout="$(job_field "$wf" "$job" timeout-minutes)"
-      if ! printf '%s' "$timeout" | grep -qE '^[0-9]+$' || [ "$timeout" -le 0 ]; then finding workflow_security "$(basename "$wf") job '$job' has no positive timeout-minutes"; clean=0; fi
+      [ -n "$job" ] || continue
+      timeout="$(job_field "$wf" "$job" timeout-minutes)"
+      uses="$(job_field "$wf" "$job" uses)"
+      if [ -z "$uses" ]; then
+        if ! positive_job_timeout "$timeout"; then
+          finding workflow_security "$(basename "$wf") job '$job' has no positive timeout-minutes"; clean=0
+        fi
+        continue
+      fi
+
+      # GitHub forbids timeout-minutes on a job-level reusable workflow call.
+      # Only a reviewed same-repository callee is accepted. Its real jobs must
+      # all carry bounded timeouts; unknown/external/nested calls fail closed.
+      if [ -n "$timeout" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' must not declare timeout-minutes"; clean=0
+      fi
+      uses="${uses%%#*}"
+      uses="$(printf '%s' "$uses" | tr -d '[:space:]')"
+      if [[ ! "$uses" =~ ^\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$ ]]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' has unverified workflow reference '$uses'"; clean=0
+        continue
+      fi
+      callee="$ROOT/${uses#./}"
+      if [ ! -f "$callee" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets missing workflow '$uses'"; clean=0
+        continue
+      fi
+      if ! grep -Eq '^  workflow_call:([[:space:]]|$)' "$callee"; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets workflow without workflow_call: '$uses'"; clean=0
+        continue
+      fi
+      callee_jobs="$(workflow_jobs "$callee")"
+      if [ -z "$callee_jobs" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets workflow without executable jobs: '$uses'"; clean=0
+        continue
+      fi
+      while IFS= read -r callee_job; do
+        [ -n "$callee_job" ] || continue
+        if [ -n "$(job_field "$callee" "$callee_job" uses)" ]; then
+          finding workflow_security "$(basename "$wf") reusable call '$job' has unverified nested call '$callee_job'"; clean=0
+          continue
+        fi
+        callee_timeout="$(job_field "$callee" "$callee_job" timeout-minutes)"
+        if ! positive_job_timeout "$callee_timeout"; then
+          finding workflow_security "$(basename "$wf") reusable call '$job' callee job '$callee_job' has no positive timeout-minutes"; clean=0
+        fi
+      done <<< "$callee_jobs"
     done <<< "$jobs"
   done < <(workflow_files)
-  [ "$clean" -eq 1 ] && info workflow_security "checkout credentials, timeouts, and concurrency are bounded"; return 0
+  [ "$clean" -eq 1 ] && info workflow_security "normal jobs and all resolved local reusable callee jobs have bounded timeouts"; return 0
 }
 
 check_privileged_workflows() {

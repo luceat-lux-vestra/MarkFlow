@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 65
     outputs:
       docs_only: ${{ steps.change-scope.outputs.docs_only }}
+      run_native: ${{ steps.evidence-scope.outputs.run_native }}
+      run_starter: ${{ steps.evidence-scope.outputs.run_starter }}
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -131,6 +133,57 @@ jobs:
 
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "docs-only fast path: $docs_only"
+
+      - name: Route specialized PR evidence using trusted base
+        id: evidence-scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -uo pipefail
+          run_native=true
+          run_starter=true
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" = "edited" ]; then
+            run_native=false
+            run_starter=false
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            tmp="$(mktemp -d)"
+            trap 'rm -rf "$tmp"' EXIT
+            if ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::warning::Unknown changed-file count; schedule both proofs."
+            elif ! gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/contents/.github/scripts/pr-ci-evidence-scope.py?ref=$BASE_SHA" \
+              --jq '.content' | tr -d '\n' | base64 --decode > "$tmp/router.py"; then
+              echo "::warning::Trusted router unavailable; schedule both proofs."
+            elif ! python3 "$tmp/router.py" --self-test; then
+              echo "::warning::Trusted router fixture failed; schedule both proofs."
+            elif ! gh api --paginate -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
+              echo "::warning::PR files API unavailable; schedule both proofs."
+            elif python3 "$tmp/router.py" --expected-count "$EXPECTED_COUNT" \
+              < "$tmp/files" > "$tmp/routes" && \
+              [ "$(wc -l < "$tmp/routes")" -eq 2 ]; then
+              native_line="$(grep -E '^run_native=(true|false)$' "$tmp/routes" || true)"
+              starter_line="$(grep -E '^run_starter=(true|false)$' "$tmp/routes" || true)"
+              if [ -n "$native_line" ] && [ -n "$starter_line" ]; then
+                run_native="${native_line#*=}"
+                run_starter="${starter_line#*=}"
+              else
+                echo "::warning::Malformed router outputs; schedule both proofs."
+              fi
+            else
+              echo "::warning::Router failed; schedule both proofs."
+            fi
+          fi
+          echo "run_native=$run_native" >> "$GITHUB_OUTPUT"
+          echo "run_starter=$run_starter" >> "$GITHUB_OUTPUT"
+          echo "Specialized evidence route: native=$run_native starter=$run_starter"
 
   build:
     name: Build
@@ -534,6 +587,30 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
           persist-credentials: false
 
+      # Trusted-base routing is intentionally unavailable to the introducing PR.
+      # Exercise its untrusted candidate implementation separately from authority.
+      - name: Validate exact-head PR evidence routing contract
+        if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          expected_sha="${{ github.event.pull_request.head.sha }}"
+          [ "$actual_sha" = "$expected_sha" ] || {
+            echo "::error::Routing self-test checkout drift: expected=$expected_sha actual=$actual_sha"
+            exit 1
+          }
+          python3 -I .github/scripts/pr-ci-evidence-scope.py --self-test
+          expected=$'run_native=true\nrun_starter=true'
+          actual="$(printf 'modified\t.github/workflows/build.yml\t\n' |
+            python3 -I .github/scripts/pr-ci-evidence-scope.py --expected-count 1)"
+          [ "$actual" = "$expected" ] || {
+            echo "::error::Routing CLI did not conservatively select both authorities."
+            printf 'actual route: %s\n' "$actual"
+            exit 1
+          }
+          echo "Exact-head PR routing self-test, negative fixtures, and CLI integration passed."
+
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
@@ -761,15 +838,45 @@ jobs:
         with:
           fail-on-severity: moderate
 
+
+  nativeEvidence:
+    name: Native Runtime Evidence
+    needs: [ headEvidence ]
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_native == 'true' }}
+    # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
+    # See rhysd/actionlint#711; preserve local reusable workflow validation.
+    # Only this exact same-commit call defers zizmor's self-repository migration.
+    uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+      pull-requests: read
+
+  starterEvidence:
+    name: Starter Driver E2E
+    needs: [ headEvidence ]
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_starter == 'true' }}
+    # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
+    # See rhysd/actionlint#711; preserve local reusable workflow validation.
+    # Only this exact same-commit call defers zizmor's self-repository migration.
+    uses: ./.github/workflows/starter-driver-e2e.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
   mergeGate:
     name: Merge Gate
-    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]
+    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]
     if: ${{ always() }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - name: Require every authoritative component
         env:
+          HEAD_RESULT: ${{ needs.headEvidence.result }}
+          ACTIVE_PR: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false }}
+          NATIVE_ROUTE: ${{ needs.headEvidence.outputs.run_native }}
+          STARTER_ROUTE: ${{ needs.headEvidence.outputs.run_starter }}
+          NATIVE_RESULT: ${{ needs.nativeEvidence.result }}
+          STARTER_RESULT: ${{ needs.starterEvidence.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           TEST_RESULT: ${{ needs.test.result }}
           INSPECT_CODE_RESULT: ${{ needs.inspectCode.result }}
@@ -793,6 +900,30 @@ jobs:
               failed=1
             fi
           done
+
+          if [ "$HEAD_RESULT" != "success" ]; then
+            echo "::error::Trusted routing head failed: $HEAD_RESULT"
+            failed=1
+          fi
+          for proof in "Native:$NATIVE_ROUTE:$NATIVE_RESULT" "Starter:$STARTER_ROUTE:$STARTER_RESULT"; do
+            name="${proof%%:*}"
+            rest="${proof#*:}"
+            route="${rest%%:*}"
+            result="${rest#*:}"
+            if [ "$ACTIVE_PR" = "true" ]; then
+              case "$route" in
+                true) expected=success ;;
+                false) expected=skipped ;;
+                *) echo "::error::$name has unknown route '$route'"; failed=1; continue ;;
+              esac
+            else
+              expected=skipped
+            fi
+            if [ "$result" != "$expected" ]; then
+              echo "::error::$name requires '$expected' from route '$route'; got '$result'"
+              failed=1
+            fi
+          done
           [ "$failed" -eq 0 ]
-          echo "All authoritative merge-gate components succeeded."
+          echo "All mandatory and route-selected runtime proof jobs succeeded."
 

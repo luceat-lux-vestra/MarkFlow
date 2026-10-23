@@ -45,8 +45,40 @@ expect_live_fail() {
 baseline="$TMP/baseline"
 copy_root "$baseline"
 expect_pass "$baseline"
+expect_pass "$baseline" workflow_security
 expect_pass "$baseline" live_readback_boundary
 expect_pass "$baseline" release_preflight
+
+# Reusable job callers cannot set timeout-minutes; their real callee jobs must.
+unbounded_native_callee="$TMP/unbounded-native-callee"
+copy_root "$unbounded_native_callee"
+perl -0pi -e 's/(  target:\n    name: Resolve exact native evidence target\n    runs-on: ubuntu-24\.04-arm\n)    timeout-minutes: 5\n/$1/' "$unbounded_native_callee/.github/workflows/native-runtime-evidence.yml"
+expect_fail "$unbounded_native_callee" workflow_security "reusable call 'nativeEvidence' callee job 'target' has no positive timeout-minutes"
+
+unbounded_starter_callee="$TMP/unbounded-starter-callee"
+copy_root "$unbounded_starter_callee"
+perl -0pi -e 's/(  package:\n    if: github\.event_name[^\n]*\n    name: Package exact Starter plugin\n    runs-on: ubuntu-24\.04-arm\n)    timeout-minutes: 30\n/$1/' "$unbounded_starter_callee/.github/workflows/starter-driver-e2e.yml"
+expect_fail "$unbounded_starter_callee" workflow_security "reusable call 'starterEvidence' callee job 'package' has no positive timeout-minutes"
+
+missing_reusable_callee="$TMP/missing-reusable-callee"
+copy_root "$missing_reusable_callee"
+sed -i 's@uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore\[self-repository\]@uses: ./.github/workflows/missing-runtime-evidence.yml # zizmor: ignore[self-repository]@' "$missing_reusable_callee/.github/workflows/build.yml"
+expect_fail "$missing_reusable_callee" workflow_security "reusable call 'nativeEvidence' targets missing workflow"
+
+unbounded_caller="$TMP/unbounded-caller"
+copy_root "$unbounded_caller"
+perl -0pi -e 's/(  nativeEvidence:\n    name: Native Runtime Evidence\n)/$1    timeout-minutes: 25\n/' "$unbounded_caller/.github/workflows/build.yml"
+expect_fail "$unbounded_caller" workflow_security "reusable call 'nativeEvidence' must not declare timeout-minutes"
+
+missing_workflow_call="$TMP/missing-workflow-call"
+copy_root "$missing_workflow_call"
+perl -0pi -e 's/^  workflow_call:\n//m' "$missing_workflow_call/.github/workflows/native-runtime-evidence.yml"
+expect_fail "$missing_workflow_call" workflow_security "reusable call 'nativeEvidence' targets workflow without workflow_call"
+
+external_reusable_callee="$TMP/external-reusable-callee"
+copy_root "$external_reusable_callee"
+sed -i 's|uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore\[self-repository\]|uses: owner/repo/.github/workflows/native-runtime-evidence.yml@deadbeef # zizmor: ignore[self-repository]|' "$external_reusable_callee/.github/workflows/build.yml"
+expect_fail "$external_reusable_callee" workflow_security "reusable call 'nativeEvidence' has unverified workflow reference"
 
 wrong_target="$TMP/wrong-target"
 copy_root "$wrong_target"
@@ -89,8 +121,23 @@ expect_fail "$continue_component" policy_producers "component 'Test' continues o
 
 missing_component="$TMP/missing-component"
 copy_root "$missing_component"
-perl -0pi -e 's/needs: \[ build, test, inspectCode, verify, metadataSafety, dependencyReview \]/needs: [ build, test, inspectCode, verify, metadataSafety ]/' "$missing_component/.github/workflows/build.yml"
+perl -0pi -e 's/needs: \[ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence \]/needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, nativeEvidence, starterEvidence ]/' "$missing_component/.github/workflows/build.yml"
 expect_fail "$missing_component" policy_producers "needs do not exactly match authoritative component jobs"
+
+unrouted_native="$TMP/unrouted-native"
+copy_root "$unrouted_native"
+perl -0pi -e "s/needs\.headEvidence\.outputs\.run_native == 'true'/true/" "$unrouted_native/.github/workflows/build.yml"
+expect_fail "$unrouted_native" policy_producers "conditional evidence 'nativeEvidence' is not gated by trusted-base route"
+
+missing_self_repository_waiver="$TMP/missing-self-repository-waiver"
+copy_root "$missing_self_repository_waiver"
+perl -0pi -e 's/^(    uses: \.\/\.github\/workflows\/native-runtime-evidence\.yml) # zizmor: ignore\[self-repository\]$/$1/m' "$missing_self_repository_waiver/.github/workflows/build.yml"
+expect_fail "$missing_self_repository_waiver" policy_producers "conditional evidence 'nativeEvidence' lost reviewed self-repository compatibility annotation"
+
+missing_native_result="$TMP/missing-native-result"
+copy_root "$missing_native_result"
+perl -0pi -e 's/          NATIVE_RESULT: \$\{\{ needs\.nativeEvidence\.result \}\}/          NATIVE_RESULT: success/' "$missing_native_result/.github/workflows/build.yml"
+expect_fail "$missing_native_result" policy_producers "does not inspect conditional evidence 'nativeEvidence' result"
 
 no_always="$TMP/no-always"
 copy_root "$no_always"
@@ -104,7 +151,7 @@ expect_fail "$aggregate_continue" policy_producers "Merge Gate must not continue
 
 noop="$TMP/noop"
 copy_root "$noop"
-perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ build, test, inspectCode, verify, metadataSafety, dependencyReview ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
+perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
 expect_fail "$noop" policy_producers "fake or no-op job"
 
 missing_result_check="$TMP/missing-result-check"

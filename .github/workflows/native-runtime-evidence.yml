@@ -4,38 +4,11 @@
 name: Native Runtime Evidence
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/workflows/native-runtime-evidence.yml'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
-      - 'src/main/resources/META-INF/plugin.xml'
-      - 'src/main/resources/META-INF/markflow-jcef.xml'
-      - 'src/main/kotlin/com/algorist/markflow/renderer/**'
-      - 'src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt'
-      - 'webview/package.json'
-      - 'webview/package-lock.json'
-      - 'webview/derived-renderer.html'
-      - 'webview/vite.derived-renderer.config.ts'
-      - 'webview/src/renderer/**'
-      - 'webview/src/app/derived-renderer-service.ts'
-      - 'webview/src/app/browser-derived-renderer-backends.ts'
-      - 'src/main/kotlin/com/algorist/markflow/editor/native/**'
-      - 'src/test/kotlin/com/algorist/markflow/editor/native/**'
-      - 'docs/architecture/native-edit-semantics.md'
-      - 'docs/architecture/native-editor-shell-selection.md'
-      - 'docs/architecture/native-markdown-projection-foundation.md'
-      - 'docs/architecture/README.md'
-      - 'docs/architecture/0001-native-authority-projection-architecture.md'
-      - 'src/main/kotlin/com/algorist/markflow/trust/**'
-      - 'src/test/kotlin/com/algorist/markflow/trust/**'
-      - 'docs/architecture/native-host-resources.md'
-      - 'docs/product/image-file-import-contract.md'
-      - 'fixtures/markdown-fidelity/**'
-      - 'src/main/kotlin/com/algorist/markflow/settings/**'
-      - 'docs/architecture/0002-mermaid-katex-renderer-continuity.md'
+  workflow_call:
+    inputs:
+      target_sha:
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       target_sha:
@@ -127,6 +100,12 @@ jobs:
           from pathlib import Path
 
           patterns = json.loads(r'''{"derived_renderer":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_derived_presentation":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-edit-semantics.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/README.md"],"native_editor_shell":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md"],"native_host_resources":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/architecture/native-host-resources.md"],"native_image_import":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/product/image-file-import-contract.md"],"native_projection":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","fixtures/markdown-fidelity/**","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md","docs/architecture/README.md"],"no_jcef_native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/settings/**","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/0002-mermaid-katex-renderer-continuity.md"]}''')
+          # A change to canonical routing affects every native probe.
+          for globs in patterns.values():
+              globs.extend([
+                  ".github/workflows/build.yml",
+                  ".github/scripts/pr-ci-evidence-scope.py",
+              ])
           changed = [
               line.strip()
               for line in Path(os.environ["RUNNER_TEMP"])
@@ -1577,3 +1556,197 @@ jobs:
             .intellijPlatform/sandbox/**/bg-wa/**
             ${{ runner.temp }}/markflow-no-jcef-xvfb.log
           if-no-files-found: warn
+
+  evidenceGate:
+    name: Native runtime evidence gate
+    if: ${{ always() }}
+    needs: [ target, derived_renderer, native_derived_presentation, native_editing, native_editor_shell, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require every routed native proof
+        shell: bash
+        env:
+          TARGET_RESULT: ${{ needs.target.result }}
+          ROUTE_DERIVED_RENDERER: ${{ needs.target.outputs.run_derived_renderer }}
+          RESULT_DERIVED_RENDERER: ${{ needs.derived_renderer.result }}
+          ROUTE_NATIVE_DERIVED_PRESENTATION: ${{ needs.target.outputs.run_native_derived_presentation }}
+          RESULT_NATIVE_DERIVED_PRESENTATION: ${{ needs.native_derived_presentation.result }}
+          ROUTE_NATIVE_EDITING: ${{ needs.target.outputs.run_native_editing }}
+          RESULT_NATIVE_EDITING: ${{ needs.native_editing.result }}
+          ROUTE_NATIVE_EDITOR_SHELL: ${{ needs.target.outputs.run_native_editor_shell }}
+          RESULT_NATIVE_EDITOR_SHELL: ${{ needs.native_editor_shell.result }}
+          ROUTE_NATIVE_HOST_RESOURCES: ${{ needs.target.outputs.run_native_host_resources }}
+          RESULT_NATIVE_HOST_RESOURCES: ${{ needs.native_host_resources.result }}
+          ROUTE_NATIVE_IMAGE_IMPORT: ${{ needs.target.outputs.run_native_image_import }}
+          RESULT_NATIVE_IMAGE_IMPORT: ${{ needs.native_image_import.result }}
+          ROUTE_NATIVE_PROJECTION: ${{ needs.target.outputs.run_native_projection }}
+          RESULT_NATIVE_PROJECTION: ${{ needs.native_projection.result }}
+          ROUTE_NO_JCEF_NATIVE_EDITING: ${{ needs.target.outputs.run_no_jcef_native_editing }}
+          RESULT_NO_JCEF_NATIVE_EDITING: ${{ needs.no_jcef_native_editing.result }}
+        run: |
+          set -euo pipefail
+          [ "$TARGET_RESULT" = "success" ] || {
+            echo "::error::Native source and routing unavailable: $TARGET_RESULT"
+            exit 1
+          }
+          executed=0
+          failed=0
+          case "$ROUTE_DERIVED_RENDERER" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_DERIVED_RENDERER" != "success" ]; then
+                echo "::error::Required derived_renderer failed: $RESULT_DERIVED_RENDERER"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_DERIVED_RENDERER" != "skipped" ]; then
+                echo "::error::Unrouted derived_renderer result: $RESULT_DERIVED_RENDERER"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown derived_renderer route: $ROUTE_DERIVED_RENDERER"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_DERIVED_PRESENTATION" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_DERIVED_PRESENTATION" != "success" ]; then
+                echo "::error::Required native_derived_presentation failed: $RESULT_NATIVE_DERIVED_PRESENTATION"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_DERIVED_PRESENTATION" != "skipped" ]; then
+                echo "::error::Unrouted native_derived_presentation result: $RESULT_NATIVE_DERIVED_PRESENTATION"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_derived_presentation route: $ROUTE_NATIVE_DERIVED_PRESENTATION"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_EDITING" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_EDITING" != "success" ]; then
+                echo "::error::Required native_editing failed: $RESULT_NATIVE_EDITING"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_EDITING" != "skipped" ]; then
+                echo "::error::Unrouted native_editing result: $RESULT_NATIVE_EDITING"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_editing route: $ROUTE_NATIVE_EDITING"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_EDITOR_SHELL" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_EDITOR_SHELL" != "success" ]; then
+                echo "::error::Required native_editor_shell failed: $RESULT_NATIVE_EDITOR_SHELL"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_EDITOR_SHELL" != "skipped" ]; then
+                echo "::error::Unrouted native_editor_shell result: $RESULT_NATIVE_EDITOR_SHELL"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_editor_shell route: $ROUTE_NATIVE_EDITOR_SHELL"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_HOST_RESOURCES" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_HOST_RESOURCES" != "success" ]; then
+                echo "::error::Required native_host_resources failed: $RESULT_NATIVE_HOST_RESOURCES"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_HOST_RESOURCES" != "skipped" ]; then
+                echo "::error::Unrouted native_host_resources result: $RESULT_NATIVE_HOST_RESOURCES"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_host_resources route: $ROUTE_NATIVE_HOST_RESOURCES"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_IMAGE_IMPORT" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_IMAGE_IMPORT" != "success" ]; then
+                echo "::error::Required native_image_import failed: $RESULT_NATIVE_IMAGE_IMPORT"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_IMAGE_IMPORT" != "skipped" ]; then
+                echo "::error::Unrouted native_image_import result: $RESULT_NATIVE_IMAGE_IMPORT"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_image_import route: $ROUTE_NATIVE_IMAGE_IMPORT"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NATIVE_PROJECTION" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NATIVE_PROJECTION" != "success" ]; then
+                echo "::error::Required native_projection failed: $RESULT_NATIVE_PROJECTION"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NATIVE_PROJECTION" != "skipped" ]; then
+                echo "::error::Unrouted native_projection result: $RESULT_NATIVE_PROJECTION"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown native_projection route: $ROUTE_NATIVE_PROJECTION"
+              failed=1
+              ;;
+          esac
+          case "$ROUTE_NO_JCEF_NATIVE_EDITING" in
+            true)
+              executed=$((executed + 1))
+              if [ "$RESULT_NO_JCEF_NATIVE_EDITING" != "success" ]; then
+                echo "::error::Required no_jcef_native_editing failed: $RESULT_NO_JCEF_NATIVE_EDITING"
+                failed=1
+              fi
+              ;;
+            false)
+              if [ "$RESULT_NO_JCEF_NATIVE_EDITING" != "skipped" ]; then
+                echo "::error::Unrouted no_jcef_native_editing result: $RESULT_NO_JCEF_NATIVE_EDITING"
+                failed=1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown no_jcef_native_editing route: $ROUTE_NO_JCEF_NATIVE_EDITING"
+              failed=1
+              ;;
+          esac
+          if [ "$executed" -eq 0 ]; then
+            echo "::error::Native evidence requested but no probe selected"
+            failed=1
+          fi
+          [ "$failed" -eq 0 ]
+          echo "All $executed requested native probes succeeded."

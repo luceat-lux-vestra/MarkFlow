@@ -26,7 +26,7 @@
       "workflow": ".github/workflows/build.yml",
       "job": "mergeGate",
       "trigger": "pull_request",
-      "covers": "Fail-closed aggregation of Build, Test, Inspect code, Verify plugin, PR Metadata Safety, and Dependency Review. The job runs with always() and succeeds only when every authoritative component result is exactly success."
+      "covers": "Fail-closed aggregation of exact head routing, six unconditional jobs, and both conditionally required native/Starter real IDE evidence calls."
     }
   ],
   "staged_required": [],
@@ -174,5 +174,23 @@
         "reason": "PR #286 retired the failure-triage pull_request_target workflow and removed the machine-enforced failure-classification/declaration protocol."
       }
     ]
-  }
+  },
+  "conditional_evidence": [
+    {
+      "context": "Native Runtime Evidence",
+      "workflow": ".github/workflows/build.yml",
+      "job": "nativeEvidence",
+      "callee": ".github/workflows/native-runtime-evidence.yml",
+      "route_output": "run_native",
+      "covers": "8 selectively routed real IDEA/JCEF/no-JCEF probes; called by the canonical PR DAG."
+    },
+    {
+      "context": "Starter Driver E2E",
+      "workflow": ".github/workflows/build.yml",
+      "job": "starterEvidence",
+      "callee": ".github/workflows/starter-driver-e2e.yml",
+      "route_output": "run_starter",
+      "covers": "Exact-SHA package once, stable real-IDE shards and x64 visual acceptance."
+    }
+  ]
 }
