@@ -431,6 +431,7 @@ grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow d
 
 
 grep -Fq "STARTER_PLATFORM_VERSION: '2026.2.3'" "$starter_workflow" || die "Starter full-product authority must stay pinned to IDEA 2026.2.3"
+grep -Fxq 'platformVersion = 2026.2.3' gradle.properties || die "default IntelliJ Platform baseline must stay aligned with authoritative IDEA 2026.2.3 acceptance"
 if grep -Eq '263\.|2026\.3|eap2|EAP2' "$starter_workflow"; then
   die "Starter full-product workflow must not make the 2026.3 EAP probe release-blocking again"
 fi
@@ -470,6 +471,18 @@ grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
 grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
   grep -Fq 'runner: ubuntu-24.04-arm' ||
   die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+shard_arm_egl_step="$(awk '
+  /^  shards:$/ { in_shards=1; next }
+  in_shards && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_shards && $0 == "      - name: Install ARM64 Skiko EGL runtime" { on=1; print; next }
+  on && /^      - name:/ { exit }
+  on { print }
+' "$starter_workflow")"
+[ -n "$shard_arm_egl_step" ] || die "Starter shard ARM64 Skiko EGL setup step is missing"
+grep -Fq "if: matrix.runner == 'ubuntu-24.04-arm'" <<<"$shard_arm_egl_step" ||
+  die "ARM64 Skiko EGL setup must be skipped on the intentional x64 derived-content shard"
+grep -Fq '[ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]' <<<"$shard_arm_egl_step" ||
+  die "ARM64 Skiko EGL setup lost its runtime architecture assertion"
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
   die "Starter workflow silently dropped bundled Markdown Preview capture"
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||

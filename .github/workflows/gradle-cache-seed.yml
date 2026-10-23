@@ -1,4 +1,4 @@
-# Populate the shared Gradle User Home cache only when cache inputs change.
+# Populate architecture-scoped Gradle User Home caches only when cache inputs change.
 # The trusted main producer is NOT a redundant post-merge product build.
 # Keep this separate from PR-required Build/Test/Qodana/Verifier: no duplicated
 # post-merge acceptance and no cache writes from untrusted pull-request refs.
@@ -33,9 +33,17 @@ jobs:
     # The GitHub cache can be reused by PRs only when written in the
     # default-branch scope. Never accept a PR-head or non-main cache writer.
     if: github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main'
-    name: Gradle cache seed (ARM64)
-    runs-on: ubuntu-24.04-arm
+    name: Gradle cache seed (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x64
+            runner: ubuntu-24.04
     steps:
       - name: Fetch exact protected main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,4 +68,4 @@ jobs:
           cache-read-only: false
 
       - name: Populate production plugin cache
-        run: ./gradlew buildPlugin
+        run: ./gradlew buildPlugin -PplatformVersion=2026.2.3
