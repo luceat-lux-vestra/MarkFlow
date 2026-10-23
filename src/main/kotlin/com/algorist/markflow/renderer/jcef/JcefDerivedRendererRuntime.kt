@@ -21,6 +21,9 @@ import org.cef.misc.BoolRef
 import org.cef.network.CefRequest
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -282,20 +285,64 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
             return
         }
 
-        callback(
-            DerivedRendererRuntimeResult(
-                requestId = requestId,
-                status = status,
-                kind = envelope.kind,
-                identity = request.identity,
-                mediaType = envelope.mediaType,
-                content = envelope.content,
-                presentationArtifact = presentationArtifactOrNull(envelope),
-                code = envelope.code,
-                retryable = envelope.retryable == true,
-                message = envelope.message,
-            )
+        val result = DerivedRendererRuntimeResult(
+            requestId = requestId,
+            status = status,
+            kind = envelope.kind,
+            identity = request.identity,
+            mediaType = envelope.mediaType,
+            content = envelope.content,
+            presentationArtifact = presentationArtifactOrNull(envelope),
+            code = envelope.code,
+            retryable = envelope.retryable == true,
+            message = envelope.message,
         )
+        // #362 opt-in diagnostics only: preserve the original callback/result semantics.
+        if (System.getProperty("markflow.visual.armForensics.outputDir")?.isNotBlank() == true) {
+            runCatching { recordVisualArmForensics(request, result) }.onFailure { failure ->
+                System.err.println("MARKFLOW_ARM_VISUAL_FORENSICS_CAPTURE_FAILED " +
+                    failure.javaClass.name + ": " + failure.message)
+            }
+        }
+        callback(result)
+    }
+
+    private fun recordVisualArmForensics(
+        request: DerivedRendererRuntimeRequest,
+        result: DerivedRendererRuntimeResult,
+    ) {
+        val output = Path.of(checkNotNull(System.getProperty("markflow.visual.armForensics.outputDir")))
+            .toAbsolutePath().normalize()
+        Files.createDirectories(output)
+        val hashInput = (request.kind.wireName + "\u0000" + request.source + "\u0000" + request.configJson)
+            .toByteArray(StandardCharsets.UTF_8)
+        val shortHash = MessageDigest.getInstance("SHA-256").digest(hashInput)
+            .joinToString("") { "%02x".format(it) }.take(24)
+        val stem = request.kind.wireName + "-" + shortHash
+        Files.writeString(output.resolve(stem + ".source.txt"), request.source, StandardCharsets.UTF_8)
+        Files.writeString(output.resolve(stem + ".config.json"), request.configJson, StandardCharsets.UTF_8)
+        val extension = when (result.mediaType) {
+            "image/svg+xml" -> "svg"
+            "text/html" -> "html"
+            else -> "unknown.txt"
+        }
+        Files.writeString(output.resolve(stem + ".renderer." + extension),
+            result.content ?: "", StandardCharsets.UTF_8)
+        val raster = result.presentationArtifact
+        if (raster?.mediaType == "image/png") {
+            Files.write(output.resolve(stem + ".raster.png"),
+                Base64.getDecoder().decode(raster.contentBase64))
+        }
+        Files.writeString(output.resolve(stem + ".metadata.txt"), buildString {
+            appendLine("schema=markflow-arm-visual-intermediate/v1")
+            appendLine("kind=" + request.kind.wireName)
+            appendLine("status=" + result.status)
+            appendLine("media_type=" + result.mediaType)
+            appendLine("png_width=" + (raster?.width ?: -1))
+            appendLine("png_height=" + (raster?.height ?: -1))
+            appendLine("has_png=" + (raster?.mediaType == "image/png"))
+            appendLine("source_bytes=" + request.source.toByteArray(StandardCharsets.UTF_8).size)
+        }, StandardCharsets.UTF_8)
     }
 
     private fun presentationArtifactOrNull(envelope: WireEnvelope): DerivedRendererPresentationArtifact? {

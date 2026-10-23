@@ -116,6 +116,12 @@ class MarkFlowStarterVisualAcceptanceTest {
                 addSystemProperty("ide.enable.notification.trace.data.sharing", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
+                if (System.getenv("MARKFLOW_VISUAL_ARM_FORENSICS") == "true") {
+                    addSystemProperty(
+                        "markflow.visual.armForensics.outputDir",
+                        outputRoot.resolve("derived-intermediates").toString(),
+                    )
+                }
             }.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 val driver = this
