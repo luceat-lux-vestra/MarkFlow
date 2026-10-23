@@ -855,10 +855,10 @@ for gated_job in visual-gate gate; do
   ' "$starter_workflow")"
   [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
 done
-# The ARM64 visual sweep was measured against reviewed Ubuntu 24.04 x64
-# golden images. Derived KaTeX/Mermaid exceeded the fail-closed pixel budget;
-# keep that exact x64 visual oracle, while its aggregate gate remains ARM64.
-for spec in "visual:ubuntu-24.04" "visual-gate:ubuntu-24.04-arm"; do
+# #362: Paired x64/ARM64 negative controls found a missing Liberation Sans
+# fallback on ARM64. Keep the strict reviewed x64 PNG goldens unchanged;
+# require EGL, real ARM CPU and exact font file SHA-256 before capture.
+for spec in "visual:ubuntu-24.04-arm" "visual-gate:ubuntu-24.04-arm"; do
   visual_job="${spec%%:*}"
   visual_runner="${spec#*:}"
   awk -v wanted="$visual_job" -v label="$visual_runner" '
@@ -868,6 +868,23 @@ for spec in "visual:ubuntu-24.04" "visual-gate:ubuntu-24.04-arm"; do
     END { exit !found }
   ' "$starter_workflow" || die "$visual_job does not use pinned $visual_runner runner"
 done
+# Require the ARM visual job itself to prove native EGL, matching font bytes
+# and retained provenance. Other shards cannot satisfy this visual contract.
+awk '
+  /^  visual:$/ { in_visual=1; next }
+  in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_visual && /name: Install pinned ARM64 visual EGL and Liberation Sans/ { named=1 }
+  in_visual && /RUNNER_ARCH.*ARM64/ { arch=1 }
+  in_visual && /sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation/ { packages=1 }
+  in_visual && /ldconfig -p \| grep -F libEGL.so.1/ { egl=1 }
+  in_visual && /fc-cache -f/ { font_cache=1 }
+  in_visual && /fc-match -f/ && /Arial/ { font_probe=1 }
+  in_visual && /expected_sha=4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144/ { pinned=1 }
+  in_visual && /sha256sum.*resolved_path/ { actual=1 }
+  in_visual && /actual_sha.*expected_sha/ { comparison=1 }
+  in_visual && /visual-font-provenance.txt/ { retention=1 }
+  END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && retention) }
+' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
 grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium path"
