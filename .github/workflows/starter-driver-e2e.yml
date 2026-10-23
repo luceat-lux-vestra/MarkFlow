@@ -145,7 +145,6 @@ jobs:
           cache-read-only: true
 
       - name: Install ARM64 Skiko EGL runtime
-        if: matrix.runner == 'ubuntu-24.04-arm'
         shell: bash
         run: |
           set -euo pipefail
