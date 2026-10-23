@@ -107,8 +107,8 @@ jobs:
             java -version 2>&1
             for family in Inter Arial KaTeX_Main sans-serif serif monospace; do
               printf 'font[%s]=' "$family"
-              fc-match -f '${family}|${style}|${file}\n' "$family"
-              path="$(fc-match -f '${file}' "$family")"
+              fc-match -f '%{family}|%{style}|%{file}\n' "$family"
+              path="$(fc-match -f '%{file}' "$family")"
               [ -f "$path" ] || { echo "::error::Missing resolved font $family"; exit 1; }
               sha256sum "$path"
             done
