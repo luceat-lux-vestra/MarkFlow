@@ -186,6 +186,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation
 
+      - name: Install x64 visual EGL runtime
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+
       - name: Verify strict visual environment
         shell: bash
         run: |
