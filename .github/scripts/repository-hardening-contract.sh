@@ -170,11 +170,39 @@ assert_gradle_catalog_trigger() {
 }
 
 assert_webview_dependency_trigger() {
-  local workflow="$1" label="$2" package_count lock_count
-  package_count="$(grep -oF '"webview/package.json"' "$workflow" | wc -l)"
-  lock_count="$(grep -oF '"webview/package-lock.json"' "$workflow" | wc -l)"
-  [ "$package_count" = "2" ] || die "$label must route package.json to native and Starter proofs"
-  [ "$lock_count" = "2" ] || die "$label must route package-lock.json to native and Starter proofs"
+  local workflow="$1" label="$2"
+  # Check the actual source-routing lists, not the number of textual mentions.
+  # Fixtures and documentation may legitimately repeat these strings.
+  python3 -I - "$workflow" <<'PY' || die "$label must route package.json and package-lock.json to both native and Starter proofs"
+import ast
+import sys
+from pathlib import Path
+
+tree = ast.parse(Path(sys.argv[1]).read_text(encoding="utf-8"))
+authorities = {}
+for statement in tree.body:
+    if not isinstance(statement, ast.Assign):
+        continue
+    for target in statement.targets:
+        if not isinstance(target, ast.Name) or target.id not in ("NATIVE", "STARTER"):
+            continue
+        if target.id in authorities:
+            raise SystemExit(f"duplicate classifier authority: {target.id}")
+        try:
+            paths = ast.literal_eval(statement.value)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError) as exc:
+            raise SystemExit(f"{target.id} is not a static literal: {exc}")
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise SystemExit(f"{target.id} must be a literal list of paths")
+        authorities[target.id] = paths
+
+for authority in ("NATIVE", "STARTER"):
+    if authority not in authorities:
+        raise SystemExit(f"missing {authority} routing authority")
+    for dependency in ("webview/package.json", "webview/package-lock.json"):
+        if authorities[authority].count(dependency) != 1:
+            raise SystemExit(f"{authority} must include exactly one {dependency}")
+PY
 }
 
 assert_gradle_managed_node() {
@@ -226,6 +254,41 @@ for workflow in \
   assert_reusable_source_trigger "$workflow" "$(basename "$workflow")"
 done
 assert_webview_dependency_trigger "$canonical_router" "canonical PR classifier"
+
+# Negative controls remove each dependency from either literal authority list,
+# leaving the classifier's self-test/example strings unchanged. A textual-count
+# check can accidentally pass; the actual scope check must refuse every case.
+for authority in NATIVE STARTER; do
+  for dependency in webview/package.json webview/package-lock.json; do
+    fixture="$trigger_fixture_dir/router-missing-${authority}-${dependency##*/}.py"
+    cp "$canonical_router" "$fixture"
+    python3 -I - "$fixture" "$authority" "$dependency" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+authority, dependency = sys.argv[2:]
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+needle = '"' + dependency + '"'
+matches = [i for i, line in enumerate(lines) if line.startswith(authority + " = [")]
+if len(matches) != 1 or lines[matches[0]].count(needle) != 1:
+    raise SystemExit("unexpected classifier list layout; cannot construct negative control")
+i = matches[0]
+line = lines[i]
+if needle + "," in line:
+    lines[i] = line.replace(needle + ",", "", 1)
+elif "," + needle in line:
+    lines[i] = line.replace("," + needle, "", 1)
+else:
+    raise SystemExit("cannot remove required classifier route")
+path.write_text("".join(lines), encoding="utf-8")
+PY
+    if ( assert_webview_dependency_trigger "$fixture" "missing $authority/$dependency" ) 2>/dev/null; then
+      die "canonical classifier guard accepted missing $authority/$dependency"
+    fi
+  done
+done
+
 grep -Fq '".github/workflows/build.yml"' "$canonical_router" || die "topology edits must route both authorities"
 
 native_evidence_workflow=".github/workflows/native-runtime-evidence.yml"
