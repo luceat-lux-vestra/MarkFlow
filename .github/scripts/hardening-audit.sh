@@ -372,19 +372,73 @@ check_workflow_permissions() {
   [ "$clean" -eq 1 ] && info workflow_permissions "workflow defaults are read-only/empty and all writes are job-local"; return 0
 }
 
+# Collect only jobs defined under the workflow's top-level jobs mapping.
+workflow_jobs() {
+  awk '/^jobs:[[:space:]]*$/{in_jobs=1; next} in_jobs && /^[^[:space:]#]/{exit} in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/{line=$0; sub(/^  /,"",line); sub(/:[[:space:]]*$/, "", line); print line}' "$1"
+}
+
+positive_job_timeout() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -gt 0 ]
+}
+
 check_workflow_security() {
-  local clean=1 wf jobs job timeout checkout_count persist_count
+  local clean=1 wf jobs job timeout checkout_count persist_count uses callee callee_jobs callee_job callee_timeout
   while IFS= read -r wf; do
     if ! grep -qE '^concurrency:' "$wf"; then finding workflow_security "$(basename "$wf") has no concurrency policy"; clean=0; fi
     checkout_count="$(grep -cE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*actions/checkout@' "$wf" || true)"; persist_count="$(grep -cE '^[[:space:]]*persist-credentials:[[:space:]]*false[[:space:]]*$' "$wf" || true)"
     if [ "$checkout_count" -ne "$persist_count" ]; then finding workflow_security "$(basename "$wf") does not set persist-credentials:false for every checkout"; clean=0; fi
-    jobs="$(awk '/^jobs:[[:space:]]*$/{in_jobs=1; next} in_jobs && /^[^[:space:]#]/{exit} in_jobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/{line=$0; sub(/^  /,"",line); sub(/:[[:space:]]*$/, "", line); print line}' "$wf")"
+    jobs="$(workflow_jobs "$wf")"
     while IFS= read -r job; do
-      [ -n "$job" ] || continue; timeout="$(job_field "$wf" "$job" timeout-minutes)"
-      if ! printf '%s' "$timeout" | grep -qE '^[0-9]+$' || [ "$timeout" -le 0 ]; then finding workflow_security "$(basename "$wf") job '$job' has no positive timeout-minutes"; clean=0; fi
+      [ -n "$job" ] || continue
+      timeout="$(job_field "$wf" "$job" timeout-minutes)"
+      uses="$(job_field "$wf" "$job" uses)"
+      if [ -z "$uses" ]; then
+        if ! positive_job_timeout "$timeout"; then
+          finding workflow_security "$(basename "$wf") job '$job' has no positive timeout-minutes"; clean=0
+        fi
+        continue
+      fi
+
+      # GitHub forbids timeout-minutes on a job-level reusable workflow call.
+      # Only a reviewed same-repository callee is accepted. Its real jobs must
+      # all carry bounded timeouts; unknown/external/nested calls fail closed.
+      if [ -n "$timeout" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' must not declare timeout-minutes"; clean=0
+      fi
+      uses="${uses%%#*}"
+      uses="$(printf '%s' "$uses" | tr -d '[:space:]')"
+      if [[ ! "$uses" =~ ^\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$ ]]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' has unverified workflow reference '$uses'"; clean=0
+        continue
+      fi
+      callee="$ROOT/${uses#./}"
+      if [ ! -f "$callee" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets missing workflow '$uses'"; clean=0
+        continue
+      fi
+      if ! grep -Eq '^  workflow_call:([[:space:]]|$)' "$callee"; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets workflow without workflow_call: '$uses'"; clean=0
+        continue
+      fi
+      callee_jobs="$(workflow_jobs "$callee")"
+      if [ -z "$callee_jobs" ]; then
+        finding workflow_security "$(basename "$wf") reusable call '$job' targets workflow without executable jobs: '$uses'"; clean=0
+        continue
+      fi
+      while IFS= read -r callee_job; do
+        [ -n "$callee_job" ] || continue
+        if [ -n "$(job_field "$callee" "$callee_job" uses)" ]; then
+          finding workflow_security "$(basename "$wf") reusable call '$job' has unverified nested call '$callee_job'"; clean=0
+          continue
+        fi
+        callee_timeout="$(job_field "$callee" "$callee_job" timeout-minutes)"
+        if ! positive_job_timeout "$callee_timeout"; then
+          finding workflow_security "$(basename "$wf") reusable call '$job' callee job '$callee_job' has no positive timeout-minutes"; clean=0
+        fi
+      done <<< "$callee_jobs"
     done <<< "$jobs"
   done < <(workflow_files)
-  [ "$clean" -eq 1 ] && info workflow_security "checkout credentials, timeouts, and concurrency are bounded"; return 0
+  [ "$clean" -eq 1 ] && info workflow_security "normal jobs and all resolved local reusable callee jobs have bounded timeouts"; return 0
 }
 
 check_privileged_workflows() {
