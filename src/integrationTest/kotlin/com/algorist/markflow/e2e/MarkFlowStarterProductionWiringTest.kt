@@ -49,7 +49,10 @@ class MarkFlowStarterProductionWiringTest {
             }
         }
 
+        val timing = StarterLifecycleTimingProbe("production-wiring",
+            Path.of("build/e2e-evidence/derived-content/production-wiring"))
         try {
+            timing.begin()
             Starter.newContext(
                 testName = "markflow-starter-driver-production-wiring",
                 testCase = targetTestCase,
@@ -64,6 +67,7 @@ class MarkFlowStarterProductionWiringTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
             }.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
+                timing.ideReady()
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
                 val editor = markFlow.openMarkdown("PRODUCTION.md")
@@ -217,8 +221,11 @@ class MarkFlowStarterProductionWiringTest {
                 check(Files.readString(fixturePath) == expectedSource) {
                     "production host/derived/raw-HTML wiring changed fixture bytes"
                 }
+                timing.scenarioComplete()
             }
+            timing.success()
         } finally {
+            timing.report()
             tempRoot.toFile().deleteRecursively()
         }
     }

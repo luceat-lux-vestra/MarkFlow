@@ -45,10 +45,13 @@ class MarkFlowStarterHeadingRobotTest {
         val fixture = project.resolve("heading-robot.md")
         val output = Path.of("build/e2e-evidence/derived-content/heading-robot").toAbsolutePath()
         Files.createDirectories(output)
+        val timing = StarterLifecycleTimingProbe("heading-robot",
+            Path.of("build/e2e-evidence/derived-content/heading-robot"))
         try {
             check(Path.of("src/integrationTest/resources/projects/markdown-smoke")
                 .toAbsolutePath().toFile().copyRecursively(project.toFile(), overwrite = true))
             Files.writeString(fixture, source, StandardCharsets.UTF_8)
+            timing.begin()
             Starter.newContext(
                 testName = "markflow-350-real-os-heading-fold-click",
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
@@ -61,6 +64,7 @@ class MarkFlowStarterHeadingRobotTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
             }.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
+                timing.ideReady()
                 val driver = this
                 val markFlow = MarkFlowIdeDriver(driver)
                 val bridge = driver.utility(HeadingRobotProductionRemote::class)
@@ -161,8 +165,11 @@ class MarkFlowStarterHeadingRobotTest {
                         "after_reattach=" + state() + "\n", StandardCharsets.UTF_8)
                 markFlow.assertProductionProjectionStillAttached(opened)
                 markFlow.close(opened)
+                timing.scenarioComplete()
             }
+            timing.success()
         } finally {
+            timing.report()
             sandbox.toFile().deleteRecursively()
         }
     }
