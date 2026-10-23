@@ -77,7 +77,7 @@ expect_fail "$missing_workflow_call" workflow_security "reusable call 'nativeEvi
 
 external_reusable_callee="$TMP/external-reusable-callee"
 copy_root "$external_reusable_callee"
-sed -i 's@uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore\[self-repository\]@uses: owner/repo/.github/workflows/native-runtime-evidence.yml@deadbeef # zizmor: ignore[self-repository]@' "$external_reusable_callee/.github/workflows/build.yml"
+sed -i 's|uses: ./.github/workflows/native-runtime-evidence.yml # zizmor: ignore\[self-repository\]|uses: owner/repo/.github/workflows/native-runtime-evidence.yml@deadbeef # zizmor: ignore[self-repository]|' "$external_reusable_callee/.github/workflows/build.yml"
 expect_fail "$external_reusable_callee" workflow_security "reusable call 'nativeEvidence' has unverified workflow reference"
 
 wrong_target="$TMP/wrong-target"
