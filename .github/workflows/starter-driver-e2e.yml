@@ -417,7 +417,7 @@ jobs:
             echo "runner_arch=$RUNNER_ARCH"
             echo "runner_uname=$(uname -m)"
             echo "runner_image=${ImageOS:-unknown}/${ImageVersion:-unknown}"
-            echo "fontconfig_version=$(fc-match --version)"
+            echo "fontconfig_version=$(fc-match --version 2>&1)"
             echo "arial_family=$resolved_family"
             echo "arial_style=$resolved_style"
             echo "arial_file=$resolved_path"

@@ -895,8 +895,9 @@ awk '
   in_visual && /expected_sha=4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144/ { pinned=1 }
   in_visual && /sha256sum.*resolved_path/ { actual=1 }
   in_visual && /actual_sha.*expected_sha/ { comparison=1 }
+  in_visual && /fontconfig_version=.*fc-match --version 2>&1/ { fontconfig_provenance=1 }
   in_visual && /visual-font-provenance.txt/ { retention=1 }
-  END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && retention) }
+  END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
 ' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
