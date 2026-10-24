@@ -222,6 +222,8 @@ grep -Fq 'dependsOn(provisionRendererNode)' build.gradle.kts || die "renderer No
 grep -Fq 'rendererNodeExecutable.get().asFile.absolutePath' build.gradle.kts || die "renderer tasks must execute the Gradle-provisioned Node binary"
 grep -Fq 'environment("PATH", rendererNodePath.get())' build.gradle.kts || die "renderer npm tasks must expose the Gradle-provisioned Node binary to child scripts"
 grep -Fq 'val testWebviewSource = tasks.register<Exec>("testWebviewSource")' build.gradle.kts || die "webview source tests must be available through the Gradle-managed Node toolchain"
+grep -Fq 'val testWebviewDependencyContract = tasks.register<Exec>("testWebviewDependencyContract")' build.gradle.kts || die "cheap webview dependency contract task is missing"
+grep -Fq '"test:dependency-contract"' webview/package.json || die "cheap webview dependency contract npm script is missing"
 grep -Fq 'disabledForTestTasks.add("integrationTest")' build.gradle.kts || die "Kover onCheck coverage must not pull Starter/Driver integrationTest into ordinary check/build"
 [ -f '.run/Build Plugin.run.xml' ] || die "shared Build Plugin run configuration is missing"
 grep -Fq 'name="Build Plugin"' '.run/Build Plugin.run.xml' || die "shared build-only run configuration must be named Build Plugin"
@@ -977,6 +979,9 @@ done
 docs_scope=".github/scripts/docs-only-scope.py"
 [ -f "$docs_scope" ] || die "docs-only scope classifier is missing"
 python3 "$docs_scope" --self-test >/dev/null || die "docs-only scope classifier fixtures failed"
+dependency_fast_lane_scope=".github/scripts/dependency-pr-fast-lane.py"
+[ -f "$dependency_fast_lane_scope" ] || die "dependency fast-lane classifier is missing"
+python3 "$dependency_fast_lane_scope" --self-test >/dev/null || die "dependency fast-lane classifier fixtures failed"
 
 grep -Fq "github.event.action == 'edited' && 'metadata' || 'validation'" "$build_workflow" || die "Build workflow does not isolate metadata-edit concurrency from head validation"
 
@@ -1001,11 +1006,18 @@ done
 
 [ "$(grep -c '^  scope:$' "$build_workflow" || true)" = "0" ] || die "docs-only classification must not depend on a non-required scope job"
 grep -Fq 'docs_only: ${{ steps.change-scope.outputs.docs_only }}' <<<"$head_evidence_job" || die "head evidence does not export its trusted docs-only classification"
+grep -Fq 'dependency_fast_lane: ${{ steps.change-scope.outputs.dependency_fast_lane }}' <<<"$head_evidence_job" || die "head evidence does not export trusted dependency fast-lane classification"
+grep -Fq 'dependency_ecosystem: ${{ steps.change-scope.outputs.dependency_ecosystem }}' <<<"$head_evidence_job" || die "head evidence does not export trusted dependency ecosystem"
 grep -Fq 'docs_only: ${{ needs.headEvidence.outputs.docs_only }}' "$build_workflow" || die "Build component does not preserve the docs-only output contract"
 grep -q '^        id: change-scope$' <<<"$head_evidence_job" || die "classifier is not owned by head validation evidence"
 grep -q '^        id: change-scope$' "$build_workflow" || die "required head-evidence classifier step is missing"
 grep -Fq 'EXPECTED_COUNT: ${{ github.event.pull_request.changed_files }}' "$build_workflow" || die "Build workflow does not bind docs-only classification to GitHub changed-file count"
-grep -Fq 'contents/.github/scripts/docs-only-scope.py?ref=$BASE_SHA' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
+grep -Fq 'fetch_content "$BASE_SHA" ".github/scripts/docs-only-scope.py"' "$build_workflow" || die "Build workflow does not load docs-only policy from the trusted PR base"
+grep -Fq 'fetch_content "$BASE_SHA" ".github/scripts/dependency-pr-fast-lane.py"' "$build_workflow" || die "Build workflow does not load dependency fast-lane policy from the trusted PR base"
+grep -Fq 'PR_ACTOR: ${{ github.event.pull_request.user.login }}' "$build_workflow" || die "dependency fast lane is not bound to the authoritative PR actor"
+grep -Fq 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}' "$build_workflow" || die "dependency fast lane does not compare exact PR head dependency metadata"
+grep -Fq 'dependency_fast_lane=false' "$build_workflow" || die "dependency fast lane lacks fail-closed default"
+grep -Fq 'Trusted dependency fast lane makes Native/Starter full-product evidence non-applicable.' "$build_workflow" || die "dependency fast lane does not explicitly route Native/Starter non-applicable"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$build_workflow" || die "Build workflow does not enumerate PR changed files"
 grep -Fq '[.status, .filename, (.previous_filename // "")] | @tsv' "$build_workflow" || die "Build workflow does not preserve rename/copy provenance for docs-only classification"
 grep -Fq 'gh api --paginate' "$build_workflow" || die "Build workflow changed-file enumeration is not paginated"
@@ -1058,6 +1070,10 @@ PY
 done
 [ "$(grep -Fc '      - name: Docs-only fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a docs-only success path"
 [ "$(grep -Fc '      - name: Metadata-only event fast path' "$build_workflow" || true)" = "4" ] || die "every product-validation component must materialize a metadata-only success path"
+[ "$(grep -Fc '      - name: Dependency fast lane' "$build_workflow" || true)" = "2" ] || die "Inspect code and Verify plugin must materialize dependency fast-lane success paths"
+[ "$(grep -Fc '      - name: Run dependency fast-lane checks' "$build_workflow" || true)" = "1" ] || die "Test must materialize exactly one dependency fast-lane validation path"
+grep -Fq './gradlew testWebviewDependencyContract' "$build_workflow" || die "npm fast lane does not execute the cheap dependency contract"
+grep -Fq './gradlew testClasses integrationTestClasses' "$build_workflow" || die "Gradle fast lane does not compile unit/integration test sources"
 [ "$(grep -Fc "needs.headEvidence.outputs.docs_only == 'true'" "$build_workflow" || true)" = "4" ] || die "all four product components must consume trusted head docs-only classification"
 [ "$(grep -Fc 'needs.build.outputs.docs_only' "$build_workflow" || true)" = "0" ] || die "product validation must not use the serial Build docs-only output"
 
@@ -1073,11 +1089,15 @@ build_plugin_if="$(step_if "Build plugin")"
 [ -n "$build_plugin_if" ] || die "Build plugin has no step-level guard"
 grep -Fq "needs.headEvidence.outputs.docs_only != 'true'" <<<"$build_plugin_if" || die "Build plugin is not guarded by head-evidence docs-only classification"
 grep -Fq "github.event.action != 'edited'" <<<"$build_plugin_if" || die "Build plugin is not suppressed on metadata-only events"
+if grep -Fq "needs.headEvidence.outputs.dependency_fast_lane != 'true'" <<<"$build_plugin_if"; then
+  die "Build plugin/package evidence must remain mandatory in the dependency fast lane"
+fi
 for heavy_step in "Run Tests" "Qodana - Code Inspection" "Run Plugin Verification tasks"; do
   heavy_if="$(step_if "$heavy_step")"
   [ -n "$heavy_if" ] || die "$heavy_step has no step-level guard"
   grep -Fq "needs.headEvidence.outputs.docs_only != 'true'" <<<"$heavy_if" || die "$heavy_step is not guarded by trusted head-evidence docs-only output"
   grep -Fq "github.event.action != 'edited'" <<<"$heavy_if" || die "$heavy_step is not suppressed on metadata-only events"
+  grep -Fq "needs.headEvidence.outputs.dependency_fast_lane != 'true'" <<<"$heavy_if" || die "$heavy_step is not suppressed by trusted dependency fast-lane classification"
 done
 
 if grep -qi 'codecov' "$build_workflow"; then
@@ -1183,8 +1203,8 @@ grep -q 'name: kover-coverage' <<<"$coverage_block" || die "Kover coverage artif
 grep -Fq 'path: ${{ github.workspace }}/build/reports/kover/report.xml' <<<"$coverage_block" || die "Kover coverage artifact path is not the verified XML report"
 grep -q 'if-no-files-found: error' <<<"$coverage_block" || die "Kover coverage artifact does not fail closed when the report is missing"
 coverage_if="$(grep -E '^[[:space:]]*if:' <<<"$coverage_block" | sed -E 's/^[[:space:]]+//' || true)"
-expected_coverage_if='if: ${{ github.event.action != '"'"'edited'"'"' && needs.headEvidence.outputs.docs_only != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
-[ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact may only be suppressed by trusted docs-only scope or exact-SHA ready-for-review evidence reuse"
+expected_coverage_if='if: ${{ github.event.action != '"'"'edited'"'"' && needs.headEvidence.outputs.docs_only != '"'"'true'"'"' && needs.headEvidence.outputs.dependency_fast_lane != '"'"'true'"'"' && (github.event_name != '"'"'pull_request'"'"' || github.event.action != '"'"'ready_for_review'"'"' || steps.fast-evidence.outputs.reuse != '"'"'true'"'"') }}'
+[ "$coverage_if" = "$expected_coverage_if" ] || die "Kover coverage artifact may only be suppressed by trusted docs-only/dependency-fast-lane scope or exact-SHA ready-for-review evidence reuse"
 if grep -q 'continue-on-error:[[:space:]]*true' <<<"$coverage_block"; then
   die "Kover coverage artifact upload must not continue on error"
 fi

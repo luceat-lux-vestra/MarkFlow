@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Advisory classifier for MarkFlow's Dependabot dependency fast lane.
+"""Trusted-base classifier for MarkFlow's Dependabot dependency fast lane.
 
-Stage 0 only. Unsupported or ambiguous input always falls back to full CI.
+Unsupported or ambiguous input always falls back to full CI. Production routing
+may consume a positive result only from the exact trusted PR base revision.
 """
 from __future__ import annotations
 
