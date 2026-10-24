@@ -226,7 +226,7 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")
+                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {

@@ -486,6 +486,11 @@ grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+[ "$(grep -Fc 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")' "$manifest_test" || true)" = "1" ] ||
+  die "#353 full differential must keep the production-faithful zero-sized JCEF JS query pool"
+if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")' "$manifest_test"; then
+  die "#353 pathological 10000-entry JCEF JS query pool must not return"
+fi
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE' "$manifest_test" ||
   die "#353 full differential test lost workflow-visible heartbeat output"
 grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
