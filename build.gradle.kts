@@ -421,6 +421,32 @@ val testWebviewSource = tasks.register<Exec>("testWebviewSource") {
     }
 }
 
+val testWebviewDependencyContract = tasks.register<Exec>("testWebviewDependencyContract") {
+    group = "verification"
+    description = "Runs cheap deterministic dependency contracts without Chromium/full-product acceptance"
+    workingDir = webviewDir
+    dependsOn(npmInstallWebview)
+    inputs.files(
+        file("webview/tests/mermaid-dependency-contract.test.mjs"),
+        file("webview/tests/mermaid-acceptance-fixtures.mjs"),
+        file("webview/package.json"),
+        file("webview/package-lock.json"),
+        file("fixtures/differential-acceptance/corpus.tsv"),
+        fileTree("examples") {
+            include("mermaid-*.md")
+        },
+    )
+    doFirst {
+        environment("PATH", rendererNodePath.get())
+        commandLine(
+            rendererNodeExecutable.get().asFile.absolutePath,
+            rendererNpmCli.get().asFile.absolutePath,
+            "run",
+            "test:dependency-contract",
+        )
+    }
+}
+
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildWebview)
     from(webviewOutputDir) {
