@@ -388,20 +388,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ] && [ "$(uname -m)" = aarch64 ] || {
+          if ! { [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ] && [ "$(uname -m)" = aarch64 ]; }; then
             echo "::error::Visual acceptance requires actual ARM64"
             exit 1
-          }
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation
           ldconfig -p | grep -F libEGL.so.1
           fc-cache -f
           resolved="$(fc-match -f '%{family}|%{style}|%{file}' Arial)"
           IFS='|' read -r resolved_family resolved_style resolved_path <<< "$resolved"
-          [ "$resolved_family" = 'Liberation Sans' ] && [ "$resolved_style" = 'Regular' ] || {
+          if ! { [ "$resolved_family" = 'Liberation Sans' ] && [ "$resolved_style" = 'Regular' ]; }; then
             echo "::error::Visual Arial fallback is not pinned Liberation Sans: $resolved"
             exit 1
-          }
+          fi
           [ -f "$resolved_path" ] || { echo "::error::Resolved Arial font missing"; exit 1; }
           actual_sha="$(sha256sum "$resolved_path" | awk '{print $1}')"
           expected_sha=4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144
