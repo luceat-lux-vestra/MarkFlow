@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: starter-shared-jcef-experiment-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   STARTER_SOURCE_SHA: ${{ github.sha }}
@@ -20,7 +20,72 @@ env:
   STARTER_SHARD: derived-content
 
 jobs:
+  package:
+    name: Exact plugin package for paired A/B
+    if: github.repository == 'luceat-lux-vestra/MarkFlow'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pushed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Assert exact head and expected ARM64 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Candidate HEAD drift"; exit 1;
+          }
+          [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ] && [ "$(uname -m)" = aarch64 ]
+
+      - name: Setup Java 25
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup read-only Gradle cache
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Build exact plugin artifact once
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          [ "${#archives[@]}" -eq 1 ] || {
+            echo "::error::Expected exactly one plugin ZIP"; exit 1;
+          }
+          archive="${archives[0]}"
+          archive_name="$(basename "$archive")"
+          digest="$(sha256sum "$archive" | awk '{print $1}')"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p build/e2e-package
+          cp "$archive" build/e2e-package/plugin.zip
+          {
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "plugin_archive=$archive_name"
+            echo "plugin_sha256=$digest"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "experiment=starter-shared-jcef-paired-ab"
+          } | tee build/e2e-package/manifest.txt
+
+      - name: Upload one exact package for all six samples
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: markflow-451-ab-plugin-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/e2e-package/plugin.zip
+            build/e2e-package/manifest.txt
   shared-jcef:
+    needs: [package]
     name: Paired A/B (${{ matrix.mode }}-${{ matrix.sample }})
     if: github.repository == 'luceat-lux-vestra/MarkFlow'
     runs-on: ubuntu-24.04-arm
@@ -60,31 +125,36 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: Package exact source plugin and record identity
+      - name: Download the one exact package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: markflow-451-ab-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify exact package identity
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
-          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
-          [ "${#archives[@]}" -eq 1 ] || {
-            echo "::error::Expected exactly one plugin ZIP"; exit 1;
+          manifest=build/e2e-package/manifest.txt
+          [ -f "$manifest" ] && [ -f build/e2e-package/plugin.zip ]
+          manifest_value() {
+            sed -n "s/^$1=//p" "$manifest"
           }
-          archive="${archives[0]}"
-          name="$(basename "$archive")"
-          digest="$(sha256sum "$archive" | awk '{print $1}')"
-          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
-          mkdir -p build/e2e-package
-          cp "$archive" build/e2e-package/plugin.zip
-          {
-            echo "source_sha=$STARTER_SOURCE_SHA"
-            echo "plugin_archive=$name"
-            echo "plugin_sha256=$digest"
-            echo "platform_version=$STARTER_PLATFORM_VERSION"
-            echo "experimental_only=true"
-          } | tee build/e2e-package/manifest.txt
-          echo "E2E_PLUGIN_PATH=$archive" >> "$GITHUB_ENV"
-          echo "E2E_PLUGIN_SHA256=$digest" >> "$GITHUB_ENV"
-
+          source_sha="$(manifest_value source_sha)"
+          archive_name="$(manifest_value plugin_archive)"
+          expected_digest="$(manifest_value plugin_sha256)"
+          platform_version="$(manifest_value platform_version)"
+          experiment="$(manifest_value experiment)"
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$experiment" = starter-shared-jcef-paired-ab ]
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+          actual_digest="$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')"
+          [ "$actual_digest" = "$expected_digest" ]
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
       - name: Install production-equivalent ARM64 EGL runtime
         shell: bash
         run: |
