@@ -121,9 +121,10 @@ class MarkFlowStarterSharedJcefExperimentTest {
                 phase = "project-switch"
                 val switchStart = System.nanoTime()
                 // The platform otherwise asks "This Window / New Window" when another project
-                // is open. Use the Driver SDK's backend setting so this controlled experiment
-                // performs the intended same-frame replacement without fragile UI automation.
-                setOpenNewProjectsInSameWindow()
+                // is open. Force the backend setting directly through the pinned Remote Driver
+                // service surface so the replacement remains non-interactive without relying on
+                // newer convenience helpers that are absent from the 2026.2.3 test classpath.
+                service<GeneralSettingsRemote>().setConfirmOpenNewProject(OPEN_PROJECT_SAME_WINDOW)
                 val opened = utility(ProjectUtilRemote::class).openOrImport(
                     previewProject.toString(),
                     initialProject,
@@ -207,3 +208,10 @@ class MarkFlowStarterSharedJcefExperimentTest {
 private interface ProjectUtilRemote {
     fun openOrImport(path: String, projectToClose: Project?, forceOpenInNewFrame: Boolean): Project?
 }
+
+@Remote("com.intellij.ide.GeneralSettings")
+private interface GeneralSettingsRemote {
+    fun setConfirmOpenNewProject(mode: Int)
+}
+
+private const val OPEN_PROJECT_SAME_WINDOW = 1
