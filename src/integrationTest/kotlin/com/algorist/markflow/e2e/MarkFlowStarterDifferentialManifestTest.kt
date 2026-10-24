@@ -226,7 +226,6 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
-                addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
@@ -241,7 +240,16 @@ class MarkFlowStarterDifferentialManifestTest {
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
                 // leaving cleanup headroom under the workflow's 85-minute outer timeout.
                 runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes,
-            ).useDriverAndCloseIde {
+            ) {
+                if (contract == "acceptance") {
+                    // Starter.calculateVmOptions() injects 10_000 before per-run patches.
+                    // Override it only after Starter defaults are assembled so the
+                    // authoritative full corpus matches the production registry default.
+                    addVMOptionsPatch {
+                        addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
+                    }
+                }
+            }.useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 heartbeat("ide-ready")
                 val driver = this
