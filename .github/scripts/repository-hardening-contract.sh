@@ -825,6 +825,8 @@ grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workf
   die "Full differential JCEF setup lost its explicit scoped shard identity"
 grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" ||
   die "JCEF profile installer scope allowlist drifted"
+grep -Fq '[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == ARM64 ]] || exit 1' "$jcef_profile_script" ||
+  die "JCEF AppArmor installer must remain ARM64-only after Linux runner migration"
 grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
   die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
 grep -Fq 'userns,' "$jcef_profile_script" ||
