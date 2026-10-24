@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFileSync, execFile} from "node:child_process";
-import {mkdtempSync, readFileSync, rmSync} from "node:fs";
+import {mkdtempSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -8,59 +8,11 @@ import {promisify} from "node:util";
 import test from "node:test";
 import {createServer} from "vite";
 
+import {loadMermaidAcceptanceSources} from "./mermaid-acceptance-fixtures.mjs";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const webviewRoot = resolve(repoRoot, "webview");
-const packageJson = JSON.parse(readFileSync(resolve(webviewRoot, "package.json"), "utf8"));
-assert.equal(packageJson.dependencies.mermaid, "12.2.0", "Mermaid upgrade requires a fresh #354 detector audit");
-
-const cases = ["agentflow", "swimlanes", "radar", "treemap", "cynefin", "treeview", "usecase", "info", "ishikawa", "wardley", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "eventmodeling", "flowchart-elk", "architecture", "block", "c4", "class", "er", "flowchart", "gantt", "journey", "mindmap", "packet", "pie", "git", "kanban", "quadrant", "requirement", "sankey", "sequence", "state", "timeline", "venn", "xychart"];
-const fixtureFiles = new Map([["git", "mermaid-gitgraph.md"]]);
-// Detector families and supplemental examples have different coverage contracts.
-// A supplemental flowchart never substitutes for a missing Mermaid detector case.
-test("browser detector inventory exactly matches the reviewed corpus manifest", () => {
-  const manifest = readFileSync(resolve(repoRoot, "fixtures/differential-acceptance/corpus.tsv"), "utf8");
-  const [header, ...rows] = manifest.trimEnd().split("\n");
-  const columns = header.split("\t");
-  const domainColumn = columns.indexOf("domain");
-  const detectorColumn = columns.indexOf("mermaid_detector");
-  assert.ok(domainColumn >= 0 && detectorColumn >= 0, "corpus manifest is missing detector columns");
-  const declared = new Set(rows.filter((row) => row && !row.startsWith("#"))
-    .map((row) => row.split("\t"))
-    .filter((cells) => cells[domainColumn] === "mermaid")
-    .map((cells) => cells[detectorColumn]));
-  assert.equal(cases.length, new Set(cases).size, "browser detector case names must be unique");
-  assert.deepEqual([...new Set(cases)].sort(), [...declared].sort(),
-    "every corpus Mermaid detector must have an explicit Chromium parse/render case");
-});
-
-const detectorSources = Object.fromEntries(cases.map((name) => {
-  const filename = fixtureFiles.get(name) ?? "mermaid-" + name + ".md";
-  const markdown = readFileSync(resolve(repoRoot, "examples", filename), "utf8");
-  const match = markdown.match(/```mermaid\s*\n([\s\S]*?)```/);
-  assert.ok(match, name + ": missing Mermaid fenced block");
-  return [name, match[1]];
-}));
-
-// Protect every fenced block of the large example, not just its first diagram.
-// Block-count assertions make future additions/removals require an explicit audit.
-const supplementalExamples = [
-  {name: "minimal", file: "mermaid-minimal.md", expectedBlocks: 1},
-  {name: "large-flowchart", file: "mermaid-large-flowchart.md", expectedBlocks: 2},
-];
-const supplementalCases = supplementalExamples.flatMap(({name, file, expectedBlocks}) => {
-  const markdown = readFileSync(resolve(repoRoot, "examples", file), "utf8");
-  const blocks = [...markdown.matchAll(/```mermaid[ \t]*\r?\n([\s\S]*?)```/g)];
-  assert.equal(blocks.length, expectedBlocks, file + ": Mermaid block count changed; audit all blocks");
-  return blocks.map((match, index) => {
-    const caseId = "supplemental-" + name + "-block-" + (index + 1);
-    assert.match(match[1].trimStart(), /^(?:flowchart|graph)\b/,
-      caseId + ": expected a flowchart; audit detector mapping before changing it");
-    return [caseId, match[1]];
-  });
-});
-const sources = {...detectorSources, ...Object.fromEntries(supplementalCases)};
-const allCaseIds = [...cases, ...supplementalCases.map(([caseId]) => caseId)];
-assert.equal(Object.keys(sources).length, allCaseIds.length, "browser case IDs must be unique");
+const {sources, allCaseIds} = loadMermaidAcceptanceSources(repoRoot);
 
 function chromeExecutable() {
   for (const executable of [process.env.CHROME_BIN, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean)) {
