@@ -120,6 +120,10 @@ class MarkFlowStarterSharedJcefExperimentTest {
 
                 phase = "project-switch"
                 val switchStart = System.nanoTime()
+                // The platform otherwise asks "This Window / New Window" when another project
+                // is open. Use the Driver SDK's backend setting so this controlled experiment
+                // performs the intended same-frame replacement without fragile UI automation.
+                setOpenNewProjectsInSameWindow()
                 val opened = utility(ProjectUtilRemote::class).openOrImport(
                     previewProject.toString(),
                     initialProject,
