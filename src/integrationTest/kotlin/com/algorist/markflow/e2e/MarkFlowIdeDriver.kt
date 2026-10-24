@@ -55,6 +55,30 @@ class MarkFlowIdeDriver(private val driver: Driver) {
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
 
+    /**
+     * #353 counterfactual only. Keep the newly opened platform Markdown editor
+     * in its original split layout: do NOT fire the EditorOnly action used by
+     * selectNativeMarkdown(). This isolates the extra layout roundtrip from the
+     * real bundled JCEF Preview lifecycle. The stress test verifies that the
+     * initial panel is reused, not replaced, before accepting this experiment.
+     */
+    fun openMarkdownWithoutEditorOnlyRoundTrip(fileName: String): JEditorUiComponent {
+        driver.openFile(fileName, waitForCodeAnalysis = false, isTextEditor = false)
+        val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
+            "opened Markdown file not found in direct split mode: $fileName"
+        }
+        val selected = driver.withContext(OnDispatcher.EDT) {
+            driver.service<FileEditorManagerRemote>(driver.singleProject()).getSelectedEditor(file)
+        }
+        checkNotNull(selected) { "No selected Markdown FileEditor in direct split mode: $fileName" }
+        return driver.ideFrame().editor().also { editor ->
+            check(editor.editor.getVirtualFile().getName() == fileName) {
+                "direct split native editor does not own Markdown file: $fileName"
+            }
+            check(editor.isEditable()) { "direct split Markdown editor is not editable: $fileName" }
+        }
+    }
+
     fun closeMarkdown(editor: Editor, fileName: String) {
         // Cleanup must not touch the UI component again: switching to the bundled Preview or an
         // auxiliary A/B editor can already remove JEditorUiComponent from the visible hierarchy.
