@@ -372,6 +372,14 @@ grep -Fq 'fixtures/differential-acceptance/' "$full_differential_workflow" || di
 grep -Fq 'run_full=false' "$full_differential_workflow" || die "#353 scheduled no-change path no longer skips the expensive corpus"
 grep -Fq "if: needs.policy.outputs.run_full == 'true'" "$full_differential_workflow" || die "#353 expensive jobs no longer honor cadence policy"
 grep -Fq 'cache-read-only: true' "$full_differential_workflow" || die "#353 full differential must not write Gradle cache state"
+[ "$(grep -Fc '    runs-on: ubuntu-24.04-arm' "$full_differential_workflow" || true)" = "3" ] ||
+  die "#353 full differential policy/package/acceptance jobs must all use ARM64"
+grep -Fq 'name: Install ARM64 Skiko EGL runtime' "$full_differential_workflow" ||
+  die "#353 full differential ARM64 runtime bootstrap is missing"
+grep -Fq '[ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]' "$full_differential_workflow" ||
+  die "#353 full differential no longer verifies actual ARM64 execution"
+grep -Fq 'sudo apt-get install -y --no-install-recommends libegl1' "$full_differential_workflow" ||
+  die "#353 full differential lost native EGL provisioning"
 grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workflow" || die "#353 full differential lost the bounded JCEF AppArmor identity"
 full_differential_watchdog=".github/scripts/run-full-differential-with-watchdog.sh"
 [ -x "$full_differential_watchdog" ] || die "#353 full differential watchdog is missing or not executable"
@@ -450,9 +458,8 @@ grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "
 
 grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
 
-# #353 genuine platform Markdown Preview uses JCEF. The original ARM64
-# Starter run 37984591105 displayed its suspended-browser/AppArmor stub.
-# Limit the x64 reference exception to derived-content; keep other shards ARM64.
+# #353 genuine platform Markdown Preview uses JCEF. Keep every maintained
+# Linux Starter shard on ARM64 with native EGL and the scoped AppArmor profile.
 grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
   die "Starter shards no longer use audited per-shard runner mapping"
 grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
@@ -465,17 +472,32 @@ grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
   grep -Fq 'runner: ubuntu-24.04-arm' ||
   die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
 grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04' ||
-  die "Starter runner drift for derived-content (ubuntu-24.04)"
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for derived-content (ubuntu-24.04-arm)"
 grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
   grep -Fq 'runner: ubuntu-24.04-arm' ||
   die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
+  die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
+fi
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
   die "Starter workflow silently dropped bundled Markdown Preview capture"
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped bundled Markdown Preview suite"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+[ "$(grep -Fc 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)' "$manifest_test" || true)" = "1" ] ||
+  die "#353 full differential must keep exactly one production-faithful zero-sized JCEF JS query pool override"
+grep -Fq 'Starter.calculateVmOptions() injects 10_000 before per-run patches.' "$manifest_test" ||
+  die "#353 JCEF query-pool override lost the Starter default-ordering rationale"
+grep -Fq 'if (contract == "acceptance") {' "$manifest_test" ||
+  die "#353 JCEF query-pool override must remain scoped to authoritative full acceptance"
+if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")' "$manifest_test"; then
+  die "#353 JCEF query-pool override regressed to the early applyVMOptionsPatch form"
+fi
+if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")' "$manifest_test"; then
+  die "#353 pathological 10000-entry JCEF JS query pool must not return"
+fi
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE' "$manifest_test" ||
   die "#353 full differential test lost workflow-visible heartbeat output"
 grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
@@ -815,6 +837,8 @@ grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workf
   die "Full differential JCEF setup lost its explicit scoped shard identity"
 grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" ||
   die "JCEF profile installer scope allowlist drifted"
+grep -Fq '[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == ARM64 ]] || exit 1' "$jcef_profile_script" ||
+  die "JCEF AppArmor installer must remain ARM64-only after Linux runner migration"
 grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
   die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
 grep -Fq 'userns,' "$jcef_profile_script" ||
