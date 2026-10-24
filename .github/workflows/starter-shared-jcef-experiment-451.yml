@@ -21,10 +21,18 @@ env:
 
 jobs:
   shared-jcef:
-    name: Experimental real-IDE single-session proof (non-authoritative)
+    name: Paired A/B (${{ matrix.mode }}-${{ matrix.sample }})
     if: github.repository == 'luceat-lux-vestra/MarkFlow'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [isolated, shared]
+        sample: [1, 2, 3]
+    env:
+      MEASUREMENT_MODE: ${{ matrix.mode }}
+      MEASUREMENT_SAMPLE: ${{ matrix.sample }}
     steps:
       - name: Checkout exact pushed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -77,6 +85,14 @@ jobs:
           echo "E2E_PLUGIN_PATH=$archive" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$digest" >> "$GITHUB_ENV"
 
+      - name: Install production-equivalent ARM64 EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
       - name: Install pinned derived-content JCEF AppArmor profile
         shell: bash
         run: |
@@ -91,35 +107,64 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-451-xvfb.log" 2>&1 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
-      - name: Run the actual opt-in shared JCEF experiment
+      - name: Run exact paired workload
         shell: bash
-        env:
-          MARKFLOW_SHARED_JCEF_EXPERIMENT: 'true'
         run: |
           set -euo pipefail
-          evidence=build/e2e-evidence/starter-shared-jcef-experiment
+          evidence="build/e2e-evidence/starter-shared-jcef-ab/${MEASUREMENT_MODE}-${MEASUREMENT_SAMPLE}"
           mkdir -p "$evidence"
           rm -rf build/test-results/integrationTest build/reports/tests/integrationTest
+
+          gradle_args=(
+            integrationTest
+            -x buildPlugin
+            -PplatformVersion="$STARTER_PLATFORM_VERSION"
+            -PstarterPackagedPlugin=true
+            --stacktrace
+          )
+          if [ "$MEASUREMENT_MODE" = isolated ]; then
+            gradle_args+=(
+              --tests 'com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest'
+              --tests 'com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest'
+            )
+          elif [ "$MEASUREMENT_MODE" = shared ]; then
+            export MARKFLOW_SHARED_JCEF_EXPERIMENT=true
+            gradle_args+=(
+              --tests 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefExperimentTest'
+            )
+          else
+            echo "::error::Unknown measurement mode: $MEASUREMENT_MODE"
+            exit 1
+          fi
+
+          start_ns="$(date +%s%N)"
           set +e
           timeout --signal=TERM --kill-after=30s 24m \
-            ./gradlew integrationTest -x buildPlugin \
-              -PplatformVersion="$STARTER_PLATFORM_VERSION" \
-              -PstarterPackagedPlugin=true --stacktrace \
-              --tests 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefExperimentTest' \
-              2>&1 | tee "$evidence/gradle.log"
+            ./gradlew "${gradle_args[@]}" 2>&1 | tee "$evidence/gradle.log"
           test_status=${PIPESTATUS[0]}
           set -e
-          echo "gradle_exit=$test_status" | tee "$evidence/gradle-status.txt"
+          end_ns="$(date +%s%N)"
+          wall_ms=$(( (end_ns - start_ns) / 1000000 ))
+
           archive_hash="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
           [ "$archive_hash" = "$E2E_PLUGIN_SHA256" ] || {
-            echo "::error::Test mutated packaged plugin"; exit 1;
+            echo "::error::Measurement mutated packaged plugin"; exit 1;
           }
-          [ "$test_status" -eq 0 ] || {
-            echo "::error::Opt-in Starter test failed with code $test_status"; exit "$test_status";
-          }
+          {
+            echo "schema=markflow-starter-shared-jcef-ab/v1"
+            echo "source_head=$STARTER_SOURCE_SHA"
+            echo "mode=$MEASUREMENT_MODE"
+            echo "sample=$MEASUREMENT_SAMPLE"
+            echo "plugin_sha256=$E2E_PLUGIN_SHA256"
+            echo "gradle_wall_ms=$wall_ms"
+            echo "gradle_exit=$test_status"
+          } | tee "$evidence/measurement.txt"
 
-      - name: Fail closed on missing or skipped opt-in evidence
-        if: ${{ always() }}
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::A/B workload failed with code $test_status"; exit "$test_status";
+          }
+      - name: Fail closed on shared opt-in evidence
+        if: ${{ matrix.mode == 'shared' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -167,15 +212,53 @@ jobs:
           print('MARKFLOW_SHARED_JCEF_EXPERIMENT PASS: actual run, assertions, one IDE launch, two active projects, exact source')
           PY
 
+      - name: Fail closed on isolated baseline evidence
+        if: ${{ matrix.mode == 'isolated' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import xml.etree.ElementTree as ET
+          suites = [
+              'com.algorist.markflow.e2e.MarkFlowStarterProductionWiringTest',
+              'com.algorist.markflow.e2e.MarkFlowStarterDifferentialPreviewSmokeTest',
+          ]
+          result_dir = Path('build/test-results/integrationTest')
+          for suite_name in suites:
+              xml = result_dir / f'TEST-{suite_name}.xml'
+              if not xml.is_file():
+                  raise SystemExit(f'ERROR: missing isolated JUnit XML: {xml}')
+              suite = ET.parse(xml).getroot()
+              metrics = {k: int(suite.attrib.get(k, '-1')) for k in ('tests','failures','errors','skipped')}
+              if metrics != {'tests':1,'failures':0,'errors':0,'skipped':0}:
+                  raise SystemExit(f'ERROR: isolated suite failed/skipped: {suite_name} {metrics}')
+          timings = [
+              Path('build/e2e-evidence/derived-content/production-wiring/lifecycle-timing.txt'),
+              Path('build/e2e-evidence/derived-content/differential-preview-smoke/lifecycle-timing.txt'),
+          ]
+          for timing in timings:
+              if not timing.is_file() or 'completed=true' not in timing.read_text():
+                  raise SystemExit(f'ERROR: incomplete isolated lifecycle evidence: {timing}')
+          measure = Path('build/e2e-evidence/starter-shared-jcef-ab') / (os.environ['MEASUREMENT_MODE'] + '-' + os.environ['MEASUREMENT_SAMPLE']) / 'measurement.txt'
+          fields = dict(line.split('=',1) for line in measure.read_text().splitlines() if '=' in line)
+          if fields.get('source_head') != os.environ['STARTER_SOURCE_SHA'] or fields.get('gradle_exit') != '0':
+              raise SystemExit(f'ERROR: isolated measurement identity mismatch: {fields}')
+          print('MARKFLOW_451_AB isolated PASS ' + str(fields))
+          PY
       - name: Upload experimental evidence, including failures
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: markflow-451-shared-jcef-experiment-${{ github.run_id }}
+          name: markflow-451-ab-${{ matrix.mode }}-${{ matrix.sample }}-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 14
           path: |
+            build/e2e-evidence/starter-shared-jcef-ab/**
             build/e2e-evidence/starter-shared-jcef-experiment/**
+            build/e2e-evidence/derived-content/production-wiring/lifecycle-timing.txt
+            build/e2e-evidence/derived-content/differential-preview-smoke/**
             build/test-results/integrationTest/**
             build/reports/tests/integrationTest/**
             build/e2e-package/manifest.txt
