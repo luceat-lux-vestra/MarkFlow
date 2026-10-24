@@ -1,0 +1,184 @@
+name: MarkFlow 451 Shared JCEF Experiment (temporary)
+
+# Deliberately branch-only and never a required PR/Merge Gate component.
+# Remove this temporary workflow before merging any production change.
+on:
+  push:
+    branches:
+      - ci/451-shared-jcef-lifecycle-experiment
+
+permissions:
+  contents: read
+
+concurrency:
+  group: starter-shared-jcef-experiment-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STARTER_SOURCE_SHA: ${{ github.sha }}
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_SHARD: derived-content
+
+jobs:
+  shared-jcef:
+    name: Experimental real-IDE single-session proof (non-authoritative)
+    if: github.repository == 'luceat-lux-vestra/MarkFlow'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact pushed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Assert exact head and expected ARM64 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA" ] || {
+            echo "::error::Candidate HEAD drift"; exit 1;
+          }
+          [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ] && [ "$(uname -m)" = aarch64 ]
+
+      - name: Setup Java 25
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup read-only Gradle cache
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Package exact source plugin and record identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          [ "${#archives[@]}" -eq 1 ] || {
+            echo "::error::Expected exactly one plugin ZIP"; exit 1;
+          }
+          archive="${archives[0]}"
+          name="$(basename "$archive")"
+          digest="$(sha256sum "$archive" | awk '{print $1}')"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p build/e2e-package
+          cp "$archive" build/e2e-package/plugin.zip
+          {
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "plugin_archive=$name"
+            echo "plugin_sha256=$digest"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "experimental_only=true"
+          } | tee build/e2e-package/manifest.txt
+          echo "E2E_PLUGIN_PATH=$archive" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$digest" >> "$GITHUB_ENV"
+
+      - name: Install pinned derived-content JCEF AppArmor profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start matching derived-content Xvfb display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-451-xvfb.log" 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Run the actual opt-in shared JCEF experiment
+        shell: bash
+        env:
+          MARKFLOW_SHARED_JCEF_EXPERIMENT: 'true'
+        run: |
+          set -euo pipefail
+          evidence=build/e2e-evidence/starter-shared-jcef-experiment
+          mkdir -p "$evidence"
+          rm -rf build/test-results/integrationTest build/reports/tests/integrationTest
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m \
+            ./gradlew integrationTest -x buildPlugin \
+              -PplatformVersion="$STARTER_PLATFORM_VERSION" \
+              -PstarterPackagedPlugin=true --stacktrace \
+              --tests 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefExperimentTest' \
+              2>&1 | tee "$evidence/gradle.log"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          echo "gradle_exit=$test_status" | tee "$evidence/gradle-status.txt"
+          archive_hash="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$archive_hash" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Test mutated packaged plugin"; exit 1;
+          }
+          [ "$test_status" -eq 0 ] || {
+            echo "::error::Opt-in Starter test failed with code $test_status"; exit "$test_status";
+          }
+
+      - name: Fail closed on missing or skipped opt-in evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import xml.etree.ElementTree as ET
+          evidence = Path('build/e2e-evidence/starter-shared-jcef-experiment')
+          suite_name = 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefExperimentTest'
+          xml = Path('build/test-results/integrationTest') / f'TEST-{suite_name}.xml'
+          if not xml.is_file():
+              raise SystemExit(f'ERROR: missing exact experiment JUnit XML: {xml}')
+          suite = ET.parse(xml).getroot()
+          if suite.attrib.get('name') != suite_name:
+              raise SystemExit(f'ERROR: wrong test suite identity: {suite.attrib}')
+          metrics = {k: int(suite.attrib.get(k, '-1')) for k in ('tests', 'failures', 'errors', 'skipped')}
+          if metrics != {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}:
+              raise SystemExit(f'ERROR: experiment did not actually execute and pass: {metrics}')
+          result = evidence / 'experiment-result.txt'
+          if not result.is_file():
+              raise SystemExit('ERROR: missing experiment-result.txt (a skipped test is not proof)')
+          fields = dict(line.split('=', 1) for line in result.read_text().splitlines() if '=' in line)
+          expected = {
+              'schema': 'markflow-starter-shared-jcef-experiment/v2',
+              'source_head': os.environ['STARTER_SOURCE_SHA'],
+              'opt_in_only': 'true',
+              'authoritative': 'false',
+              'last_phase': 'completed',
+              'production_wiring_passed': 'true',
+              'differential_preview_passed': 'true',
+              'ide_launch_requests': '1',
+              'active_ide_projects': '2',
+              'separate_active_projects': 'true',
+              'project_switches': '1',
+              'same_ide_process': 'true',
+          }
+          for key, value in expected.items():
+              if fields.get(key) != value:
+                  raise SystemExit(f'ERROR: {key}: expected={value}, observed={fields.get(key)}')
+          if not (evidence / 'lifecycle-timing.txt').is_file():
+              raise SystemExit('ERROR: lifecycle timing evidence is missing')
+          package = Path('build/e2e-package/manifest.txt')
+          if f"source_sha={os.environ['STARTER_SOURCE_SHA']}" not in package.read_text():
+              raise SystemExit('ERROR: package source identity missing or mismatched')
+          print('MARKFLOW_SHARED_JCEF_EXPERIMENT PASS: actual run, assertions, one IDE launch, two active projects, exact source')
+          PY
+
+      - name: Upload experimental evidence, including failures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: markflow-451-shared-jcef-experiment-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/e2e-evidence/starter-shared-jcef-experiment/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-451-xvfb.log

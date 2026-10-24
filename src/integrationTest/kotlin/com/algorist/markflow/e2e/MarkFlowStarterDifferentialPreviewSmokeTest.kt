@@ -1,5 +1,6 @@
 package com.algorist.markflow.e2e
 
+import com.intellij.driver.client.Driver
 import com.intellij.driver.client.Remote
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
@@ -77,154 +78,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             }.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 timing.ideReady()
-                val driver = this
-                val markFlow = MarkFlowIdeDriver(driver)
-                val visual = driver.utility(DifferentialVisualBridgeRemote::class)
-                val preview = driver.utility(DifferentialPreviewBridgeRemote::class)
-
-                driver.withContext(OnDispatcher.EDT) {
-                    visual.prepareEditorChromeBeforeOpen()
-                }
-                val editor = markFlow.openMarkdown("VISUAL-DERIVED.md")
-                markFlow.assertProductionProjectionAttached(editor)
-                val sourceEditor = editor.editor // cached before SHOW_PREVIEW hides EditorComponentImpl
-                check(markFlow.source(editor) == expectedSource)
-                val initialStamp = markFlow.modificationStamp(editor)
-                // Persist the actual IDE process identity BEFORE any JCEF failure.
-                // IDEA may use a different Java binary from the archived JBR.
-                val actualRuntime = driver.withContext(OnDispatcher.EDT) {
-                    preview.jcefRuntimeEvidence()
-                }
-                Files.writeString(
-                    output.resolve("jcef-runtime-evidence.txt"),
-                    actualRuntime,
-                    StandardCharsets.UTF_8
-                )
-                val expectedIdeaExecutable = "/idea-IU-262.10968.63/bin/idea"
-                check(actualRuntime.lineSequence().any {
-                    it.startsWith("idea_apparmor_current=") && it.contains(expectedIdeaExecutable)
-                }) {
-                    "Actual IDEA process is not attached to the pinned AppArmor userns profile; " +
-                        "see retained jcef-runtime-evidence.txt"
-                }
-                driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }
-                markFlow.resetToSingleCaret(editor, expectedSource.indexOf("Visual acceptance anchor.") + 3)
-
-                waitFor(
-                    message = "native derived presentation reaches decoded, zero-pending state",
-                    timeout = 45.seconds,
-                    getter = {
-                        driver.withContext(OnDispatcher.EDT) {
-                            visual.visualEvidence(editor.editor)
-                        }
-                    },
-                    checker = { raw ->
-                        val entries = raw.split(';').mapNotNull {
-                            val parts = it.split('=')
-                            if (parts.size == 2) parts[1].toIntOrNull()?.let { n -> parts[0] to n }
-                            else null
-                        }.toMap()
-                        entries["derivedPending"] == 0 &&
-                            (entries["derivedDecoded"] ?: 0) >= 3 &&
-                            (entries["derivedInlays"] ?: 0) >= 3
-                    }
-                )
-                driver.withContext(OnDispatcher.EDT) {
-                    visual.normalizeEditorChromeForCapture(editor.editor)
-                }
-                val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
-                    visual.environmentIdentity(editor.editor)
-                }
-                val native = driver.withContext(OnDispatcher.EDT) {
-                    Rectangle(
-                        visual.contentScreenX(editor.editor),
-                        visual.contentScreenY(editor.editor),
-                        visual.contentWidth(editor.editor),
-                        visual.contentHeight(editor.editor)
-                    )
-                }
-                check(native.width == 1200 && native.height == 760)
-                val robot = Robot()
-                robot.waitForIdle()
-                check(ImageIO.write(robot.createScreenCapture(native), "png",
-                    output.resolve("markflow.png").toFile()))
-
-                val referenceIdentity = driver.withContext(OnDispatcher.EDT) {
-                    preview.showReferenceAtSourceLine(sourceEditor, sourceLine)
-                }
-                waitFor(
-                    message = "real bundled Markdown Preview is visible",
-                    timeout = 30.seconds,
-                    getter = {
-                        driver.withContext(OnDispatcher.EDT) {
-                            preview.referenceShowing(sourceEditor)
-                        }
-                    },
-                    checker = { shown -> shown }
-                )
-                val reference = driver.withContext(OnDispatcher.EDT) {
-                    val parts = preview.referenceBounds(sourceEditor).split(',').map(String::toInt)
-                    check(parts.size == 4)
-                    Rectangle(parts[0], parts[1], parts[2], parts[3])
-                }
-                // A visible Swing/JCEF panel can still be an empty background while
-                // Chromium is loading. This exact fixture must have substantial text
-                // AND derived content; blank or partial paint is fail-closed.
-                waitFor(
-                    message = "real platform Markdown Preview paints nonblank source-anchored content",
-                    timeout = 60.seconds,
-                    getter = {
-                        robot.waitForIdle()
-                        val image = robot.createScreenCapture(reference)
-                        check(ImageIO.write(image, "png",
-                            output.resolve("intellij-preview-probe.png").toFile()))
-                        referenceHasVisibleContent(image)
-                    },
-                    checker = { ready -> ready }
-                )
-                Files.copy(
-                    output.resolve("intellij-preview-probe.png"),
-                    output.resolve("intellij-preview.png"),
-                    StandardCopyOption.REPLACE_EXISTING
-                )
-
-                // EditorComponentImpl is intentionally absent during SHOW_PREVIEW;
-                // verify exact source through the cached remote Editor before restore.
-                check(driver.withContext(OnDispatcher.EDT) { preview.sourceText(sourceEditor) } == expectedSource)
-                check(driver.withContext(OnDispatcher.EDT) { preview.sourceStamp(sourceEditor) } == initialStamp) {
-                    "Bundled preview mutated Document modification stamp"
-                }
-                check(!driver.withContext(OnDispatcher.EDT) { preview.sourceUnsaved(sourceEditor) }) {
-                    "Bundled preview dirtied the source Document"
-                }
-                driver.withContext(OnDispatcher.EDT) {
-                    preview.restoreNative(sourceEditor)
-                }
-                waitFor(
-                    message = "source editor returns to visible native layout after preview",
-                    timeout = 20.seconds,
-                    getter = {
-                        driver.withContext(OnDispatcher.EDT) { preview.nativeShowing(sourceEditor) }
-                    },
-                    checker = { showing -> showing }
-                )
-                check(markFlow.source(editor) == expectedSource)
-                check(Files.readAllBytes(file).contentEquals(expectedBytes))
-                Files.write(output.resolve("source.md"), expectedBytes)
-                Files.writeString(
-                    output.resolve("identity.txt"),
-                    "idea=" + version + "\nreference=" + referenceIdentity + "\n" +
-                        "fixture_sha256=" + sha256(expectedBytes) + "\n" +
-                        "source_line_zero_based=" + sourceLine + "\n" +
-                        "native_viewport=" + native.width + "x" + native.height + "\n" +
-                        "preview_viewport=" + reference.width + "x" + reference.height + "\n" +
-                        nativeEnvironment,
-                    StandardCharsets.UTF_8
-                )
-                // Raw pairs are now proven to originate from exact same source.
-                // Produce diagnostic images/metrics without declaring visual parity.
-                writeDiagnosticPair(output, sha256(expectedBytes), sourceLine)
-                markFlow.close(editor)
+                proveInOpenProject(this, file, expectedBytes, expectedSource, sourceLine, output, version)
                 timing.scenarioComplete()
             }
             timing.success()
@@ -232,6 +86,165 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             timing.report()
             sandbox.toFile().deleteRecursively()
         }
+    }
+
+
+    internal fun proveInOpenProject(
+        driver: Driver,
+        file: Path,
+        expectedBytes: ByteArray,
+        expectedSource: String,
+        sourceLine: Int,
+        output: Path,
+        version: String,
+    ) {
+        val markFlow = MarkFlowIdeDriver(driver)
+        val visual = driver.utility(DifferentialVisualBridgeRemote::class)
+        val preview = driver.utility(DifferentialPreviewBridgeRemote::class)
+
+        driver.withContext(OnDispatcher.EDT) {
+            visual.prepareEditorChromeBeforeOpen()
+        }
+        val editor = markFlow.openMarkdown("VISUAL-DERIVED.md")
+        markFlow.assertProductionProjectionAttached(editor)
+        val sourceEditor = editor.editor // cached before SHOW_PREVIEW hides EditorComponentImpl
+        check(markFlow.source(editor) == expectedSource)
+        val initialStamp = markFlow.modificationStamp(editor)
+        // Persist the actual IDE process identity BEFORE any JCEF failure.
+        // IDEA may use a different Java binary from the archived JBR.
+        val actualRuntime = driver.withContext(OnDispatcher.EDT) {
+            preview.jcefRuntimeEvidence()
+        }
+        Files.writeString(
+            output.resolve("jcef-runtime-evidence.txt"),
+            actualRuntime,
+            StandardCharsets.UTF_8
+        )
+        val expectedIdeaExecutable = "/idea-IU-262.10968.63/bin/idea"
+        check(actualRuntime.lineSequence().any {
+            it.startsWith("idea_apparmor_current=") && it.contains(expectedIdeaExecutable)
+        }) {
+            "Actual IDEA process is not attached to the pinned AppArmor userns profile; " +
+                "see retained jcef-runtime-evidence.txt"
+        }
+        driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }
+        markFlow.resetToSingleCaret(editor, expectedSource.indexOf("Visual acceptance anchor.") + 3)
+
+        waitFor(
+            message = "native derived presentation reaches decoded, zero-pending state",
+            timeout = 45.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    visual.visualEvidence(editor.editor)
+                }
+            },
+            checker = { raw ->
+                val entries = raw.split(';').mapNotNull {
+                    val parts = it.split('=')
+                    if (parts.size == 2) parts[1].toIntOrNull()?.let { n -> parts[0] to n }
+                    else null
+                }.toMap()
+                entries["derivedPending"] == 0 &&
+                    (entries["derivedDecoded"] ?: 0) >= 3 &&
+                    (entries["derivedInlays"] ?: 0) >= 3
+            }
+        )
+        driver.withContext(OnDispatcher.EDT) {
+            visual.normalizeEditorChromeForCapture(editor.editor)
+        }
+        val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
+            visual.environmentIdentity(editor.editor)
+        }
+        val native = driver.withContext(OnDispatcher.EDT) {
+            Rectangle(
+                visual.contentScreenX(editor.editor),
+                visual.contentScreenY(editor.editor),
+                visual.contentWidth(editor.editor),
+                visual.contentHeight(editor.editor)
+            )
+        }
+        check(native.width == 1200 && native.height == 760)
+        val robot = Robot()
+        robot.waitForIdle()
+        check(ImageIO.write(robot.createScreenCapture(native), "png",
+            output.resolve("markflow.png").toFile()))
+
+        val referenceIdentity = driver.withContext(OnDispatcher.EDT) {
+            preview.showReferenceAtSourceLine(sourceEditor, sourceLine)
+        }
+        waitFor(
+            message = "real bundled Markdown Preview is visible",
+            timeout = 30.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) {
+                    preview.referenceShowing(sourceEditor)
+                }
+            },
+            checker = { shown -> shown }
+        )
+        val reference = driver.withContext(OnDispatcher.EDT) {
+            val parts = preview.referenceBounds(sourceEditor).split(',').map(String::toInt)
+            check(parts.size == 4)
+            Rectangle(parts[0], parts[1], parts[2], parts[3])
+        }
+        // A visible Swing/JCEF panel can still be an empty background while
+        // Chromium is loading. This exact fixture must have substantial text
+        // AND derived content; blank or partial paint is fail-closed.
+        waitFor(
+            message = "real platform Markdown Preview paints nonblank source-anchored content",
+            timeout = 60.seconds,
+            getter = {
+                robot.waitForIdle()
+                val image = robot.createScreenCapture(reference)
+                check(ImageIO.write(image, "png",
+                    output.resolve("intellij-preview-probe.png").toFile()))
+                referenceHasVisibleContent(image)
+            },
+            checker = { ready -> ready }
+        )
+        Files.copy(
+            output.resolve("intellij-preview-probe.png"),
+            output.resolve("intellij-preview.png"),
+            StandardCopyOption.REPLACE_EXISTING
+        )
+
+        // EditorComponentImpl is intentionally absent during SHOW_PREVIEW;
+        // verify exact source through the cached remote Editor before restore.
+        check(driver.withContext(OnDispatcher.EDT) { preview.sourceText(sourceEditor) } == expectedSource)
+        check(driver.withContext(OnDispatcher.EDT) { preview.sourceStamp(sourceEditor) } == initialStamp) {
+            "Bundled preview mutated Document modification stamp"
+        }
+        check(!driver.withContext(OnDispatcher.EDT) { preview.sourceUnsaved(sourceEditor) }) {
+            "Bundled preview dirtied the source Document"
+        }
+        driver.withContext(OnDispatcher.EDT) {
+            preview.restoreNative(sourceEditor)
+        }
+        waitFor(
+            message = "source editor returns to visible native layout after preview",
+            timeout = 20.seconds,
+            getter = {
+                driver.withContext(OnDispatcher.EDT) { preview.nativeShowing(sourceEditor) }
+            },
+            checker = { showing -> showing }
+        )
+        check(markFlow.source(editor) == expectedSource)
+        check(Files.readAllBytes(file).contentEquals(expectedBytes))
+        Files.write(output.resolve("source.md"), expectedBytes)
+        Files.writeString(
+            output.resolve("identity.txt"),
+            "idea=" + version + "\nreference=" + referenceIdentity + "\n" +
+                "fixture_sha256=" + sha256(expectedBytes) + "\n" +
+                "source_line_zero_based=" + sourceLine + "\n" +
+                "native_viewport=" + native.width + "x" + native.height + "\n" +
+                "preview_viewport=" + reference.width + "x" + reference.height + "\n" +
+                nativeEnvironment,
+            StandardCharsets.UTF_8
+        )
+        // Raw pairs are now proven to originate from exact same source.
+        // Produce diagnostic images/metrics without declaring visual parity.
+        writeDiagnosticPair(output, sha256(expectedBytes), sourceLine)
+        markFlow.close(editor)
     }
 
     /**
