@@ -372,6 +372,14 @@ grep -Fq 'fixtures/differential-acceptance/' "$full_differential_workflow" || di
 grep -Fq 'run_full=false' "$full_differential_workflow" || die "#353 scheduled no-change path no longer skips the expensive corpus"
 grep -Fq "if: needs.policy.outputs.run_full == 'true'" "$full_differential_workflow" || die "#353 expensive jobs no longer honor cadence policy"
 grep -Fq 'cache-read-only: true' "$full_differential_workflow" || die "#353 full differential must not write Gradle cache state"
+[ "$(grep -Fc '    runs-on: ubuntu-24.04-arm' "$full_differential_workflow" || true)" = "3" ] ||
+  die "#353 full differential policy/package/acceptance jobs must all use ARM64"
+grep -Fq 'name: Install ARM64 Skiko EGL runtime' "$full_differential_workflow" ||
+  die "#353 full differential ARM64 runtime bootstrap is missing"
+grep -Fq '[ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]' "$full_differential_workflow" ||
+  die "#353 full differential no longer verifies actual ARM64 execution"
+grep -Fq 'sudo apt-get install -y --no-install-recommends libegl1' "$full_differential_workflow" ||
+  die "#353 full differential lost native EGL provisioning"
 grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workflow" || die "#353 full differential lost the bounded JCEF AppArmor identity"
 full_differential_watchdog=".github/scripts/run-full-differential-with-watchdog.sh"
 [ -x "$full_differential_watchdog" ] || die "#353 full differential watchdog is missing or not executable"
@@ -450,9 +458,8 @@ grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "
 
 grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starter diagnostics do not apply shard-scoped required suites"
 
-# #353 genuine platform Markdown Preview uses JCEF. The original ARM64
-# Starter run 37984591105 displayed its suspended-browser/AppArmor stub.
-# Limit the x64 reference exception to derived-content; keep other shards ARM64.
+# #353 genuine platform Markdown Preview uses JCEF. Keep every maintained
+# Linux Starter shard on ARM64 with native EGL and the scoped AppArmor profile.
 grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
   die "Starter shards no longer use audited per-shard runner mapping"
 grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
@@ -465,11 +472,14 @@ grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
   grep -Fq 'runner: ubuntu-24.04-arm' ||
   die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
 grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04' ||
-  die "Starter runner drift for derived-content (ubuntu-24.04)"
+  grep -Fq 'runner: ubuntu-24.04-arm' ||
+  die "Starter runner drift for derived-content (ubuntu-24.04-arm)"
 grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
   grep -Fq 'runner: ubuntu-24.04-arm' ||
   die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
+  die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
+fi
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
   die "Starter workflow silently dropped bundled Markdown Preview capture"
 grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
