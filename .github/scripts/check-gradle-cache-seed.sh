@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# #467 acceptance v2 HEAD B: non-semantic hardening-only correction.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
