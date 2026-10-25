@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: research-475-node-vite-b1-${{ github.ref }}
+  group: research-475-node-vite-b2-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -17,9 +17,12 @@ env:
 
 jobs:
   producer:
-    name: B1 npm-cache producer
+    name: B2 clean-node_modules producer
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
+    outputs:
+      key: ${{ steps.cache-id.outputs.key }}
+      node-modules-digest: ${{ steps.identity.outputs.digest }}
     steps:
       - name: Check out exact research HEAD
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -38,7 +41,7 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: Compute exact B1 cache identity
+      - name: Compute exact B2 cache identity
         id: cache-id
         shell: bash
         run: |
@@ -47,33 +50,44 @@ jobs:
           lock_sha="$(sha256sum webview/package-lock.json | awk '{print $1}')"
           [ "$node_version" = "26.10.0" ]
           [ "$RUNNER_ARCH" = "ARM64" ]
-          key="markflow-npm-b1-${RUNNER_OS}-${RUNNER_ARCH}-node-${node_version}-npm-11.19.1-lock-${lock_sha}-head-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          key="markflow-node-modules-b2-${RUNNER_OS}-${RUNNER_ARCH}-node-${node_version}-npm-11.19.1-lock-${lock_sha}-head-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
           echo "key=$key" >> "$GITHUB_OUTPUT"
-          echo "B1 cache key: $key"
+          echo "B2 cache key: $key"
 
-      - name: Populate isolated npm package cache
+      - name: Produce clean node_modules with real npm ci
         env:
-          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: producer
-        run: .github/scripts/research-node-vite-cache-b1.sh producer
+          npm_config_cache: ${{ runner.temp }}/markflow-npm-b2-producer-cache
+        run: .github/scripts/research-node-vite-cache-b2.sh producer
 
-      - name: Save exact B1 npm package cache
+      - name: Export clean node_modules digest
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(awk -F '\t' '$1=="node_modules_clean.digest"{print $2}' build/reports/node-vite-cache-b2/summary.tsv)"
+          [ -n "$digest" ]
+          [ ! -d webview/node_modules/.vite ]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Clean node_modules digest: $digest"
+
+      - name: Save exact clean node_modules cache
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/markflow-npm-b1-cache
+          path: webview/node_modules
           key: ${{ steps.cache-id.outputs.key }}
 
-      - name: Upload producer evidence
+      - name: Upload B2 producer evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: node-vite-b1-producer
-          path: build/reports/node-vite-cache-b1
+          name: node-vite-b2-producer
+          path: build/reports/node-vite-cache-b2
           if-no-files-found: error
           retention-days: 7
 
   cold:
-    name: B1 cold control ${{ matrix.replica }}
+    name: B2 cold control ${{ matrix.replica }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     strategy:
@@ -107,24 +121,24 @@ jobs:
           sudo apt-get install -y chromium-browser
           /snap/bin/chromium --version
 
-      - name: Run cold B1 consumer
+      - name: Run cold B2 consumer
         env:
-          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
-        run: .github/scripts/research-node-vite-cache-b1.sh cold
+          npm_config_cache: ${{ runner.temp }}/markflow-npm-b2-cold-cache
+        run: .github/scripts/research-node-vite-cache-b2.sh cold
 
-      - name: Upload cold evidence
+      - name: Upload cold B2 evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: node-vite-b1-cold-${{ matrix.replica }}
-          path: build/reports/node-vite-cache-b1
+          name: node-vite-b2-cold-${{ matrix.replica }}
+          path: build/reports/node-vite-cache-b2
           if-no-files-found: error
           retention-days: 7
 
   warm:
-    name: B1 warm consumer ${{ matrix.replica }}
+    name: B2 warm consumer ${{ matrix.replica }}
     needs: producer
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -150,34 +164,22 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: Compute exact B1 cache identity
-        id: cache-id
-        shell: bash
-        run: |
-          set -euo pipefail
-          node_version="$(tr -d '\r\n' < .nvmrc)"
-          lock_sha="$(sha256sum webview/package-lock.json | awk '{print $1}')"
-          [ "$node_version" = "26.10.0" ]
-          [ "$RUNNER_ARCH" = "ARM64" ]
-          key="markflow-npm-b1-${RUNNER_OS}-${RUNNER_ARCH}-node-${node_version}-npm-11.19.1-lock-${lock_sha}-head-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-          echo "B1 cache key: $key"
-
-      - name: Restore exact producer npm package cache
-        id: restore-npm
+      - name: Restore exact clean node_modules cache
+        id: restore-node-modules
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/markflow-npm-b1-cache
-          key: ${{ steps.cache-id.outputs.key }}
+          path: webview/node_modules
+          key: ${{ needs.producer.outputs.key }}
+          fail-on-cache-miss: true
 
-      - name: Require exact npm cache hit
+      - name: Require exact producer cache hit
         shell: bash
         env:
-          CACHE_HIT: ${{ steps.restore-npm.outputs.cache-hit }}
+          CACHE_HIT: ${{ steps.restore-node-modules.outputs.cache-hit }}
         run: |
           set -euo pipefail
           [ "$CACHE_HIT" = "true" ] || {
-            echo "::error::Exact B1 producer cache was not restored."
+            echo "::error::Exact B2 producer cache was not restored."
             exit 1
           }
 
@@ -190,18 +192,18 @@ jobs:
           sudo apt-get install -y chromium-browser
           /snap/bin/chromium --version
 
-      - name: Run warm B1 consumer
+      - name: Run warm B2 consumer without npm ci
         env:
-          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
-        run: .github/scripts/research-node-vite-cache-b1.sh warm
+          EXPECTED_NODE_MODULES_DIGEST: ${{ needs.producer.outputs.node-modules-digest }}
+        run: .github/scripts/research-node-vite-cache-b2.sh warm
 
-      - name: Upload warm evidence
+      - name: Upload warm B2 evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: node-vite-b1-warm-${{ matrix.replica }}
-          path: build/reports/node-vite-cache-b1
+          name: node-vite-b2-warm-${{ matrix.replica }}
+          path: build/reports/node-vite-cache-b2
           if-no-files-found: error
           retention-days: 7
