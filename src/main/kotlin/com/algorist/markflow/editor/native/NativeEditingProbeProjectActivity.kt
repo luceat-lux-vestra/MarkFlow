@@ -1,5 +1,7 @@
 package com.algorist.markflow.editor.native
 
+// #467 acceptance HEAD A: route this harmless source touch through real Native/Starter evidence.
+
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 
