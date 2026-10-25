@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# #467 acceptance HEAD B: non-semantic hardening-only correction for cross-SHA reuse proof.
+
 die() {
   echo "gradle-cache-seed: $*" >&2
   exit 1
