@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       key: ${{ steps.cache-id.outputs.key }}
-      node-modules-digest: ${{ steps.identity.outputs.digest }}
+      node_modules_digest: ${{ steps.identity.outputs.digest }}
     steps:
       - name: Check out exact research HEAD
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -196,7 +196,7 @@ jobs:
         env:
           REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
-          EXPECTED_NODE_MODULES_DIGEST: ${{ needs.producer.outputs.node-modules-digest }}
+          EXPECTED_NODE_MODULES_DIGEST: ${{ needs.producer.outputs.node_modules_digest }}
         run: .github/scripts/research-node-vite-cache-b2.sh warm
 
       - name: Upload warm B2 evidence
