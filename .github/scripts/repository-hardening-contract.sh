@@ -332,6 +332,14 @@ grep -Fq 'pull-requests: read' "$native_evidence_workflow" ||
   die "Native runtime evidence changed-file router lacks pull-request read permission"
 grep -Fq 'pulls/$PR_NUMBER/files?per_page=100' "$native_evidence_workflow" ||
   die "Native runtime evidence no longer routes from the complete PR changed-file list"
+for topology_path in \
+  ".github/workflows/build.yml" \
+  ".github/scripts/pr-ci-evidence-scope.py" \
+  ".github/scripts/replacement-head-evidence-reuse.py" \
+  ".github/scripts/replacement-head-evidence-proof.py"; do
+  grep -Fq "\"$topology_path\"" "$native_evidence_workflow" ||
+    die "Native runtime evidence no longer conservatively routes canonical topology: $topology_path"
+done
 for job in \
   derived_renderer \
   native_derived_presentation \
