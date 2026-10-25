@@ -995,6 +995,22 @@ dependency_fast_lane_scope=".github/scripts/dependency-pr-fast-lane.py"
 [ -f "$dependency_fast_lane_scope" ] || die "dependency fast-lane classifier is missing"
 python3 "$dependency_fast_lane_scope" --self-test >/dev/null || die "dependency fast-lane classifier fixtures failed"
 
+replacement_reuse_scope=".github/scripts/replacement-head-evidence-reuse.py"
+[ -f "$replacement_reuse_scope" ] || die "#467 replacement-head evidence-reuse classifier is missing"
+python3 -I "$replacement_reuse_scope" --self-test >/dev/null || die "#467 replacement-head evidence-reuse fixtures failed"
+grep -Fq '".github/scripts/replacement-head-evidence-reuse.py"' "$canonical_router" || die "#467 evidence-reuse classifier changes are not conservatively routed"
+replacement_hardening_workflow=".github/workflows/hardening-audit.yml"
+for hardening_only_path in \
+  ".github/scripts/repository-hardening-contract.sh" \
+  ".github/scripts/hardening-audit.sh" \
+  ".github/scripts/check-gradle-cache-seed.sh"; do
+  grep -Fq "$hardening_only_path" "$replacement_hardening_workflow" ||
+    die "#467 allowed hardening-only path is no longer executed by Hardening Audit: $hardening_only_path"
+  if grep -Fq "$hardening_only_path" "$build_workflow"; then
+    die "#467 allowed hardening-only path entered the product-validation graph: $hardening_only_path"
+  fi
+done
+
 grep -Fq "github.event.action == 'edited' && 'metadata' || 'validation'" "$build_workflow" || die "Build workflow does not isolate metadata-edit concurrency from head validation"
 
 head_evidence_job="$(awk '

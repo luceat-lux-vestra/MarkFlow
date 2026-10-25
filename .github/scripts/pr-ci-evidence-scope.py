@@ -12,7 +12,7 @@ import sys
 NATIVE = [".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-edit-semantics.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/README.md","docs/architecture/0001-native-authority-projection-architecture.md","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/architecture/native-host-resources.md","docs/product/image-file-import-contract.md","fixtures/markdown-fidelity/**","src/main/kotlin/com/algorist/markflow/settings/**","docs/architecture/0002-mermaid-katex-renderer-continuity.md"]
 STARTER = [".github/workflows/starter-driver-e2e.yml",".github/scripts/check-starter-driver-diagnostics.py","build.gradle.kts","gradle/libs.versions.toml","webview/package.json","webview/package-lock.json","src/integrationTest/**","src/main/**"]
 # Orchestrator or classifier changes invalidate both evidence authorities.
-TOPOLOGY = (".github/workflows/build.yml", ".github/scripts/pr-ci-evidence-scope.py")
+TOPOLOGY = (".github/workflows/build.yml", ".github/scripts/pr-ci-evidence-scope.py", ".github/scripts/replacement-head-evidence-reuse.py")
 STATUSES = {"added", "modified", "removed", "renamed", "copied", "changed"}
 
 
@@ -56,6 +56,7 @@ def self_test():
     assert classify(row("webview/package-lock.json"), "1") == (True, True)
     assert classify(row(".github/workflows/build.yml"), "1") == (True, True)
     assert classify(row(".github/scripts/pr-ci-evidence-scope.py"), "1") == (True, True)
+    assert classify(row(".github/scripts/replacement-head-evidence-reuse.py"), "1") == (True, True)
     assert classify(["renamed\tdocs/new.md\tsrc/integrationTest/Old.kt"], "1") == (False, True)
     assert classify(["renamed\tdocs/new.md\t"], "1") == (True, True)
     assert classify(row("README.md"), "2") == (True, True)
