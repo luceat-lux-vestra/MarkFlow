@@ -1,5 +1,7 @@
 package com.algorist.markflow.editor.native
 
+// #467 acceptance v2 HEAD A: non-semantic source touch for full product evidence.
+
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 
