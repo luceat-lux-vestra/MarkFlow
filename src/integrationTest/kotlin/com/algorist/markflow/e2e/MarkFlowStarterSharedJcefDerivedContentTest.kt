@@ -1,6 +1,5 @@
 package com.algorist.markflow.e2e
 
-import com.intellij.driver.client.Driver
 import com.intellij.driver.client.Remote
 import com.intellij.driver.client.service
 import com.intellij.driver.sdk.Project
