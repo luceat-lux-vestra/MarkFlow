@@ -42,7 +42,20 @@ jobs:
         with:
           cache-read-only: true
 
+      # Match the production ARM64 Test job prerequisite exactly: Mermaid browser
+      # acceptance is mandatory and must fail closed rather than be skipped.
+      - name: Install native ARM64 Chromium for webview acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+          /snap/bin/chromium --version
+
       - name: Measure cold and same-job warm renderer tasks
+        env:
+          CHROME_BIN: /snap/bin/chromium
         run: .github/scripts/research-node-vite-cacheability.sh
 
       - name: Publish measurement summary
