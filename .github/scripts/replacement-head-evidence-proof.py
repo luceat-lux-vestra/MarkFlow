@@ -14,6 +14,7 @@ mandatory changed authority and must complete successfully before reuse=true is
 published.
 """
 
+# #467 acceptance HEAD A: non-semantic topology touch forces complete product evidence.
 from __future__ import annotations
 
 import argparse
