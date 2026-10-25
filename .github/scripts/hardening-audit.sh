@@ -197,7 +197,7 @@ job_is_substantive() {
 
 check_policy_producers() {
   local context workflow job trigger wf jobname block cond ontext clean needs actual_needs expected_needs
-  local component_context component_workflow component_job component_block component_name
+  local component_context component_workflow component_job component_block component_name component_cond expected_component_cond
 
   context="$(jq -r '.required[0].context // empty' "$POLICY")"
   workflow="$(jq -r '.required[0].workflow // empty' "$POLICY")"
@@ -272,9 +272,23 @@ check_policy_producers() {
     if [ "$component_name" != "$component_context" ]; then
       finding policy_producers "Merge Gate component '$component_context' does not match job '$component_job' name '$component_name'"; clean=0
     fi
-    if printf '%s\n' "$component_block" | grep -qE '^    if:'; then
-      finding policy_producers "Merge Gate component '$component_context' is conditionally skipped"; clean=0
-    fi
+    component_cond="$(printf '%s\n' "$component_block" | grep -m1 -E '^    if:' || true)"
+    case "$component_job" in
+      build|test|inspectCode|verify|dependencyReview)
+        expected_component_cond='    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != '"'"'true'"'"' }}'
+        if [ "$component_cond" != "$expected_component_cond" ]; then
+          finding policy_producers "Merge Gate component '$component_context' has unsupported replacement-evidence execution guard"; clean=0
+        fi
+        ;;
+      metadataSafety)
+        if [ -n "$component_cond" ]; then
+          finding policy_producers "PR Metadata Safety must remain unconditional across replacement-evidence reuse"; clean=0
+        fi
+        ;;
+      *)
+        finding policy_producers "Merge Gate component '$component_context' has unsupported policy job '$component_job'"; clean=0
+        ;;
+    esac
     if printf '%s\n' "$component_block" | grep -qE '^    continue-on-error:[[:space:]]*true[[:space:]]*$'; then
       finding policy_producers "Merge Gate component '$component_context' continues on error"; clean=0
     fi
@@ -305,6 +319,9 @@ check_policy_producers() {
     if ! printf '%s\n' "$proof_block" | grep -Fq "needs.headEvidence.outputs.$route == 'true'"; then
       finding policy_producers "conditional evidence '$proof' is not gated by trusted-base route"; clean=0
     fi
+    if ! printf '%s\n' "$proof_block" | grep -Fq "needs.headEvidence.outputs.reuse_product_evidence != 'true'"; then
+      finding policy_producers "conditional evidence '$proof' is not suppressed only by proven replacement evidence"; clean=0
+    fi
     if ! printf '%s\n' "$block" | grep -Fq "needs.$proof.result"; then
       finding policy_producers "Merge Gate does not inspect conditional evidence '$proof' result"; clean=0
     fi
@@ -313,7 +330,7 @@ check_policy_producers() {
   if [ "$waiver_count" -ne 2 ]; then
     finding policy_producers "exactly two reviewed self-repository compatibility annotations are required"; clean=0
   fi
-  for proof in HEAD_RESULT ACTIVE_PR NATIVE_ROUTE STARTER_ROUTE NATIVE_RESULT STARTER_RESULT; do
+  for proof in HEAD_RESULT ACTIVE_PR NATIVE_ROUTE STARTER_ROUTE NATIVE_RESULT STARTER_RESULT REUSE_PRODUCT_EVIDENCE PRIOR_HEAD_SHA PRIOR_RUN_ID; do
     if ! printf '%s\n' "$block" | grep -Fq "$proof:"; then
       finding policy_producers "Merge Gate lost routing environment '$proof'"; clean=0
     fi
@@ -322,14 +339,29 @@ check_policy_producers() {
     finding policy_producers "Merge Gate no longer enforces conditional result and allowed skip"; clean=0
   fi
 
-  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "success" ]; then'; then
-    finding policy_producers "Merge Gate does not fail closed on non-success component results"; clean=0
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$REUSE_PRODUCT_EVIDENCE" = "true" ]; then'; then
+    finding policy_producers "Merge Gate does not branch on proven replacement-evidence reuse"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq 'product_expected=skipped'; then
+    finding policy_producers "Merge Gate does not require skipped product jobs for proven reuse"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq 'product_expected=success'; then
+    finding policy_producers "Merge Gate does not require successful product jobs without reuse"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$result" != "$product_expected" ]; then'; then
+    finding policy_producers "Merge Gate does not enforce product result against reuse state"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then'; then
+    finding policy_producers "Merge Gate does not keep PR Metadata Safety fail-closed"; clean=0
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq '[[ "$PRIOR_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]'; then
+    finding policy_producers "Merge Gate does not require exact prior evidence identity for reuse"; clean=0
   fi
   if ! printf '%s\n' "$block" | grep -Fq '[ "$failed" -eq 0 ]'; then
     finding policy_producers "Merge Gate does not enforce aggregate failure state"; clean=0
   fi
 
-  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' aggregates six unconditional jobs plus route-selected native/Starter evidence"
+  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' preserves Metadata Safety and either executes or provenance-reuses five product jobs plus route-selected native/Starter evidence"
   return 0
 }
 
