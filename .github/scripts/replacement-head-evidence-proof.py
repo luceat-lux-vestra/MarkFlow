@@ -124,15 +124,44 @@ def list_pr_commits(repository: str, pr_number: int) -> list[str]:
     return commits
 
 
+def compare_binds_exact_head(compare: dict[str, Any], head_sha: str) -> bool:
+    """Bind a compare response to the requested exact head without head_commit.
+
+    GitHub's compare REST payload exposes base_commit, merge_base_commit,
+    ahead_by/total_commits, and commits[], but no head_commit object. Reject
+    truncated, malformed, duplicate, or wrong-head commit lists rather than
+    accepting an ambiguous relation.
+    """
+    ahead_by = compare.get("ahead_by")
+    total_commits = compare.get("total_commits")
+    commits = compare.get("commits")
+    if (
+        not isinstance(ahead_by, int)
+        or isinstance(ahead_by, bool)
+        or ahead_by <= 0
+        or total_commits != ahead_by
+        or not isinstance(commits, list)
+        or len(commits) != ahead_by
+    ):
+        return False
+
+    shas: list[str] = []
+    for item in commits:
+        sha = item.get("sha", "") if isinstance(item, dict) else ""
+        if not isinstance(sha, str) or not HEX40.fullmatch(sha):
+            return False
+        shas.append(sha)
+
+    return len(set(shas)) == len(shas) and shas[-1] == head_sha
+
+
 def valid_base_relation(compare: dict[str, Any], base_sha: str, head_sha: str) -> bool:
     return (
         compare.get("status") == "ahead"
         and compare.get("base_commit", {}).get("sha") == base_sha
         and compare.get("merge_base_commit", {}).get("sha") == base_sha
-        and compare.get("head_commit", {}).get("sha") == head_sha
         and compare.get("behind_by") == 0
-        and isinstance(compare.get("ahead_by"), int)
-        and compare["ahead_by"] > 0
+        and compare_binds_exact_head(compare, head_sha)
     )
 
 
@@ -143,10 +172,8 @@ def valid_replacement_relation(
         compare.get("status") == "ahead"
         and compare.get("base_commit", {}).get("sha") == prior_sha
         and compare.get("merge_base_commit", {}).get("sha") == prior_sha
-        and compare.get("head_commit", {}).get("sha") == head_sha
         and compare.get("behind_by") == 0
-        and isinstance(compare.get("ahead_by"), int)
-        and compare["ahead_by"] > 0
+        and compare_binds_exact_head(compare, head_sha)
     )
 
 
@@ -468,28 +495,60 @@ def self_test() -> None:
     base = "a" * 40
     prior = "b" * 40
     head = "c" * 40
+    # Mirrors the actual GitHub Compare REST payload shape: there is no
+    # head_commit object. Exact-head identity is carried by the final commits[]
+    # entry when the response is complete.
     good_base = {
         "status": "ahead",
         "base_commit": {"sha": base},
         "merge_base_commit": {"sha": base},
-        "head_commit": {"sha": head},
         "behind_by": 0,
         "ahead_by": 2,
+        "total_commits": 2,
+        "commits": [{"sha": prior}, {"sha": head}],
     }
     assert valid_base_relation(good_base, base, head)
-    assert not valid_base_relation({**good_base, "merge_base_commit": {"sha": prior}}, base, head)
+    assert not valid_base_relation(
+        {**good_base, "merge_base_commit": {"sha": prior}}, base, head
+    )
+    assert not valid_base_relation(
+        {**good_base, "commits": [{"sha": prior}, {"sha": "d" * 40}]},
+        base,
+        head,
+    )
+    assert not valid_base_relation(
+        {**good_base, "commits": [{"sha": head}]},
+        base,
+        head,
+    )
+    assert not valid_base_relation(
+        {**good_base, "total_commits": 3},
+        base,
+        head,
+    )
+    assert not valid_base_relation(
+        {**good_base, "commits": [{"sha": prior}, {"sha": "not-a-sha"}]},
+        base,
+        head,
+    )
 
     good_replacement = {
         "status": "ahead",
         "base_commit": {"sha": prior},
         "merge_base_commit": {"sha": prior},
-        "head_commit": {"sha": head},
         "behind_by": 0,
         "ahead_by": 1,
+        "total_commits": 1,
+        "commits": [{"sha": head}],
     }
     assert valid_replacement_relation(good_replacement, prior, head)
     assert not valid_replacement_relation(
         {**good_replacement, "status": "diverged"}, prior, head
+    )
+    assert not valid_replacement_relation(
+        {**good_replacement, "commits": [{"sha": "d" * 40}]},
+        prior,
+        head,
     )
 
     jobs = [
