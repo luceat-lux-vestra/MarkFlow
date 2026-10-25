@@ -9,21 +9,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: research-475-node-vite-phase-a-${{ github.ref }}
+  group: research-475-node-vite-b1-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CI: true
+  B1_NPM_CACHE: ${{ runner.temp }}/markflow-npm-b1-cache
+
 jobs:
-  phase-a:
-    name: Phase A replica ${{ matrix.replica }}
+  producer:
+    name: B1 npm-cache producer
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        replica: [1, 2]
-    env:
-      CI: true
-      REPLICA: ${{ matrix.replica }}
+    timeout-minutes: 20
     steps:
       - name: Check out exact research HEAD
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -42,8 +39,66 @@ jobs:
         with:
           cache-read-only: true
 
-      # Match the production ARM64 Test job prerequisite exactly: Mermaid browser
-      # acceptance is mandatory and must fail closed rather than be skipped.
+      - name: Compute exact B1 cache identity
+        id: cache-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_version="$(tr -d '\r\n' < .nvmrc)"
+          lock_sha="$(sha256sum webview/package-lock.json | awk '{print $1}')"
+          [ "$node_version" = "26.10.0" ]
+          [ "$RUNNER_ARCH" = "ARM64" ]
+          key="markflow-npm-b1-${RUNNER_OS}-${RUNNER_ARCH}-node-${node_version}-npm-11.19.1-lock-${lock_sha}-head-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "B1 cache key: $key"
+
+      - name: Populate isolated npm package cache
+        env:
+          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          REPLICA: producer
+        run: .github/scripts/research-node-vite-cache-b1.sh producer
+
+      - name: Save exact B1 npm package cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.B1_NPM_CACHE }}
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Upload producer evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-vite-b1-producer
+          path: build/reports/node-vite-cache-b1
+          if-no-files-found: error
+          retention-days: 7
+
+  cold:
+    name: B1 cold control ${{ matrix.replica }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - name: Check out exact research HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Java 25
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Restore Gradle state read-only
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
       - name: Install native ARM64 Chromium for webview acceptance
         shell: bash
         run: |
@@ -53,30 +108,101 @@ jobs:
           sudo apt-get install -y chromium-browser
           /snap/bin/chromium --version
 
-      - name: Measure cold and same-job warm renderer tasks
+      - name: Run cold B1 consumer
         env:
+          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
-        run: .github/scripts/research-node-vite-cacheability.sh
+        run: .github/scripts/research-node-vite-cache-b1.sh cold
 
-      - name: Publish measurement summary
-        if: ${{ always() }}
-        run: |
-          if [ -f build/reports/node-vite-cacheability/summary.tsv ]; then
-            cat build/reports/node-vite-cacheability/summary.tsv
-            {
-              echo '### #475 Phase A replica ${{ matrix.replica }}'
-              echo
-              echo '\`\`\`text'
-              cat build/reports/node-vite-cacheability/summary.tsv
-              echo '\`\`\`'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload Phase A evidence
+      - name: Upload cold evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: node-vite-phase-a-replica-${{ matrix.replica }}
-          path: build/reports/node-vite-cacheability
+          name: node-vite-b1-cold-${{ matrix.replica }}
+          path: build/reports/node-vite-cache-b1
+          if-no-files-found: error
+          retention-days: 7
+
+  warm:
+    name: B1 warm consumer ${{ matrix.replica }}
+    needs: producer
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - name: Check out exact research HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Java 25
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Restore Gradle state read-only
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Compute exact B1 cache identity
+        id: cache-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_version="$(tr -d '\r\n' < .nvmrc)"
+          lock_sha="$(sha256sum webview/package-lock.json | awk '{print $1}')"
+          [ "$node_version" = "26.10.0" ]
+          [ "$RUNNER_ARCH" = "ARM64" ]
+          key="markflow-npm-b1-${RUNNER_OS}-${RUNNER_ARCH}-node-${node_version}-npm-11.19.1-lock-${lock_sha}-head-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "B1 cache key: $key"
+
+      - name: Restore exact producer npm package cache
+        id: restore-npm
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.B1_NPM_CACHE }}
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Require exact npm cache hit
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.restore-npm.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          [ "$CACHE_HIT" = "true" ] || {
+            echo "::error::Exact B1 producer cache was not restored."
+            exit 1
+          }
+
+      - name: Install native ARM64 Chromium for webview acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+          /snap/bin/chromium --version
+
+      - name: Run warm B1 consumer
+        env:
+          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          REPLICA: ${{ matrix.replica }}
+          CHROME_BIN: /snap/bin/chromium
+        run: .github/scripts/research-node-vite-cache-b1.sh warm
+
+      - name: Upload warm evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-vite-b1-warm-${{ matrix.replica }}
+          path: build/reports/node-vite-cache-b1
           if-no-files-found: error
           retention-days: 7
