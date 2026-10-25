@@ -482,10 +482,22 @@ grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
 if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
   die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
 fi
-grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_workflow" ||
-  die "Starter workflow silently dropped bundled Markdown Preview capture"
-grep -Fq "MarkFlowStarterDifferentialPreviewSmokeTest" "$starter_diagnostics" ||
-  die "Starter diagnostics silently dropped bundled Markdown Preview suite"
+shared_jcef_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterSharedJcefDerivedContentTest.kt"
+[ -f "$shared_jcef_test" ] ||
+  die "#451 production shared-JCEF derived-content suite is missing"
+grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_workflow" ||
+  die "#451 Starter workflow lost the shared JCEF derived-content suite"
+grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_diagnostics" ||
+  die "#451 Starter diagnostics lost the shared JCEF derived-content suite"
+grep -Fq 'MarkFlowStarterProductionWiringTest().proveInOpenProject(' "$shared_jcef_test" ||
+  die "#451 shared suite no longer executes the original Production Wiring proof body"
+grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest().proveInOpenProject(' "$shared_jcef_test" ||
+  die "#451 shared suite no longer executes the original bundled Preview Smoke proof body"
+derived_content_matrix="$(grep -F -A2 -- '- shard: derived-content' "$starter_workflow")"
+if grep -Fq 'MarkFlowStarterProductionWiringTest|' <<<"$derived_content_matrix" ||
+   grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest|' <<<"$derived_content_matrix"; then
+  die "#451 derived-content matrix regressed to duplicate isolated JCEF lifecycles"
+fi
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
 [ "$(grep -Fc 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)' "$manifest_test" || true)" = "1" ] ||
