@@ -14,7 +14,6 @@ concurrency:
 
 env:
   CI: true
-  B1_NPM_CACHE: ${{ runner.temp }}/markflow-npm-b1-cache
 
 jobs:
   producer:
@@ -54,14 +53,14 @@ jobs:
 
       - name: Populate isolated npm package cache
         env:
-          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: producer
         run: .github/scripts/research-node-vite-cache-b1.sh producer
 
       - name: Save exact B1 npm package cache
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.B1_NPM_CACHE }}
+          path: ${{ runner.temp }}/markflow-npm-b1-cache
           key: ${{ steps.cache-id.outputs.key }}
 
       - name: Upload producer evidence
@@ -110,7 +109,7 @@ jobs:
 
       - name: Run cold B1 consumer
         env:
-          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
         run: .github/scripts/research-node-vite-cache-b1.sh cold
@@ -168,7 +167,7 @@ jobs:
         id: restore-npm
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.B1_NPM_CACHE }}
+          path: ${{ runner.temp }}/markflow-npm-b1-cache
           key: ${{ steps.cache-id.outputs.key }}
 
       - name: Require exact npm cache hit
@@ -193,7 +192,7 @@ jobs:
 
       - name: Run warm B1 consumer
         env:
-          npm_config_cache: ${{ env.B1_NPM_CACHE }}
+          npm_config_cache: ${{ runner.temp }}/markflow-npm-b1-cache
           REPLICA: ${{ matrix.replica }}
           CHROME_BIN: /snap/bin/chromium
         run: .github/scripts/research-node-vite-cache-b1.sh warm
