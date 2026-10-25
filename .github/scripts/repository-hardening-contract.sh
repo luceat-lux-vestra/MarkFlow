@@ -998,6 +998,7 @@ python3 "$dependency_fast_lane_scope" --self-test >/dev/null || die "dependency 
 replacement_reuse_scope=".github/scripts/replacement-head-evidence-reuse.py"
 [ -f "$replacement_reuse_scope" ] || die "#467 replacement-head evidence-reuse classifier is missing"
 python3 -I "$replacement_reuse_scope" --self-test >/dev/null || die "#467 replacement-head evidence-reuse fixtures failed"
+grep -Fq 'if expected_count != 1' "$replacement_reuse_scope" || die "#467 replacement classifier must require exactly one correction file"
 grep -Fq '".github/scripts/replacement-head-evidence-reuse.py"' "$canonical_router" || die "#467 evidence-reuse classifier changes are not conservatively routed"
 replacement_hardening_workflow=".github/workflows/hardening-audit.yml"
 for hardening_only_path in \
@@ -1006,10 +1007,45 @@ for hardening_only_path in \
   ".github/scripts/check-gradle-cache-seed.sh"; do
   grep -Fq "$hardening_only_path" "$replacement_hardening_workflow" ||
     die "#467 allowed hardening-only path is no longer executed by Hardening Audit: $hardening_only_path"
-  if grep -Fq "$hardening_only_path" "$build_workflow"; then
-    die "#467 allowed hardening-only path entered the product-validation graph: $hardening_only_path"
-  fi
+  build_mentions="$(grep -Fc "$hardening_only_path" "$build_workflow" || true)"
+  [ "$build_mentions" -eq 1 ] ||
+    die "#467 hardening-only path must appear exactly once in Build as trusted-base verifier input: $hardening_only_path"
+  trusted_fetch_line="$(grep -F "$hardening_only_path" "$build_workflow" | grep -F 'fetch_content "$BASE_SHA"' || true)"
+  [ -n "$trusted_fetch_line" ] ||
+    die "#467 hardening-only path may only enter Build as trusted-base verifier input: $hardening_only_path"
 done
+replacement_proof_scope=".github/scripts/replacement-head-evidence-proof.py"
+[ -f "$replacement_proof_scope" ] || die "#467 replacement-head evidence proof is missing"
+python3 -I "$replacement_proof_scope" --self-test >/dev/null || die "#467 replacement-head evidence proof fixtures failed"
+grep -Fq '".github/scripts/replacement-head-evidence-proof.py"' "$canonical_router" || die "#467 evidence-proof changes are not conservatively routed"
+grep -Fq 'fetch_content "$BASE_SHA" ".github/scripts/replacement-head-evidence-proof.py"' "$build_workflow" || die "#467 Build does not execute the proof from the trusted PR base"
+grep -Fq 'reuse_product_evidence: ${{ steps.replacement-evidence.outputs.reuse_product_evidence }}' "$build_workflow" || die "#467 Build does not publish replacement evidence reuse"
+replacement_reuse_guards="$(grep -Fc "needs.headEvidence.outputs.reuse_product_evidence != 'true'" "$build_workflow")"
+[ "$replacement_reuse_guards" -eq 7 ] || die "#467 product-evidence reuse must guard exactly five core jobs plus Native and Starter"
+grep -Fq 'REUSE_PRODUCT_EVIDENCE: ${{ needs.headEvidence.outputs.reuse_product_evidence }}' "$build_workflow" || die "#467 Merge Gate is not bound to the reuse proof"
+grep -Fq 'Replacement evidence reuse lacks exact prior evidence identity.' "$build_workflow" || die "#467 Merge Gate does not require prior evidence identity"
+grep -Fq 'current replacement Hardening authority was verified by Head validation evidence' "$build_workflow" || die "#467 Merge Gate does not record current-head hardening proof"
+grep -Fq 'commits[-1] != args.head_sha' "$replacement_proof_scope" || die "#467 proof is not bound to current PR commit history"
+grep -Fq 'pr = gh_json(args.repository, f"pulls/{args.pr_number}")' "$replacement_proof_scope" || die "#467 proof does not read authoritative current PR identity"
+grep -Fq 'run.get("head_branch") != head_ref' "$replacement_proof_scope" || die "#467 prior Build evidence is not bound to the current PR head branch"
+grep -Fq 'run_created < pr_created_at' "$replacement_proof_scope" || die "#467 prior Build evidence is not bounded to the current PR lifetime"
+grep -Fq 'TRUST_FRAMEWORK_PATHS = HARDENING_AUTHORITY_PATHS | frozenset' "$replacement_proof_scope" || die "#467 proof does not freeze the trusted hardening framework before the prior HEAD"
+grep -Fq 'for path in TRUST_FRAMEWORK_PATHS' "$replacement_proof_scope" || die "#467 proof does not compare trusted framework content identities"
+grep -Fq 'len(files) != 1' "$replacement_proof_scope" || die "#467 replacement proof must accept exactly one correction file"
+grep -Fq 'TRUSTED_AUDIT_CHECKS = (' "$replacement_proof_scope" || die "#467 proof lacks a fixed trusted-base audit check set"
+grep -Fq '["--root", args.workspace, "--only", check, "--no-network"]' "$replacement_proof_scope" || die "#467 proof does not execute fixed trusted-base audit checks"
+grep -Fq 'run_trusted_authority(args.trusted_repository_contract, [], args.workspace)' "$replacement_proof_scope" || die "#467 proof does not execute the trusted-base repository contract"
+grep -Fq 'run_trusted_authority(args.trusted_gradle_cache_seed, [], args.workspace)' "$replacement_proof_scope" || die "#467 proof does not execute the trusted-base cache-seed contract"
+grep -Fq 'name: Fetch replacement proof workspace' "$build_workflow" || die "#467 Build does not checkout the exact replacement workspace for trusted verification"
+grep -Fq 'ref: ${{ github.event.pull_request.head.sha }}' "$build_workflow" || die "#467 replacement proof workspace is not exact-HEAD bound"
+for trusted_authority in hardening-audit.sh repository-hardening-contract.sh check-gradle-cache-seed.sh; do
+  trusted_authority_fetch="$(grep -F ".github/scripts/$trusted_authority" "$build_workflow" | grep -F 'fetch_content "$BASE_SHA"' || true)"
+  [ -n "$trusted_authority_fetch" ] ||
+    die "#467 Build does not load trusted-base authority: $trusted_authority"
+done
+grep -Fq 'actions/workflows/hardening-audit.yml/runs?event=pull_request&head_sha=' "$replacement_proof_scope" || die "#467 proof does not require exact-head Hardening audit"
+grep -Fq '"Native Runtime Evidence / Native runtime evidence gate"' "$replacement_proof_scope" || die "#467 proof does not require prior Native gate"
+grep -Fq '"Starter Driver E2E / Starter Driver E2E Gate"' "$replacement_proof_scope" || die "#467 proof does not require prior Starter gate"
 
 grep -Fq "github.event.action == 'edited' && 'metadata' || 'validation'" "$build_workflow" || die "Build workflow does not isolate metadata-edit concurrency from head validation"
 
@@ -1181,7 +1217,14 @@ for proof in nativeEvidence starterEvidence; do
 done
 grep -Fq 'needs.headEvidence.result' <<<"$merge_gate_job" || die "Merge Gate does not verify head router"
 grep -Fq 'if [ "$result" != "$expected" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not verify conditional job result"
-grep -Fq 'if [ "$result" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not fail closed on non-success component results"
+grep -Fq 'REUSE_PRODUCT_EVIDENCE: ${{ needs.headEvidence.outputs.reuse_product_evidence }}' <<<"$merge_gate_job" || die "Merge Gate does not bind product result expectations to replacement-evidence proof"
+grep -Fq 'PRIOR_HEAD_SHA: ${{ needs.headEvidence.outputs.prior_head_sha }}' <<<"$merge_gate_job" || die "Merge Gate does not bind prior evidence HEAD"
+grep -Fq 'PRIOR_RUN_ID: ${{ needs.headEvidence.outputs.prior_run_id }}' <<<"$merge_gate_job" || die "Merge Gate does not bind prior evidence run"
+grep -Fq 'product_expected=skipped' <<<"$merge_gate_job" || die "Merge Gate does not require skipped product jobs for proven replacement reuse"
+grep -Fq 'product_expected=success' <<<"$merge_gate_job" || die "Merge Gate does not require successful product jobs without replacement reuse"
+grep -Fq 'if [ "$result" != "$product_expected" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not enforce product result against replacement reuse state"
+grep -Fq 'if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate no longer keeps PR Metadata Safety fail-closed"
+grep -Fq '[[ "$PRIOR_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]' <<<"$merge_gate_job" || die "Merge Gate does not require exact prior evidence identity"
 grep -Fq '[ "$failed" -eq 0 ]' <<<"$merge_gate_job" || die "Merge Gate does not enforce aggregate failure state"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"
 assert_recovery_target_validation "$build_workflow" "required Build workflow"

@@ -66,7 +66,7 @@ def parse_record(line: str) -> Change | None:
 
 
 def classify(changes: list[Change], expected_count: int) -> Decision:
-    if expected_count <= 0 or len(changes) != expected_count:
+    if expected_count != 1 or len(changes) != expected_count:
         return Decision(False, "full", "changed-file-count-invalid")
     if not changes:
         return Decision(False, "full", "empty-change-set")
@@ -97,13 +97,14 @@ def self_test() -> None:
         )
 
     all_allowed = [Change("modified", path) for path in sorted(HARDENING_ONLY_PATHS)]
-    assert classify(all_allowed, len(all_allowed)).reuse_product_evidence
+    assert not classify(all_allowed, len(all_allowed)).reuse_product_evidence
 
     negatives = [
         [],
         [Change("modified", ".github/workflows/build.yml")],
         [Change("modified", ".github/workflows/hardening-audit.yml")],
         [Change("modified", ".github/scripts/replacement-head-evidence-reuse.py")],
+        [Change("modified", ".github/scripts/replacement-head-evidence-proof.py")],
         [Change("modified", "src/main/kotlin/App.kt")],
         [
             Change("modified", ".github/scripts/repository-hardening-contract.sh"),

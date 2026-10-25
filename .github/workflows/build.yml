@@ -38,6 +38,9 @@ jobs:
       dependency_ecosystem: ${{ steps.change-scope.outputs.dependency_ecosystem }}
       run_native: ${{ steps.evidence-scope.outputs.run_native }}
       run_starter: ${{ steps.evidence-scope.outputs.run_starter }}
+      reuse_product_evidence: ${{ steps.replacement-evidence.outputs.reuse_product_evidence }}
+      prior_head_sha: ${{ steps.replacement-evidence.outputs.prior_head_sha }}
+      prior_run_id: ${{ steps.replacement-evidence.outputs.prior_run_id }}
     steps:
       - name: Head validation anchor
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' }}
@@ -89,6 +92,99 @@ jobs:
           echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
           exit 1
 
+      - name: Fetch replacement proof workspace
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Resolve replacement-HEAD product evidence
+        id: replacement-evidence
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft == false }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trusted_hardening="$GITHUB_WORKSPACE/.github/scripts/.replacement-trusted-hardening-audit.sh"
+          trusted_contract="$GITHUB_WORKSPACE/.github/scripts/.replacement-trusted-repository-hardening-contract.sh"
+          trusted_seed="$GITHUB_WORKSPACE/.github/scripts/.replacement-trusted-gradle-cache-seed.sh"
+          trap 'rm -rf "$tmp"; rm -f "$trusted_hardening" "$trusted_contract" "$trusted_seed"' EXIT
+
+          fetch_content() {
+            local ref="$1" path="$2" output="$3"
+            gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/contents/$path?ref=$ref" \
+              --jq '.content' | tr -d '\n' | base64 --decode > "$output"
+          }
+
+          if ! fetch_content "$BASE_SHA" ".github/scripts/replacement-head-evidence-proof.py" "$tmp/proof.py" || \
+             ! fetch_content "$BASE_SHA" ".github/scripts/replacement-head-evidence-reuse.py" "$tmp/classifier.py"; then
+            {
+              echo "reuse_product_evidence=false"
+              echo "prior_head_sha="
+              echo "prior_run_id="
+            } >> "$GITHUB_OUTPUT"
+            echo "Trusted-base replacement proof is unavailable; falling back to FULL CI."
+            exit 0
+          fi
+
+          if ! fetch_content "$BASE_SHA" ".github/scripts/hardening-audit.sh" "$trusted_hardening" || \
+             ! fetch_content "$BASE_SHA" ".github/scripts/repository-hardening-contract.sh" "$trusted_contract" || \
+             ! fetch_content "$BASE_SHA" ".github/scripts/check-gradle-cache-seed.sh" "$trusted_seed"; then
+            echo "::error::Trusted-base changed-authority verifier is unavailable."
+            exit 1
+          fi
+          chmod 700 "$trusted_hardening" "$trusted_contract" "$trusted_seed"
+
+          python3 -I "$tmp/proof.py" \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --head-repo "$HEAD_REPO" \
+            --event-name "$EVENT_NAME" \
+            --event-action "$EVENT_ACTION" \
+            --draft "$PR_DRAFT" \
+            --classifier "$tmp/classifier.py" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --trusted-hardening-audit "$trusted_hardening" \
+            --trusted-repository-contract "$trusted_contract" \
+            --trusted-gradle-cache-seed "$trusted_seed" > "$tmp/proof.out"
+
+          reuse_line="$(grep -E '^reuse_product_evidence=(true|false)$' "$tmp/proof.out" || true)"
+          prior_line="$(grep -E '^prior_head_sha=([0-9a-f]{40})?$' "$tmp/proof.out" || true)"
+          run_line="$(grep -E '^prior_run_id=([0-9]+)?$' "$tmp/proof.out" || true)"
+          reason_line="$(grep -E '^reason=[^[:space:]]+$' "$tmp/proof.out" || true)"
+          if [ "$(wc -l < "$tmp/proof.out")" -ne 4 ] || [ -z "$reuse_line" ] || \
+             [ -z "$prior_line" ] || [ -z "$run_line" ] || [ -z "$reason_line" ]; then
+            echo "::error::Trusted replacement proof returned malformed output."
+            cat "$tmp/proof.out" >&2 || true
+            exit 1
+          fi
+
+          reuse="${reuse_line#*=}"
+          prior="${prior_line#*=}"
+          prior_run="${run_line#*=}"
+          if [ "$reuse" = "true" ]; then
+            [[ "$prior" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Reuse proof omitted prior HEAD."; exit 1; }
+            [[ "$prior_run" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Reuse proof omitted prior Build run."; exit 1; }
+          elif [ -n "$prior" ] || [ -n "$prior_run" ]; then
+            echo "::error::Non-reuse proof unexpectedly published prior evidence identity."
+            exit 1
+          fi
+
+          printf '%s\n' "$reuse_line" "$prior_line" "$run_line" >> "$GITHUB_OUTPUT"
+          cat "$tmp/proof.out"
       - name: Classify changed files
         id: change-scope
         shell: bash
@@ -299,6 +395,7 @@ jobs:
   build:
     name: Build
     needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     outputs:
@@ -598,6 +695,7 @@ jobs:
   test:
     name: Test
     needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
     runs-on: ubuntu-24.04-arm
     # Exact-head 96332952: ./gradlew check finished SUCCESSFUL in 29m29s,
     # but GitHub then cancelled the 30m job before mandatory webview source
@@ -824,6 +922,7 @@ jobs:
   inspectCode:
     name: Inspect code
     needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
@@ -890,6 +989,7 @@ jobs:
   verify:
     name: Verify plugin
     needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -964,6 +1064,7 @@ jobs:
   dependencyReview:
     name: Dependency Review
     needs: [ headEvidence ]
+    if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
@@ -981,7 +1082,7 @@ jobs:
   nativeEvidence:
     name: Native Runtime Evidence
     needs: [ headEvidence ]
-    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_native == 'true' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.reuse_product_evidence != 'true' && needs.headEvidence.outputs.run_native == 'true' }}
     # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
     # See rhysd/actionlint#711; preserve local reusable workflow validation.
     # Only this exact same-commit call defers zizmor's self-repository migration.
@@ -993,7 +1094,7 @@ jobs:
   starterEvidence:
     name: Starter Driver E2E
     needs: [ headEvidence ]
-    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.run_starter == 'true' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.draft == false && needs.headEvidence.outputs.reuse_product_evidence != 'true' && needs.headEvidence.outputs.run_starter == 'true' }}
     # Compatibility: actionlint v1.7.12 rejects GitHub's new `$/` syntax.
     # See rhysd/actionlint#711; preserve local reusable workflow validation.
     # Only this exact same-commit call defers zizmor's self-repository migration.
@@ -1016,6 +1117,9 @@ jobs:
           STARTER_ROUTE: ${{ needs.headEvidence.outputs.run_starter }}
           NATIVE_RESULT: ${{ needs.nativeEvidence.result }}
           STARTER_RESULT: ${{ needs.starterEvidence.result }}
+          REUSE_PRODUCT_EVIDENCE: ${{ needs.headEvidence.outputs.reuse_product_evidence }}
+          PRIOR_HEAD_SHA: ${{ needs.headEvidence.outputs.prior_head_sha }}
+          PRIOR_RUN_ID: ${{ needs.headEvidence.outputs.prior_run_id }}
           BUILD_RESULT: ${{ needs.build.result }}
           TEST_RESULT: ${{ needs.test.result }}
           INSPECT_CODE_RESULT: ${{ needs.inspectCode.result }}
@@ -1025,20 +1129,34 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
+          if [ "$REUSE_PRODUCT_EVIDENCE" = "true" ]; then
+            product_expected=skipped
+            if ! [[ "$PRIOR_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Replacement evidence reuse lacks exact prior evidence identity."
+              failed=1
+            fi
+          else
+            product_expected=success
+          fi
+
           for component in \
             "Build=$BUILD_RESULT" \
             "Test=$TEST_RESULT" \
             "Inspect code=$INSPECT_CODE_RESULT" \
             "Verify plugin=$VERIFY_PLUGIN_RESULT" \
-            "PR Metadata Safety=$PR_METADATA_SAFETY_RESULT" \
             "Dependency Review=$DEPENDENCY_REVIEW_RESULT"; do
             name="${component%%=*}"
             result="${component#*=}"
-            if [ "$result" != "success" ]; then
-              echo "::error::$name concluded '$result'; Merge Gate fails closed."
+            if [ "$result" != "$product_expected" ]; then
+              echo "::error::$name requires '$product_expected' when reuse=$REUSE_PRODUCT_EVIDENCE; got '$result'."
               failed=1
             fi
           done
+
+          if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then
+            echo "::error::PR Metadata Safety concluded '$PR_METADATA_SAFETY_RESULT'; Merge Gate fails closed."
+            failed=1
+          fi
 
           if [ "$HEAD_RESULT" != "success" ]; then
             echo "::error::Trusted routing head failed: $HEAD_RESULT"
@@ -1049,7 +1167,9 @@ jobs:
             rest="${proof#*:}"
             route="${rest%%:*}"
             result="${rest#*:}"
-            if [ "$ACTIVE_PR" = "true" ]; then
+            if [ "$REUSE_PRODUCT_EVIDENCE" = "true" ]; then
+              expected=skipped
+            elif [ "$ACTIVE_PR" = "true" ]; then
               case "$route" in
                 true) expected=success ;;
                 false) expected=skipped ;;
@@ -1064,5 +1184,9 @@ jobs:
             fi
           done
           [ "$failed" -eq 0 ]
-          echo "All mandatory and route-selected runtime proof jobs succeeded."
+          if [ "$REUSE_PRODUCT_EVIDENCE" = "true" ]; then
+            echo "Reused canonical full-product evidence from Build run $PRIOR_RUN_ID at $PRIOR_HEAD_SHA; current replacement Hardening authority was verified by Head validation evidence."
+          else
+            echo "All mandatory and route-selected runtime proof jobs succeeded."
+          fi
 
