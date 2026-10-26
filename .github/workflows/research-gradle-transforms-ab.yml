@@ -1,0 +1,159 @@
+# lifecycle-owner: MarkFlow #457 / R2A #92
+# lifecycle-retire: delete after the bounded Gradle transforms restore A/B evidence is recorded
+name: Research Gradle Transforms Cache A/B
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/research-gradle-transforms-ab.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-gradle-transforms-ab-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  RESEARCH_PLATFORM_VERSION: '2026.2.3'
+  RESEARCH_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  build-plugin-ab:
+    name: Gradle transforms ${{ matrix.arm }} replica ${{ matrix.replica }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [control, reduced]
+        replica: [1, 2]
+
+    steps:
+      - name: Fetch exact research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RESEARCH_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$RESEARCH_SOURCE_SHA" ] || {
+            echo "::error::Research checkout drifted: expected=$RESEARCH_SOURCE_SHA actual=$actual"
+            exit 1
+          }
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Start Setup Gradle timer
+        shell: bash
+        run: echo "RESEARCH_SETUP_START_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+
+      - name: Setup Gradle production-equivalent read-only cache
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+          gradle-home-cache-excludes: ${{ matrix.arm == 'reduced' && 'caches/9.8.1/transforms/**' || '' }}
+
+      - name: Record setup and pre-build cache state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/research-gradle-transforms
+
+          ended_ms="$(date +%s%3N)"
+          transforms="$HOME/.gradle/caches/9.8.1/transforms"
+          if [ -d "$transforms" ]; then
+            pre_files="$(find "$transforms" -type f | wc -l | tr -d ' ')"
+            pre_bytes="$(du -sb "$transforms" | awk '{print $1}')"
+          else
+            pre_files=0
+            pre_bytes=0
+          fi
+
+          if [ "${{ matrix.arm }}" = "control" ] && [ "$pre_files" -eq 0 ]; then
+            echo "::error::Control did not restore any Gradle transforms; A/B baseline is invalid."
+            exit 1
+          fi
+          if [ "${{ matrix.arm }}" = "reduced" ] && [ "$pre_files" -ne 0 ]; then
+            echo "::error::Reduced arm unexpectedly restored Gradle transform files."
+            exit 1
+          fi
+
+          {
+            echo "arm=${{ matrix.arm }}"
+            echo "replica=${{ matrix.replica }}"
+            echo "source_sha=$RESEARCH_SOURCE_SHA"
+            echo "platform_version=$RESEARCH_PLATFORM_VERSION"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "setup_gradle_wall_ms=$((ended_ms - RESEARCH_SETUP_START_MS))"
+            echo "transforms_pre_files=$pre_files"
+            echo "transforms_pre_bytes=$pre_bytes"
+          } > build/research-gradle-transforms/metrics.txt
+
+      - name: Build plugin and record Gradle metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="build/research-gradle-transforms/gradle.log"
+
+          started_ms="$(date +%s%3N)"
+          set +e
+          ./gradlew buildPlugin -PplatformVersion="$RESEARCH_PLATFORM_VERSION" --info --stacktrace 2>&1 | tee "$log"
+          gradle_status="${PIPESTATUS[0]}"
+          set -e
+          ended_ms="$(date +%s%3N)"
+
+          transforms="$HOME/.gradle/caches/9.8.1/transforms"
+          if [ -d "$transforms" ]; then
+            post_files="$(find "$transforms" -type f | wc -l | tr -d ' ')"
+            post_bytes="$(du -sb "$transforms" | awk '{print $1}')"
+          else
+            post_files=0
+            post_bytes=0
+          fi
+
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one plugin distribution, found ${#archives[@]}"
+            exit 1
+          fi
+          archive="${archives[0]}"
+          plugin_digest="$(sha256sum "$archive" | awk '{print $1}')"
+          plugin_bytes="$(stat -c '%s' "$archive")"
+
+          {
+            echo "gradle_status=$gradle_status"
+            echo "gradle_wall_ms=$((ended_ms - started_ms))"
+            echo "transforms_post_files=$post_files"
+            echo "transforms_post_bytes=$post_bytes"
+            echo "idea_direct_downloads=$(grep -Ec 'Downloading https://download.jetbrains.com/idea/idea-2026\.2\.3-aarch64\.tar\.gz' "$log" || true)"
+            echo "http_download_lines=$(grep -Ec 'Downloading https?://' "$log" || true)"
+            echo "from_cache_tasks=$(grep -Ec ' FROM-CACHE$' "$log" || true)"
+            echo "up_to_date_tasks=$(grep -Ec ' UP-TO-DATE$' "$log" || true)"
+            echo "executed_task_lines=$(grep -Ec '^> Task ' "$log" || true)"
+            echo "plugin_sha256=$plugin_digest"
+            echo "plugin_bytes=$plugin_bytes"
+          } >> build/research-gradle-transforms/metrics.txt
+
+          if [ "$gradle_status" -ne 0 ]; then
+            exit "$gradle_status"
+          fi
+
+      - name: Upload A/B evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: research-gradle-transforms-${{ matrix.arm }}-${{ matrix.replica }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            build/research-gradle-transforms/metrics.txt
+            build/research-gradle-transforms/gradle.log
