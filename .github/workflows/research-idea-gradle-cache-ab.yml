@@ -17,10 +17,7 @@ concurrency:
 env:
   STARTER_PLATFORM_VERSION: '2026.2.3'
   STARTER_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-  STARTER_SUITES: >-
-    com.algorist.markflow.e2e.MarkFlowStarterSharedJcefDerivedContentTest|
-    com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|
-    com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
+  STARTER_SUITES: 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefDerivedContentTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest'
 
 jobs:
   package-and-seed:
