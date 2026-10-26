@@ -1,0 +1,412 @@
+# lifecycle-owner: MarkFlow #457 / R2A #92
+# lifecycle-retire: delete after the bounded Starter IDEA installer archive A/B evidence is recorded
+name: Research Starter IDEA Installer Cache A/B
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/research-starter-idea-installer-ab.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-starter-idea-installer-ab-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_IDEA_BUILD: '262.10968.63'
+  STARTER_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+  STARTER_INSTALLER_NAME: 'ideaIU-262.10968.63-aarch64.tar.gz'
+  STARTER_INSTALLER_URL: 'https://download.jetbrains.com/idea/idea-2026.2.3-aarch64.tar.gz'
+  STARTER_SUITES: 'com.algorist.markflow.e2e.MarkFlowStarterSharedJcefDerivedContentTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest'
+
+jobs:
+  package-and-seed:
+    name: Package exact plugin and seed Starter IDEA installer cache
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - name: Fetch exact research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA"
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Build exact plugin artifact once
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+
+          mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one plugin distribution, found ${#archives[@]}"
+            exit 1
+          fi
+
+          artifact="${archives[0]}"
+          archive_name="$(basename "$artifact")"
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          mkdir -p build/e2e-package build/research-starter-installer
+          cp "$artifact" build/e2e-package/plugin.zip
+          {
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "plugin_archive=$archive_name"
+            echo "plugin_sha256=$digest"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "scenario_sets=derived-content"
+          } > build/e2e-package/manifest.txt
+
+      - name: Download exact Starter IDEA installer once
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer_dir="out/ide-tests/installers/IU"
+          installer="$installer_dir/$STARTER_INSTALLER_NAME"
+          mkdir -p "$installer_dir" build/research-starter-installer
+          rm -f "$installer"
+
+          started_ms="$(date +%s%3N)"
+          curl --fail --location --retry 3 --retry-delay 2 --output "$installer" "$STARTER_INSTALLER_URL"
+          ended_ms="$(date +%s%3N)"
+
+          bytes="$(stat -c '%s' "$installer")"
+          digest="$(sha256sum "$installer" | awk '{print $1}')"
+          [ "$bytes" -gt 0 ]
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+
+          {
+            echo "installer_download_ms=$((ended_ms - started_ms))"
+            echo "installer_bytes=$bytes"
+            echo "installer_sha256=$digest"
+            echo "installer_name=$STARTER_INSTALLER_NAME"
+            echo "installer_url=$STARTER_INSTALLER_URL"
+            echo "idea_build=$STARTER_IDEA_BUILD"
+          } > build/research-starter-installer/producer-metrics.txt
+          {
+            echo "starter_installer_name=$STARTER_INSTALLER_NAME"
+            echo "starter_installer_sha256=$digest"
+            echo "starter_idea_build=$STARTER_IDEA_BUILD"
+          } >> build/e2e-package/manifest.txt
+
+      - name: Compute exact research cache key
+        id: cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness_sha="$(sha256sum .github/workflows/research-starter-idea-installer-ab.yml | awk '{print $1}')"
+          key="r2a92-starter-idea-installer-${RUNNER_OS}-${RUNNER_ARCH}-${STARTER_PLATFORM_VERSION}-${STARTER_IDEA_BUILD}-${harness_sha}-${STARTER_SOURCE_SHA}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "cache_key=$key" >> build/research-starter-installer/producer-metrics.txt
+
+      - name: Start research cache save timer
+        shell: bash
+        run: echo "RESEARCH_CACHE_SAVE_START_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+
+      - name: Save isolated Starter IDEA installer cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: out/ide-tests/installers/IU
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Record research cache save duration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ended_ms="$(date +%s%3N)"
+          echo "cache_save_ms=$((ended_ms - RESEARCH_CACHE_SAVE_START_MS))" >> build/research-starter-installer/producer-metrics.txt
+
+      - name: Upload exact plugin artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: research-starter-installer-plugin-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: build/e2e-package
+
+      - name: Upload producer metrics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: research-starter-installer-producer-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: build/research-starter-installer/producer-metrics.txt
+
+  derived-content-ab:
+    needs: [package-and-seed]
+    name: Starter installer ${{ matrix.arm }} replica ${{ matrix.replica }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [control, warm]
+        replica: [1, 2]
+    steps:
+      - name: Fetch exact research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.STARTER_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$STARTER_SOURCE_SHA"
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle production-equivalent baseline
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Download exact plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: research-starter-installer-plugin-${{ github.run_id }}
+          path: build/e2e-package
+
+      - name: Restore and verify packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          [ -f "$manifest" ]
+          [ -f build/e2e-package/plugin.zip ]
+
+          value() { sed -n "s/^$1=//p" "$manifest"; }
+          source_sha="$(value source_sha)"
+          archive_name="$(value plugin_archive)"
+          expected_plugin_digest="$(value plugin_sha256)"
+          platform_version="$(value platform_version)"
+          scenario_sets="$(value scenario_sets)"
+          installer_name="$(value starter_installer_name)"
+          installer_digest="$(value starter_installer_sha256)"
+          idea_build="$(value starter_idea_build)"
+
+          [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ]
+          [ "$installer_name" = "$STARTER_INSTALLER_NAME" ]
+          [ "$idea_build" = "$STARTER_IDEA_BUILD" ]
+          [[ "$scenario_sets" == *"derived-content"* ]]
+          [[ "$expected_plugin_digest" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$installer_digest" =~ ^[0-9a-f]{64}$ ]]
+
+          actual_plugin_digest="$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')"
+          [ "$actual_plugin_digest" = "$expected_plugin_digest" ]
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip "build/distributions/$archive_name"
+          echo "E2E_PLUGIN_PATH=$GITHUB_WORKSPACE/build/distributions/$archive_name" >> "$GITHUB_ENV"
+          echo "E2E_PLUGIN_SHA256=$expected_plugin_digest" >> "$GITHUB_ENV"
+          echo "E2E_INSTALLER_SHA256=$installer_digest" >> "$GITHUB_ENV"
+
+      - name: Remove Starter IDEA installer and extracted build baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf out/ide-tests/installers/IU
+          rm -rf "out/ide-tests/cache/builds/IU-$STARTER_IDEA_BUILD"
+          mkdir -p out/ide-tests/installers
+
+      - name: Start research cache restore timer
+        if: matrix.arm == 'warm'
+        shell: bash
+        run: echo "RESEARCH_CACHE_RESTORE_START_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+
+      - name: Restore isolated Starter IDEA installer cache
+        if: matrix.arm == 'warm'
+        id: idea-installer-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: out/ide-tests/installers/IU
+          key: ${{ needs.package-and-seed.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Record and verify warm installer restore
+        if: matrix.arm == 'warm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ended_ms="$(date +%s%3N)"
+          installer="out/ide-tests/installers/IU/$STARTER_INSTALLER_NAME"
+          [ -f "$installer" ]
+          actual="$(sha256sum "$installer" | awk '{print $1}')"
+          [ "$actual" = "$E2E_INSTALLER_SHA256" ]
+          {
+            echo "cache_hit=${{ steps.idea-installer-cache.outputs.cache-hit }}"
+            echo "cache_restore_ms=$((ended_ms - RESEARCH_CACHE_RESTORE_START_MS))"
+            echo "installer_preseeded=1"
+            echo "installer_bytes_before_gradle=$(stat -c '%s' "$installer")"
+          } > "$RUNNER_TEMP/research-starter-installer-prep.txt"
+
+      - name: Record control installer baseline
+        if: matrix.arm == 'control'
+        shell: bash
+        run: |
+          {
+            echo "cache_hit=not-restored"
+            echo "cache_restore_ms=0"
+            echo "installer_preseeded=0"
+            echo "installer_bytes_before_gradle=0"
+          } > "$RUNNER_TEMP/research-starter-installer-prep.txt"
+
+      - name: Install pinned sandboxed JCEF AppArmor profile
+        shell: bash
+        env:
+          STARTER_SHARD: derived-content
+        run: |
+          set -euo pipefail
+          bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
+          bash .github/scripts/install-starter-jcef-apparmor.sh
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/research-starter-installer-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run derived-content Starter shard and record metrics
+        shell: bash
+        env:
+          STARTER_SHARD: derived-content
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+
+          pass_dir="build/e2e-evidence/research-installer-${{ matrix.arm }}-${{ matrix.replica }}"
+          marker="$RUNNER_TEMP/research-starter-installer-start"
+          gradle_log="$RUNNER_TEMP/research-starter-installer-gradle.log"
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          IFS='|' read -r -a suites <<< "$STARTER_SUITES"
+          gradle_args=(
+            integrationTest
+            -x buildPlugin
+            -PplatformVersion="$STARTER_PLATFORM_VERSION"
+            -PstarterPackagedPlugin=true
+            --stacktrace
+          )
+          diagnostics_args=()
+          for suite in "${suites[@]}"; do
+            gradle_args+=(--tests "$suite")
+            diagnostics_args+=(--required-suite "$suite")
+          done
+
+          started_ms="$(date +%s%3N)"
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m ./gradlew "${gradle_args[@]}" 2>&1 | tee "$gradle_log"
+          test_status="${PIPESTATUS[0]}"
+          set -e
+          ended_ms="$(date +%s%3N)"
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$destination"
+            cp -R "$log_dir"/. "$destination/"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox \
+              -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py \
+            --root "$pass_dir" \
+            --output "$pass_dir/diagnostics.json" \
+            "${diagnostics_args[@]}"
+          diagnostics_status=$?
+          set -e
+
+          actual_plugin_digest="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          [ "$actual_plugin_digest" = "$E2E_PLUGIN_SHA256" ]
+
+          installer="out/ide-tests/installers/IU/$STARTER_INSTALLER_NAME"
+          [ -f "$installer" ] || { echo "::error::Starter installer archive missing after run"; exit 1; }
+          actual_installer_digest="$(sha256sum "$installer" | awk '{print $1}')"
+          [ "$actual_installer_digest" = "$E2E_INSTALLER_SHA256" ] || {
+            echo "::error::Starter installer archive identity mismatch"
+            exit 1
+          }
+
+          metrics="$pass_dir/metrics.txt"
+          cp "$RUNNER_TEMP/research-starter-installer-prep.txt" "$metrics"
+          {
+            echo "arm=${{ matrix.arm }}"
+            echo "replica=${{ matrix.replica }}"
+            echo "source_sha=$STARTER_SOURCE_SHA"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "idea_build=$STARTER_IDEA_BUILD"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "gradle_wall_ms=$((ended_ms - started_ms))"
+            echo "starter_direct_idea_downloads=$(grep -Ec "Downloading https://download.jetbrains.com/idea/idea-${STARTER_PLATFORM_VERSION}-aarch64.tar.gz to .*/out/ide-tests/installers/" "$gradle_log" || true)"
+            echo "starter_idea_extracts=$(grep -Ec "Extracting application into .*/out/ide-tests/cache/builds/IU-${STARTER_IDEA_BUILD}" "$gradle_log" || true)"
+            echo "installer_bytes=$(stat -c '%s' "$installer")"
+            echo "installer_sha256=$actual_installer_digest"
+            echo "plugin_sha256=$actual_plugin_digest"
+          } >> "$metrics"
+
+          cp "$gradle_log" "$pass_dir/gradle.log"
+
+          if [ "$test_status" -ne 0 ]; then
+            echo "Derived-content research arm failed with status $test_status" >&2
+            exit "$test_status"
+          fi
+          if [ "$diagnostics_status" -ne 0 ]; then
+            echo "Derived-content diagnostics failed" >&2
+            exit "$diagnostics_status"
+          fi
+
+      - name: Upload A/B evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: research-starter-installer-${{ matrix.arm }}-${{ matrix.replica }}-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            build/e2e-evidence/**
+            ${{ runner.temp }}/research-starter-installer-xvfb.log
