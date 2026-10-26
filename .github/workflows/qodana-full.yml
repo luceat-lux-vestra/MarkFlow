@@ -1,0 +1,238 @@
+# Trusted full Qodana analysis for protected-main source identities.
+# Owner: MarkFlow #457 / R2A #104.
+#
+# Stage A only: this workflow adds recurring/manual exact-SHA full-scan evidence.
+# Existing PR-time Build / Inspect code authority remains unchanged until later
+# release-preflight and fail-closed classifier stages are independently proven.
+
+name: Qodana Full Scan
+run-name: Qodana source ${{ inputs.candidate_sha || github.sha }}
+
+on:
+  schedule:
+    - cron: "41 4 * * 4"
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact protected-main ancestor commit to analyze"
+        required: true
+        type: string
+
+concurrency:
+  group: qodana-full-${{ inputs.candidate_sha || github.sha }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  scan-guard:
+    name: Qodana schedule guard
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      should_scan: ${{ steps.decide.outputs.should_scan }}
+    steps:
+      - name: Decide whether full Qodana is required
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then
+            echo "should_scan=true" >> "$GITHUB_OUTPUT"
+            echo "Explicit candidate scan: always run full Qodana."
+            exit 0
+          fi
+
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Scheduled source is not an immutable SHA."
+            exit 1
+          }
+
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qodana-full.yml/runs?event=schedule&status=success&branch=main&per_page=100")"
+          mapfile -t candidate_runs < <(
+            jq -r --arg sha "$GITHUB_SHA" --argjson current "$GITHUB_RUN_ID" '
+              .workflow_runs[]
+              | select(
+                  .id != $current
+                  and .head_sha == $sha
+                  and .head_branch == "main"
+                  and .path == ".github/workflows/qodana-full.yml"
+                )
+              | .id
+            ' <<<"$runs"
+          )
+
+          expected_sarif="qodana-$GITHUB_SHA-sarif"
+          expected_source="qodana-source-$GITHUB_SHA"
+          for run_id in "${candidate_runs[@]}"; do
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100")"
+            if jq -e --arg sarif "$expected_sarif" --arg source "$expected_source" '
+              [.artifacts[] | select(.expired == false) | .name] as $names
+              | ($names | index($sarif)) != null
+                and ($names | index($source)) != null
+            ' <<<"$artifacts" >/dev/null; then
+              echo "should_scan=false" >> "$GITHUB_OUTPUT"
+              echo "Protected main SHA $GITHUB_SHA already has reusable full Qodana evidence in run $run_id."
+              exit 0
+            fi
+          done
+
+          echo "should_scan=true" >> "$GITHUB_OUTPUT"
+          echo "No reusable full Qodana evidence exists for protected main SHA $GITHUB_SHA; running full scan."
+
+  full-scan:
+    needs: scan-guard
+    if: needs.scan-guard.outputs.should_scan == 'true'
+    name: Qodana full scan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+    steps:
+      - name: Checkout trusted main policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact protected-main candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Trusted Qodana workflow must execute from protected main."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::candidate_sha must be a full lowercase commit SHA."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git cat-file -e "$EXPECTED_SHA^{commit}"; then
+            echo "::error::candidate_sha is not available as a commit."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$EXPECTED_SHA" origin/main; then
+            echo "::error::candidate_sha is not reachable from protected main."
+            exit 1
+          fi
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          path: .qodana-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .qodana-source rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -s .qodana-source/qodana.yml
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Qodana - Full Code Inspection
+        uses: JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f # v2026.2.2
+        with:
+          args: --project-dir .qodana-source --repository-root .qodana-source --image jetbrains/qodana-jvm-community:2026.2 --clear-cache
+          use-caches: false
+          upload-result: true
+          artifact-name: qodana-report
+          use-annotations: false
+          post-pr-comment: false
+
+      - name: Enforce full Qodana SARIF
+        if: ${{ always() }}
+        env:
+          QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
+          QODANA_VERDICT_FILE: ${{ runner.temp }}/qodana-verdict.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-qodana-sarif.py             --sarif-file "$QODANA_RESULTS_DIR/qodana.sarif.json"             --verdict-file "$QODANA_VERDICT_FILE"
+
+      - name: Retain verified original Qodana SARIF
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: qodana-${{ env.EXPECTED_SHA }}-sarif
+          path: ${{ runner.temp }}/qodana/results/qodana.sarif.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record exact-source Qodana provenance
+        env:
+          QODANA_RESULTS_DIR: ${{ runner.temp }}/qodana/results
+          QODANA_VERDICT_FILE: ${{ runner.temp }}/qodana-verdict.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          source = os.environ["EXPECTED_SHA"]
+          checkout = subprocess.check_output(
+              ["git", "-C", ".qodana-source", "rev-parse", "HEAD"], text=True
+          ).strip()
+          if checkout != source:
+              raise SystemExit("Qodana checkout diverges from selected source SHA")
+
+          sarif = Path(os.environ["QODANA_RESULTS_DIR"]) / "qodana.sarif.json"
+          verdict_path = Path(os.environ["QODANA_VERDICT_FILE"])
+          if not sarif.is_file() or not verdict_path.is_file():
+              raise SystemExit("Verified Qodana evidence is incomplete")
+
+          verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+          if verdict.get("high_critical") != 0:
+              raise SystemExit("Qodana provenance cannot record a rejected High/Critical verdict")
+
+          config = Path(".qodana-source/qodana.yml")
+          payload = {
+              "schema": 1,
+              "candidate_sha": source,
+              "checkout_sha": checkout,
+              "event_name": os.environ["GITHUB_EVENT_NAME"],
+              "event_sha": os.environ["GITHUB_SHA"],
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "qodana_action": "JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f",
+              "qodana_image": "jetbrains/qodana-jvm-community:2026.2",
+              "profile": "qodana.recommended",
+              "severity_gate": ["High", "Critical"],
+              "high_critical": verdict["high_critical"],
+              "total_results": verdict["results"],
+              "sarif_sha256": hashlib.sha256(sarif.read_bytes()).hexdigest(),
+              "qodana_config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+          }
+          Path("qodana-source-manifest.json").write_text(
+              json.dumps(payload, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-source Qodana provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: qodana-source-${{ env.EXPECTED_SHA }}
+          path: qodana-source-manifest.json
+          if-no-files-found: error
+          retention-days: 90
