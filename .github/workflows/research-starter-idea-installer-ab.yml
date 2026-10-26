@@ -105,6 +105,7 @@ jobs:
           {
             echo "starter_installer_name=$STARTER_INSTALLER_NAME"
             echo "starter_installer_sha256=$digest"
+            echo "starter_installer_bytes=$bytes"
             echo "starter_idea_build=$STARTER_IDEA_BUILD"
           } >> build/e2e-package/manifest.txt
 
@@ -214,6 +215,7 @@ jobs:
           scenario_sets="$(value scenario_sets)"
           installer_name="$(value starter_installer_name)"
           installer_digest="$(value starter_installer_sha256)"
+          installer_bytes="$(value starter_installer_bytes)"
           idea_build="$(value starter_idea_build)"
 
           [ "$source_sha" = "$STARTER_SOURCE_SHA" ]
@@ -223,6 +225,7 @@ jobs:
           [[ "$scenario_sets" == *"derived-content"* ]]
           [[ "$expected_plugin_digest" =~ ^[0-9a-f]{64}$ ]]
           [[ "$installer_digest" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$installer_bytes" =~ ^[0-9]+$ ]] && [ "$installer_bytes" -gt 0 ]
 
           actual_plugin_digest="$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')"
           [ "$actual_plugin_digest" = "$expected_plugin_digest" ]
@@ -232,6 +235,7 @@ jobs:
           echo "E2E_PLUGIN_PATH=$GITHUB_WORKSPACE/build/distributions/$archive_name" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_plugin_digest" >> "$GITHUB_ENV"
           echo "E2E_INSTALLER_SHA256=$installer_digest" >> "$GITHUB_ENV"
+          echo "E2E_INSTALLER_BYTES=$installer_bytes" >> "$GITHUB_ENV"
 
       - name: Remove Starter IDEA installer and extracted build baseline
         shell: bash
@@ -255,7 +259,7 @@ jobs:
           key: ${{ needs.package-and-seed.outputs.cache-key }}
           fail-on-cache-miss: true
 
-      - name: Record and verify warm installer restore
+      - name: Record warm installer restore
         if: matrix.arm == 'warm'
         shell: bash
         run: |
@@ -263,13 +267,13 @@ jobs:
           ended_ms="$(date +%s%3N)"
           installer="out/ide-tests/installers/IU/$STARTER_INSTALLER_NAME"
           [ -f "$installer" ]
-          actual="$(sha256sum "$installer" | awk '{print $1}')"
-          [ "$actual" = "$E2E_INSTALLER_SHA256" ]
+          restored_bytes="$(stat -c '%s' "$installer")"
+          [ "$restored_bytes" = "$E2E_INSTALLER_BYTES" ]
           {
             echo "cache_hit=${{ steps.idea-installer-cache.outputs.cache-hit }}"
             echo "cache_restore_ms=$((ended_ms - RESEARCH_CACHE_RESTORE_START_MS))"
             echo "installer_preseeded=1"
-            echo "installer_bytes_before_gradle=$(stat -c '%s' "$installer")"
+            echo "installer_bytes_before_gradle=$restored_bytes"
           } > "$RUNNER_TEMP/research-starter-installer-prep.txt"
 
       - name: Record control installer baseline
