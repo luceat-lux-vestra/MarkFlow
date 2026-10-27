@@ -211,6 +211,140 @@ grep -Fq '      - name: Qodana - Code Inspection' "$build_workflow" ||
 grep -Fq 'needs.inspectCode.result' "$build_workflow" ||
   die "Stage A must preserve Inspect code as Merge Gate input"
 
+# R2A #104 Stage B: independent CodeQL AND Qodana evidence must gate Marketplace
+# publication, without giving the preflight jobs signing/release-write authority.
+# This remains AFTER public GitHub Release creation; Stage D is not authorized.
+qodana_release_gate=".github/scripts/release-qodana-gate.py"
+release_workflow=".github/workflows/release.yml"
+hardening_audit_workflow=".github/workflows/hardening-audit.yml"
+[ -f "$qodana_release_gate" ] || die "Stage B Qodana release verifier is missing"
+grep -Fq 'python3 .github/scripts/release-qodana-gate.py --self-test' "$hardening_audit_workflow" ||
+  die "Stage B Qodana negative controls must execute in Hardening audit"
+python3 -I - "$release_workflow" "$qodana_release_gate" <<'PY' ||
+  die "Stage B dual release-preflight contract failed"
+import re
+import sys
+from pathlib import Path
+
+release = Path(sys.argv[1]).read_text(encoding="utf-8")
+gate = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+def require(condition, reason):
+    if not condition:
+        raise AssertionError(reason)
+
+def validate(source):
+    require(source.count("\njobs:\n") == 1, "release jobs are ambiguous")
+    require("on:\n  release:\n    types: [ released ]\n" in source,
+            "release event timing must remain explicit")
+    require(re.search(r"(?m)^permissions:\n  contents: read\s*$", source),
+            "root release permissions must stay read-only")
+    section = source.split("\njobs:\n", 1)[1]
+    matches = list(re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):\s*$", section))
+    require([m.group(1) for m in matches] ==
+            ["codeql-preflight", "qodana-preflight", "release"],
+            "dual-preflight job names/order drifted")
+    jobs = {m.group(1): section[m.start():(matches[i + 1].start()
+                                if i + 1 < len(matches) else len(section))]
+            for i, m in enumerate(matches)}
+    for name, verifier in (
+        ("codeql-preflight", "release-codeql-gate.py"),
+        ("qodana-preflight", "release-qodana-gate.py"),
+    ):
+        job = jobs[name]
+        perms = re.search(r"(?m)^    permissions:\n((?:^      [^\n]+\n)+)", job)
+        require(perms is not None and perms.group(1) ==
+                "      contents: read\n      actions: write\n",
+                name + ": permission escalation")
+        require("    environment:" not in job and "secrets." not in job
+                and "    needs:" not in job, name + ": elevated authority")
+        require(job.count("          ref: main\n") == 1
+                and job.count("          path: .release-policy\n") == 1
+                and job.count("          ref: ${{ github.event.release.tag_name }}\n") == 1
+                and job.count("          persist-credentials: false\n") == 2,
+                name + ": trusted policy vs tagged source drift")
+        require(job.count(".release-policy/.github/scripts/" + verifier) == 1,
+                name + ": wrong policy verifier")
+        require("name: Detect existing published recovery identity" in job
+                and "steps.recovery.outputs.skip != 'true'" in job,
+                name + ": recovery bypass or inversion")
+        require("    runs-on: ubuntu-24.04-arm\n" in job
+                and "    timeout-minutes: 90\n" in job,
+                name + ": scanner execution bounds changed")
+    publish = jobs["release"]
+    require(re.findall(r"(?m)^    needs:.*$", publish) ==
+            ["    needs: [codeql-preflight, qodana-preflight]"],
+            "Marketplace publication no longer requires both scanners")
+    require("    environment: jetbrains-marketplace\n" in publish
+            and "      contents: write\n" in publish
+            and "      id-token: write\n" in publish,
+            "privileged publication environment drift")
+    require("run: ./gradlew publishPlugin -x signPlugin" in publish
+            and "name: Release provenance preflight for signed artifact" in publish,
+            "existing signed-artifact authority changed")
+    require("release-qodana-gate.py" not in publish
+            and "release-codeql-gate.py" not in publish,
+            "privileged job must not perform scanner verification")
+
+validate(release)
+for required in ("def verify_source(", "def verify_run(", "def verify_jobs(",
+                 "def verify_artifacts(", "def verify_bundle(",
+                 "def verify_evidence(", "def eligible_run(", "def find_runs(",
+                 "def intentional_schedule_skip(", "def select_run(",
+                 "def dispatch(", "def run_preflight(", "def self_test(",
+                 "check-qodana-sarif.py", "qodana_config_sha256",
+                 "sarif_sha256", "run_attempt", "high_critical"):
+    require(required in gate, "Qodana release evidence proof missing: " + required)
+for forbidden in ("gh release ", "publishPlugin", "PUBLISH_TOKEN", "PRIVATE_KEY"):
+    require(forbidden not in gate, "Qodana release verifier has publication authority")
+
+# Mutate each security boundary independently; the validation must refuse each.
+def reject(mutant, label):
+    try:
+        validate(mutant)
+    except AssertionError:
+        return
+    raise AssertionError("release policy guard accepted " + label)
+
+def global_change(old, new, label):
+    require(release.count(old) == 1, "negative fixture ambiguous: " + label)
+    reject(release.replace(old, new, 1), label)
+
+def qodana_change(old, new, label):
+    left, mark, right = release.partition("  qodana-preflight:\n")
+    require(bool(mark) and right.count(old) == 1,
+            "Qodana fixture ambiguous: " + label)
+    reject(left + mark + right.replace(old, new, 1), label)
+
+global_change("needs: [codeql-preflight, qodana-preflight]",
+              "needs: codeql-preflight", "missing Qodana gate")
+global_change("  qodana-preflight:\n", "  missing-qodana-preflight:\n",
+              "missing Qodana job")
+global_change("  codeql-preflight:\n", "  missing-codeql-preflight:\n",
+              "missing CodeQL job")
+global_change("    environment: jetbrains-marketplace\n",
+              "    environment: not-protected\n", "missing protected environment")
+global_change("    types: [ released ]\n", "    types: [ created ]\n",
+              "changed release event boundary")
+qodana_change("      contents: read\n      actions: write\n",
+              "      contents: write\n      actions: write\n",
+              "preflight write access")
+qodana_change("    name: Exact-source Qodana publication preflight\n",
+              "    name: Exact-source Qodana publication preflight\n"
+              "    environment: jetbrains-marketplace\n",
+              "preflight signing authority")
+qodana_change("          ref: main\n",
+              "          ref: ${{ github.event.release.tag_name }}\n",
+              "tagged untrusted verifier")
+qodana_change(".release-policy/.github/scripts/release-qodana-gate.py",
+              ".release-policy/.github/scripts/release-codeql-gate.py",
+              "wrong Qodana verifier")
+qodana_change("steps.recovery.outputs.skip != 'true'",
+              "steps.recovery.outputs.skip == 'true'",
+              "inverted published recovery")
+print("Stage B dual release Qodana/CodeQL gate negative controls passed")
+PY
+
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -oF '"gradle/**"' "$workflow" | wc -l)"
