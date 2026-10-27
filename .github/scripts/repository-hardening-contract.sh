@@ -163,6 +163,7 @@ if ( assert_codeql_schedule_noop_guard "$trigger_fixture_dir/codeql-guard-regres
   die "CodeQL schedule no-op guard accepted non-exact source identity"
 fi
 
+build_workflow=".github/workflows/build.yml"
 # R2A #104 Stage A: keep PR-time Qodana authority unchanged while adding a
 # trusted recurring/manual exact-protected-main-SHA full-scan evidence path.
 qodana_full_workflow=".github/workflows/qodana-full.yml"
@@ -1034,7 +1035,6 @@ if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*c
 fi
 
 
-build_workflow=".github/workflows/build.yml"
 # The $/ self-repository spelling is valid on GitHub but unsupported by
 # actionlint v1.7.12 (rhysd/actionlint#711). Its local reusable workflow checks
 # must remain active; zizmor may ignore only these exact two known invocations.
