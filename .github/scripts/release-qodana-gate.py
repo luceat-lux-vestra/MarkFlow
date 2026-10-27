@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fail-closed, non-publishing Qodana release evidence verifier (R2A #104 Stage B).
 
-This first slice verifies an explicitly selected completed full-scan run. Automatic
-reuse/join/dispatch and the release workflow dependency are separate checkpoints.
+This slice verifies completed original SARIF/source evidence and reuses, joins or
+dispatches trusted full scans. The release workflow dependency is a later checkpoint.
 The source under examination is the release-tag checkout; policy lives on main.
 """
 from __future__ import annotations
@@ -16,7 +16,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 _spec = importlib.util.spec_from_file_location(
     "markflow_qodana_sarif", Path(__file__).with_name("check-qodana-sarif.py"))
@@ -30,6 +32,10 @@ WORKFLOW = "qodana-full.yml"
 PREFIX = "Qodana source "
 GUARD = "Qodana schedule guard"
 SCAN = "Qodana full scan"
+WAIT_SECONDS = 80 * 60
+POLL_SECONDS = 15
+DISCOVERY_SECONDS = 150
+MAX_PAGES = 10
 ACTION = "JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f"
 IMAGE = "jetbrains/qodana-jvm-community:2026.2"
 REQUIRED_STEPS = (
@@ -117,20 +123,33 @@ def verify_jobs(payload: dict) -> None:
                 f"Qodana full scan missing successful {name}")
 
 
-def verify_artifacts(payload: dict, sha: str, run_id: int) -> dict[str, str]:
+def verify_artifacts(payload: dict, sha: str, run_id: int,
+                     allow_missing: bool = False) -> dict[str, str] | None:
     items = payload.get("artifacts")
     require(isinstance(items, list) and payload.get("total_count") == len(items),
             "incomplete Qodana artifact listing")
     required = {"sarif": f"qodana-{sha}-sarif", "source": f"qodana-source-{sha}"}
+    missing = False
     for name in required.values():
         matches = [a for a in items if isinstance(a, dict) and a.get("name") == name]
-        require(len(matches) == 1, f"missing or duplicate artifact: {name}")
+        require(len(matches) <= 1, f"duplicate artifact: {name}")
+        if not matches:
+            require(allow_missing, f"missing artifact: {name}")
+            missing = True
+            continue
         a = matches[0]
-        require(a.get("expired") is False and isinstance(a.get("size_in_bytes"), int)
-                and a["size_in_bytes"] > 0, f"expired or empty artifact: {name}")
+        require(isinstance(a.get("size_in_bytes"), int) and a["size_in_bytes"] > 0,
+                f"empty artifact: {name}")
         require(a.get("workflow_run", {}).get("id") == run_id,
                 f"artifact from another Qodana run: {name}")
-    return required
+        if a.get("expired") is True:
+            require(allow_missing, f"expired artifact: {name}")
+            missing = True
+            continue
+        require(a.get("expired") is False, f"artifact has unknown expiry: {name}")
+    # Only genuinely absent or expired original archives may cause re-generation.
+    # Existing corrupt, duplicate, zero-length or cross-run evidence always fails.
+    return None if missing else required
 
 
 def only_file(directory: Path, name: str) -> Path:
@@ -171,18 +190,21 @@ def verify_bundle(manifest: dict, sarif: Path, config: Path, run: dict,
 
 
 def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str,
-                    config: Path) -> dict:
+                    config: Path, allow_missing: bool = False) -> dict | None:
     verify_run(run, sha, workflow_id, repo)
     rid = run["id"]
     jobs = gh_json(f"repos/{repo}/actions/runs/{rid}/jobs?filter=latest&per_page=100")
     verify_jobs(jobs)
-    artifacts = gh_json(f"repos/{repo}/actions/runs/{rid}/artifacts?per_page=100")
-    names = verify_artifacts(artifacts, sha, rid)
-    # The event SHA is a trusted main ancestor independent of the chosen tag SHA.
+    # The event SHA is trusted main history; the historical candidate's actual
+    # checkout identity is independently attested by the verified manifest.
     subprocess.run(["git", "fetch", "--no-tags", "origin", "main"], check=True)
     require(subprocess.run(["git", "merge-base", "--is-ancestor",
                             run["head_sha"], "FETCH_HEAD"], check=False).returncode == 0,
             "Qodana event source is not protected-main history")
+    artifacts = gh_json(f"repos/{repo}/actions/runs/{rid}/artifacts?per_page=100")
+    names = verify_artifacts(artifacts, sha, rid, allow_missing=allow_missing)
+    if names is None:
+        return None
     with tempfile.TemporaryDirectory(prefix="release-qodana-proof-") as tmp:
         root = Path(tmp)
         for kind, name in names.items():
@@ -194,6 +216,169 @@ def verify_evidence(run: dict, sha: str, workflow_id: int, repo: str,
         manifest_file = only_file(root / "source", "qodana-source-manifest.json")
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
         return verify_bundle(manifest, sarif, config, run, sha, repo)
+
+
+def eligible_run(run: dict, sha: str, workflow_id: int) -> bool:
+    if not isinstance(run, dict):
+        return False
+    return (run.get("workflow_id") == workflow_id
+            and run.get("path") == ".github/workflows/qodana-full.yml"
+            and run.get("head_branch") == "main"
+            and run.get("event") in {"schedule", "workflow_dispatch"}
+            and run.get("display_title") == PREFIX + sha)
+
+
+def find_runs(repo: str, sha: str, workflow_id: int) -> list[dict]:
+    found: list[dict] = []
+    # Event SHA can be newer than historical candidate SHA. Never query by head_sha.
+    # Exhaust finite pages or fail closed rather than silently truncate history.
+    for event in ("workflow_dispatch", "schedule"):
+        for page in range(1, MAX_PAGES + 1):
+            payload = gh_json(f"repos/{repo}/actions/workflows/{WORKFLOW}/runs"
+                              f"?event={event}&per_page=100&page={page}")
+            records = payload.get("workflow_runs")
+            require(isinstance(records, list) and len(records) <= 100
+                    and all(isinstance(r, dict) for r in records),
+                    "malformed Qodana workflow-run discovery")
+            found.extend(r for r in records if eligible_run(r, sha, workflow_id))
+            if len(records) < 100:
+                break
+        else:
+            raise ValueError("Qodana discovery exceeded safe 1000-run bound")
+    # Defend against duplicate API discovery records, which otherwise might
+    # camouflage a failed scanner or cause ambiguous join/selection.
+    ids = [r.get("id") for r in found]
+    require(all(isinstance(rid, int) and rid > 0 for rid in ids)
+            and len(ids) == len(set(ids)), "duplicate or invalid Qodana run IDs")
+    return sorted(found, key=lambda r: (r.get("created_at", ""), r["id"]),
+                  reverse=True)
+
+
+def intentional_schedule_skip(repo: str, run: dict) -> bool:
+    if (run.get("event") != "schedule"
+            or run.get("status") != "completed"
+            or run.get("conclusion") != "success"):
+        return False
+    rid = run.get("id")
+    require(isinstance(rid, int) and rid > 0, "invalid schedule guard run ID")
+    jobs = gh_json(f"repos/{repo}/actions/runs/{rid}/jobs?filter=latest&per_page=100")
+    entries = jobs.get("jobs")
+    require(isinstance(entries, list) and jobs.get("total_count") == len(entries),
+            "incomplete schedule guard jobs")
+    guard = [j for j in entries if isinstance(j, dict) and j.get("name") == GUARD]
+    scanner = [j for j in entries if isinstance(j, dict) and j.get("name") == SCAN]
+    require(len(guard) == 1 and len(scanner) == 1 and len(entries) == 2,
+            "ambiguous schedule guard/scanner jobs")
+    return (guard[0].get("status") == "completed"
+            and guard[0].get("conclusion") == "success"
+            and scanner[0].get("status") == "completed"
+            and scanner[0].get("conclusion") == "skipped")
+
+
+def select_run(repo: str, sha: str, workflow_id: int,
+               ignored: set[int] | None = None) -> dict | None:
+    runs = find_runs(repo, sha, workflow_id)
+    for run in runs:
+        require(run.get("run_attempt") == 1,
+                f"Qodana rerun/attempt ambiguity in run {run.get('id')}")
+    runs = [run for run in runs if not intentional_schedule_skip(repo, run)]
+    # Failed scans cannot be masked by subsequent green scanner runs.
+    for run in runs:
+        status = run.get("status")
+        if status == "completed":
+            require(run.get("conclusion") == "success",
+                    f"Qodana run {run.get('id')} ended: {run.get('conclusion')}")
+        else:
+            require(status in {"queued", "in_progress", "waiting", "pending", "requested"},
+                    f"unknown Qodana run status: {status}")
+    active = [run for run in runs if run.get("status") != "completed"]
+    require(len(active) <= 1, "multiple active full Qodana scans for exact candidate")
+    if active:
+        return active[0]
+    return next((run for run in runs if run["id"] not in (ignored or set())), None)
+
+
+def dispatch(repo: str, sha: str) -> None:
+    # This tool never publishes. The destination Qodana workflow enforces main
+    # ancestry and exact-source checkout with its own limited read-only token.
+    subprocess.run(["gh", "api", "-X", "POST",
+                    f"repos/{repo}/actions/workflows/{WORKFLOW}/dispatches",
+                    "-f", "ref=main", "-f", f"inputs[candidate_sha]={sha}"],
+                   check=True)
+
+
+def run_preflight(sha: str, tag: str, repo: str,
+                  timeout: int = WAIT_SECONDS, poll: int = POLL_SECONDS) -> dict:
+    verify_source(sha, tag, repo)
+    workflow = gh_json(f"repos/{repo}/actions/workflows/{WORKFLOW}")
+    workflow_id = workflow.get("id")
+    require(isinstance(workflow_id, int) and workflow_id > 0
+            and workflow.get("state") == "active",
+            "trusted Qodana full-scan workflow unavailable")
+    candidate = select_run(repo, sha, workflow_id)
+    # Records excluded below are *only* scans with genuinely expired/missing
+    # original artifacts. Never exclude failed scans or invalid existing proof.
+    expired_ids: set[int] = set()
+    verified_ids: set[int] = set()
+    verified_proof: dict | None = None
+    dispatched = False
+    if candidate is None:
+        dispatch(repo, sha)
+        dispatched = True
+        print(f"Dispatched {WORKFLOW} for exact source {sha}", flush=True)
+    else:
+        print(f"Joining/reusing Qodana run {candidate['id']} for {sha}", flush=True)
+
+    deadline = time.monotonic() + timeout
+    registration_deadline = min(deadline, time.monotonic() + DISCOVERY_SECONDS)
+    while True:
+        current = select_run(repo, sha, workflow_id, expired_ids | verified_ids)
+        if current is not None:
+            status = current.get("status")
+            if status == "completed":
+                require(current.get("conclusion") == "success",
+                        f"Qodana run {current.get('id')} failed")
+                proof = verify_evidence(current, sha, workflow_id, repo,
+                                        Path("qodana.yml"),
+                                        allow_missing=not dispatched)
+                if proof is None:
+                    require(not dispatched,
+                            "dispatched Qodana run lacks required original evidence")
+                    expired_ids.add(current["id"])
+                    print(f"Original Qodana evidence expired/missing for {current['id']}",
+                          flush=True)
+                    continue
+                if not dispatched:
+                    # Inspect all same-candidate source attestations, not just
+                    # the most recent green scan. The last green cannot launder
+                    # another run's malformed or security-positive evidence.
+                    verified_ids.add(current["id"])
+                    if verified_proof is None:
+                        verified_proof = proof
+                    continue
+                verify_source(sha, tag, repo)
+                proof["execution"] = "dispatched"
+                return proof
+            require(status in {"queued", "in_progress", "waiting", "pending", "requested"},
+                    f"unknown Qodana run status: {status}")
+        elif not dispatched:
+            if verified_proof is not None:
+                verify_source(sha, tag, repo)
+                verified_proof["execution"] = "reused-or-joined"
+                return verified_proof
+            require(bool(expired_ids),
+                    "previously visible Qodana scan vanished before verification")
+            # At most one replacement when all original archives expired.
+            dispatch(repo, sha)
+            dispatched = True
+            registration_deadline = min(deadline, time.monotonic() + DISCOVERY_SECONDS)
+            print(f"Re-generating exact-source Qodana original evidence for {sha}",
+                  flush=True)
+        if time.monotonic() >= deadline:
+            raise ValueError("Qodana release preflight timed out")
+        if current is None and dispatched and time.monotonic() >= registration_deadline:
+            raise ValueError("dispatched Qodana run did not register within 150 seconds")
+        time.sleep(min(poll, max(0.1, deadline - time.monotonic())))
 
 
 def self_test() -> None:
@@ -281,7 +466,92 @@ def self_test() -> None:
         sarif.write_text("{", encoding="utf-8")
         rejects(lambda: verify_bundle(manifest, sarif, config, run, sha, repo),
                 "malformed SARIF")
-    print("release Qodana identity/evidence negative controls passed")
+    # Discovery/dispatch state-machine negative controls. No network, no
+    # scheduler delays, no GitHub Release publication and no actual dispatch.
+    mock_active = dict(run, status="in_progress", conclusion=None)
+    mock_failure = dict(run, conclusion="failure")
+    new_scan = dict(run, id=18)
+    proof = {"run_id": 17, "candidate_sha": sha}
+
+    with patch(__name__ + ".gh_json", return_value={"workflow_runs": [run]}) as api:
+        # Same record appearing under multiple event endpoints must fail closed.
+        rejects(lambda: find_runs(repo, sha, workflow_id), "duplicate discovery run")
+        assert api.call_count == 2
+
+    def discovery(endpoint: str) -> dict:
+        if "event=workflow_dispatch" in endpoint:
+            return {"workflow_runs": [run]}
+        return {"workflow_runs": []}
+
+    with patch(__name__ + ".gh_json", side_effect=discovery):
+        assert find_runs(repo, sha, workflow_id) == [run]
+    with patch(__name__ + ".gh_json", return_value={"workflow_runs": [{}] * 100}):
+        rejects(lambda: find_runs(repo, sha, workflow_id), "incomplete paged discovery")
+    skipped = dict(run, event="schedule", head_sha=sha)
+    skip_jobs = {"jobs": [
+        {"name": GUARD, "status": "completed", "conclusion": "success"},
+        {"name": SCAN, "status": "completed", "conclusion": "skipped"}], "total_count": 2}
+    with patch(__name__ + ".gh_json", return_value=skip_jobs):
+        assert intentional_schedule_skip(repo, skipped)
+    with patch(__name__ + ".find_runs", return_value=[skipped]), \
+         patch(__name__ + ".intentional_schedule_skip", return_value=True):
+        assert select_run(repo, sha, workflow_id) is None
+    for bad_list, description in [
+        ([run, mock_failure], "failed same-source run"),
+        ([dict(run, run_attempt=2)], "rerun ambiguity"),
+        ([mock_active, dict(mock_active, id=18)], "multiple active scans")]:
+        with patch(__name__ + ".find_runs", return_value=bad_list), \
+             patch(__name__ + ".intentional_schedule_skip", return_value=False):
+            rejects(lambda: select_run(repo, sha, workflow_id), description)
+    with patch(__name__ + ".find_runs", return_value=[run]), \
+         patch(__name__ + ".intentional_schedule_skip", return_value=False):
+        assert select_run(repo, sha, workflow_id, ignored={17}) is None
+
+    def exercise(sequence: list[dict | None], verification: list[dict | None],
+                 expected_dispatches: int, expected_execution: str,
+                 expected_error: str | None = None) -> None:
+        def selection(*_args, **_kwargs):
+            if not sequence:
+                raise AssertionError("unexpected extra scan selection")
+            return sequence.pop(0)
+        def evidence(*_args, **_kwargs):
+            if not verification:
+                raise AssertionError("unexpected evidence read")
+            return verification.pop(0)
+        with patch(__name__ + ".verify_source") as check_source, \
+             patch(__name__ + ".gh_json", return_value={"id": workflow_id, "state": "active"}), \
+             patch(__name__ + ".select_run", side_effect=selection), \
+             patch(__name__ + ".verify_evidence", side_effect=evidence), \
+             patch(__name__ + ".dispatch") as send, \
+             patch(__name__ + ".time.sleep"):
+            if expected_error:
+                try:
+                    run_preflight(sha, "v1.0.0", repo, timeout=5, poll=0.01)
+                except ValueError as exc:
+                    require(expected_error in str(exc),
+                            f"unexpected failure: {exc}")
+                else:
+                    raise AssertionError("unsafe state-machine path succeeded")
+            else:
+                result = run_preflight(sha, "v1.0.0", repo, timeout=5, poll=0.01)
+                require(result["execution"] == expected_execution,
+                        "wrong release Qodana execution mode")
+                require(check_source.call_count >= 2,
+                        "source identity not rechecked after scanner")
+            require(send.call_count == expected_dispatches,
+                    f"expected {expected_dispatches} dispatch(es), got {send.call_count}")
+
+    exercise([run, run, None], [dict(proof)], 0, "reused-or-joined")
+    exercise([mock_active, mock_active, run, None],
+             [dict(proof)], 0, "reused-or-joined")
+    exercise([None, None, new_scan], [dict(proof)], 1, "dispatched")
+    exercise([run, run, None, None, new_scan],
+             [None, dict(proof)], 1, "dispatched")
+    exercise([None, mock_failure], [], 1, "", "failed")
+    exercise([None, new_scan], [None], 1, "",
+             "lacks required original evidence")
+
+    print("release Qodana identity/evidence and dispatch-state negative controls passed")
 
 
 def main() -> int:
@@ -295,16 +565,21 @@ def main() -> int:
     if args.self_test:
         self_test()
         return 0
-    if not all([args.repository, args.candidate_sha, args.tag, args.run_id]):
-        parser.error("--repository, --candidate-sha, --tag, and --run-id required")
+    if not all([args.repository, args.candidate_sha, args.tag]):
+        parser.error("--repository, --candidate-sha, and --tag required")
     try:
-        verify_source(args.candidate_sha, args.tag, args.repository)
-        wf = gh_json(f"repos/{args.repository}/actions/workflows/{WORKFLOW}")
-        require(wf.get("state") == "active", "trusted Qodana workflow is unavailable")
-        run = gh_json(f"repos/{args.repository}/actions/runs/{args.run_id}")
-        proof = verify_evidence(run, args.candidate_sha, wf.get("id"),
-                                args.repository, Path("qodana.yml"))
-        verify_source(args.candidate_sha, args.tag, args.repository)
+        if args.run_id is not None:
+            verify_source(args.candidate_sha, args.tag, args.repository)
+            wf = gh_json(f"repos/{args.repository}/actions/workflows/{WORKFLOW}")
+            require(wf.get("state") == "active", "trusted Qodana workflow is unavailable")
+            run = gh_json(f"repos/{args.repository}/actions/runs/{args.run_id}")
+            proof = verify_evidence(run, args.candidate_sha, wf.get("id"),
+                                    args.repository, Path("qodana.yml"))
+            require(proof is not None, "original Qodana evidence is unavailable")
+            verify_source(args.candidate_sha, args.tag, args.repository)
+            proof["execution"] = "explicit-run"
+        else:
+            proof = run_preflight(args.candidate_sha, args.tag, args.repository)
         print(json.dumps(proof, sort_keys=True))
         return 0
     except (ValueError, OSError, subprocess.CalledProcessError,
