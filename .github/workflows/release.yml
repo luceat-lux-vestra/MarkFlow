@@ -80,9 +80,74 @@ jobs:
             --candidate-sha "$candidate_sha" \
             --tag "$RELEASE_TAG"
 
+  # Independent fail-closed Qodana evidence preflight runs in parallel with
+  # CodeQL. Both jobs use current protected-main policy and have only read/dispatch
+  # rights; neither has a publication environment or signing credentials.
+  # A GitHub Release has already been created by the time these jobs execute.
+  qodana-preflight:
+    name: Exact-source Qodana publication preflight
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Fetch exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Release source may be historical. NEVER run the release tag's possibly
+      # outdated verifier; use the currently protected main policy instead.
+      # Keep the tagged source as the working repository for identity checks.
+      - name: Fetch trusted current-main release verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: .release-policy
+          persist-credentials: false
+
+      # Preserve existing completed-publication recovery. The privileged job
+      # independently validates the full signed asset and pending/published
+      # identity before performing any recovery action.
+      - name: Detect existing published recovery identity
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          jq -e --arg tag "$RELEASE_TAG" '
+            .tag_name == $tag and .id != null and
+            .draft == false and .prerelease == false
+          ' <<<"$release_json" >/dev/null
+          published_count="$(jq '[.assets[]? | select(.name == "markflow-release-published.json")] | length' <<<"$release_json")"
+          [ "$published_count" -le 1 ] || { echo "::error::Ambiguous completed publication identity"; exit 1; }
+          if [ "$published_count" -eq 1 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Already-published recovery: privileged job independently verifies existing signed assets."
+          fi
+
+      - name: Reuse, join or dispatch exact-source Qodana security preflight
+        if: ${{ steps.recovery.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate_sha="$(git rev-parse HEAD)"
+          python3 .release-policy/.github/scripts/release-qodana-gate.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --candidate-sha "$candidate_sha" \
+            --tag "$RELEASE_TAG"
+
+
   release:
     name: Publish Plugin
-    needs: codeql-preflight
+    needs: [codeql-preflight, qodana-preflight]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     environment: jetbrains-marketplace
