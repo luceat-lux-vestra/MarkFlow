@@ -97,6 +97,14 @@ The original manifest's `supported`/`degraded`/`unsupported` classifications
 are retained rather than silently dropping missing cases. The raw-pixel MAE
 in `metrics.json` is an **unregistered diagnostic**, not a quality score.
 
+Platform comparability is a separate capability axis from MarkFlow product
+support. Exact controlled run `40601539702` on IDEA 2026.2.3 proved that the
+bundled Markdown Preview does not recognize Mermaid `agentflow-beta` while
+MarkFlow renders the same exact source. Accordingly `mermaid-agentflow`
+remains `classification=supported` but is explicitly
+`intellij_preview=no`; its reference disposition is
+`NOT_APPLICABLE_BY_MANIFEST`, not a visual rejection or JCEF failure.
+
 This slice does not yet prove cumulative heading/source-anchor geometry,
 clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
 complete 88-row/89-expanded-case real coverage. Some corpus sources reference relative local images. Full-corpus execution

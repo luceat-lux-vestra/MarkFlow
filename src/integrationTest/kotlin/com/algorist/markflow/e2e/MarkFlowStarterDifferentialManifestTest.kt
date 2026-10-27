@@ -155,8 +155,9 @@ class MarkFlowStarterDifferentialManifestTest {
             }
         }
         if (controlledFullCorpus) {
-            check(selected.size == 89 && controlledCaseIds?.size == 88 &&
-                inventory.count { !it.comparable } == 1) {
+            val nonComparableIds = inventory.filter { !it.comparable }.map { it.id }.toSet()
+            check(selected.size == 89 && controlledCaseIds?.size == 87 &&
+                nonComparableIds == setOf("md-raw-html-hostile", "mermaid-agentflow")) {
                 "89-case controlled scope or Manifest preview classification changed"
             }
         }

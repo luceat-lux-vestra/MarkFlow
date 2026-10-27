@@ -48,7 +48,7 @@ md-reference-definition	markdown	reference-definition	supported	covered	fixtures
 md-reference-image	markdown	reference-image	supported	covered	fixtures/differential-acceptance/markdown/inline-edge-cases.md	exact-source	source-anchored-geometry	yes	none	-	inline,image,reference
 md-autolink-email	markdown	autolink-email	supported	covered	fixtures/differential-acceptance/markdown/inline-edge-cases.md	exact-source	source-anchored-geometry	yes	navigate	-	inline,autolink,email
 md-gfm-autolink-literal	markdown	gfm-autolink-literal	unsupported	covered	fixtures/differential-acceptance/markdown/gfm-autolink-unsupported.md	exact-source	no-parity-expected	yes	none	-	extension,gfm,autolink,unsupported
-mermaid-agentflow	mermaid	agentflow	supported	covered	examples/mermaid-agentflow.md	exact-source	diagram-semantic-perceptual	yes	click	agentflow	mermaid,agentflow
+mermaid-agentflow	mermaid	agentflow	supported	covered	examples/mermaid-agentflow.md	exact-source	diagram-semantic-perceptual	no	click	agentflow	mermaid,agentflow
 mermaid-architecture	mermaid	architecture	supported	covered	examples/mermaid-architecture.md	exact-source	diagram-semantic-perceptual	yes	click	architecture	mermaid,architecture
 mermaid-block	mermaid	block	supported	covered	examples/mermaid-block.md	exact-source	diagram-semantic-perceptual	yes	click	block	mermaid,block
 mermaid-c4	mermaid	c4	supported	covered	examples/mermaid-c4.md	exact-source	diagram-semantic-perceptual	yes	click	c4	mermaid,c4
