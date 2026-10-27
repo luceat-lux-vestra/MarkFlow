@@ -231,8 +231,22 @@ expect_fail "$prerelease_publication" release_preflight "release workflow must p
 
 missing_codeql_dependency="$TMP/missing-codeql-dependency"
 copy_root "$missing_codeql_dependency"
-sed -i 's/needs: codeql-preflight/needs: missing-codeql-preflight/' "$missing_codeql_dependency/.github/workflows/release.yml"
-expect_fail "$missing_codeql_dependency" release_preflight "Marketplace publication must depend on exact-source CodeQL preflight"
+sed -i 's/needs: \[codeql-preflight, qodana-preflight\]/needs: [missing-codeql-preflight, qodana-preflight]/' "$missing_codeql_dependency/.github/workflows/release.yml"
+grep -Fq 'needs: [missing-codeql-preflight, qodana-preflight]' "$missing_codeql_dependency/.github/workflows/release.yml" ||
+  { echo "missing-CodeQL negative fixture did not mutate the dual gate" >&2; exit 1; }
+expect_fail "$missing_codeql_dependency" release_preflight "Marketplace publication must depend on BOTH exact-source CodeQL and Qodana preflights"
+
+missing_qodana_dependency="$TMP/missing-qodana-dependency"
+copy_root "$missing_qodana_dependency"
+sed -i 's/needs: \[codeql-preflight, qodana-preflight\]/needs: [codeql-preflight, missing-qodana-preflight]/' "$missing_qodana_dependency/.github/workflows/release.yml"
+grep -Fq 'needs: [codeql-preflight, missing-qodana-preflight]' "$missing_qodana_dependency/.github/workflows/release.yml" ||
+  { echo "missing-Qodana negative fixture did not mutate the dual gate" >&2; exit 1; }
+expect_fail "$missing_qodana_dependency" release_preflight "Marketplace publication must depend on BOTH exact-source CodeQL and Qodana preflights"
+
+missing_qodana_job="$TMP/missing-qodana-job"
+copy_root "$missing_qodana_job"
+sed -i 's/^  qodana-preflight:$/  missing-qodana-preflight:/' "$missing_qodana_job/.github/workflows/release.yml"
+expect_fail "$missing_qodana_job" release_preflight "exact-source Qodana preflight job is missing"
 
 publisher_dispatch_right="$TMP/publisher-dispatch-right"
 copy_root "$publisher_dispatch_right"
@@ -241,18 +255,33 @@ expect_fail "$publisher_dispatch_right" release_preflight "Marketplace publicati
 
 scanner_publication_right="$TMP/scanner-publication-right"
 copy_root "$scanner_publication_right"
-sed -i '/^  codeql-preflight:$/,/^  release:$/s/^      contents: read$/      contents: write$/' "$scanner_publication_right/.github/workflows/release.yml"
+sed -i '/^  codeql-preflight:$/,/^  qodana-preflight:$/s/^      contents: read$/      contents: write$/' "$scanner_publication_right/.github/workflows/release.yml"
 expect_fail "$scanner_publication_right" release_preflight "CodeQL preflight must not hold publication authority"
+
+qodana_scanner_publication_right="$TMP/qodana-scanner-publication-right"
+copy_root "$qodana_scanner_publication_right"
+sed -i '/^  qodana-preflight:$/,/^  release:$/s/^      contents: read$/      contents: write$/' "$qodana_scanner_publication_right/.github/workflows/release.yml"
+expect_fail "$qodana_scanner_publication_right" release_preflight "Qodana preflight must not hold publication authority"
 
 historical_tag_verifier="$TMP/historical-tag-verifier"
 copy_root "$historical_tag_verifier"
 sed -i 's#python3 .release-policy/.github/scripts/release-codeql-gate.py#python3 .github/scripts/release-codeql-gate.py#' "$historical_tag_verifier/.github/workflows/release.yml"
 expect_fail "$historical_tag_verifier" release_preflight "CodeQL preflight dispatch, source binding, or recovery guard missing"
 
+historical_qodana_verifier="$TMP/historical-qodana-verifier"
+copy_root "$historical_qodana_verifier"
+sed -i 's#python3 .release-policy/.github/scripts/release-qodana-gate.py#python3 .github/scripts/release-qodana-gate.py#' "$historical_qodana_verifier/.github/workflows/release.yml"
+expect_fail "$historical_qodana_verifier" release_preflight "Qodana preflight dispatch, source binding, or recovery guard missing"
+
 mismatched_codeql_artifacts="$TMP/mismatched-codeql-artifacts"
 copy_root "$mismatched_codeql_artifacts"
 sed -i 's/name: release-codeql-/name: wrong-release-codeql-/' "$mismatched_codeql_artifacts/.github/workflows/codeql.yml"
 expect_fail "$mismatched_codeql_artifacts" release_preflight "CodeQL raw SARIF/source artifact names disagree with release gate"
+
+mismatched_qodana_artifacts="$TMP/mismatched-qodana-artifacts"
+copy_root "$mismatched_qodana_artifacts"
+sed -i 's/name: qodana-${{ env.EXPECTED_SHA }}-sarif/name: wrong-qodana-${{ env.EXPECTED_SHA }}-sarif/' "$mismatched_qodana_artifacts/.github/workflows/qodana-full.yml"
+expect_fail "$mismatched_qodana_artifacts" release_preflight "Qodana raw SARIF/source artifact names disagree with release gate"
 
 missing_release_environment="$TMP/missing-release-environment"
 copy_root "$missing_release_environment"
