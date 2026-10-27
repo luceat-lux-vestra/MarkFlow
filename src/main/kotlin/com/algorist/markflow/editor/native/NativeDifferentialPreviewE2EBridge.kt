@@ -5,13 +5,26 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import java.awt.AWTEvent
 import java.awt.Component
 import java.awt.Container
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.ContainerEvent
+import java.lang.ref.WeakReference
+import com.intellij.openapi.project.ProjectManager
 import javax.swing.JLabel
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefApp
+import com.intellij.openapi.util.registry.Registry
+import org.cef.CefClient
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
+import org.cef.handler.CefLoadHandlerAdapter
+import org.cef.handler.CefLoadHandler
+import org.cef.browser.CefFrame
+import org.cef.network.CefRequest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.Rectangle
 import java.nio.file.Files
@@ -39,6 +52,331 @@ internal object NativeDifferentialPreviewE2EBridge {
     private var lastDetachedReferenceBeforeClose = AtomicBoolean(true)
     private var nextDetachedReferenceCloseMarker: Path? = null
     private var lastDetachedReferenceCloseMarker: Path? = null
+    // Exactly one diagnostic listener per live bundled Preview; removed before
+    // that panel's normal disposal so successive iterations do not accumulate it.
+    private data class ReferenceLoadTrace(
+        val browser: JBCefBrowser,
+        val handler: CefLoadHandlerAdapter,
+        val path: Path,
+    )
+    private var referenceLoadTrace: ReferenceLoadTrace? = null
+
+    // #353 2-open, direct_split-only ownership probe. Capture the platform's
+    // synchronous ContainerEvent at the point MarkdownPreviewFileEditor has
+    // stored its current panel but before a subsequent attach can overwrite it.
+    // No panel creation/disposal, no waiting, no synthetic CEF events.
+    private data class ObservedPanelOwner(
+        val wrapperId: Int,
+        val componentId: Int,
+        val panelId: Int,
+        val browserId: Int,
+        val cefId: Int,
+        val firstObservedEvent: String,
+        val cefNativeIdAtCapture: String,
+        val browser: WeakReference<JBCefBrowser>,
+        val lifeSpanHandler: CefLifeSpanHandlerAdapter,
+    )
+    private class PanelOwnerTrace(
+        val path: Path,
+        val filename: String,
+        val listener: AWTEventListener,
+        val observed: MutableList<ObservedPanelOwner> = mutableListOf(),
+        var iteration: Int = 0,
+        var eagerNativeCreate: Boolean = false,
+        var eagerCreateAttempts: Int = 0,
+        var eagerCreateReturns: Int = 0,
+        var eagerCreateFailure: String = "NONE",
+    )
+    private var panelOwnerTrace: PanelOwnerTrace? = null
+
+    /** Serialize EDT and native CEF callback evidence into one event journal. */
+    private fun appendPanelOwnerTrace(trace: PanelOwnerTrace, line: String) {
+        synchronized(trace) {
+            runCatching {
+                Files.writeString(trace.path, line + "\n",
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND)
+            }.onFailure { error ->
+                runCatching {
+                    Files.writeString(
+                        trace.path.resolveSibling(trace.path.fileName.toString() + ".write-error"),
+                        "error_class=" + error.javaClass.name + "\n",
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND
+                    )
+                }
+            }
+        }
+    }
+
+    /** Locate the real platform preview on EDT; never instantiate an editor. */
+    private fun resolvePreviewWrapperOwner(
+        wrapper: Container, child: Component, filename: String
+    ): JBCefBrowser? {
+        for (project in ProjectManager.getInstance().openProjects) {
+            val manager = FileEditorManager.getInstance(project)
+            for (file in manager.openFiles) {
+                if (file.name != filename) continue
+                for (selected in manager.getEditors(file).filterIsInstance<TextEditorWithPreview>()) {
+                    if (selected.javaClass.name != MARKDOWN_SPLIT) continue
+                    val field = TextEditorWithPreview::class.java.getDeclaredField("myPreview")
+                    check(field.trySetAccessible()) { "Preview field reflection changed" }
+                    val preview = field.get(selected) as? FileEditor ?: continue
+                    if (preview.javaClass.name != MARKDOWN_PREVIEW ||
+                        preview.component !== wrapper) continue
+                    val panel = previewPanel(preview) as? JBCefBrowser ?: continue
+                    if (panel.component === child) return panel
+                }
+            }
+        }
+        return null
+    }
+
+    private fun cefNativeId(browser: JBCefBrowser): String = runCatching {
+        val cef = browser.getCefBrowser()
+        cef.javaClass.getMethod("getIdentifier").invoke(cef).toString()
+    }.getOrElse { "UNAVAILABLE_" + it.javaClass.simpleName }
+
+    /**
+     * Register before opening the Markdown file. Restrict capture to actual
+     * JBLoadingPanel additions/removals. Resolve owners on both events:
+     * IDEA may not expose the FileEditor during COMPONENT_ADDED, but its
+     * soon-to-be-replaced panel is still inspectable at COMPONENT_REMOVED.
+     * Record unsuccessful lookups instead of treating them as no attachment.
+     */
+    fun startReferencePanelOwnerTrace(filename: String, outputPath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(panelOwnerTrace == null) { "Panel owner trace already armed" }
+        require(filename == "JCEF-LIFECYCLE-STRESS.md")
+        val path = Path.of(outputPath).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent))
+        Files.deleteIfExists(path)
+        lateinit var listener: AWTEventListener
+        listener = AWTEventListener { event ->
+            val containerEvent = event as? ContainerEvent ?: return@AWTEventListener
+            val child = containerEvent.child ?: return@AWTEventListener
+            if (child.javaClass.name != "com.intellij.ui.components.JBLoadingPanel") {
+                return@AWTEventListener
+            }
+            val parent = containerEvent.container
+            val eventName = when (containerEvent.id) {
+                ContainerEvent.COMPONENT_ADDED -> "component-added"
+                ContainerEvent.COMPONENT_REMOVED -> "component-removed"
+                else -> return@AWTEventListener
+            }
+            val trace = panelOwnerTrace ?: return@AWTEventListener
+            // Observation errors are recorded, not propagated to platform EDT.
+            val line = runCatching {
+                val owner = resolvePreviewWrapperOwner(parent, child, trace.filename)
+                // AWT emits COMPONENT_ADDED before the bundled preview's
+                // FileEditor is necessarily discoverable through FileEditorManager.
+                // At COMPONENT_REMOVED the old 'panel' field may still reference
+                // that exact first panel, just before it is overwritten/disposed.
+                // Capture either event, exactly once per actual panel identity.
+                val newOwnerCaptured = if (owner != null &&
+                    trace.observed.none {
+                        it.wrapperId == System.identityHashCode(parent) &&
+                            it.componentId == System.identityHashCode(child) &&
+                            it.panelId == System.identityHashCode(owner)
+                    }
+                ) {
+                    val cef = owner.getCefBrowser()
+                    val weakOwner = WeakReference(owner)
+                    val panelId = System.identityHashCode(owner)
+                    val cefId = System.identityHashCode(cef)
+                    // Registration happens at the first resolvable container event,
+                    // before native creation for the problematic first Preview.
+                    // Do not block the CEF callback or mutate browser lifecycle.
+                    val handler = object : CefLifeSpanHandlerAdapter() {
+                        private fun recordNative(phase: String, actual: CefBrowser) {
+                            appendPanelOwnerTrace(trace,
+                                "timestamp_ms=" + System.currentTimeMillis() +
+                                    "\tevent=" + phase +
+                                    "\tpanel_identity=" + panelId +
+                                    "\tcef_identity=" + cefId +
+                                    "\tcallback_cef_identity=" + System.identityHashCode(actual) +
+                                    "\tcallback_cef_same=" + (actual === cef) +
+                                    "\tcef_native_id=" + actual.identifier +
+                                    "\tjbcef_disposed_at_callback=" +
+                                        (weakOwner.get()?.isDisposed?.toString() ?: "UNKNOWN") +
+                                    "\tcef_closing=" + actual.isClosing +
+                                    "\tcef_closed=" + actual.isClosed
+                            )
+                        }
+                        override fun onAfterCreated(browser: CefBrowser) {
+                            recordNative("cef-on-after-created", browser)
+                        }
+                        override fun onBeforeClose(browser: CefBrowser) {
+                            recordNative("cef-on-before-close", browser)
+                        }
+                    }
+                    owner.getJBCefClient().addLifeSpanHandler(handler, cef)
+                    trace.observed.add(ObservedPanelOwner(
+                        System.identityHashCode(parent),
+                        System.identityHashCode(child),
+                        panelId,
+                        panelId,
+                        cefId,
+                        eventName,
+                        cefNativeId(owner),
+                        weakOwner,
+                        handler,
+                    ))
+                    appendPanelOwnerTrace(trace,
+                        "timestamp_ms=" + System.currentTimeMillis() +
+                            "\tevent=owner-handler-registered" +
+                            "\titeration=" + trace.iteration +
+                            "\tpanel_identity=" + panelId +
+                            "\tcef_identity=" + cefId +
+                            "\tcef_native_id=" + cefNativeId(owner) +
+                            "\tjbcef_disposed_at_registration=" + owner.isDisposed +
+                            "\tcef_closing=" + cef.isClosing +
+                            "\tcef_closed=" + cef.isClosed)
+                    // IDEA 2026.2.3 detaches using remove(panel.component)
+                    // immediately before Disposer.dispose(panel). This AWT
+                    // callback is synchronous with the component mutation.
+                    // Request immediate creation here without waiting on EDT.
+                    // This does not promise native creation completion.
+                    if (trace.iteration == 2 && trace.eagerNativeCreate &&
+                        trace.eagerCreateAttempts == 0
+                    ) {
+                        trace.eagerCreateAttempts++
+                        appendPanelOwnerTrace(trace,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                "\tevent=eager-create-request" +
+                                "\titeration=" + trace.iteration +
+                                "\tfirst_observed_event=" + eventName +
+                                "\tpanel_identity=" + panelId +
+                                "\tcef_identity=" + cefId +
+                                "\tjbcef_disposed_before_request=" + owner.isDisposed +
+                                "\tcef_closing_before_request=" + cef.isClosing +
+                                "\tcef_native_id_before_request=" + cefNativeId(owner))
+                        val attempt = runCatching {
+                            check(!owner.isDisposed && !cef.isClosing) {
+                                "First observed bundled Preview is already disposing"
+                            }
+                            owner.createImmediately()
+                        }
+                        if (attempt.isSuccess) trace.eagerCreateReturns++
+                        else trace.eagerCreateFailure =
+                            attempt.exceptionOrNull()?.javaClass?.simpleName ?: "UNKNOWN"
+                        appendPanelOwnerTrace(trace,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                "\tevent=eager-create-return" +
+                                "\titeration=" + trace.iteration +
+                                "\tpanel_identity=" + panelId +
+                                "\tresult=" + (if (attempt.isSuccess) "RETURNED" else "FAILED") +
+                                "\tjbcef_disposed_after_request=" + owner.isDisposed +
+                                "\tcef_native_id_after_request=" + cefNativeId(owner) +
+                                "\terror=" + trace.eagerCreateFailure)
+                    }
+                    true
+                } else {
+                    false
+                }
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=" + eventName +
+                    "\twrapper_identity=" + System.identityHashCode(parent) +
+                    "\tcomponent_identity=" + System.identityHashCode(child) +
+                    "\towner_resolved=" + (owner != null) +
+                    "\tnew_owner_captured=" + newOwnerCaptured +
+                    "\tpanel_identity=" + (owner?.let { System.identityHashCode(it) } ?: "NONE") +
+                    "\tcef_identity=" + (owner?.let { System.identityHashCode(it.getCefBrowser()) } ?: "NONE") +
+                    "\tcef_native_id=" + (owner?.let(::cefNativeId) ?: "NONE") +
+                    "\tjbcef_disposed_at_container_event=" +
+                        (owner?.isDisposed?.toString() ?: "UNKNOWN")
+            }.getOrElse { error ->
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=" + eventName +
+                    "\twrapper_identity=" + System.identityHashCode(parent) +
+                    "\tcomponent_identity=" + System.identityHashCode(child) +
+                    "\tobservation_error=" + error.javaClass.name
+            }
+            appendPanelOwnerTrace(trace, line)
+        }
+        panelOwnerTrace = PanelOwnerTrace(path, filename, listener)
+        Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.CONTAINER_EVENT_MASK)
+    }
+
+    /**
+     * #353 opt-in counterfactual: keep iteration 001 as the unmodified control.
+     * Only iteration 002 may request eager creation, and only for the first
+     * real platform panel resolved on an AWT container event.
+     */
+    fun configureReferencePanelOwnerTraceIteration(iteration: Int, eagerNativeCreate: Boolean) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val trace = checkNotNull(panelOwnerTrace) { "Panel owner trace was not armed" }
+        require(iteration in 1..2)
+        require(!eagerNativeCreate || iteration == 2)
+        trace.iteration = iteration
+        trace.eagerNativeCreate = eagerNativeCreate
+        appendPanelOwnerTrace(trace,
+            "timestamp_ms=" + System.currentTimeMillis() +
+                "\tevent=iteration-start" +
+                "\titeration=" + iteration +
+                "\teager_native_create=" + eagerNativeCreate)
+    }
+
+    fun snapshotReferencePanelOwnerTrace(phase: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val trace = checkNotNull(panelOwnerTrace) { "Panel owner trace was not armed" }
+        require(phase == "after-detach" || phase == "after-file-close" || phase == "final")
+        val lines = trace.observed.mapIndexed { index, owner ->
+            val browser = owner.browser.get()
+            listOf(
+                "index=" + index,
+                "wrapper_identity=" + owner.wrapperId,
+                "component_identity=" + owner.componentId,
+                "panel_identity=" + owner.panelId,
+                "cef_identity=" + owner.cefId,
+                "first_observed_event=" + owner.firstObservedEvent,
+                "cef_native_id_at_capture=" + owner.cefNativeIdAtCapture,
+                "browser_reachable=" + (browser != null),
+                "jbcef_disposed=" + (browser?.isDisposed?.toString() ?: "UNKNOWN"),
+                "cef_closing=" + (browser?.getCefBrowser()?.isClosing?.toString() ?: "UNKNOWN"),
+                "cef_closed=" + (browser?.getCefBrowser()?.isClosed?.toString() ?: "UNKNOWN"),
+                "cef_native_id=" + (browser?.let(::cefNativeId) ?: "UNKNOWN"),
+            ).joinToString(",")
+        }
+        val evidence = "schema=markflow-preview-owner-trace/v1\n" +
+            "phase=$phase\nobserved_panels=" + trace.observed.size + "\n" +
+            "eager_create_attempts=" + trace.eagerCreateAttempts + "\n" +
+            "eager_create_returns=" + trace.eagerCreateReturns + "\n" +
+            "eager_create_failure=" + trace.eagerCreateFailure + "\n" +
+            lines.joinToString("\n", postfix = "\n")
+        appendPanelOwnerTrace(trace,
+            "timestamp_ms=" + System.currentTimeMillis() +
+                "\tevent=snapshot\tphase=" + phase +
+                "\tobserved_panels=" + trace.observed.size +
+                "\teager_create_attempts=" + trace.eagerCreateAttempts +
+                "\teager_create_returns=" + trace.eagerCreateReturns + "\n" +
+                lines.joinToString("\n"))
+        return evidence
+    }
+
+    fun finishReferencePanelOwnerTrace(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val evidence = snapshotReferencePanelOwnerTrace("final")
+        val trace = checkNotNull(panelOwnerTrace)
+        Toolkit.getDefaultToolkit().removeAWTEventListener(trace.listener)
+        // The two-open diagnostic must not retain additional CEF listeners.
+        trace.observed.forEach { entry ->
+            entry.browser.get()?.let { browser ->
+                runCatching {
+                    browser.getJBCefClient().removeLifeSpanHandler(
+                        entry.lifeSpanHandler, browser.getCefBrowser())
+                }.onFailure { error ->
+                    appendPanelOwnerTrace(trace,
+                        "timestamp_ms=" + System.currentTimeMillis() +
+                            "\tevent=handler-removal-failed" +
+                            "\tpanel_identity=" + entry.panelId +
+                            "\terror_class=" + error.javaClass.name)
+                }
+            }
+        }
+        panelOwnerTrace = null
+        return evidence
+    }
 
     /**
      * Actual IDEA EditorImpl font-size probe for #350 Starter acceptance.
@@ -645,6 +983,214 @@ internal object NativeDifferentialPreviewE2EBridge {
             panelComponent.height > 100
     }
 
+    // JBCefApp.isRemoteEnabled() is package-private in pinned IDEA 2026.2.3.
+    // Fail closed if JetBrains changes this diagnostic-only reflection boundary.
+    private fun jcefRemoteEnabled(): Boolean {
+        val app = JBCefApp.getInstance()
+        val method = app.javaClass.getDeclaredMethod("isRemoteEnabled")
+        check(method.trySetAccessible()) { "Cannot inspect actual JCEF execution mode" }
+        return method.invoke(app) as? Boolean
+            ?: error("Unexpected JBCefApp.isRemoteEnabled() result")
+    }
+
+    /**
+     * #353: use the public CEF readiness source called by the pinned platform
+     * JBCefBrowserBase instead of its @ApiStatus.Internal convenience method.
+     * This is a current-state probe, so registering a lifespan listener late
+     * cannot manufacture native creation evidence. The native identifier is
+     * assigned onAfterCreated in Remote JCEF; require it to be valid too.
+     *
+     * Nonstandard delegate-backed implementations are not presumed ready:
+     * unknown readiness must fail closed, never be inferred from Swing paint.
+     */
+    private fun referenceNativeBrowserCreated(browser: JBCefBrowser): Boolean {
+        val cef = browser.getCefBrowser()
+        return CefClient.isNativeBrowserCreated(cef) && cef.identifier > 0
+    }
+
+    /**
+     * Read-only identity of the active *bundled* Markdown Preview browser.
+     * The diagnostic can distinguish repeated native browser creation from
+     * accidental session reuse without changing the production lifecycle.
+     */
+    fun referenceBrowserIdentity(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Markdown Preview has no active browser panel"
+        }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        return listOf(
+            "schema=markflow-bundled-preview-active-browser/v1",
+            "preview_identity=" + System.identityHashCode(preview),
+            "panel_identity=" + System.identityHashCode(panel),
+            "browser_identity=" + System.identityHashCode(browser),
+            "cef_identity=" + System.identityHashCode(browser.getCefBrowser()),
+            "native_browser_created=" + referenceNativeBrowserCreated(browser),
+            "cef_browser_closing=" + browser.getCefBrowser().isClosing,
+            "cef_browser_closed=" + browser.getCefBrowser().isClosed,
+            "jbcef_disposed=" + browser.isDisposed,
+            "jcef_remote_enabled=" + jcefRemoteEnabled(),
+            "registry_markdown_osr=" + Registry.`is`("ide.browser.jcef.markdownView.osr.enabled"),
+            "browser_offscreen_rendering=" + browser.isOffScreenRendering,
+            "panel_showing=" + referencePanelShowing(editor),
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
+    /**
+     * #353 diagnostic only: correlate CEF page-load events with getText callback
+     * timestamps. Called after bundled panel attachment and before waiting for
+     * native creation; never changes page loading or the production Preview.
+     * Missing load-start events are possible if registration was late; the
+     * registration timestamp is always present to make that visible.
+     */
+    fun installReferenceLoadTrace(editor: Editor, traceFile: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        check(referenceLoadTrace == null) { "Previous bundled Preview load trace was not removed" }
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Preview was not attached for load trace"
+        }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        check(!browser.isDisposed) { "Cannot trace an already disposed bundled browser" }
+        val cefBrowser = browser.getCefBrowser()
+        val path = Path.of(traceFile).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent) { "Load trace has no parent" })
+        check(!Files.exists(path)) { "Bundled load trace already exists: $path" }
+        val traceLock = Any()
+        fun trace(event: String, detail: String = "") {
+            val atMs = System.currentTimeMillis()
+            synchronized(traceLock) {
+                runCatching {
+                    Files.writeString(
+                        path,
+                        "timestamp_ms=" + atMs +
+                            "\tevent=" + event +
+                            "\tthread=" + Thread.currentThread().name +
+                            "\tbrowser_identity=" + System.identityHashCode(browser) +
+                            "\tcef_identity=" + System.identityHashCode(cefBrowser) +
+                            "\t" + detail + "\n",
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND,
+                    )
+                }
+            }
+        }
+        val handler = object : CefLoadHandlerAdapter() {
+            override fun onLoadingStateChange(
+                callbackBrowser: CefBrowser, isLoading: Boolean,
+                canGoBack: Boolean, canGoForward: Boolean,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("loading-state-change", "is_loading=" + isLoading)
+                }
+            }
+
+            override fun onLoadStart(
+                callbackBrowser: CefBrowser, frame: CefFrame,
+                transitionType: CefRequest.TransitionType,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    // No synchronous frame RPC from CEF's callback thread.
+                    trace("load-start", "frame_identity=" + System.identityHashCode(frame) +
+                        "\ttransition=" + transitionType)
+                }
+            }
+
+            override fun onLoadEnd(
+                callbackBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("load-end", "frame_identity=" + System.identityHashCode(frame) +
+                        "\thttp_status=" + httpStatusCode)
+                }
+            }
+
+            override fun onLoadError(
+                callbackBrowser: CefBrowser, frame: CefFrame,
+                errorCode: CefLoadHandler.ErrorCode, errorText: String, failedUrl: String,
+            ) {
+                if (callbackBrowser === cefBrowser) {
+                    trace("load-error", "frame_identity=" + System.identityHashCode(frame) +
+                        "\terror_code=" + errorCode)
+                }
+            }
+        }
+        trace("load-handler-registration-start",
+            "native_created=" + referenceNativeBrowserCreated(browser))
+        browser.getJBCefClient().addLoadHandler(handler, cefBrowser)
+        referenceLoadTrace = ReferenceLoadTrace(browser, handler, path)
+        trace("load-handler-registered")
+    }
+
+    /**
+     * An asynchronous, exact-bundled-CEF DOM-text probe. The host must not
+     * block the IDE/EDT waiting for CefStringVisitor: on-screen text is only
+     * accepted after the native browser is created and CEF returns the actual
+     * rendered page text. Each request owns a unique host-visible evidence file.
+     */
+    fun requestReferenceRenderedTextProbe(editor: Editor, probePath: String) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) { "No bundled Preview for DOM text probe" }
+        val browser = panel as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
+        check(!browser.isDisposed && referenceNativeBrowserCreated(browser)) {
+            "Cannot request rendered text before native browser creation"
+        }
+        val cef = browser.getCefBrowser()
+        check(!cef.isClosing && !cef.isClosed) { "Cannot request rendered text from closing browser" }
+        val path = Path.of(probePath).toAbsolutePath().normalize()
+        Files.createDirectories(requireNotNull(path.parent) { "Probe path has no parent" })
+        check(!Files.exists(path)) { "Rendered text probe result already exists: $path" }
+        val timingPath = path.resolveSibling("rendered-text-ide-timing.tsv")
+        fun traceCef(phase: String, detail: String = "") {
+            // Trace files are diagnostic-only. A tracing failure must not change
+            // the actual JCEF callback contract or prevent the text response.
+            runCatching {
+                Files.writeString(
+                    timingPath,
+                    "timestamp_ms=" + System.currentTimeMillis() +
+                        "\tphase=" + phase +
+                        "\tprobe=" + path.fileName +
+                        "\tthread=" + Thread.currentThread().name +
+                        "\t" + detail + "\n",
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND,
+                )
+            }
+        }
+        traceCef("cef-get-text-invoke")
+        cef.getText { text ->
+            // CefStringVisitor is asynchronous: do not dispatch back to the EDT.
+            // Record callback ARRIVAL before writing the result file.
+            traceCef("cef-text-callback", "chars=" + (text?.length ?: 0))
+            val write = runCatching {
+                Files.writeString(
+                    path, text ?: "",
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                )
+            }
+            if (write.isFailure) {
+                traceCef("cef-text-file-write-failed",
+                    "error=" + write.exceptionOrNull()?.javaClass?.name)
+                runCatching {
+                    Files.writeString(
+                        path.resolveSibling(path.fileName.toString() + ".write-error"),
+                        "callback_write_failure=" +
+                            write.exceptionOrNull()?.javaClass?.name + "\n"
+                    )
+                }
+            } else {
+                traceCef("cef-text-file-written", "chars=" + (text?.length ?: 0))
+            }
+        }
+        traceCef("cef-get-text-return")
+    }
+
     fun previewLifecycleEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
@@ -652,15 +1198,66 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panelComponent = panel?.javaClass?.methods
             ?.firstOrNull { it.name == "getComponent" && it.parameterCount == 0 }
             ?.invoke(panel) as? Component
+        // IDEA 2026.2.3 MarkdownPreviewFileEditor adds each newly created
+        // panel component to its BorderLayout wrapper and stores only the last
+        // panel reference. A replaced CENTER component is not automatically
+        // removed from the container or disposed. Inspect ownership directly
+        // without modifying JetBrains' lifecycle.
+        val wrapper = preview.component
+        val directChildren = wrapper.components.toList()
+        val unownedChildren = directChildren.filter { it !== panelComponent }
+        val children = directChildren.joinToString(";") { child ->
+            listOf(
+                "identity=" + System.identityHashCode(child),
+                "class=" + child.javaClass.name,
+                "is_active_panel=" + (child === panelComponent),
+                "is_showing=" + child.isShowing,
+                "is_displayable=" + child.isDisplayable,
+            ).joinToString(",")
+        }
         return listOf(
             "schema=markflow-bundled-preview-lifecycle/v1",
             "layout=" + (selected.getLayout()?.name ?: "NULL"),
             "preview_disposed=" + previewDisposed(preview),
             "preview_component_showing=" + preview.component.isShowing,
             "panel_attached=" + (panel != null),
+            "panel_identity=" +
+                (panel?.let { System.identityHashCode(it).toString() } ?: "NONE"),
             "panel_class=" + (panel?.javaClass?.name ?: "NONE"),
             "panel_component_showing=" + (panelComponent?.isShowing ?: false),
+            "wrapper_identity=" + System.identityHashCode(wrapper),
+            "wrapper_direct_child_count=" + directChildren.size,
+            "wrapper_active_child_count=" + directChildren.count { it === panelComponent && panelComponent != null },
+            "wrapper_unowned_child_count=" + unownedChildren.size,
+            "wrapper_direct_children=" + children,
         ).joinToString(separator = "\n", postfix = "\n")
+    }
+
+    /**
+     * #353 direct-split counterfactual: the prior iteration's SHOW_EDITOR layout
+     * can be restored when this same Markdown file is reopened. Establish split
+     * without an EditorOnly roundtrip, and disclose the actual transition.
+     * This test-only path never creates/disposes a browser explicitly.
+     */
+    fun prepareReferenceSplitAtOpen(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (selected, preview) = editors(editor)
+        check(!previewDisposed(preview)) { "New bundled Markdown Preview is already disposed" }
+        val before = checkNotNull(selected.getLayout()) { "Bundled Preview layout is null at open" }
+        check(before == TextEditorWithPreview.Layout.SHOW_EDITOR ||
+            before == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
+            "Direct split began from unexpected layout: $before"
+        }
+        if (before == TextEditorWithPreview.Layout.SHOW_EDITOR) {
+            selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW)
+        }
+        val after = checkNotNull(selected.getLayout()) { "Bundled Preview layout is null after split" }
+        check(after == TextEditorWithPreview.Layout.SHOW_EDITOR_AND_PREVIEW) {
+            "Direct split layout not established: before=$before after=$after"
+        }
+        return "layout_before=" + before.name + "\n" +
+            "layout_after=" + after.name + "\n" +
+            "split_transition_applied=" + (before != after) + "\n"
     }
 
     // SHOW_PREVIEW hides the Swing editor; callers must cache the remote Editor
@@ -712,6 +1309,14 @@ internal object NativeDifferentialPreviewE2EBridge {
             "idea_process_command=" + command,
             "idea_proc_self_exe=" + executable,
             "idea_java_home=" + System.getProperty("java.home", "UNKNOWN"),
+            "idea_jcef_remote_property=" + System.getProperty("jcef.remote.enabled", "UNSET"),
+            "idea_jcef_remote_enabled=" + jcefRemoteEnabled(),
+            "idea_cef_server_trace_flag=" +
+                System.getenv("CEF_SERVER_TRACE_RemoteLoadHandler").orEmpty(),
+            "idea_cef_server_log_level=" +
+                System.getenv("CEF_SERVER_LOG_LEVEL").orEmpty(),
+            "idea_cef_server_log_path=" +
+                System.getenv("CEF_SERVER_LOG_PATH").orEmpty(),
             "idea_apparmor_current=" + read("/proc/self/attr/current"),
             "kernel_apparmor_restrict_unprivileged_userns=" +
                 read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
@@ -755,6 +1360,26 @@ internal object NativeDifferentialPreviewE2EBridge {
         val closeMarker = nextDetachedReferenceCloseMarker
         nextDetachedReferenceCloseMarker = null
         lastDetachedReferenceCloseMarker = closeMarker
+        // Stop diagnostic load listeners before the genuine JCEF disposal path.
+        // Do not retain one per iteration on a shared client.
+        referenceLoadTrace?.let { loadTrace ->
+            val stillAttached = previewPanel(preview)
+            check(stillAttached === loadTrace.browser) {
+                "Load trace browser identity differs from the bundled Preview being closed"
+            }
+            loadTrace.browser.getJBCefClient().removeLoadHandler(
+                loadTrace.handler, loadTrace.browser.getCefBrowser()
+            )
+            Files.writeString(
+                loadTrace.path,
+                "timestamp_ms=" + System.currentTimeMillis() +
+                    "\tevent=load-handler-removed\tthread=" +
+                    Thread.currentThread().name + "\n",
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND,
+            )
+            referenceLoadTrace = null
+        }
         // Capture the actual JBCefBrowser before MarkdownPreviewFileEditor hides
         // and nulls its panel. Do not clear an existing tracker when the panel is
         // already detached: normal acceptance may restore native earlier and the
@@ -766,12 +1391,44 @@ internal object NativeDifferentialPreviewE2EBridge {
             val beforeClose = AtomicBoolean(false)
             val panelIdentity = System.identityHashCode(panel)
             val browserIdentity = System.identityHashCode(browser)
+            // Diagnostic-only event journal. In particular, a missing marker alone
+            // cannot distinguish a missing native callback from a swallowed
+            // filesystem write failure. Persist native callbacks on their own
+            // thread; the host timeout must not make a Driver/EDT round-trip.
+            val eventLog = closeMarker?.resolveSibling("native-close.events")
+            fun recordNativeCloseEvent(phase: String, closingBrowser: CefBrowser? = null) {
+                eventLog?.let { log ->
+                    runCatching {
+                        Files.writeString(
+                            log,
+                            "timestamp_ms=" + System.currentTimeMillis() +
+                                " phase=" + phase +
+                                " thread=" + Thread.currentThread().name +
+                                " panel_identity=" + panelIdentity +
+                                " browser_identity=" + browserIdentity +
+                                " cef_identity=" + System.identityHashCode(cefBrowser) +
+                                " callback_cef_identity=" +
+                                    (closingBrowser?.let { System.identityHashCode(it) } ?: "NONE") +
+                                " cef_same=" + (closingBrowser === cefBrowser) + "\n",
+                            java.nio.file.StandardOpenOption.CREATE,
+                            java.nio.file.StandardOpenOption.APPEND,
+                        )
+                    }
+                }
+            }
+            recordNativeCloseEvent("handler-registration-start")
             browser.getJBCefClient().addLifeSpanHandler(
                 object : CefLifeSpanHandlerAdapter() {
+                    override fun doClose(closingBrowser: CefBrowser): Boolean {
+                        recordNativeCloseEvent("cef-do-close", closingBrowser)
+                        return false // Preserve CefLifeSpanHandlerAdapter default behavior.
+                    }
+
                     override fun onBeforeClose(closingBrowser: CefBrowser) {
+                        recordNativeCloseEvent("cef-on-before-close", closingBrowser)
                         if (closingBrowser === cefBrowser && beforeClose.compareAndSet(false, true)) {
                             closeMarker?.let { marker ->
-                                runCatching {
+                                val write = runCatching {
                                     Files.writeString(
                                         marker,
                                         "schema=markflow-bundled-preview-native-close-marker/v1\n" +
@@ -780,12 +1437,18 @@ internal object NativeDifferentialPreviewE2EBridge {
                                             "cef_before_close_observed=true\n"
                                     )
                                 }
+                                recordNativeCloseEvent(
+                                    if (write.isSuccess) "native-marker-written" else
+                                        "native-marker-write-failed-" +
+                                            write.exceptionOrNull()?.javaClass?.simpleName
+                                )
                             }
                         }
                     }
                 },
                 cefBrowser,
             )
+            recordNativeCloseEvent("handler-registered")
             lastDetachedReferenceBrowser = browser
             lastDetachedReferencePanelIdentity = panelIdentity
             lastDetachedReferenceBeforeClose = beforeClose

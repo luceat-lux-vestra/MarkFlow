@@ -75,7 +75,7 @@ class MarkFlowStarterDifferentialManifestTest {
         // contracts. Never infer release approval from a successful bounded
         // source-identical capture of only a bounded subset of 89 expanded cases.
         val contract = System.getProperty("markflow.differential.contract") ?: "capture"
-        require(contract == "capture" || contract == "acceptance") {
+        require(contract in setOf("capture", "acceptance", "controlled-capture")) {
             "Unknown differential contract: $contract"
         }
         // Expand one sequential real-IDE session rather than adding CI shards.
@@ -87,7 +87,7 @@ class MarkFlowStarterDifferentialManifestTest {
             ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
             ",mermaid-flowchart-large--block-02"
         val explicitCaseIds = System.getProperty("markflow.differential.caseIds")
-        val selectedIds = if (contract == "acceptance") {
+        val selectedIds = if (contract == "acceptance" || contract == "controlled-capture") {
             check(explicitCaseIds == null) {
                 "Full #353 acceptance cannot be reduced with differentialCaseIds"
             }
@@ -135,6 +135,31 @@ class MarkFlowStarterDifferentialManifestTest {
             check(reviewCases.isEmpty() && selected.size == inventory.size)
             check(selected.map { it.id }.toSet() == inventory.map { it.id }.toSet())
         }
+        // Isolated controlled-reference migration proof. Never substitute this for
+        // reviewed full acceptance or silently turn on a second reference renderer.
+        val controlledFullCorpus = contract == "controlled-capture"
+        val pilotIds = System.getProperty("markflow.differential.controlledCaseId")
+            ?.takeIf { it.isNotBlank() }?.split(',')?.map { it.trim() }?.toSet()
+        check(!controlledFullCorpus || pilotIds == null) {
+            "Full controlled corpus must not be reduced to a pilot subset"
+        }
+        val controlledCaseIds = if (controlledFullCorpus) {
+            inventory.filter { it.comparable }.map { it.id }.toSet()
+        } else pilotIds
+        if (pilotIds != null) {
+            check(contract == "capture" && pilotIds.isNotEmpty() &&
+                pilotIds.all {
+                    it in setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
+                } && selectedIds.containsAll(pilotIds)) {
+                "Controlled manifest DOM pilot requires selected H1-H6 / minimal Mermaid cases"
+            }
+        }
+        if (controlledFullCorpus) {
+            check(selected.size == 89 && controlledCaseIds?.size == 88 &&
+                inventory.count { !it.comparable } == 1) {
+                "89-case controlled scope or Manifest preview classification changed"
+            }
+        }
         val sourceHead = ProcessBuilder("git", "rev-parse", "HEAD")
             .directory(root.toFile()).start().let {
                 val actual = it.inputStream.bufferedReader().readText().trim()
@@ -155,13 +180,21 @@ class MarkFlowStarterDifferentialManifestTest {
                 val candidate = Path.of(raw)
                 if (candidate.isAbsolute) candidate.normalize() else root.resolve(candidate).normalize()
             }
+        // Keep the first three TSV columns stable for the existing watchdog.
+        // The fourth is the selected-corpus ordinal, so a live PR log can show
+        // exactly which case is running even if the IDE fails before artifacts upload.
+        var currentCaseNumber = 0
+        val totalCaseCount = selected.size
         fun heartbeat(phase: String, caseId: String = "-") {
             val target = progressFile ?: return
             target.parent?.let { parent -> Files.createDirectories(parent) }
             Files.writeString(
                 target,
-                System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId + "\n",
+                System.currentTimeMillis().toString() + "\t" + phase + "\t" + caseId +
+                    "\tcase=" + currentCaseNumber + "/" + totalCaseCount + "\n",
                 StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND,
             )
         }
         heartbeat("test-start")
@@ -215,10 +248,10 @@ class MarkFlowStarterDifferentialManifestTest {
             }
             heartbeat("starter-launch")
             Starter.newContext(
-                testName = if (contract == "acceptance") {
-                    "markflow-353-full-manifest-real-pairs"
-                } else {
-                    "markflow-353-bounded-manifest-real-pairs"
+                testName = when (contract) {
+                    "acceptance" -> "markflow-353-full-manifest-real-pairs"
+                    "controlled-capture" -> "markflow-353-full-controlled-manifest"
+                    else -> "markflow-353-bounded-manifest-real-pairs"
                 },
                 testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
             ).apply {
@@ -226,6 +259,12 @@ class MarkFlowStarterDifferentialManifestTest {
             }.applyVMOptionsPatch {
                 addSystemProperty("ide.browser.jcef.enabled", true)
                 addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                // Keep IntelliJ's default global JSQuery pool (0).
+                // The bundled MarkdownJCEFHtmlPanel configures 20 slots on its OWN
+                // JBCefClient before native browser creation; no global override needed.
+            // #353 acceptance: distinguish absent FileEditor listener registration
+            // from no stale JCEF panels found. Logging is off in normal IDE use.
+            addSystemProperty("markflow.353.lifecycle.trace", "true")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
@@ -239,12 +278,12 @@ class MarkFlowStarterDifferentialManifestTest {
                 // for the bounded PR capture, but the complete 89-case acceptance corpus cannot
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
                 // leaving cleanup headroom under the workflow's 85-minute outer timeout.
-                runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes,
+                runTimeout = if (contract != "capture") 75.minutes else 12.minutes,
             ) {
-                if (contract == "acceptance") {
-                    // Starter.calculateVmOptions() injects 10_000 before per-run patches.
-                    // Override it only after Starter defaults are assembled so the
-                    // authoritative full corpus matches the production registry default.
+                if (contract == "acceptance" || controlledFullCorpus) {
+                    // Starter injects a 10_000 global JSQuery pool after ordinary VM patches.
+                    // Re-apply the production registry default only after Starter defaults
+                    // are assembled. Bundled Markdown owns its own bounded client pool.
                     addVMOptionsPatch {
                         addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
                     }
@@ -256,6 +295,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 val markFlow = MarkFlowIdeDriver(driver)
                 val visual = driver.utility(DifferentialManifestVisualRemote::class)
                 val preview = driver.utility(DifferentialManifestPreviewRemote::class)
+                val ownedReference = if (controlledCaseIds != null) {
+                    driver.utility(DifferentialOwnedReferenceRemote::class)
+                } else null
                 val rendererLifecycle = driver.utility(DifferentialRendererLifecycleRemote::class)
                 val rendererBaseline = driver.withContext(OnDispatcher.EDT) {
                     rendererLifecycle.liveRuntimeCount()
@@ -275,7 +317,8 @@ class MarkFlowStarterDifferentialManifestTest {
                     preview.rasterScrollNegativeControls()
                 }) { "Stage E18 scroll-reachability negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
-                for (entry in selected) {
+                for ((index, entry) in selected.withIndex()) {
+                    currentCaseNumber = index + 1
                     val dest = output.resolve(entry.id)
                     states[entry.id] = "CAPTURE_FAILED"
                     heartbeat("case-start", entry.id)
@@ -285,6 +328,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseStamp: Long? = null
                     var caseFailure: Throwable? = null
                     var caseReferenceCloseMarker: Path? = null
+                    var controlledPlatformPreviewBaseline: String? = null
                     var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
@@ -310,6 +354,24 @@ class MarkFlowStarterDifferentialManifestTest {
                         markFlow.resetToSingleCaret(editor, source.length)
                         driver.withContext(OnDispatcher.EDT) {
                             preview.showNativeAtSourceLine(remoteEditor, entry.line)
+                        }
+                        if (controlledFullCorpus) {
+                            val before = driver.withContext(OnDispatcher.EDT) {
+                                check(preview.nativeShowing(remoteEditor)) {
+                                    "Controlled corpus must start with visible native Editor"
+                                }
+                                preview.previewLifecycleEvidence(remoteEditor)
+                            }
+                            Files.writeString(
+                                dest.resolve("platform-preview-before-controlled.txt"), before
+                            )
+                            check(before.lineSequence().any {
+                                it == "panel_component_showing=false"
+                            }) {
+                                "Platform Preview visibly active before controlled capture: " +
+                                    entry.id
+                            }
+                            controlledPlatformPreviewBaseline = before
                         }
                         waitFor(
                             message = "Native derived capture readiness: " + entry.id,
@@ -510,6 +572,387 @@ class MarkFlowStarterDifferentialManifestTest {
                             }) { "E18 scroll probe altered the authoritative source/caret" }
                         }
                         heartbeat("case-native-evidence-complete", entry.id)
+                        // First migrate the source-bound lifecycle inside the existing manifest
+                        // runner without replacing its old DOM geometry or acceptance ledger.
+                        // This reference is closed natively before any platform Preview opens.
+                        if (controlledCaseIds?.contains(entry.id) == true) {
+                            val owned = requireNotNull(ownedReference)
+                            val ownedDest = dest.resolve("controlled-reference")
+                            Files.createDirectories(ownedDest)
+                            val journal = ownedDest.resolve("native-events.tsv")
+                            val closeMarker = ownedDest.resolve("native-close.marker")
+                            val expectedSha = sha(entry.bytes)
+                            heartbeat("case-owned-reference-open-start", entry.id)
+                            val opened = driver.withContext(OnDispatcher.EDT) {
+                                owned.openCorpusReference(
+                                    remoteEditor, entry.id, expectedSha, entry.line,
+                                    journal.toString(), closeMarker.toString()
+                                )
+                            }
+                            Files.writeString(ownedDest.resolve("open.txt"), opened)
+                            check(opened.contains("scope=CONTROLLED_CORPUS_EXISTING_NATIVE_EDITOR\n") &&
+                                opened.contains("source_sha256=$expectedSha\n"))
+                            waitFor(
+                                message = "Manifest-owned JCEF native creation: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    owned.snapshot().contains("native_created=true\n")
+                                } },
+                                checker = { it }
+                            )
+                            val created = driver.withContext(OnDispatcher.EDT) { owned.snapshot() }
+                            Files.writeString(ownedDest.resolve("native-created.txt"), created)
+                            check(created.lineSequence().single {
+                                it.startsWith("cef_native_id=")
+                            }.substringAfter('=').toInt() > 0)
+                            heartbeat("case-owned-reference-native-created", entry.id)
+                            if (!controlledFullCorpus || entry.id in
+                                setOf("md-atx-headings-h1-h6", "mermaid-flowchart-minimal")
+                            ) {
+                            var probe: Path? = null
+                            var requests = 0
+                            waitFor(
+                                message = "Manifest-owned H1-H6 DOM text: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = {
+                                    val current = probe
+                                    when {
+                                        current == null -> {
+                                            requests++
+                                            val next = ownedDest.resolve("dom-$requests.txt")
+                                            driver.withContext(OnDispatcher.EDT) {
+                                                owned.requestRenderedText(next.toString())
+                                            }
+                                            probe = next
+                                            false
+                                        }
+                                        !Files.exists(current) -> false
+                                        else -> {
+                                            val text = Files.readString(current)
+                                            if ((entry.id == "md-atx-headings-h1-h6" &&
+                                                    text.contains("Heading level 1") &&
+                                                    text.contains("Paragraph after H6.")) ||
+                                                (entry.id == "mermaid-flowchart-minimal" &&
+                                                    text.contains("Rendered correctly?"))) {
+                                                Files.writeString(ownedDest.resolve("dom-proof.txt"),
+                                                    "first_heading=true\nlast_paragraph=true\n")
+                                                true
+                                            } else {
+                                                probe = null
+                                                false
+                                            }
+                                        }
+                                    }
+                                },
+                                checker = { it }
+                            )
+                            }
+                            val bounds = driver.withContext(OnDispatcher.EDT) {
+                                owned.bounds().split(',').map(String::toInt)
+                            }
+                            check(bounds.size == 4)
+                            // Preserve the genuine first-paint failure. A blank real CEF
+                            // screenshot must never be promoted to CAPTURED_UNVERIFIED.
+                            // Probe that *same* CEF only on failure to distinguish a
+                            // rendered but off-screen DOM from a stalled renderer.
+                            heartbeat("case-owned-reference-first-paint-start", entry.id)
+                            val firstPaintFailure = runCatching {
+                                waitFor(
+                                    message = "Manifest-owned bundled JCEF first paint: " + entry.id,
+                                    timeout = 20.seconds,
+                                    getter = {
+                                        robot.waitForIdle()
+                                        val image = robot.createScreenCapture(
+                                            Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                                        )
+                                        check(ImageIO.write(image, "png",
+                                            ownedDest.resolve("intellij-preview.png").toFile()))
+                                        diagnostics.referenceHasVisibleContent(image)
+                                    },
+                                    checker = { it }
+                                )
+                            }.exceptionOrNull()
+                            if (firstPaintFailure == null) {
+                                heartbeat("case-owned-reference-first-paint-complete", entry.id)
+                            } else {
+                                heartbeat("case-owned-reference-first-paint-failed", entry.id)
+                            }
+                            if (firstPaintFailure != null) {
+                                val diagnostic = ownedDest.resolve("first-paint-failure.txt")
+                                Files.writeString(
+                                    diagnostic,
+                                    "schema=markflow-controlled-jcef-first-paint-failure/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "source_sha256=$expectedSha\n" +
+                                        "first_paint=FAIL\n" +
+                                        "reason=" + firstPaintFailure.javaClass.name + ": " +
+                                            firstPaintFailure.message + "\n" +
+                                        "phase=before-dom-diagnostic\n" +
+                                        driver.withContext(OnDispatcher.EDT) { owned.snapshot() }
+                                )
+                                // A failed diagnostic is *not* a recovery path: retain
+                                // both its error and the original first-paint exception.
+                                val domFailure = runCatching {
+                                    val probePath = ownedDest.resolve(
+                                        "first-paint-dom-diagnostic.txt"
+                                    )
+                                    driver.withContext(OnDispatcher.EDT) {
+                                        owned.requestDomProbe(
+                                            "generic-dom-geometry",
+                                            controlledReferenceGenericDomProbe(
+                                                entry.domain == "mermaid"
+                                            ),
+                                            probePath.toString()
+                                        )
+                                    }
+                                    waitFor(
+                                        message = "Failed-paint exact CEF DOM callback: " + entry.id,
+                                        timeout = 8.seconds,
+                                        getter = {
+                                            Files.exists(probePath) &&
+                                                Files.exists(
+                                                    Path.of(probePath.toString() + ".identity")
+                                                )
+                                        },
+                                        checker = { it }
+                                    )
+                                }.exceptionOrNull()
+                                // The captured OS pixels and the exact CEF's
+                                // JavaScript may disagree. Record that distinction
+                                // instead of relabeling a blank screen as a PASS.
+                                val bitmap = ImageIO.read(
+                                    ownedDest.resolve("intellij-preview.png").toFile()
+                                )
+                                check(bitmap != null &&
+                                    bitmap.width == bounds[2] && bitmap.height == bounds[3]) {
+                                    "Failed first-paint screenshot is unreadable"
+                                }
+                                val baseRgb = bitmap.getRGB(0, 0)
+                                var uniformPixels = true
+                                pixelScan@ for (y in 0 until bitmap.height) {
+                                    for (x in 0 until bitmap.width) {
+                                        if (bitmap.getRGB(x, y) != baseRgb) {
+                                            uniformPixels = false
+                                            break@pixelScan
+                                        }
+                                    }
+                                }
+                                val probePath = ownedDest.resolve(
+                                    "first-paint-dom-diagnostic.txt"
+                                )
+                                val probeIdentityPath = Path.of(
+                                    probePath.toString() + ".identity"
+                                )
+                                val probeContents = if (domFailure == null &&
+                                    Files.isRegularFile(probePath) &&
+                                    Files.isRegularFile(probeIdentityPath)) {
+                                    Files.readString(probePath)
+                                } else ""
+                                val identityContents = if (Files.isRegularFile(probeIdentityPath)) {
+                                    Files.readString(probeIdentityPath)
+                                } else ""
+                                val sourceBoundDom = domFailure == null &&
+                                    probeContents.startsWith(
+                                        "schema=markflow-controlled-reference-generic-dom/v1\n"
+                                    ) && identityContents.lineSequence().any {
+                                        it == "case_id=" + entry.id
+                                    } && identityContents.lineSequence().any {
+                                        it == "source_sha256=$expectedSha"
+                                    } && identityContents.lineSequence().any {
+                                        it == "browser_identity=" + created.lineSequence().single {
+                                            line -> line.startsWith("browser_identity=")
+                                        }.substringAfter('=')
+                                    } && identityContents.contains("status=OK\n")
+                                val priorPaintedSameSource = selected.filter {
+                                    it.id != entry.id &&
+                                        states[it.id] == "CAPTURED_UNVERIFIED" &&
+                                        it.bytes.contentEquals(entry.bytes)
+                                }.map { it.id }
+                                val visualClassification = when {
+                                    uniformPixels && sourceBoundDom ->
+                                        "UNIFORM_OS_SURFACE_WITH_LIVE_SOURCE_BOUND_DOM"
+                                    uniformPixels -> "UNIFORM_OS_SURFACE_DOM_NOT_PROVEN"
+                                    sourceBoundDom -> "NONUNIFORM_OS_SURFACE_WITH_LIVE_DOM"
+                                    else -> "FIRST_PAINT_FAILED_UNCLASSIFIED"
+                                }
+                                Files.writeString(
+                                    diagnostic,
+                                    "phase=after-dom-diagnostic\n" +
+                                        "diagnostic_result=" +
+                                            (if (domFailure == null) "CALLBACK_RECORDED" else
+                                                "FAILED_" + domFailure.javaClass.name) + "\n" +
+                                        "visual_classification=$visualClassification\n" +
+                                        "os_screenshot_width=" + bitmap.width + "\n" +
+                                        "os_screenshot_height=" + bitmap.height + "\n" +
+                                        "os_screenshot_uniform_rgb=" +
+                                            (if (uniformPixels) Integer.toHexString(baseRgb)
+                                             else "NONUNIFORM") + "\n" +
+                                        "source_bound_dom_proven=$sourceBoundDom\n" +
+                                        "previously_painted_same_source_cases=" +
+                                            (if (priorPaintedSameSource.isEmpty()) "NONE" else
+                                                priorPaintedSameSource.joinToString(",")) + "\n" +
+                                        driver.withContext(OnDispatcher.EDT) { owned.snapshot() },
+                                    StandardCharsets.UTF_8,
+                                    java.nio.file.StandardOpenOption.APPEND
+                                )
+                                throw firstPaintFailure
+                            }
+
+                            // Additional browser-bound geometry evidence; the historical
+                            // Driver-selected platform Preview path remains diagnostic only.
+                            fun captureOwnedProbe(name: String, script: String, schema: String) {
+                                var current: Path? = null
+                                var attempts = 0
+                                waitFor(
+                                    message = "Source-bound controlled JCEF $name: " + entry.id,
+                                    timeout = 30.seconds,
+                                    getter = {
+                                        val path = current
+                                        when {
+                                            path == null -> {
+                                                attempts++
+                                                val next = ownedDest.resolve("$name-$attempts.txt")
+                                                driver.withContext(OnDispatcher.EDT) {
+                                                    owned.requestDomProbe(name, script, next.toString())
+                                                }
+                                                current = next
+                                                false
+                                            }
+                                            !Files.exists(Path.of(path.toString() + ".identity")) -> false
+                                            else -> {
+                                                val text = Files.readString(path)
+                                                val identity = Files.readString(
+                                                    Path.of(path.toString() + ".identity")
+                                                )
+                                                val claims = listOf(
+                                                    "probe_name=$name", "case_id=" + entry.id,
+                                                    "source_sha256=$expectedSha",
+                                                    "query_browser_bound=true", "status=OK"
+                                                ) + created.lineSequence().filter {
+                                                    it.startsWith("browser_identity=") ||
+                                                        it.startsWith("cef_identity=") ||
+                                                        it.startsWith("cef_native_id=")
+                                                }.toList()
+                                                check(claims.all { claim ->
+                                                    identity.lineSequence().any { it == claim }
+                                                }) { "Controlled DOM callback not from created browser/source" }
+                                                if (!text.startsWith(schema + "\n")) {
+                                                    current = null
+                                                    false
+                                                } else {
+                                                    Files.writeString(ownedDest.resolve("$name.txt"),
+                                                        text + "\n")
+                                                    Files.writeString(ownedDest.resolve("$name.identity"),
+                                                        identity)
+                                                    true
+                                                }
+                                            }
+                                        }
+                                    },
+                                    checker = { it }
+                                )
+                            }
+                            if (entry.id == "md-atx-headings-h1-h6") {
+                                captureOwnedProbe(
+                                    "heading-dom-geometry", headingReferenceDomProbe,
+                                    "schema=markflow-reference-heading-dom-geometry/v1"
+                                )
+                                captureOwnedProbe(
+                                    "following-paragraph-dom-geometry", followingParagraphDomProbe,
+                                    "schema=markflow-reference-paragraph-text-range/v1"
+                                )
+                            } else if (entry.id == "mermaid-flowchart-minimal") {
+                                captureOwnedProbe(
+                                    "mermaid-svg-dom-geometry",
+                                    mermaidReferenceSvgProbe("Rendered correctly?"),
+                                    "schema=markflow-reference-mermaid-svg-dom-geometry/v1"
+                                )
+                            } else {
+                                check(controlledFullCorpus)
+                                captureOwnedProbe(
+                                    "generic-dom-geometry",
+                                    controlledReferenceGenericDomProbe(entry.domain == "mermaid"),
+                                    "schema=markflow-controlled-reference-generic-dom/v1"
+                                )
+                                Files.writeString(
+                                    ownedDest.resolve("dom-proof.txt"),
+                                    "schema=markflow-controlled-reference-dom-proof/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "source_sha256=$expectedSha\n" +
+                                        "probe_name=generic-dom-geometry\n" +
+                                        "result=CAPTURED_UNVERIFIED\n"
+                                )
+                            }
+                            val probeSnapshot = driver.withContext(OnDispatcher.EDT) {
+                                owned.snapshot()
+                            }
+                            Files.writeString(ownedDest.resolve("dom-probes-complete.txt"),
+                                probeSnapshot)
+                            val completedProbes = probeSnapshot.lineSequence().single {
+                                it.startsWith("dom_probe_completed=")
+                            }.substringAfter('=').toInt()
+                            check(probeSnapshot.contains("dom_probe_pending=false\n") &&
+                                completedProbes >=
+                                    (if (entry.id == "md-atx-headings-h1-h6") 2 else 1)
+                            ) { "Controlled DOM callback barrier incomplete" }
+                            heartbeat("case-owned-reference-close-start", entry.id)
+                            val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
+                            Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
+                            check(disposed.contains("jbcef_disposed=true\n"))
+                            waitFor(
+                                message = "Manifest-owned native onBeforeClose: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { Files.exists(closeMarker) },
+                                checker = { it }
+                            )
+                            val closeProof = Files.readString(closeMarker)
+                            check(closeProof.lineSequence().any { it == "on_before_close=true" } &&
+                                created.lineSequence().filter { it.startsWith("cef_identity=") ||
+                                    it.startsWith("browser_identity=") }.all { identity ->
+                                    closeProof.lineSequence().any { it == identity }
+                                })
+                            waitFor(
+                                message = "Manifest-owned CEF fully closed: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    owned.snapshot().contains("cef_closed=true\n")
+                                } },
+                                checker = { it }
+                            )
+                            val finished = driver.withContext(OnDispatcher.EDT) { owned.finish() }
+                            Files.writeString(ownedDest.resolve("native-closed.txt"), finished)
+                            check(finished.contains("native_before_close=true\n") &&
+                                finished.contains("cef_closed=true\n") &&
+                                finished.contains("callback_failure=NONE\n"))
+                            heartbeat("case-owned-reference-native-close-complete", entry.id)
+                            check(markFlow.source(editor) == source &&
+                                markFlow.modificationStamp(editor) == stamp &&
+                                !markFlow.isDirty(editor) &&
+                                Files.readAllBytes(project.resolve(entry.id + ".md"))
+                                    .contentEquals(entry.bytes))
+                            Files.writeString(ownedDest.resolve("result.txt"),
+                                "result=CAPTURED_UNVERIFIED\ncase_id=${entry.id}\n" +
+                                    "source_sha256=$expectedSha\nnative_closed=true\n" +
+                                    "full_differential_acceptance=false\n")
+                            heartbeat("case-owned-reference-complete", entry.id)
+                            if (controlledFullCorpus) {
+                                states[entry.id] = "CAPTURED_UNVERIFIED"
+                                heartbeat("case-controlled-evidence-complete", entry.id)
+                            }
+                        }
+                        if (controlledFullCorpus && !entry.comparable) {
+                            Files.writeString(
+                                dest.resolve("reference-disposition.txt"),
+                                "schema=markflow-differential-reference-disposition/v1\n" +
+                                    "case_id=" + entry.id + "\n" +
+                                    "classification=" + entry.classification + "\n" +
+                                    "intellij_preview=NOT_APPLICABLE_BY_MANIFEST\n" +
+                                    "result=CAPTURED_UNVERIFIED\n"
+                            )
+                            states[entry.id] = "CAPTURED_UNVERIFIED"
+                            heartbeat("case-controlled-no-reference", entry.id)
+                        }
+                        if (!controlledFullCorpus) {
                         var refIdentity = "NOT_APPLICABLE_BY_MANIFEST"
                         var reference: Rectangle? = null
                         if (entry.comparable) {
@@ -1635,6 +2078,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-evidence-complete", entry.id)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
+                        }
                     } catch (cause: Throwable) {
                         caseFailure = cause
                         heartbeat("case-failed", entry.id)
@@ -1681,6 +2125,52 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // MarkdownPreviewFileEditor disposes its JCEF-backed panel from the
                                 // componentHidden lifecycle callback; prove that detach completed
                                 // before closing the owning TextEditorWithPreview.
+                                if (controlledFullCorpus) {
+                                    val before = checkNotNull(controlledPlatformPreviewBaseline) {
+                                        "Missing pre-controlled platform Preview ownership snapshot"
+                                    }
+                                    val (nativeVisible, after) =
+                                        driver.withContext(OnDispatcher.EDT) {
+                                            preview.nativeShowing(remote) to
+                                                preview.previewLifecycleEvidence(remote)
+                                        }
+                                    Files.writeString(
+                                        dest.resolve("reference-lifecycle.txt"),
+                                        "schema=markflow-controlled-reference-cleanup/v2\n" +
+                                            "case_id=" + entry.id + "\n" +
+                                            "native_editor_showing=$nativeVisible\n" +
+                                            "native_close_barrier=" +
+                                                (if (entry.comparable) "FINISHED" else "NOT_APPLICABLE") +
+                                            "\nphase=before-controlled\n" + before +
+                                            "phase=after-controlled\n" + after
+                                    )
+                                    fun field(snapshot: String, key: String): String =
+                                        snapshot.lineSequence().single {
+                                            it.startsWith("$key=")
+                                        }.substringAfter('=')
+                                    // A Markdown FileEditor can eagerly retain a Preview panel
+                                    // even while SHOW_EDITOR is selected. A non-null panel is
+                                    // NOT evidence of a newly opened browser. Prove that
+                                    // Controlled JCEF did not change that pre-existing owner:
+                                    // layout, panel identity, wrapper identity and child counts
+                                    // must remain exact, and no Preview panel may be showing.
+                                    val ownershipKeys = listOf(
+                                        "layout", "preview_disposed", "panel_attached",
+                                        "panel_identity", "panel_class", "wrapper_identity",
+                                        "wrapper_direct_child_count", "wrapper_active_child_count",
+                                        "wrapper_unowned_child_count"
+                                    )
+                                    check(nativeVisible &&
+                                        field(after, "panel_component_showing") == "false" &&
+                                        ownershipKeys.all { key ->
+                                            field(before, key) == field(after, key)
+                                        }
+                                    ) {
+                                        "Controlled case changed platform Preview ownership or " +
+                                            "left it visible: " + entry.id +
+                                            "; see reference-lifecycle.txt"
+                                    }
+                                } else {
                                 Files.writeString(
                                     dest.resolve("reference-lifecycle.txt"),
                                     "phase=before-hide\n" +
@@ -1753,6 +2243,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "Diagnostic-only case lost native layout before close: " + entry.id
                                     }
                                 }
+                                }
                                 markFlow.closeMarkdown(remote, entry.id + ".md")
                                 waitFor(
                                     message = "MarkFlow derived JCEF runtime returns to baseline: " +
@@ -1771,6 +2262,18 @@ class MarkFlowStarterDifferentialManifestTest {
                             if (cleanupError != null) {
                                 states[entry.id] = "CAPTURE_FAILED"
                                 heartbeat("case-failed", entry.id)
+                                Files.writeString(
+                                    dest.resolve("cleanup-failure.txt"),
+                                    "schema=markflow-manifest-cleanup-failure/v1\n" +
+                                        "case_id=" + entry.id + "\n" +
+                                        "reason=" + cleanupError.javaClass.name + ": " +
+                                            (cleanupError.message ?: "NO_MESSAGE") + "\n" +
+                                        "controlled_native_close=" +
+                                            Files.exists(dest.resolve(
+                                                "controlled-reference/native-close.marker"
+                                            )) + "\n" +
+                                        cleanupError.stackTraceToString() + "\n"
+                                )
                                 val original = caseFailure
                                 if (original == null || toleratedStructuralFailure) {
                                     deferredDriverFailure = cleanupError
@@ -2228,6 +2731,51 @@ class MarkFlowStarterDifferentialManifestTest {
      * is not an oracle. Relative bounding coordinates are invariant under a
      * shared browser scroll displacement (unlike viewport screenshot offsets).
      */
+
+    /**
+     * Browser-bound generic DOM evidence. A diagram case must have a visible
+     * SVG; full visual parity remains subject to independent human review.
+     */
+    private fun controlledReferenceGenericDomProbe(expectMermaidSvg: Boolean): String = """
+        (() => {
+          const body = document.body;
+          if (!body || !document.documentElement) return 'FAIL: missing body';
+          const box = body.getBoundingClientRect();
+          const visibleSvgs = Array.from(body.querySelectorAll('svg')).filter(svg => {
+            const rect = svg.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          }).length;
+          if (!Number.isFinite(box.width) || box.width <= 0 ||
+              !Number.isFinite(box.height) || box.height <= 0 ||
+              body.children.length === 0 ||
+              (document.documentElement.outerHTML || '').length < 100) {
+            return 'FAIL: controlled DOM empty or geometrically invalid';
+          }
+          if ($expectMermaidSvg && visibleSvgs === 0) {
+            return 'FAIL: source Mermaid SVG not rendered';
+          }
+          return [
+            'schema=markflow-controlled-reference-generic-dom/v1',
+            'document_ready_state=' + document.readyState,
+            'body_child_count=' + body.children.length,
+            'body_text_characters=' + (body.textContent || '').length,
+            'visible_svg_count=' + visibleSvgs,
+            'body_css_width=' + box.width.toFixed(3),
+            'body_css_height=' + box.height.toFixed(3),
+            'document_scroll_height=' + document.documentElement.scrollHeight,
+            'window_scroll_x=' + window.scrollX,
+            'window_scroll_y=' + window.scrollY,
+            'first_child_top=' + body.children[0].getBoundingClientRect().top.toFixed(3),
+            'first_child_bottom=' + body.children[0].getBoundingClientRect().bottom.toFixed(3),
+            'body_display=' + getComputedStyle(body).display,
+            'body_visibility=' + getComputedStyle(body).visibility,
+            'viewport_width=' + window.innerWidth,
+            'viewport_height=' + window.innerHeight,
+            'html_length=' + document.documentElement.outerHTML.length
+          ].join('\n');
+        })()
+    """.trimIndent()
+
     /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
     private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
         require(sourceLabel == "Rendered correctly?" ||
@@ -3047,6 +3595,23 @@ private interface DifferentialManifestVisualRemote {
     plugin = "com.algorist.markflow")
 private interface DifferentialRendererLifecycleRemote {
     fun liveRuntimeCount(): Int
+}
+
+@Remote(
+    value = "com.algorist.markflow.editor.native.NativeControlledReferencePreviewE2EBridge",
+    plugin = "com.algorist.markflow",
+)
+private interface DifferentialOwnedReferenceRemote {
+    fun openCorpusReference(
+        editor: Editor, caseId: String, expectedSourceSha256: String, sourceLine: Int,
+        journalPath: String, closeMarkerPath: String,
+    ): String
+    fun snapshot(): String
+    fun bounds(): String
+    fun requestRenderedText(probePath: String)
+    fun requestDomProbe(probeName: String, script: String, outputPath: String)
+    fun close(): String
+    fun finish(): String
 }
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeDifferentialPreviewE2EBridge",

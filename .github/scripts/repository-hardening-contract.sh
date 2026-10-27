@@ -591,6 +591,8 @@ grep -Fq 'kill -KILL -- "-$child_pid"' "$full_differential_watchdog" || die "#35
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"' "$full_differential_workflow" || die "#353 full differential no longer exports heartbeat location"
 grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" || die "#353 full differential bypasses the fail-fast watchdog"
 grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
+grep -Fq -- '-PdifferentialContract=controlled-capture' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its canonical full-corpus route"
+grep -Fq 'controlled_reference:' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its explicit manual opt-in"
 if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
   die "#353 canonical full corpus must never reduce the 89-case inventory"
 fi
@@ -996,8 +998,10 @@ grep -Fq 'output.resolve("acceptance.json")' "$manifest_test" ||
   die "Full #353 acceptance no longer emits a distinct final reviewed verdict"
 grep -Fq '\"full_differential_acceptance\":true' "$manifest_test" ||
   die "Full #353 final verdict cannot signal reviewed full-corpus acceptance"
-grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes' "$manifest_test" ||
-  die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
+grep -Fq 'runTimeout = if (contract != "capture") 75.minutes else 12.minutes' "$manifest_test" ||
+  die "Full #353 acceptance/controlled corpus lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
+grep -Fq '"controlled-capture"' "$manifest_test" ||
+  die "#353 manifest lost the explicit unreviewed controlled-provider contract"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
   die "Full #353 Starter launch lost its distinct diagnostic identity"
 grep -Fq 'timeout-minutes: 100' "$full_differential_workflow" ||
