@@ -281,9 +281,10 @@ class MarkFlowStarterDifferentialManifestTest {
                 runTimeout = if (contract != "capture") 75.minutes else 12.minutes,
             ) {
                 if (contract == "acceptance" || controlledFullCorpus) {
-                    // Starter injects a 10_000 global JSQuery pool after ordinary VM patches.
-                    // Re-apply the production registry default only after Starter defaults
-                    // are assembled. Bundled Markdown owns its own bounded client pool.
+                    // Starter.calculateVmOptions() injects 10_000 before per-run patches.
+                    // Override it only after Starter defaults are assembled so both the
+                    // authoritative acceptance and controlled #353 diagnostic use the
+                    // production registry default while bundled Markdown owns its own pool.
                     addVMOptionsPatch {
                         addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)
                     }

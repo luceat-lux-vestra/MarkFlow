@@ -273,7 +273,22 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val height = minOf(800, layeredPane.height - 32)
         check(width > 100 && height > 100) { "IDE viewport too small for controlled JCEF" }
 
-        val markdownPanel = provider.createHtmlPanel(project, file)
+        // MarkdownHtmlPanelProvider#createHtmlPanel is Experimental on the pinned IDE.
+        // Keep this diagnostic bound to the real bundled provider without making the
+        // production plugin statically depend on that unstable method signature.
+        val markdownPanel = try {
+            val createHtmlPanel = MarkdownHtmlPanelProvider::class.java.getMethod(
+                "createHtmlPanel",
+                Project::class.java,
+                VirtualFile::class.java,
+            )
+            createHtmlPanel.invoke(provider, project, file)
+        } catch (error: ReflectiveOperationException) {
+            throw IllegalStateException(
+                "Bundled Markdown createHtmlPanel API unavailable",
+                error.cause ?: error,
+            )
+        }
         val panel = markdownPanel as? JBCefBrowser
             ?: error("Bundled Markdown panel is not a JBCefBrowser")
         if (panel.javaClass.name != JCEF_PANEL) {

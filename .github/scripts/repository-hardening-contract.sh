@@ -696,14 +696,27 @@ manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStar
   die "#353 full differential must keep exactly one production-faithful zero-sized JCEF JS query pool override"
 grep -Fq 'Starter.calculateVmOptions() injects 10_000 before per-run patches.' "$manifest_test" ||
   die "#353 JCEF query-pool override lost the Starter default-ordering rationale"
-grep -Fq 'if (contract == "acceptance") {' "$manifest_test" ||
-  die "#353 JCEF query-pool override must remain scoped to authoritative full acceptance"
+grep -Fq 'if (contract == "acceptance" || controlledFullCorpus) {' "$manifest_test" ||
+  die "#353 JCEF query-pool override must remain scoped to authoritative acceptance or the explicit controlled diagnostic"
 if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")' "$manifest_test"; then
   die "#353 JCEF query-pool override regressed to the early applyVMOptionsPatch form"
 fi
 if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")' "$manifest_test"; then
   die "#353 pathological 10000-entry JCEF JS query pool must not return"
 fi
+controlled_reference_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeControlledReferencePreviewE2EBridge.kt"
+[ -f "$controlled_reference_bridge" ] || die "#353 controlled bundled-Markdown reference bridge is missing"
+if grep -Fq 'provider.createHtmlPanel(' "$controlled_reference_bridge"; then
+  die "#353 controlled reference must not restore a static dependency on Experimental createHtmlPanel"
+fi
+grep -Fq 'MarkdownHtmlPanelProvider::class.java.getMethod(' "$controlled_reference_bridge" ||
+  die "#353 controlled reference lost the fail-closed bundled-provider factory boundary"
+grep -Fq '"createHtmlPanel"' "$controlled_reference_bridge" ||
+  die "#353 controlled reference no longer resolves the exact bundled-provider factory"
+grep -Fq 'Project::class.java' "$controlled_reference_bridge" ||
+  die "#353 controlled reference factory lost the Project parameter identity"
+grep -Fq 'VirtualFile::class.java' "$controlled_reference_bridge" ||
+  die "#353 controlled reference factory lost the VirtualFile parameter identity"
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE' "$manifest_test" ||
   die "#353 full differential test lost workflow-visible heartbeat output"
 grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
