@@ -19,6 +19,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.intellij.plugins.markdown.settings.MarkdownSettings
+import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanel
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
 import java.awt.BorderLayout
 import java.awt.Rectangle
@@ -282,7 +283,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
                 Project::class.java,
                 VirtualFile::class.java,
             )
-            createHtmlPanel.invoke(provider, project, file)
+            createHtmlPanel.invoke(provider, project, file) as? MarkdownHtmlPanel
+                ?: error("Bundled Markdown factory did not return a MarkdownHtmlPanel")
         } catch (error: ReflectiveOperationException) {
             throw IllegalStateException(
                 "Bundled Markdown createHtmlPanel API unavailable",
