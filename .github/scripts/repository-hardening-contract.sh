@@ -163,6 +163,54 @@ if ( assert_codeql_schedule_noop_guard "$trigger_fixture_dir/codeql-guard-regres
   die "CodeQL schedule no-op guard accepted non-exact source identity"
 fi
 
+build_workflow=".github/workflows/build.yml"
+# R2A #104 Stage A: keep PR-time Qodana authority unchanged while adding a
+# trusted recurring/manual exact-protected-main-SHA full-scan evidence path.
+qodana_full_workflow=".github/workflows/qodana-full.yml"
+qodana_sarif_verifier=".github/scripts/check-qodana-sarif.py"
+[ -f "$qodana_full_workflow" ] || die "trusted full Qodana workflow is missing"
+[ -f "$qodana_sarif_verifier" ] || die "Qodana SARIF verifier is missing"
+python3 "$qodana_sarif_verifier" --self-test >/dev/null ||
+  die "Qodana SARIF verifier negative controls failed"
+grep -Eq '^  schedule:([[:space:]]|$)' "$qodana_full_workflow" ||
+  die "trusted full Qodana must retain scheduled protected-main scanning"
+grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$qodana_full_workflow" ||
+  die "trusted full Qodana must retain manual exact-SHA scanning"
+if grep -Eq '^  (pull_request|pull_request_target|push):([[:space:]]|$)' "$qodana_full_workflow"; then
+  die "trusted full Qodana must not execute from PR or push authority"
+fi
+grep -Fq 'run-name: Qodana source ${{ inputs.candidate_sha || github.sha }}' "$qodana_full_workflow" ||
+  die "trusted full Qodana lost exact-source run identity"
+grep -Fq 'event=schedule&status=success&branch=main&per_page=100' "$qodana_full_workflow" ||
+  die "Qodana schedule no-op guard lost successful-main evidence lookup"
+grep -Fq '.head_sha == $sha' "$qodana_full_workflow" ||
+  die "Qodana schedule no-op guard lost exact protected-main SHA matching"
+grep -Fq 'git merge-base --is-ancestor "$EXPECTED_SHA" origin/main' "$qodana_full_workflow" ||
+  die "trusted full Qodana no longer restricts candidate SHA to protected-main history"
+grep -Fq 'ref: ${{ env.EXPECTED_SHA }}' "$qodana_full_workflow" ||
+  die "trusted full Qodana does not checkout the selected exact SHA"
+grep -Fq 'JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f' "$qodana_full_workflow" ||
+  die "trusted full Qodana action pin drifted"
+grep -Fq -- '--image jetbrains/qodana-jvm-community:2026.2 --clear-cache' "$qodana_full_workflow" ||
+  die "trusted full Qodana image/reproducibility contract drifted"
+grep -Fq 'use-caches: false' "$qodana_full_workflow" ||
+  die "trusted full Qodana must preserve production no-cache analysis semantics"
+grep -Fq 'python3 .github/scripts/check-qodana-sarif.py' "$qodana_full_workflow" ||
+  die "trusted full Qodana does not independently verify SARIF"
+grep -Fq 'qodana-${{ env.EXPECTED_SHA }}-sarif' "$qodana_full_workflow" ||
+  die "trusted full Qodana lost exact-SHA SARIF retention"
+grep -Fq 'qodana-source-${{ env.EXPECTED_SHA }}' "$qodana_full_workflow" ||
+  die "trusted full Qodana lost exact-SHA provenance retention"
+grep -Fq '"sarif_sha256": hashlib.sha256(sarif.read_bytes()).hexdigest()' "$qodana_full_workflow" ||
+  die "trusted full Qodana provenance lost SARIF digest binding"
+grep -Fq '"qodana_config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()' "$qodana_full_workflow" ||
+  die "trusted full Qodana provenance lost Qodana-config digest binding"
+# Stage A must not weaken or bypass the existing PR Inspect-code authority.
+grep -Fq '      - name: Qodana - Code Inspection' "$build_workflow" ||
+  die "Stage A must preserve PR-time Qodana inspection"
+grep -Fq 'needs.inspectCode.result' "$build_workflow" ||
+  die "Stage A must preserve Inspect code as Merge Gate input"
+
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
   count="$(grep -oF '"gradle/**"' "$workflow" | wc -l)"
@@ -987,7 +1035,6 @@ if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*c
 fi
 
 
-build_workflow=".github/workflows/build.yml"
 # The $/ self-repository spelling is valid on GitHub but unsupported by
 # actionlint v1.7.12 (rhysd/actionlint#711). Its local reusable workflow checks
 # must remain active; zizmor may ignore only these exact two known invocations.
