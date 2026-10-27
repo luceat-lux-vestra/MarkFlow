@@ -511,13 +511,23 @@ check_release_preflight() {
   grep -qE 'Run release preflight fixtures' "$audit" || { finding release_preflight "release preflight fixtures are not named in the hardening workflow"; clean=0; }
   grep -qE 'bash \.github/scripts/release-preflight-test\.sh' "$audit" || { finding release_preflight "release preflight fixtures are not executed by the hardening workflow"; clean=0; }
   [ -f "$release" ] || { finding release_preflight "release.yml is missing"; return 0; }
-  # The source-verifying scanner job must succeed before the privileged
-  # Marketplace job can acquire its publishing environment/secrets.
-  local scan_block publish_block
+  # Both independent exact-source scanners must succeed before the privileged
+  # Marketplace job can acquire publishing environment/secrets. Match the
+  # complete dependency list, not a substring that accepts a missing gate.
+  local scan_block qodana_block publish_block
   scan_block="$(job_block "$release" codeql-preflight)"
+  qodana_block="$(job_block "$release" qodana-preflight)"
   publish_block="$(job_block "$release" release)"
-  if [ -z "$scan_block" ] || ! grep -qF 'needs: codeql-preflight' <<< "$publish_block"; then
-    finding release_preflight "Marketplace publication must depend on exact-source CodeQL preflight"
+  if [ -z "$scan_block" ]; then
+    finding release_preflight "exact-source CodeQL preflight job is missing"
+    clean=0
+  fi
+  if [ -z "$qodana_block" ]; then
+    finding release_preflight "exact-source Qodana preflight job is missing"
+    clean=0
+  fi
+  if [ "$(job_field "$release" release needs)" != '[codeql-preflight, qodana-preflight]' ]; then
+    finding release_preflight "Marketplace publication must depend on BOTH exact-source CodeQL and Qodana preflights"
     clean=0
   fi
   if ! grep -qF 'actions: write' <<< "$scan_block" ||
@@ -533,6 +543,19 @@ check_release_preflight() {
     finding release_preflight "CodeQL preflight must not hold publication authority"
     clean=0
   fi
+  if ! grep -qF 'actions: write' <<< "$qodana_block" ||
+     ! grep -qF 'contents: read' <<< "$qodana_block" ||
+     ! grep -qF 'path: .release-policy' <<< "$qodana_block" ||
+     ! grep -qF 'ref: main' <<< "$qodana_block" ||
+     ! grep -qF 'python3 .release-policy/.github/scripts/release-qodana-gate.py' <<< "$qodana_block" ||
+     ! grep -qF "steps.recovery.outputs.skip != 'true'" <<< "$qodana_block"; then
+    finding release_preflight "Qodana preflight dispatch, source binding, or recovery guard missing"
+    clean=0
+  fi
+  if grep -Eq 'contents: write|id-token: write|attestations: write|environment: jetbrains-marketplace|secrets\.|publishPlugin|gh release upload' <<< "$qodana_block"; then
+    finding release_preflight "Qodana preflight must not hold publication authority"
+    clean=0
+  fi
   # The published SARIF and source artifact contracts must match the consumer
   # exactly; static checks catch name drift before release event execution.
   local codeql_workflow="$WORKFLOW_DIR/codeql.yml"
@@ -542,6 +565,17 @@ check_release_preflight() {
      ! grep -qF 'f"release-codeql-{sha}-{language}"' "$codeql_gate" ||
      ! grep -qF 'f"codeql-source-{sha}-{language}"' "$codeql_gate"; then
     finding release_preflight "CodeQL raw SARIF/source artifact names disagree with release gate"
+    clean=0
+  fi
+  # Both scanner producers and their release consumers must agree on
+  # immutable evidence names; drift is a security failure, not a cache miss.
+  local qodana_workflow="$WORKFLOW_DIR/qodana-full.yml"
+  local qodana_gate="$ROOT/.github/scripts/release-qodana-gate.py"
+  if ! grep -qF 'name: qodana-${{ env.EXPECTED_SHA }}-sarif' "$qodana_workflow" ||
+     ! grep -qF 'name: qodana-source-${{ env.EXPECTED_SHA }}' "$qodana_workflow" ||
+     ! grep -qF 'f"qodana-{sha}-sarif"' "$qodana_gate" ||
+     ! grep -qF 'f"qodana-source-{sha}"' "$qodana_gate"; then
+    finding release_preflight "Qodana raw SARIF/source artifact names disagree with release gate"
     clean=0
   fi
   if grep -qF 'actions: write' <<< "$publish_block"; then
