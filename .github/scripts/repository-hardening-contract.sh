@@ -1553,8 +1553,7 @@ grep -q 'If a default-branch workflow is ever suppressed before a run exists' GO
 grep -q 'treat the original missing run as an audit anomaly rather than as PASS' GOVERNANCE.md || die "missing fail-closed audit-anomaly governance"
 
 echo "repository hardening contract checks passed"
- "$wrapper" \
-  || die "Gradle wrapper distributionUrl must use the official services.gradle.org binary distribution"
+ "$wrapper" || die "Gradle wrapper distributionUrl must use the official services.gradle.org binary distribution"
 [ -n "$wrapper_gradle" ] || die "Gradle wrapper distribution version could not be parsed"
 [[ "$wrapper_sha" =~ ^[0-9a-f]{64}$ ]] || die "Gradle wrapper distributionSha256Sum is missing or malformed"
 if [ "$wrapper_gradle" = "9.8.1" ] && [ "$wrapper_sha" != "dce76f55f8e251a3a1f130eb120f30b3d271de2b76c9b0729d316b5a1b6dc01f" ]; then
