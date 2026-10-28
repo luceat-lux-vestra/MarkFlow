@@ -1047,6 +1047,20 @@ jobs:
         if: ${{ github.event_name != 'pull_request' }}
         run: echo "PR metadata safety is not applicable to trusted exact-SHA recovery."
 
+      - name: Verify live squash metadata policy
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repository="$(gh api "repos/$GITHUB_REPOSITORY")"
+          title_mode="$(jq -r '.squash_merge_commit_title // empty' <<<"$repository")"
+          message_mode="$(jq -r '.squash_merge_commit_message // empty' <<<"$repository")"
+          if [ "$title_mode" != "PR_TITLE" ] || [ "$message_mode" != "BLANK" ]; then
+            echo "::error::Repository squash metadata policy drifted: title=$title_mode message=$message_mode; expected PR_TITLE/BLANK."
+            exit 1
+          fi
+
       - name: Check out exact PR head for squash-message policy
         if: ${{ github.event_name == 'pull_request' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
