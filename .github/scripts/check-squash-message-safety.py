@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject GitHub Actions skip directives that would enter a squash commit message."""
+"""Reject GitHub Actions skip directives that would enter the squash commit title."""
 
 from __future__ import annotations
 
@@ -28,55 +28,54 @@ DIRECTIVES = (
 )
 
 
-def findings(title: str, body: str) -> list[str]:
-    message = f"{title}\n\n{body}"
-    return [directive.name for directive in DIRECTIVES if directive.pattern.search(message)]
+def findings(title: str) -> list[str]:
+    return [directive.name for directive in DIRECTIVES if directive.pattern.search(title)]
 
 
-def validate(title: str, body: str) -> int:
-    detected = findings(title, body)
+def validate(title: str) -> int:
+    detected = findings(title)
     if not detected:
         print("Squash commit metadata safety check passed.")
         return 0
 
     print(
-        "::error::PR title/body contains GitHub Actions skip directive(s) that could "
-        "suppress default-branch workflows when copied into a squash commit: "
+        "::error::PR title contains GitHub Actions skip directive(s) that could "
+        "suppress default-branch workflows when copied into the squash commit title: "
         + ", ".join(detected)
     )
     print(
-        "::error::Remove or neutralize the directive in PR metadata, or use an explicitly "
-        "sanitized squash commit message after the required checks pass."
+        "::error::Remove or neutralize the directive in the PR title. The configured "
+        "squash commit body is blank and PR body text is not commit-message authority."
     )
     return 1
 
 
 def self_test() -> int:
     unsafe = (
-        ("title [skip ci]", ""),
-        ("title", "release [ci skip] notes"),
-        ("title", "[NO CI]"),
-        ("title", "upstream [skip actions] marker"),
-        ("title", "upstream [actions skip] marker"),
-        ("title", "notes\n\nskip-checks:true"),
-        ("title", "notes\n\nskip-checks: true"),
-        ("title", "notes\n\nSKIP-CHECKS : TRUE"),
+        "title [skip ci]",
+        "release [ci skip] notes",
+        "[NO CI]",
+        "upstream [skip actions] marker",
+        "upstream [actions skip] marker",
+        "skip-checks:true",
+        "skip-checks: true",
+        "SKIP-CHECKS : TRUE",
     )
     safe = (
-        ("title", ""),
-        ("title", "[ci  skip]"),
-        ("title", "skip-checks: false"),
-        ("title", "skip checks: true"),
-        ("title", "the words ci skip without brackets"),
+        "title",
+        "[ci  skip]",
+        "skip-checks: false",
+        "skip checks: true",
+        "the words ci skip without brackets",
     )
 
-    for title, body in unsafe:
-        if not findings(title, body):
-            print(f"self-test failed: unsafe fixture was accepted: {title!r} / {body!r}", file=sys.stderr)
+    for title in unsafe:
+        if not findings(title):
+            print(f"self-test failed: unsafe fixture was accepted: {title!r}", file=sys.stderr)
             return 1
-    for title, body in safe:
-        if findings(title, body):
-            print(f"self-test failed: safe fixture was rejected: {title!r} / {body!r}", file=sys.stderr)
+    for title in safe:
+        if findings(title):
+            print(f"self-test failed: safe fixture was rejected: {title!r}", file=sys.stderr)
             return 1
 
     print(f"Squash message safety self-test passed ({len(unsafe)} unsafe, {len(safe)} safe fixtures).")
@@ -89,7 +88,7 @@ def main() -> int:
     if sys.argv[1:]:
         print("usage: check-squash-message-safety.py [--self-test]", file=sys.stderr)
         return 2
-    return validate(os.environ.get("PR_TITLE", ""), os.environ.get("PR_BODY", ""))
+    return validate(os.environ.get("PR_TITLE", ""))
 
 
 if __name__ == "__main__":
