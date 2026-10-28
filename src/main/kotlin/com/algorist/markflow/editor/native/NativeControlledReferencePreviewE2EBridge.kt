@@ -419,6 +419,34 @@ internal object NativeControlledReferencePreviewE2EBridge {
         return listOf(rect.x, rect.y, rect.width, rect.height).joinToString(",")
     }
 
+    /**
+     * #353 reviewed-capture guard. Re-issue the bundled Markdown panel's own
+     * source-offset navigation only after its asynchronous page/render work has
+     * converged. This is not a guessed browser scroll coordinate.
+     */
+    fun scrollToSourceAnchor(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val state = checkNotNull(active) { "No controlled reference" }
+        val editor = checkNotNull(state.sourceEditor) {
+            "Source-anchor scroll requires a corpus-bound native Editor"
+        }
+        check(state.created.get() && !state.disposalRequested &&
+            !state.cef.isClosing && !state.cef.isClosed
+        ) { "Source-anchor scroll outside exact native browser lifetime" }
+        require(state.sourceLine in 0 until editor.document.lineCount) {
+            "Controlled source anchor line is outside the Document"
+        }
+        val offset = editor.document.getLineStartOffset(state.sourceLine)
+        val markdownPanel = state.panel as? MarkdownHtmlPanel
+            ?: error("Controlled JCEF panel no longer implements MarkdownHtmlPanel")
+        markdownPanel.scrollToMarkdownSrcOffset(offset)
+        state.record("source-anchor-scroll")
+        return "schema=markflow-controlled-reference-source-anchor-scroll/v1\n" +
+            "source_line_zero_based=" + state.sourceLine + "\n" +
+            "source_offset=" + offset + "\n" +
+            "scroll_api=MarkdownHtmlPanel.scrollToMarkdownSrcOffset\n"
+    }
+
     /** CEF callback writes the result directly; never waits for it on EDT. */
     fun requestRenderedText(probePath: String) {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -450,7 +478,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(probeName in setOf(
             "heading-dom-geometry", "following-paragraph-dom-geometry",
-            "mermaid-svg-dom-geometry", "generic-dom-geometry"
+            "mermaid-svg-dom-geometry", "generic-dom-geometry",
+            "source-anchor-viewport"
         )) { "Unapproved controlled DOM probe" }
         require(script.isNotBlank()) { "Empty controlled DOM probe" }
         val state = checkNotNull(active) { "No active controlled reference" }

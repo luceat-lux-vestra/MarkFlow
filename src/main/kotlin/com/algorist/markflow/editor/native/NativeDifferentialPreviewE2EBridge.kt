@@ -458,6 +458,34 @@ internal object NativeDifferentialPreviewE2EBridge {
         return "line=" + line + ";offset=" + offset
     }
 
+    /**
+     * #353 reviewed-capture guard: prove the requested source line still occupies
+     * the real editor viewport after asynchronous block/inlay layout has settled.
+     * A prior scroll request alone is not evidence because derived inlays above the
+     * target can move its final visual position after that request.
+     */
+    fun nativeSourceAnchorViewport(editor: Editor, line: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(line in 0 until editor.document.lineCount) { "Invalid native source anchor" }
+        val offset = editor.document.getLineStartOffset(line)
+        val visual = editor.offsetToVisualPosition(offset)
+        val point = editor.visualPositionToXY(visual)
+        val viewport = editor.scrollingModel.visibleArea
+        val anchorBottom = point.y + editor.lineHeight
+        val visible = anchorBottom > viewport.y && point.y < viewport.y + viewport.height
+        return listOf(
+            "schema=markflow-native-source-anchor-viewport/v1",
+            "source_line_zero_based=" + line,
+            "source_offset=" + offset,
+            "anchor_visual_line=" + visual.line,
+            "anchor_y_document_px=" + point.y,
+            "anchor_bottom_document_px=" + anchorBottom,
+            "viewport_y_document_px=" + viewport.y,
+            "viewport_height_px=" + viewport.height,
+            "anchor_visible=" + visible,
+        ).joinToString(separator = "\n", postfix = "\n")
+    }
+
 
     /**
      * Stage D: read-only native raster dimensions from the actual installed inlays.
