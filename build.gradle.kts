@@ -427,8 +427,9 @@ val testWebviewDependencyContract = tasks.register<Exec>("testWebviewDependencyC
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
     inputs.files(
-        file("webview/tests/mermaid-dependency-contract.test.mjs"),
+        file("webview/tests/renderer-dependency-contract.test.mjs"),
         file("webview/tests/mermaid-acceptance-fixtures.mjs"),
+        file("webview/src/app/browser-derived-renderer-backends.ts"),
         file("webview/package.json"),
         file("webview/package-lock.json"),
         file("fixtures/differential-acceptance/corpus.tsv"),
