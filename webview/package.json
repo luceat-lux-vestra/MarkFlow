@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc && vite build --config vite.derived-renderer.config.ts",
     "test:source": "node --test tests/*.test.mjs",
-    "test:dependency-contract": "node --test tests/mermaid-dependency-contract.test.mjs"
+    "test:dependency-contract": "node --test tests/renderer-dependency-contract.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
