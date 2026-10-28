@@ -105,6 +105,15 @@ remains `classification=supported` but is explicitly
 `intellij_preview=no`; its reference disposition is
 `NOT_APPLICABLE_BY_MANIFEST`, not a visual rejection or JCEF failure.
 
+Exact controlled run `40613000211` then advanced through case 54 and stopped
+at `mermaid-cynefin`. Its source-bound JCEF callbacks and browser identity
+were healthy, while the retained OS screenshot showed a painted Cynefin
+diagram even though the old generic probe found no top-level visible `<svg>`.
+The controlled generic probe therefore records same-origin iframe, open shadow
+root, SVG, canvas, image and named render-host surfaces instead of treating
+top-level SVG absence as a renderer failure. This is diagnostic evidence only;
+it does not waive independent visual review or change product support.
+
 This slice does not yet prove cumulative heading/source-anchor geometry,
 clipping, non-uniform scaling, Gantt legibility, renderer equivalence, or
 complete 88-row/89-expanded-case real coverage. Some corpus sources reference relative local images. Full-corpus execution

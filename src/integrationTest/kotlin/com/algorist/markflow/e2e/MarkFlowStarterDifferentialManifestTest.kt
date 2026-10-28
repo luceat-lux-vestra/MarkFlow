@@ -755,7 +755,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 } else ""
                                 val sourceBoundDom = domFailure == null &&
                                     probeContents.startsWith(
-                                        "schema=markflow-controlled-reference-generic-dom/v1\n"
+                                        "schema=markflow-controlled-reference-generic-dom/v2\n"
                                     ) && identityContents.lineSequence().any {
                                         it == "case_id=" + entry.id
                                     } && identityContents.lineSequence().any {
@@ -874,7 +874,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 captureOwnedProbe(
                                     "generic-dom-geometry",
                                     controlledReferenceGenericDomProbe(entry.domain == "mermaid"),
-                                    "schema=markflow-controlled-reference-generic-dom/v1"
+                                    "schema=markflow-controlled-reference-generic-dom/v2"
                                 )
                                 Files.writeString(
                                     ownedDest.resolve("dom-proof.txt"),
@@ -2735,33 +2735,132 @@ class MarkFlowStarterDifferentialManifestTest {
      */
 
     /**
-     * Browser-bound generic DOM evidence. A diagram case must have a visible
-     * SVG; full visual parity remains subject to independent human review.
+     * Browser-bound generic DOM evidence. Mermaid renderers do not all expose
+     * their painted surface as a top-level <svg>. This controlled-capture probe
+     * is diagnostic-first: retain the exact browser-bound surface inventory
+     * across the document, same-origin frames and open shadow roots, while the
+     * OS screenshot remains the independent proof that the controlled panel
+     * actually painted. Full visual parity still requires independent review.
      */
     private fun controlledReferenceGenericDomProbe(expectMermaidSvg: Boolean): String = """
         (() => {
           const body = document.body;
           if (!body || !document.documentElement) return 'FAIL: missing body';
           const box = body.getBoundingClientRect();
-          const visibleSvgs = Array.from(body.querySelectorAll('svg')).filter(svg => {
-            const rect = svg.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          }).length;
           if (!Number.isFinite(box.width) || box.width <= 0 ||
               !Number.isFinite(box.height) || box.height <= 0 ||
               body.children.length === 0 ||
               (document.documentElement.outerHTML || '').length < 100) {
             return 'FAIL: controlled DOM empty or geometrically invalid';
           }
-          if ($expectMermaidSvg && visibleSvgs === 0) {
-            return 'FAIL: source Mermaid SVG not rendered';
-          }
+
+          const visible = element => {
+            try {
+              const rect = element.getBoundingClientRect();
+              const view = element.ownerDocument && element.ownerDocument.defaultView;
+              const style = view ? view.getComputedStyle(element) : null;
+              return rect.width > 0 && rect.height > 0 &&
+                (!style || (style.display !== 'none' && style.visibility !== 'hidden'));
+            } catch (_) {
+              return false;
+            }
+          };
+          const topLevelVisibleSvgs = Array.from(body.querySelectorAll('svg'))
+            .filter(visible).length;
+          const inventory = {
+            roots: 0,
+            shadowRoots: 0,
+            sameOriginIframes: 0,
+            inaccessibleIframes: 0,
+            visibleIframes: 0,
+            visibleSvgs: 0,
+            visibleCanvases: 0,
+            visibleImages: 0,
+            visibleNamedHosts: 0,
+            visibleElements: 0
+          };
+          const candidates = [];
+          const visitedRoots = new Set();
+          const inspectRoot = root => {
+            if (!root || visitedRoots.has(root) || !root.querySelectorAll) return;
+            visitedRoots.add(root);
+            inventory.roots++;
+            for (const element of Array.from(root.querySelectorAll('*'))) {
+              const tag = (element.tagName || '').toLowerCase();
+              const isVisible = visible(element);
+              if (isVisible) {
+                inventory.visibleElements++;
+                if (tag === 'svg') inventory.visibleSvgs++;
+                if (tag === 'canvas') inventory.visibleCanvases++;
+                if (tag === 'img') inventory.visibleImages++;
+                if (tag === 'iframe') inventory.visibleIframes++;
+                const className = typeof element.className === 'string'
+                  ? element.className
+                  : (element.className && element.className.baseVal) || '';
+                const descriptor = ((element.id || '') + ' ' + className + ' ' +
+                  (element.getAttribute && (
+                    element.getAttribute('data-mermaid') ||
+                    element.getAttribute('data-diagram') ||
+                    ''
+                  ))).toLowerCase();
+                if (/(mermaid|cynefin|diagram)/.test(descriptor)) {
+                  inventory.visibleNamedHosts++;
+                  if (candidates.length < 12) {
+                    candidates.push(
+                      tag + '#' + (element.id || '-') + '.' +
+                      String(className || '-').replace(/[\t\r\n|]+/g, '_').slice(0, 120)
+                    );
+                  }
+                }
+              }
+              if (element.shadowRoot) {
+                inventory.shadowRoots++;
+                inspectRoot(element.shadowRoot);
+              }
+              if (tag === 'iframe') {
+                try {
+                  const child = element.contentDocument;
+                  if (child) {
+                    inventory.sameOriginIframes++;
+                    inspectRoot(child);
+                  } else {
+                    inventory.inaccessibleIframes++;
+                  }
+                } catch (_) {
+                  inventory.inaccessibleIframes++;
+                }
+              }
+            }
+          };
+          inspectRoot(document);
+
+          const mermaidSurface = !$expectMermaidSvg ? 'NOT_REQUIRED'
+            : inventory.visibleSvgs > 0 ? 'SVG'
+            : inventory.visibleCanvases > 0 ? 'CANVAS'
+            : inventory.visibleImages > 0 ? 'IMG'
+            : inventory.visibleIframes > 0 ? 'IFRAME_HOST'
+            : inventory.visibleNamedHosts > 0 ? 'NAMED_DOM_HOST'
+            : 'NOT_IDENTIFIED';
+
           return [
-            'schema=markflow-controlled-reference-generic-dom/v1',
+            'schema=markflow-controlled-reference-generic-dom/v2',
             'document_ready_state=' + document.readyState,
             'body_child_count=' + body.children.length,
             'body_text_characters=' + (body.textContent || '').length,
-            'visible_svg_count=' + visibleSvgs,
+            'visible_svg_count=' + topLevelVisibleSvgs,
+            'deep_visible_svg_count=' + inventory.visibleSvgs,
+            'deep_visible_canvas_count=' + inventory.visibleCanvases,
+            'deep_visible_image_count=' + inventory.visibleImages,
+            'visible_iframe_count=' + inventory.visibleIframes,
+            'same_origin_iframe_count=' + inventory.sameOriginIframes,
+            'inaccessible_iframe_count=' + inventory.inaccessibleIframes,
+            'shadow_root_count=' + inventory.shadowRoots,
+            'inspected_root_count=' + inventory.roots,
+            'visible_named_render_host_count=' + inventory.visibleNamedHosts,
+            'visible_element_count=' + inventory.visibleElements,
+            'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG',
+            'mermaid_surface_observation=' + mermaidSurface,
+            'render_surface_candidates=' + (candidates.length ? candidates.join('|') : 'NONE'),
             'body_css_width=' + box.width.toFixed(3),
             'body_css_height=' + box.height.toFixed(3),
             'document_scroll_height=' + document.documentElement.scrollHeight,
