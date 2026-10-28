@@ -1402,11 +1402,13 @@ metadata_job="$(awk '
 ' "$build_workflow")"
 [ -n "$metadata_job" ] || die "integrated PR Metadata Safety job could not be located"
 grep -q '^    name: PR Metadata Safety$' <<<"$metadata_job" || die "PR Metadata Safety component name drifted"
-grep -q 'Verify live squash metadata policy' <<<"$metadata_job" || die "PR Metadata Safety does not verify live squash metadata settings"
-grep -Fq 'squash_merge_commit_title // empty' <<<"$metadata_job" || die "PR Metadata Safety does not read live squash title mode"
-grep -Fq 'squash_merge_commit_message // empty' <<<"$metadata_job" || die "PR Metadata Safety does not read live squash message mode"
-grep -Fq '"PR_TITLE"' <<<"$metadata_job" || die "PR Metadata Safety does not require PR_TITLE squash titles"
-grep -Fq '"BLANK"' <<<"$metadata_job" || die "PR Metadata Safety does not require blank squash bodies"
+grep -q 'Verify canonical squash metadata policy' <<<"$metadata_job" || die "PR Metadata Safety does not verify the checked-out canonical squash policy"
+grep -Fq '.github/merge-gate-policy.json' <<<"$metadata_job" || die "PR Metadata Safety does not bind squash semantics to the canonical repository policy"
+grep -Fq '.repository_settings.squash_merge_commit_title == "PR_TITLE"' <<<"$metadata_job" || die "PR Metadata Safety does not require canonical PR_TITLE squash titles"
+grep -Fq '.repository_settings.squash_merge_commit_message == "BLANK"' <<<"$metadata_job" || die "PR Metadata Safety does not require canonical blank squash bodies"
+if grep -Eq 'gh api|HARDENING_AUDIT_TOKEN|squash_merge_commit_title // empty|squash_merge_commit_message // empty' <<<"$metadata_job"; then
+  die "PR Metadata Safety must not attempt privileged live repository-settings readback"
+fi
 grep -q 'Reject squash-title CI-skip directives' <<<"$metadata_job" || die "PR Metadata Safety does not reject unsafe squash titles"
 grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' <<<"$metadata_job" || die "squash guard does not inspect PR title"
 if grep -Fq 'PR_BODY:' <<<"$metadata_job"; then
