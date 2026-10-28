@@ -593,19 +593,6 @@ grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" 
 grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
 grep -Fq -- '-PdifferentialContract=controlled-capture' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its canonical full-corpus route"
 grep -Fq 'controlled_reference:' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its explicit manual opt-in"
-grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
-  die "#353 controlled generic DOM evidence schema lost diagnostic surface inventory"
-grep -Fq 'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG' "$manifest_test" ||
-  die "#353 controlled Mermaid probe regressed to assuming one renderer surface"
-grep -Fq "'same_origin_iframe_count='" "$manifest_test" ||
-  die "#353 controlled Mermaid probe lost same-origin iframe inventory"
-grep -Fq "'shadow_root_count='" "$manifest_test" ||
-  die "#353 controlled Mermaid probe lost shadow-root inventory"
-grep -Fq "'deep_visible_canvas_count='" "$manifest_test" ||
-  die "#353 controlled Mermaid probe lost canvas surface inventory"
-if grep -Fq 'source Mermaid SVG not rendered' "$manifest_test"; then
-  die "#353 controlled diagnostic must not treat top-level SVG absence as renderer failure"
-fi
 if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
   die "#353 canonical full corpus must never reduce the 89-case inventory"
 fi
@@ -705,6 +692,19 @@ if grep -Fq 'MarkFlowStarterProductionWiringTest|' <<<"$derived_content_matrix" 
 fi
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
+  die "#353 controlled generic DOM evidence schema lost diagnostic surface inventory"
+grep -Fq 'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG' "$manifest_test" ||
+  die "#353 controlled Mermaid probe regressed to assuming one renderer surface"
+grep -Fq "'same_origin_iframe_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost same-origin iframe inventory"
+grep -Fq "'shadow_root_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost shadow-root inventory"
+grep -Fq "'deep_visible_canvas_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost canvas surface inventory"
+if grep -Fq 'source Mermaid SVG not rendered' "$manifest_test"; then
+  die "#353 controlled diagnostic must not treat top-level SVG absence as renderer failure"
+fi
 [ "$(grep -Fc 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)' "$manifest_test" || true)" = "1" ] ||
   die "#353 full differential must keep exactly one production-faithful zero-sized JCEF JS query pool override"
 grep -Fq 'Starter.calculateVmOptions() injects 10_000 before per-run patches.' "$manifest_test" ||
