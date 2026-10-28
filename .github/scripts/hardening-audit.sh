@@ -144,6 +144,18 @@ check_policy_shape() {
   fi
 
   if ! jq -e '
+    .repository_settings
+    | type == "object"
+      and (.allow_squash_merge == true)
+      and (.allow_merge_commit == false)
+      and (.allow_rebase_merge == false)
+      and (.squash_merge_commit_title == "PR_TITLE")
+      and (.squash_merge_commit_message == "BLANK")
+  ' "$POLICY" >/dev/null; then
+    finding policy_shape "repository squash metadata policy must be PR_TITLE with a blank commit body"; clean=0
+  fi
+
+  if ! jq -e '
     .security_settings
     | type == "object"
       and (.visibility == "public")
