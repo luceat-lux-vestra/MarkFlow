@@ -1402,10 +1402,20 @@ metadata_job="$(awk '
 ' "$build_workflow")"
 [ -n "$metadata_job" ] || die "integrated PR Metadata Safety job could not be located"
 grep -q '^    name: PR Metadata Safety$' <<<"$metadata_job" || die "PR Metadata Safety component name drifted"
-grep -q 'Reject squash CI-skip directives' <<<"$metadata_job" || die "PR Metadata Safety does not reject unsafe squash metadata"
+grep -q 'Verify canonical squash metadata policy' <<<"$metadata_job" || die "PR Metadata Safety does not verify the checked-out canonical squash policy"
+grep -Fq '.github/merge-gate-policy.json' <<<"$metadata_job" || die "PR Metadata Safety does not bind squash semantics to the canonical repository policy"
+grep -Fq '.repository_settings.squash_merge_commit_title == "PR_TITLE"' <<<"$metadata_job" || die "PR Metadata Safety does not require canonical PR_TITLE squash titles"
+grep -Fq '.repository_settings.squash_merge_commit_message == "BLANK"' <<<"$metadata_job" || die "PR Metadata Safety does not require canonical blank squash bodies"
+if grep -Eq 'gh api|HARDENING_AUDIT_TOKEN|squash_merge_commit_title // empty|squash_merge_commit_message // empty' <<<"$metadata_job"; then
+  die "PR Metadata Safety must not attempt privileged live repository-settings readback"
+fi
+grep -q 'Reject squash-title CI-skip directives' <<<"$metadata_job" || die "PR Metadata Safety does not reject unsafe squash titles"
 grep -Fq 'PR_TITLE: ${{ github.event.pull_request.title }}' <<<"$metadata_job" || die "squash guard does not inspect PR title"
-grep -Fq "PR_BODY: \${{ github.event.pull_request.body || '' }}" <<<"$metadata_job" || die "squash guard does not inspect PR body"
+if grep -Fq 'PR_BODY:' <<<"$metadata_job"; then
+  die "PR body must not be treated as squash commit-message authority"
+fi
 grep -q 'python3 .github/scripts/check-squash-message-safety.py' <<<"$metadata_job" || die "PR Metadata Safety does not invoke squash message safety guard"
+jq -e '.repository_settings.squash_merge_commit_title == "PR_TITLE" and .repository_settings.squash_merge_commit_message == "BLANK"' .github/merge-gate-policy.json >/dev/null || die "canonical squash metadata policy must use PR_TITLE with a blank commit body"
 
 dependency_job="$(awk '
   /^  dependencyReview:$/ { on=1 }
@@ -1540,7 +1550,7 @@ if grep -Eq '^\| .*`TEMPORARY`' docs/architecture/leap-migration-inventory.md; t
   die "#141 migration inventory still contains an unresolved TEMPORARY production row"
 fi
 grep -q '^## Dependency update governance$' GOVERNANCE.md || die "dependency update governance contract is missing"
-grep -q 'PR titles and bodies must not contain GitHub Actions skip directives' GOVERNANCE.md || die "squash message safety governance is missing"
+grep -q 'squash commit title from the PR title and leave the squash commit body blank' GOVERNANCE.md || die "squash message safety governance is missing"
 grep -q 'If a default-branch workflow is ever suppressed before a run exists' GOVERNANCE.md || die "missing default-branch suppression recovery governance"
 grep -q 'treat the original missing run as an audit anomaly rather than as PASS' GOVERNANCE.md || die "missing fail-closed audit-anomaly governance"
 

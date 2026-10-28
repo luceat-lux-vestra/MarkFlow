@@ -1054,11 +1054,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
-      - name: Reject squash CI-skip directives
+      - name: Verify canonical squash metadata policy
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          jq -e '
+            .repository_settings.squash_merge_commit_title == "PR_TITLE"
+            and .repository_settings.squash_merge_commit_message == "BLANK"
+          ' .github/merge-gate-policy.json >/dev/null
+
+      - name: Reject squash-title CI-skip directives
         if: ${{ github.event_name == 'pull_request' }}
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: python3 .github/scripts/check-squash-message-safety.py
 
   dependencyReview:
