@@ -47,7 +47,7 @@ The required evidence is deliberately bounded:
 - **Build** remains mandatory and executes `buildPlugin`, preserving
   dependency resolution, compilation, renderer build, and plugin packaging.
 - **Test** runs ecosystem-specific low-cost validation:
-  - npm: `./gradlew testWebviewDependencyContract`
+  - npm: `./gradlew testWebviewDependencyContract`; build/dev dependencies are covered by the mandatory renderer/plugin build, while runtime renderer dependencies are exercised by the role-based renderer dependency contract
   - Gradle libraries: `./gradlew testClasses integrationTestClasses`
 - **Dependency Review** remains mandatory with its existing severity gate.
 - **PR Metadata Safety** remains mandatory.
@@ -67,12 +67,28 @@ The normal path is unchanged for every non-fast-lane PR.
 
 ## Cheap deterministic contract
 
-The static Mermaid dependency/detector contract is separated from Chromium
-acceptance by `testWebviewDependencyContract`.
+The npm fast lane is intentionally classified by change shape rather than by a
+dependency-name allowlist. Its cheap validation is role-based:
 
-That preserves the historical #454 behavior: an unaudited Mermaid version bump
-can still fail before merge without paying for the full browser acceptance
-suite.
+- build/dev dependencies are exercised by the mandatory TypeScript/Vite renderer
+  build and plugin packaging;
+- runtime renderer dependencies are exercised by
+  `testWebviewDependencyContract`, backed by
+  `renderer-dependency-contract.test.mjs`;
+- transitive lock-resolution updates must still pass installation plus the same
+  build and renderer contract.
+
+The renderer contract keeps the reviewed Mermaid detector/corpus invariants and
+executes the installed KaTeX engine through the same `renderToString` API and
+fail-soft/trust/display-mode semantics used by the production browser backend.
+This preserves the historical #454 Mermaid audit requirement while preventing a
+runtime renderer dependency from receiving only a successful bundle build as
+FAST evidence.
+
+Adding or removing a dependency still falls back to full CI. A future runtime
+renderer introduced through such a full-validation change must extend the
+renderer contract before subsequent ordinary version bumps rely on the npm fast
+lane; the classifier itself does not gain a per-dependency whitelist.
 
 ## Trust model
 
