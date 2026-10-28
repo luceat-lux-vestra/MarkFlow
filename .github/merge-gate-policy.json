@@ -153,7 +153,7 @@
       "context": "PR Metadata Safety",
       "workflow": ".github/workflows/build.yml",
       "job": "metadataSafety",
-      "covers": "PR title/body squash-message safety. Revalidates edited metadata and rejects GitHub Actions skip directives before they can enter the squash commit message."
+      "covers": "PR-title squash-message safety under the blank-body policy. Revalidates edited metadata and rejects GitHub Actions skip directives before they can enter the squash commit title."
     },
     {
       "context": "Dependency Review",
