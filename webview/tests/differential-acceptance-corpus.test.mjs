@@ -18,6 +18,10 @@ const allowedClassifications = new Set(["supported", "degraded", "unsupported"])
 const allowedStates = new Set(["covered", "gap"]);
 const allowedBoolean = new Set(["yes", "no"]);
 const allowedInteractions = new Set(["none", "click", "navigate"]);
+// Product support and pinned IntelliJ Preview comparability are separate contracts.
+// IDEA 2026.2.3 bundled Mermaid does not recognize agentflow-beta; retain the
+// MarkFlow-supported case while explicitly excluding that unavailable reference.
+const supportedPlatformReferenceUnavailableCaseIds = new Set(["mermaid-agentflow"]);
 
 const expectedMermaidVersion = "12.2.0";
 const expectedMermaidDetectors = new Set(["agentflow", "architecture", "block", "c4", "class", "cynefin", "er", "eventmodeling", "flowchart", "flowchart-elk", "gantt", "git", "info", "ishikawa", "journey", "kanban", "mindmap", "packet", "pie", "quadrant", "radar", "railroad", "railroad-abnf", "railroad-ebnf", "railroad-peg", "requirement", "sankey", "sequence", "state", "swimlanes", "timeline", "treeview", "treemap", "usecase", "venn", "wardley", "xychart"]);
@@ -27,7 +31,7 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set([]);
 // Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
-const reviewedManifestGitBlobSha = "334cc91357825fa9f29f97656ec1e88b04f59c2c";
+const reviewedManifestGitBlobSha = "57e02d9569c31b1694b21bb9e11186ae0e4ef496";
 const reviewedManifestRows = 88;
 const reviewedMarkdownAnchorGitBlobSha = "cefb6ca6770559a0b606eb988af9ff114594ee13";
 const reviewedMarkdownAnchorRows = 49;
@@ -160,7 +164,12 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
     assert.equal(entry.visual_reference_expectation, visualExpected,
       `${entry.case_id} visual-reference expectation disagrees with explicit product classification`);
     if (visualExpected === "source-anchored-geometry" || visualExpected === "diagram-semantic-perceptual") {
-      assert.equal(entry.intellij_preview, "yes", `${entry.case_id} needs platform preview for parity comparison`);
+      const expectedPreview = supportedPlatformReferenceUnavailableCaseIds.has(entry.case_id) ? "no" : "yes";
+      assert.equal(
+        entry.intellij_preview,
+        expectedPreview,
+        `${entry.case_id} platform-reference capability classification drifted`
+      );
     }
     assert.ok(entry.categories.split(",").every((category) => /^[a-z0-9-]+$/.test(category)), `${entry.case_id} has invalid categories`);
 
@@ -174,6 +183,17 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
     assert.equal(existsSync(fixturePath), true, `${entry.case_id} fixture is missing: ${entry.fixture_path}`);
     assert.equal(statSync(fixturePath).isFile(), true, `${entry.case_id} fixture is not a file`);
   }
+
+  const observedSupportedPlatformReferenceUnavailable = new Set(
+    entries
+      .filter((entry) => entry.classification === "supported" && entry.intellij_preview === "no")
+      .map((entry) => entry.case_id)
+  );
+  assert.deepEqual(
+    [...observedSupportedPlatformReferenceUnavailable].sort(),
+    [...supportedPlatformReferenceUnavailableCaseIds].sort(),
+    "supported/platform-reference exception inventory drifted"
+  );
 
   const observedGaps = new Set(entries.filter((entry) => entry.fixture_state === "gap").map((entry) => entry.case_id));
   assert.deepEqual([...observedGaps].sort(), [...knownGapIds].sort(), "reviewed #354 gap inventory changed");

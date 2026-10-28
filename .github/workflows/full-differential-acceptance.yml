@@ -8,6 +8,11 @@ on:
         description: 'Exact 40-character repository commit SHA to test'
         required: true
         type: string
+      controlled_reference:
+        description: 'Run the retained #353 controlled-provider 89-case diagnostic instead of reviewed acceptance'
+        required: false
+        type: boolean
+        default: false
   # Temporary stabilization health check. Remove this schedule once the
   # full-corpus path has proven stable; manual exact-SHA execution remains.
   schedule:
@@ -311,6 +316,7 @@ jobs:
         shell: bash
         env:
           POLICY_REASON: ${{ needs.policy.outputs.reason }}
+          CONTROLLED_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.controlled_reference || false }}
         run: |
           set -euo pipefail
           pass_dir="build/e2e-evidence/derived-content/differential-manifest"
@@ -319,15 +325,30 @@ jobs:
           rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
           mkdir -p "$pass_dir"
 
+          contract=acceptance
+          if [ "$CONTROLLED_REFERENCE" = "true" ]; then
+            contract=controlled-capture
+          fi
+
           test_status=0
           set +e
-          MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
-            bash .github/scripts/run-full-differential-with-watchdog.sh \
-              "$progress_file" "$watchdog_file" -- \
-              ./gradlew integrationTest -x buildPlugin \
-                -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
-                -PdifferentialContract=acceptance --stacktrace \
-                --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          if [ "$contract" = "controlled-capture" ]; then
+            MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
+              bash .github/scripts/run-full-differential-with-watchdog.sh \
+                "$progress_file" "$watchdog_file" -- \
+                ./gradlew integrationTest -x buildPlugin \
+                  -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                  -PdifferentialContract=controlled-capture --stacktrace \
+                  --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          else
+            MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
+              bash .github/scripts/run-full-differential-with-watchdog.sh \
+                "$progress_file" "$watchdog_file" -- \
+                ./gradlew integrationTest -x buildPlugin \
+                  -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                  -PdifferentialContract=acceptance --stacktrace \
+                  --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          fi
           test_status=$?
           set -e
 
@@ -338,8 +359,8 @@ jobs:
 
           mkdir -p "$pass_dir"
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'source_sha=%s\ncontract=acceptance\ntrigger=%s\npolicy_reason=%s\n' \
-            "$STARTER_SOURCE_SHA" "$GITHUB_EVENT_NAME" "$POLICY_REASON" > "$pass_dir/run-contract.txt"
+          printf 'source_sha=%s\ncontract=%s\ntrigger=%s\npolicy_reason=%s\n' \
+            "$STARTER_SOURCE_SHA" "$contract" "$GITHUB_EVENT_NAME" "$POLICY_REASON" > "$pass_dir/run-contract.txt"
 
           if [ "$test_status" -ne 0 ]; then
             if [ -f "$pass_dir/summary.json" ]; then
@@ -354,6 +375,33 @@ jobs:
               fi
             fi
             exit "$test_status"
+          fi
+
+          if [ "$contract" = "controlled-capture" ]; then
+            summary="$pass_dir/summary.json"
+            [ -f "$summary" ] || {
+              echo "::error::Controlled #353 corpus returned success without summary.json"
+              exit 1
+            }
+            jq -e '
+              .expanded_cases == 89 and
+              .selected_cases == 89 and
+              .captured_unverified == 89 and
+              .capture_failed == 0 and
+              .not_executed == 0 and
+              .candidate_structural_failure_count == 0 and
+              .full_differential_acceptance == false and
+              .release_eligible == false
+            ' "$summary" >/dev/null || {
+              echo "::error::Controlled #353 corpus summary is incomplete or malformed"
+              cat "$summary"
+              exit 1
+            }
+            [ ! -e "$pass_dir/acceptance.json" ] || {
+              echo "::error::Unreviewed controlled corpus must never emit acceptance.json"
+              exit 1
+            }
+            exit 0
           fi
 
           acceptance="$pass_dir/acceptance.json"

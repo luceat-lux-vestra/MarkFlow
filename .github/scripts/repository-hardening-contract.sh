@@ -591,6 +591,8 @@ grep -Fq 'kill -KILL -- "-$child_pid"' "$full_differential_watchdog" || die "#35
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file"' "$full_differential_workflow" || die "#353 full differential no longer exports heartbeat location"
 grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" || die "#353 full differential bypasses the fail-fast watchdog"
 grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
+grep -Fq -- '-PdifferentialContract=controlled-capture' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its canonical full-corpus route"
+grep -Fq 'controlled_reference:' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its explicit manual opt-in"
 if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
   die "#353 canonical full corpus must never reduce the 89-case inventory"
 fi
@@ -690,18 +692,44 @@ if grep -Fq 'MarkFlowStarterProductionWiringTest|' <<<"$derived_content_matrix" 
 fi
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
+  die "#353 controlled generic DOM evidence schema lost diagnostic surface inventory"
+grep -Fq 'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG' "$manifest_test" ||
+  die "#353 controlled Mermaid probe regressed to assuming one renderer surface"
+grep -Fq "'same_origin_iframe_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost same-origin iframe inventory"
+grep -Fq "'shadow_root_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost shadow-root inventory"
+grep -Fq "'deep_visible_canvas_count='" "$manifest_test" ||
+  die "#353 controlled Mermaid probe lost canvas surface inventory"
+if grep -Fq 'source Mermaid SVG not rendered' "$manifest_test"; then
+  die "#353 controlled diagnostic must not treat top-level SVG absence as renderer failure"
+fi
 [ "$(grep -Fc 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", 0)' "$manifest_test" || true)" = "1" ] ||
   die "#353 full differential must keep exactly one production-faithful zero-sized JCEF JS query pool override"
 grep -Fq 'Starter.calculateVmOptions() injects 10_000 before per-run patches.' "$manifest_test" ||
   die "#353 JCEF query-pool override lost the Starter default-ordering rationale"
-grep -Fq 'if (contract == "acceptance") {' "$manifest_test" ||
-  die "#353 JCEF query-pool override must remain scoped to authoritative full acceptance"
+grep -Fq 'if (contract == "acceptance" || controlledFullCorpus) {' "$manifest_test" ||
+  die "#353 JCEF query-pool override must remain scoped to authoritative acceptance or the explicit controlled diagnostic"
 if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "0")' "$manifest_test"; then
   die "#353 JCEF query-pool override regressed to the early applyVMOptionsPatch form"
 fi
 if grep -Fq 'addSystemProperty("ide.browser.jcef.jsQueryPoolSize", "10000")' "$manifest_test"; then
   die "#353 pathological 10000-entry JCEF JS query pool must not return"
 fi
+controlled_reference_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeControlledReferencePreviewE2EBridge.kt"
+[ -f "$controlled_reference_bridge" ] || die "#353 controlled bundled-Markdown reference bridge is missing"
+if grep -Fq 'provider.createHtmlPanel(' "$controlled_reference_bridge"; then
+  die "#353 controlled reference must not restore a static dependency on Experimental createHtmlPanel"
+fi
+grep -Fq 'MarkdownHtmlPanelProvider::class.java.getMethod(' "$controlled_reference_bridge" ||
+  die "#353 controlled reference lost the fail-closed bundled-provider factory boundary"
+grep -Fq '"createHtmlPanel"' "$controlled_reference_bridge" ||
+  die "#353 controlled reference no longer resolves the exact bundled-provider factory"
+grep -Fq 'Project::class.java' "$controlled_reference_bridge" ||
+  die "#353 controlled reference factory lost the Project parameter identity"
+grep -Fq 'VirtualFile::class.java' "$controlled_reference_bridge" ||
+  die "#353 controlled reference factory lost the VirtualFile parameter identity"
 grep -Fq 'MARKFLOW_DIFFERENTIAL_PROGRESS_FILE' "$manifest_test" ||
   die "#353 full differential test lost workflow-visible heartbeat output"
 grep -Fq 'heartbeat("case-start", entry.id)' "$manifest_test" ||
@@ -996,8 +1024,10 @@ grep -Fq 'output.resolve("acceptance.json")' "$manifest_test" ||
   die "Full #353 acceptance no longer emits a distinct final reviewed verdict"
 grep -Fq '\"full_differential_acceptance\":true' "$manifest_test" ||
   die "Full #353 final verdict cannot signal reviewed full-corpus acceptance"
-grep -Fq 'runTimeout = if (contract == "acceptance") 75.minutes else 12.minutes' "$manifest_test" ||
-  die "Full #353 acceptance lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
+grep -Fq 'runTimeout = if (contract != "capture") 75.minutes else 12.minutes' "$manifest_test" ||
+  die "Full #353 acceptance/controlled corpus lost its 75-minute Starter lifetime or bounded capture lost its 12-minute limit"
+grep -Fq '"controlled-capture"' "$manifest_test" ||
+  die "#353 manifest lost the explicit unreviewed controlled-provider contract"
 grep -Fq '"markflow-353-full-manifest-real-pairs"' "$manifest_test" ||
   die "Full #353 Starter launch lost its distinct diagnostic identity"
 grep -Fq 'timeout-minutes: 100' "$full_differential_workflow" ||

@@ -520,6 +520,10 @@ intellijPlatformTesting {
             providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
                 systemProperty("markflow.differential.caseIds", ids)
             }
+            // #353 controlled-provider diagnostic: source-bound reference path only.
+            providers.gradleProperty("differentialControlledCaseId").orNull?.let { id ->
+                systemProperty("markflow.differential.controlledCaseId", id)
+            }
             // Explicitly distinguish bounded Stage D capture from the opt-in
             // full-corpus #353 evidence contract. The latter still fails closed
             // until exact retained artifacts receive an explicit reviewed ledger.
