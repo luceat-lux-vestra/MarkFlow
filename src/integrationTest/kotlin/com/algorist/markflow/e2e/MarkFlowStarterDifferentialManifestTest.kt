@@ -3895,6 +3895,7 @@ private interface DifferentialOwnedReferenceRemote {
 private interface DifferentialManifestPreviewRemote {
     fun showNativeAtSourceLine(editor: Editor, line: Int): String
     fun nativeSourceAnchorViewport(editor: Editor, line: Int): String
+    fun sourceAnchorViewportNegativeControls(): Boolean
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String

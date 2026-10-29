@@ -846,6 +846,10 @@ grep -Fq 'target_visible=true' "$manifest_test" ||
   die "#353 reviewed source-anchor evidence no longer fails closed off-screen"
 grep -Fq 'preview.sourceAnchorViewportNegativeControls()' "$manifest_test" ||
   die "#353 native source viewport negative controls no longer execute"
+grep -Fq 'fun sourceAnchorViewportNegativeControls(): Boolean' "$manifest_test" ||
+  die "#353 source viewport negative controls no longer appear in the Remote interface"
+grep -Fq 'fun sourceAnchorViewportNegativeControls(): Boolean' "$differential_bridge" ||
+  die "#353 source viewport negative controls no longer have a bridge implementation"
 grep -Fq 'preview-source-anchor-viewport.txt' "$manifest_test" ||
   die "#353 ordinary bundled Preview source-anchor artifact is missing"
 
