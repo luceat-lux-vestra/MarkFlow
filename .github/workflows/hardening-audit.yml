@@ -96,7 +96,7 @@ jobs:
         run: actionlint -color
 
       - name: Run zizmor across all workflows
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           advanced-security: false
           online-audits: false
@@ -123,7 +123,7 @@ jobs:
       - name: Verify zizmor rejects unsafe fixture
         id: zizmor-negative
         continue-on-error: true
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           advanced-security: false
           online-audits: false
