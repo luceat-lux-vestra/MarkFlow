@@ -840,6 +840,11 @@ grep -Fq 'owned.scrollToSourceAnchor()' "$manifest_test" ||
   die "#353 controlled reference no longer reissues bundled source navigation after paint"
 grep -Fq 'fun scrollToSourceAnchor(): String' "$controlled_reference_bridge" ||
   die "#353 controlled reference lost post-paint source-anchor navigation"
+grep -Fq 'markdownPanel.scrollToSourceOffset(offset.toDouble())' "$controlled_reference_bridge" ||
+  die "#353 controlled reference no longer follows the current DOM source offset"
+if grep -Fq 'scrollToMarkdownSrcOffset(offset, false)' "$controlled_reference_bridge"; then
+  die "#353 controlled reference regressed to deprecated cached-element source scrolling"
+fi
 grep -Fq '"source-anchor-viewport"' "$manifest_test" ||
   die "#353 controlled reference lost source-position DOM viewport proof"
 grep -Fq 'target_visible=true' "$manifest_test" ||
