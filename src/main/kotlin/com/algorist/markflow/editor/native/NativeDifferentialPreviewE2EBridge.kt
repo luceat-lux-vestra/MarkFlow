@@ -476,20 +476,55 @@ internal object NativeDifferentialPreviewE2EBridge {
             !sourceAnchorFullyVisible(490, 510, 100, 400) &&
             !sourceAnchorFullyVisible(200, 220, 100, 0)
 
+    /**
+     * Return a source offset on the requested line that is actually represented in the editor.
+     *
+     * Ordinary Markdown presentation can legitimately collapse only leading/trailing syntax
+     * delimiters (for example the '<' and '>' of an autolink). Treating a collapsed delimiter at
+     * line start as proof that the whole source line is invisible rejects valid reviewed evidence.
+     * Conversely, if every source character on the line is covered by a collapsed region, there is
+     * no visible source anchor and reviewed capture must still fail closed.
+     */
+    private fun sourceAnchorProbeOffset(editor: Editor, line: Int): Int? {
+        val document = editor.document
+        val lineStart = document.getLineStartOffset(line)
+        val lineEnd = document.getLineEndOffset(line)
+        if (lineEnd <= lineStart) {
+            return lineStart.takeIf {
+                editor.foldingModel.getCollapsedRegionAtOffset(it) == null
+            }
+        }
+
+        var candidate = lineStart
+        while (candidate < lineEnd) {
+            val collapsed = editor.foldingModel.getCollapsedRegionAtOffset(candidate)
+                ?: return candidate
+            candidate = maxOf(candidate + 1, collapsed.endOffset)
+        }
+        return null
+    }
+
     fun nativeSourceAnchorViewport(editor: Editor, line: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid native source anchor" }
-        val offset = editor.document.getLineStartOffset(line)
-        val visual = editor.offsetToVisualPosition(offset)
+        val lineStart = editor.document.getLineStartOffset(line)
+        val lineEnd = editor.document.getLineEndOffset(line)
+        val probeOffset = sourceAnchorProbeOffset(editor, line)
+        val geometryOffset = probeOffset ?: lineStart
+        val visual = editor.offsetToVisualPosition(geometryOffset)
         val point = editor.visualPositionToXY(visual)
         val viewport = editor.scrollingModel.visibleArea
         val anchorBottom = point.y + editor.lineHeight
-        val visible = editor.foldingModel.getCollapsedRegionAtOffset(offset) == null &&
+        val visible = probeOffset != null &&
             sourceAnchorFullyVisible(point.y, anchorBottom, viewport.y, viewport.height)
         return listOf(
             "schema=markflow-native-source-anchor-viewport/v1",
             "source_line_zero_based=" + line,
-            "source_offset=" + offset,
+            "source_offset=" + lineStart,
+            "source_line_end_offset=" + lineEnd,
+            "source_probe_offset=" + (probeOffset ?: -1),
+            "line_start_collapsed=" +
+                (editor.foldingModel.getCollapsedRegionAtOffset(lineStart) != null),
             "anchor_visual_line=" + visual.line,
             "anchor_y_document_px=" + point.y,
             "anchor_bottom_document_px=" + anchorBottom,
