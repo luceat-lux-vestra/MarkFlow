@@ -921,3 +921,33 @@ the full-corpus cleanup: retain the native `Editor`, resolve its exact
 until both `isFileOpen(file)==false` and that retained native Editor reports
 disposed. UI `CloseContent` and global `waitNotFound()` are no longer
 accepted as lifecycle authority by repository hardening.
+
+
+### Stage E31 — reviewed source-anchor viewport proof
+
+Independent review of controlled full-corpus run `40678549031` found that
+`md-autolink` declared `examples/eg2.md` line 296
+(`<https://example.com>`) but both retained review screenshots showed an
+earlier Mermaid region. This is a capture-oracle failure, not evidence of an
+autolink product defect.
+
+The rejected review case now re-centers the native editor only after derived
+layout has converged and fails closed unless that exact source line occupies
+the real editor viewport. The controlled bundled Markdown reference likewise
+reissues `MarkdownHtmlPanel.scrollToMarkdownSrcOffset` after paint, then
+queries JetBrains Markdown's generated `md-src-pos="start..end"` DOM identity
+and requires the narrowest element containing the reviewed source offset to
+intersect the browser viewport. Only after that proof is the retained
+`intellij-preview.png` replaced with the source-verified screenshot.
+
+This is intentionally bounded to the rejected `md-autolink` review evidence.
+It does not loosen visual criteria, change corpus classification, or populate
+the 89-row acceptance ledger before the full independent review is complete.
+
+The current-main follow-up also requires the normal reviewed `acceptance` path
+to re-issue platform source navigation after successful paint and retain a
+post-paint `md-src-pos` viewport proof immediately before the final image.
+The native screenshot rechecks its source row at the screenshot boundary.
+Viewport negatives (above/below/zero height) are deterministic and blocking.
+No runtime result may be inferred from these static controls before exact-HEAD CI.
+
