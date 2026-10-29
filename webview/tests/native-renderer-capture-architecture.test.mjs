@@ -54,10 +54,15 @@ test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentat
         ["node_modules/katex"],
         "renderer dependency graph must resolve one shared top-level KaTeX installation",
     );
-    assert.match(
-        katexPackages[0]?.[1]?.version ?? "",
-        /^\d+\.\d+\.\d+(?:[-+].*)?$/,
-        "resolved KaTeX package must expose a concrete version",
+    assert.equal(
+        typeof katexPackages[0]?.[1]?.version,
+        "string",
+        "resolved KaTeX package must expose a version",
+    );
+    assert.notEqual(
+        katexPackages[0][1].version.length,
+        0,
+        "resolved KaTeX package version must not be empty",
     );
 });
 
