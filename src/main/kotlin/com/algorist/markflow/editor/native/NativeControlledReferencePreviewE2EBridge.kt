@@ -420,11 +420,12 @@ internal object NativeControlledReferencePreviewE2EBridge {
     }
 
     /**
-     * #353 reviewed-capture guard. Re-issue the bundled Markdown panel's own
-     * source-offset navigation only after its asynchronous page/render work has
-     * converged. This is not a guessed browser scroll coordinate.
+     * #353 reviewed-capture guard. IDEA 2026.2.3's bundled ScrollController caches
+     * currentScrollElement and returns early when the requested source offset still
+     * belongs to that stale element after asynchronous DOM layout changes. Reset only
+     * that cache, then ask the pinned platform controller to locate the offset again
+     * in the current DOM and perform its normal non-smooth scroll.
      */
-    @Suppress("DEPRECATION") // Pinned MarkdownHtmlPanel offset/smooth bridge; test-only.
     fun scrollToSourceAnchor(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val state = checkNotNull(active) { "No controlled reference" }
@@ -438,15 +439,20 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "Controlled source anchor line is outside the Document"
         }
         val offset = editor.document.getLineStartOffset(state.sourceLine)
-        val markdownPanel = state.panel as? MarkdownHtmlPanel
-            ?: error("Controlled JCEF panel no longer implements MarkdownHtmlPanel")
-        // IDEA 2026.2.3 declares (int offset, boolean smooth); avoid animated capture drift.
-        markdownPanel.scrollToMarkdownSrcOffset(offset, false)
+        val javascript = """
+            (() => {
+              const controller = window.scrollController;
+              if (!controller) return;
+              controller.currentScrollElement = null;
+              controller.scrollTo($offset, false);
+            })();
+        """.trimIndent()
+        state.cef.executeJavaScript(javascript, state.cef.url, 0)
         state.record("source-anchor-scroll")
         return "schema=markflow-controlled-reference-source-anchor-scroll/v1\n" +
             "source_line_zero_based=" + state.sourceLine + "\n" +
             "source_offset=" + offset + "\n" +
-            "scroll_api=MarkdownHtmlPanel.scrollToMarkdownSrcOffset\n"
+            "scroll_api=ScrollController.reset-current-element+scrollTo\n"
     }
 
     /** CEF callback writes the result directly; never waits for it on EDT. */
