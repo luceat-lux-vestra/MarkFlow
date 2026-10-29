@@ -20,6 +20,7 @@ import org.cef.browser.CefBrowser
 import org.cef.handler.CefLifeSpanHandlerAdapter
 import org.intellij.plugins.markdown.settings.MarkdownSettings
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanel
+import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelEx
 import org.intellij.plugins.markdown.ui.preview.MarkdownHtmlPanelProvider
 import java.awt.BorderLayout
 import java.awt.Rectangle
@@ -420,11 +421,10 @@ internal object NativeControlledReferencePreviewE2EBridge {
     }
 
     /**
-     * #353 reviewed-capture guard. Re-issue the bundled Markdown panel's own
-     * source-offset navigation only after its asynchronous page/render work has
-     * converged. This is not a guessed browser scroll coordinate.
+     * #353 reviewed-capture guard. Re-issue source-offset navigation only after
+     * asynchronous page/render work has converged, using the current-DOM follow
+     * path rather than the deprecated element-cached scrollToMarkdownSrcOffset().
      */
-    @Suppress("DEPRECATION") // Pinned MarkdownHtmlPanel offset/smooth bridge; test-only.
     fun scrollToSourceAnchor(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val state = checkNotNull(active) { "No controlled reference" }
@@ -438,15 +438,17 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "Controlled source anchor line is outside the Document"
         }
         val offset = editor.document.getLineStartOffset(state.sourceLine)
-        val markdownPanel = state.panel as? MarkdownHtmlPanel
-            ?: error("Controlled JCEF panel no longer implements MarkdownHtmlPanel")
-        // IDEA 2026.2.3 declares (int offset, boolean smooth); avoid animated capture drift.
-        markdownPanel.scrollToMarkdownSrcOffset(offset, false)
+        val markdownPanel = state.panel as? MarkdownHtmlPanelEx
+            ?: error("Controlled JCEF panel no longer implements MarkdownHtmlPanelEx")
+        check(markdownPanel.canScrollToSourceOffset) {
+            "Controlled JCEF panel no longer supports source-offset follow scrolling"
+        }
+        markdownPanel.scrollToSourceOffset(offset.toDouble())
         state.record("source-anchor-scroll")
         return "schema=markflow-controlled-reference-source-anchor-scroll/v1\n" +
             "source_line_zero_based=" + state.sourceLine + "\n" +
             "source_offset=" + offset + "\n" +
-            "scroll_api=MarkdownHtmlPanel.scrollToMarkdownSrcOffset\n"
+            "scroll_api=MarkdownHtmlPanelEx.scrollToSourceOffset\n"
     }
 
     /** CEF callback writes the result directly; never waits for it on EDT. */
