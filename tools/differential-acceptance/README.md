@@ -934,8 +934,9 @@ autolink product defect.
 The rejected review case now re-centers the native editor only after derived
 layout has converged and fails closed unless that exact source line occupies
 the real editor viewport. The controlled bundled Markdown reference likewise
-reissues `MarkdownHtmlPanel.scrollToMarkdownSrcOffset` after paint, then
-queries JetBrains Markdown's generated `md-src-pos="start..end"` DOM identity
+reissues `MarkdownHtmlPanelEx.scrollToSourceOffset` after paint so the
+current DOM geometry drives source-offset following, then queries JetBrains Markdown's
+generated `md-src-pos="start..end"` DOM identity
 and requires the narrowest element containing the reviewed source offset to
 intersect the browser viewport. Only after that proof is the retained
 `intellij-preview.png` replaced with the source-verified screenshot.
