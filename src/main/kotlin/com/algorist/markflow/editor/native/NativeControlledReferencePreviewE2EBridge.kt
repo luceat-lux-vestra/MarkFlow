@@ -424,6 +424,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
      * source-offset navigation only after its asynchronous page/render work has
      * converged. This is not a guessed browser scroll coordinate.
      */
+    @Suppress("DEPRECATION") // Pinned MarkdownHtmlPanel offset/smooth bridge; test-only.
     fun scrollToSourceAnchor(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val state = checkNotNull(active) { "No controlled reference" }
@@ -439,7 +440,8 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val offset = editor.document.getLineStartOffset(state.sourceLine)
         val markdownPanel = state.panel as? MarkdownHtmlPanel
             ?: error("Controlled JCEF panel no longer implements MarkdownHtmlPanel")
-        markdownPanel.scrollToMarkdownSrcOffset(offset)
+        // IDEA 2026.2.3 declares (int offset, boolean smooth); avoid animated capture drift.
+        markdownPanel.scrollToMarkdownSrcOffset(offset, false)
         state.record("source-anchor-scroll")
         return "schema=markflow-controlled-reference-source-anchor-scroll/v1\n" +
             "source_line_zero_based=" + state.sourceLine + "\n" +
