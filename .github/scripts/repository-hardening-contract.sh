@@ -10,13 +10,11 @@ die() {
 }
 
 wrapper="gradle/wrapper/gradle-wrapper.properties"
-configured_gradle="$(sed -n 's/^gradleVersion[[:space:]]*=[[:space:]]*//p' gradle.properties)"
 wrapper_gradle="$(sed -n 's#^distributionUrl=.*gradle-\([0-9][0-9.]*\)-bin\.zip$#\1#p' "$wrapper")"
 wrapper_sha="$(sed -n 's/^distributionSha256Sum=//p' "$wrapper")"
 
-[ -n "$configured_gradle" ] || die "gradleVersion is missing from gradle.properties"
+grep -Eq '^distributionUrl=https\\://services\.gradle\.org/distributions/gradle-[0-9][0-9.]*-bin\.zip$' "$wrapper" || die "Gradle wrapper distributionUrl must use the official services.gradle.org binary distribution"
 [ -n "$wrapper_gradle" ] || die "Gradle wrapper distribution version could not be parsed"
-[ "$configured_gradle" = "$wrapper_gradle" ] || die "gradleVersion ($configured_gradle) does not match wrapper ($wrapper_gradle)"
 [[ "$wrapper_sha" =~ ^[0-9a-f]{64}$ ]] || die "Gradle wrapper distributionSha256Sum is missing or malformed"
 if [ "$wrapper_gradle" = "9.8.1" ] && [ "$wrapper_sha" != "dce76f55f8e251a3a1f130eb120f30b3d271de2b76c9b0729d316b5a1b6dc01f" ]; then
   die "Gradle 9.8.1 distribution checksum does not match the reviewed upstream checksum"

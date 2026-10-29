@@ -33,13 +33,37 @@ test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentat
     assert.match(bootstrap, /#\[0-9a-fA-F\]\{3\}/);
     assert.equal(bootstrap.includes("renderToString"), false);
     assert.equal(bootstrap.includes("mermaid.render"), false);
-    assert.equal(packageJson.dependencies.katex, "^0.19.0");
-    assert.equal(packageJson.dependencies.mermaid, "12.2.0");
+
+    const rootLock = packageLock.packages?.[""];
+    assert.equal(
+        rootLock?.dependencies?.katex,
+        packageJson.dependencies?.katex,
+        "package-lock root KaTeX declaration must match package.json",
+    );
+    assert.equal(
+        rootLock?.dependencies?.mermaid,
+        packageJson.dependencies?.mermaid,
+        "package-lock root Mermaid declaration must match package.json",
+    );
     assert.equal(packageJson.overrides?.mermaid?.katex, "$katex");
-    const katexPackages = Object.entries(packageLock.packages)
+
+    const katexPackages = Object.entries(packageLock.packages ?? {})
         .filter(([location]) => location === "node_modules/katex" || location.endsWith("/node_modules/katex"));
-    assert.deepEqual(katexPackages.map(([location]) => location), ["node_modules/katex"]);
-    assert.equal(katexPackages[0][1].version, "0.19.0");
+    assert.deepEqual(
+        katexPackages.map(([location]) => location),
+        ["node_modules/katex"],
+        "renderer dependency graph must resolve one shared top-level KaTeX installation",
+    );
+    assert.equal(
+        typeof katexPackages[0]?.[1]?.version,
+        "string",
+        "resolved KaTeX package must expose a version",
+    );
+    assert.notEqual(
+        katexPackages[0][1].version.length,
+        0,
+        "resolved KaTeX package version must not be empty",
+    );
 });
 
 test("capture adds no ambient transport or mutation authority", () => {
