@@ -318,6 +318,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 check(driver.withContext(OnDispatcher.EDT) {
                     preview.rasterScrollNegativeControls()
                 }) { "Stage E18 scroll-reachability negative controls failed" }
+                check(driver.withContext(OnDispatcher.EDT) {
+                    preview.sourceAnchorViewportNegativeControls()
+                }) { "Stage E31 source-anchor viewport negative controls failed" }
                 driver.withContext(OnDispatcher.EDT) { visual.prepareEditorChromeBeforeOpen() }
                 for ((index, entry) in selected.withIndex()) {
                     currentCaseNumber = index + 1
@@ -396,6 +399,36 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-native-ready", entry.id)
                         driver.withContext(OnDispatcher.EDT) {
                             visual.normalizeEditorChromeForCapture(remoteEditor)
+                        }
+                        // #353 reviewed evidence found md-autolink captured an earlier
+                        // Mermaid region even though its declared anchor is line 296.
+                        // Derived block inlays can settle after the initial scroll, so
+                        // re-center only this rejected review case after convergence and
+                        // prove the requested source line is inside the actual viewport.
+                        if (entry.id == "md-autolink") {
+                            driver.withContext(OnDispatcher.EDT) {
+                                preview.showNativeAtSourceLine(remoteEditor, entry.line)
+                            }
+                            waitFor(
+                                message = "Native reviewed source anchor visible: " + entry.id,
+                                timeout = 15.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                                } },
+                                checker = { it.lineSequence().any { line ->
+                                    line == "anchor_visible=true"
+                                } }
+                            )
+                            val anchorViewport = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                            }
+                            check(anchorViewport.lineSequence().any {
+                                it == "anchor_visible=true"
+                            }) { "Reviewed native source anchor is outside capture viewport" }
+                            Files.writeString(
+                                dest.resolve("native-source-anchor-viewport.txt"),
+                                anchorViewport, StandardCharsets.UTF_8
+                            )
                         }
                         val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(remoteEditor)
@@ -505,6 +538,18 @@ class MarkFlowStarterDifferentialManifestTest {
                         }
                         check(native.width == 1200 && native.height == 760)
                         robot.waitForIdle()
+                        if (entry.id == "md-autolink") {
+                            // Recheck at the actual screenshot boundary; prior inlay
+                            // convergence must not be mistaken for a retained viewport.
+                            val evidence = driver.withContext(OnDispatcher.EDT) {
+                                preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                            }
+                            Files.writeString(dest.resolve("native-source-anchor-viewport.txt"),
+                                evidence, StandardCharsets.UTF_8)
+                            check(evidence.lineSequence().any { it == "anchor_visible=true" }) {
+                                "Reviewed native source anchor drifted before screenshot"
+                            }
+                        }
                         check(ImageIO.write(robot.createScreenCapture(native), "png",
                             dest.resolve("markflow.png").toFile()))
                         // E18: physically scroll to each boundary of the same native
@@ -802,7 +847,12 @@ class MarkFlowStarterDifferentialManifestTest {
 
                             // Additional browser-bound geometry evidence; the historical
                             // Driver-selected platform Preview path remains diagnostic only.
-                            fun captureOwnedProbe(name: String, script: String, schema: String) {
+                            fun captureOwnedProbe(
+                                name: String,
+                                script: String,
+                                schema: String,
+                                accept: (String) -> Boolean = { true },
+                            ) {
                                 var current: Path? = null
                                 var attempts = 0
                                 waitFor(
@@ -838,7 +888,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 check(claims.all { claim ->
                                                     identity.lineSequence().any { it == claim }
                                                 }) { "Controlled DOM callback not from created browser/source" }
-                                                if (!text.startsWith(schema + "\n")) {
+                                                if (!text.startsWith(schema + "\n") ||
+                                                    !accept(text)) {
                                                     current = null
                                                     false
                                                 } else {
@@ -884,6 +935,48 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "probe_name=generic-dom-geometry\n" +
                                         "result=CAPTURED_UNVERIFIED\n"
                                 )
+                            }
+                            if (entry.id == "md-autolink") {
+                                val sourceOffset = source.split('\n')
+                                    .take(entry.line).sumOf { it.length + 1 }
+                                val scrollEvidence = driver.withContext(OnDispatcher.EDT) {
+                                    owned.scrollToSourceAnchor()
+                                }
+                                Files.writeString(
+                                    ownedDest.resolve("source-anchor-scroll.txt"),
+                                    scrollEvidence, StandardCharsets.UTF_8
+                                )
+                                captureOwnedProbe(
+                                    "source-anchor-viewport",
+                                    controlledReferenceSourceAnchorViewportProbe(sourceOffset),
+                                    "schema=markflow-controlled-reference-source-anchor-viewport/v1",
+                                ) { evidence ->
+                                    evidence.lineSequence().any { line ->
+                                        line == "target_visible=true"
+                                    }
+                                }
+                                val anchorEvidence = Files.readString(
+                                    ownedDest.resolve("source-anchor-viewport.txt")
+                                )
+                                check(anchorEvidence.lineSequence().any {
+                                    it == "target_visible=true"
+                                }) {
+                                    "Reviewed bundled Preview source anchor is outside capture viewport"
+                                }
+                                // Replace the pre-scroll first-paint image with the reviewed,
+                                // source-verified viewport. The earlier image is only a liveness
+                                // probe; the retained review artifact must show the target case.
+                                robot.waitForIdle()
+                                val anchoredImage = robot.createScreenCapture(
+                                    Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                                )
+                                check(diagnostics.referenceHasVisibleContent(anchoredImage)) {
+                                    "Reviewed bundled Preview source-anchor capture is blank"
+                                }
+                                check(ImageIO.write(
+                                    anchoredImage, "png",
+                                    ownedDest.resolve("intellij-preview.png").toFile()
+                                ))
                             }
                             val probeSnapshot = driver.withContext(OnDispatcher.EDT) {
                                 owned.snapshot()
@@ -1208,6 +1301,37 @@ class MarkFlowStarterDifferentialManifestTest {
                                     getter = ::captureReferencePaint,
                                     checker = { it }
                                 )
+                            }
+                            if (entry.id == "md-autolink") {
+                                // A successfully painted JCEF surface may still be scrolled
+                                // to an unrelated earlier section. Reissue the real bundled
+                                // Preview navigation after paint and prove its DOM source offset
+                                // before retaining the review screenshot.
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showReferenceAtSourceLine(remoteEditor, entry.line)
+                                }
+                                val offset = source.split('\n').take(entry.line)
+                                    .sumOf { it.length + 1 }
+                                val probe = controlledReferenceSourceAnchorViewportProbe(offset)
+                                waitFor(
+                                    message = "Bundled Preview reviewed source anchor: " + entry.id,
+                                    timeout = 20.seconds,
+                                    getter = { driver.ui.jcef().callJs(probe) },
+                                    checker = { evidence -> evidence.lineSequence().any {
+                                        it == "target_visible=true"
+                                    } }
+                                )
+                                val anchored = driver.ui.jcef().callJs(probe)
+                                Files.writeString(
+                                    dest.resolve("preview-source-anchor-viewport.txt"),
+                                    anchored + "\n", StandardCharsets.UTF_8
+                                )
+                                check(anchored.lineSequence().any {
+                                    it == "target_visible=true"
+                                }) { "Bundled Preview source anchor drifted before screenshot" }
+                                check(captureReferencePaint()) {
+                                    "Reviewed bundled Preview source-anchor capture is blank"
+                                }
                             }
                             heartbeat("case-reference-painted", entry.id)
                         } else {
@@ -2877,6 +3001,56 @@ class MarkFlowStarterDifferentialManifestTest {
         })()
     """.trimIndent()
 
+    /**
+     * #353 reviewed-capture proof for the exact bundled Markdown HTML.
+     * JetBrains' Markdown HtmlGenerator emits md-src-pos="start..end"; select the
+     * narrowest rendered node containing the reviewed source offset and require
+     * that node to intersect the actual browser viewport after platform scrolling.
+     */
+    private fun controlledReferenceSourceAnchorViewportProbe(sourceOffset: Int): String {
+        require(sourceOffset >= 0)
+        return """
+            (() => {
+              const sourceOffset = $sourceOffset;
+              const rows = Array.from(document.querySelectorAll('[md-src-pos]'))
+                .map(element => {
+                  const raw = element.getAttribute('md-src-pos') || '';
+                  const match = /^(\d+)\.\.(\d+)$/.exec(raw);
+                  if (!match) return null;
+                  const start = Number(match[1]);
+                  const end = Number(match[2]);
+                  if (!Number.isFinite(start) || !Number.isFinite(end) ||
+                      start > sourceOffset || end < sourceOffset) return null;
+                  return { element, raw, start, end, span: end - start };
+                })
+                .filter(Boolean)
+                .sort((a, b) => a.span - b.span || a.start - b.start);
+              if (!rows.length) {
+                return 'FAIL: no md-src-pos element contains source offset=' + sourceOffset;
+              }
+              const target = rows[0];
+              const rect = target.element.getBoundingClientRect();
+              const visible = rect.width > 0 && rect.height > 0 &&
+                rect.bottom > 0 && rect.top < window.innerHeight &&
+                rect.right > 0 && rect.left < window.innerWidth;
+              return [
+                'schema=markflow-controlled-reference-source-anchor-viewport/v1',
+                'source_offset=' + sourceOffset,
+                'source_range=' + target.raw,
+                'target_tag=' + (target.element.tagName || 'UNKNOWN').toLowerCase(),
+                'target_left=' + rect.left.toFixed(3),
+                'target_top=' + rect.top.toFixed(3),
+                'target_right=' + rect.right.toFixed(3),
+                'target_bottom=' + rect.bottom.toFixed(3),
+                'viewport_width=' + window.innerWidth,
+                'viewport_height=' + window.innerHeight,
+                'window_scroll_y=' + window.scrollY,
+                'target_visible=' + visible
+              ].join('\n');
+            })()
+        """.trimIndent()
+    }
+
     /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
     private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
         require(sourceLabel == "Rendered correctly?" ||
@@ -3709,6 +3883,7 @@ private interface DifferentialOwnedReferenceRemote {
     ): String
     fun snapshot(): String
     fun bounds(): String
+    fun scrollToSourceAnchor(): String
     fun requestRenderedText(probePath: String)
     fun requestDomProbe(probeName: String, script: String, outputPath: String)
     fun close(): String
@@ -3719,6 +3894,8 @@ private interface DifferentialOwnedReferenceRemote {
     plugin = "com.algorist.markflow")
 private interface DifferentialManifestPreviewRemote {
     fun showNativeAtSourceLine(editor: Editor, line: Int): String
+    fun nativeSourceAnchorViewport(editor: Editor, line: Int): String
+    fun sourceAnchorViewportNegativeControls(): Boolean
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String

@@ -831,6 +831,27 @@ grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
   die "Markdown source anchors no longer fail closed on fixture drift"
 grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
   die "Markdown source-anchor ledger lost its reviewed snapshot pin"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+grep -Fq 'nativeSourceAnchorViewport(remoteEditor, entry.line)' "$manifest_test" ||
+  die "#353 reviewed native capture no longer proves the source anchor is in the viewport"
+grep -Fq 'fun nativeSourceAnchorViewport(editor: Editor, line: Int)' "$differential_bridge" ||
+  die "#353 native source-anchor viewport bridge is missing"
+grep -Fq 'owned.scrollToSourceAnchor()' "$manifest_test" ||
+  die "#353 controlled reference no longer reissues bundled source navigation after paint"
+grep -Fq 'fun scrollToSourceAnchor(): String' "$controlled_reference_bridge" ||
+  die "#353 controlled reference lost post-paint source-anchor navigation"
+grep -Fq '"source-anchor-viewport"' "$manifest_test" ||
+  die "#353 controlled reference lost source-position DOM viewport proof"
+grep -Fq 'target_visible=true' "$manifest_test" ||
+  die "#353 reviewed source-anchor evidence no longer fails closed off-screen"
+grep -Fq 'preview.sourceAnchorViewportNegativeControls()' "$manifest_test" ||
+  die "#353 native source viewport negative controls no longer execute"
+grep -Fq 'fun sourceAnchorViewportNegativeControls(): Boolean' "$manifest_test" ||
+  die "#353 source viewport negative controls no longer appear in the Remote interface"
+grep -Fq 'fun sourceAnchorViewportNegativeControls(): Boolean' "$differential_bridge" ||
+  die "#353 source viewport negative controls no longer have a bridge implementation"
+grep -Fq 'preview-source-anchor-viewport.txt' "$manifest_test" ||
+  die "#353 ordinary bundled Preview source-anchor artifact is missing"
 
 [ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
@@ -1050,7 +1071,6 @@ grep -Fq '\"full_differential_acceptance\":false' "$manifest_test" ||
 grep -Fq '\"release_eligible\":false' "$manifest_test" ||
   die "Unreviewed Stage D capture cannot authorize release"
 differential_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt"
-differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 [ -f "$differential_test" ] && [ -f "$differential_bridge" ] ||
   die "bundled Markdown Preview real-E2E consumer or bridge missing"
 grep -Fq "preview.showReferenceAtSourceLine(sourceEditor, sourceLine)" "$differential_test" ||
