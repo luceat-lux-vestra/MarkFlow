@@ -884,6 +884,22 @@ grep -Fq 'fun sourceAnchorViewportNegativeControls(): Boolean' "$differential_br
 grep -Fq 'preview-source-anchor-viewport.txt' "$manifest_test" ||
   die "#353 ordinary bundled Preview source-anchor artifact is missing"
 
+grep -Fq 'val expectedNonComparableIds = setOf(' "$manifest_test" ||
+  die "#353 full-corpus Preview comparability inventory is no longer explicit"
+for case_id in md-raw-html-hostile mermaid-agentflow; do
+  grep -Fq "\"$case_id\"" "$manifest_test" ||
+    die "#353 full-corpus Preview comparability inventory lost $case_id"
+done
+grep -Fq 'nonComparableIds == expectedNonComparableIds' "$manifest_test" ||
+  die "#353 full-corpus Preview comparability no longer fails closed on manifest drift"
+grep -Fq 'entry.id in expectedNonComparableIds' "$manifest_test" ||
+  die "#353 reviewed acceptance no longer honors manifest-declared Preview unavailability"
+if grep -Fq 'entry.classification == "degraded" &&' "$manifest_test"; then
+  die "#353 Preview availability must not be inferred from product classification"
+fi
+grep -Fq 'intellij_preview=NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
+  die "#353 non-comparable Preview disposition evidence is missing"
+
 [ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
   die "Starter workflow silently dropped Stage D manifest capture"
