@@ -1026,11 +1026,24 @@ internal object NativeDifferentialPreviewE2EBridge {
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
         val (selected, preview) = editors(editor)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_PREVIEW)
-        // Invoke the real bundled preview's source-line navigation; never guess scroll offsets.
+        val panel = previewPanel(preview) as? JBCefBrowser
+            ?: error("Bundled Markdown panel is not JBCefBrowser")
+        val sourceOffset = editor.document.getLineStartOffset(line)
+
+        // Preserve the real bundled Preview navigation contract first.
         preview.javaClass.getMethod(
             "scrollToLine", Editor::class.java, Int::class.javaPrimitiveType
         ).invoke(preview, editor, line)
-        return selected.javaClass.name + ";" + preview.javaClass.name + ";line=" + line
+
+        // IDEA 2026.2.3 may let the platform call return early against a stale
+        // ScrollController.currentScrollElement after asynchronous layout shifts.
+        // Re-resolve through the same compatibility seam used by the controlled
+        // reference so provider ownership stays separate from scroll semantics.
+        MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(
+            panel.getCefBrowser(), sourceOffset
+        )
+        return selected.javaClass.name + ";" + preview.javaClass.name +
+            ";line=" + line + ";source_offset=" + sourceOffset
     }
 
     fun referenceShowing(editor: Editor): Boolean {
