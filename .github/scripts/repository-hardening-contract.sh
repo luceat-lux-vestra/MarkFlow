@@ -845,8 +845,20 @@ grep -Fq 'fun scrollToSourceAnchor(): String' "$controlled_reference_bridge" ||
   die "#353 controlled reference lost post-paint source-anchor navigation"
 grep -Fq 'MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(state.cef, offset)' "$controlled_reference_bridge" ||
   die "#353 controlled reference no longer uses the shared source-anchor navigator"
+grep -Fq 'fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String' "$differential_bridge" ||
+  die "#353 reviewed bundled Preview lost the panel-ready source-anchor seam"
+grep -Fq 'preview.reResolveReferenceSourceAnchor(remoteEditor, entry.line)' "$manifest_test" ||
+  die "#353 reviewed acceptance no longer invokes panel-ready source re-resolution"
 grep -Fq 'MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(' "$differential_bridge" ||
   die "#353 reviewed bundled Preview no longer uses the shared source-anchor navigator"
+if sed -n '/fun showReferenceAtSourceLine(editor: Editor, line: Int): String/,/fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String/p' "$differential_bridge" |
+  grep -Fq 'previewPanel('; then
+  die "#353 initial bundled Preview navigation must remain panel-independent"
+fi
+panel_ready_line="$(grep -n 'heartbeat("case-reference-panel-ready", entry.id)' "$manifest_test" | head -n1 | cut -d: -f1)"
+reresolve_line="$(grep -n 'preview.reResolveReferenceSourceAnchor(remoteEditor, entry.line)' "$manifest_test" | head -n1 | cut -d: -f1)"
+[ -n "$panel_ready_line" ] && [ -n "$reresolve_line" ] && [ "$reresolve_line" -gt "$panel_ready_line" ] ||
+  die "#353 reviewed source re-resolution must occur after bundled Preview panel readiness"
 grep -Fq 'controller.currentScrollElement = null' "$source_anchor_navigator" ||
   die "#353 shared navigator no longer clears stale bundled ScrollController state"
 grep -Fq 'controller.scrollTo($sourceOffset, false)' "$source_anchor_navigator" ||
