@@ -836,14 +836,26 @@ grep -Fq 'nativeSourceAnchorViewport(remoteEditor, entry.line)' "$manifest_test"
   die "#353 reviewed native capture no longer proves the source anchor is in the viewport"
 grep -Fq 'fun nativeSourceAnchorViewport(editor: Editor, line: Int)' "$differential_bridge" ||
   die "#353 native source-anchor viewport bridge is missing"
+source_anchor_navigator="src/main/kotlin/com/algorist/markflow/editor/native/MarkdownPreviewSourceAnchorNavigator.kt"
+[ -f "$source_anchor_navigator" ] ||
+  die "#353 shared Markdown Preview source-anchor navigator is missing"
 grep -Fq 'owned.scrollToSourceAnchor()' "$manifest_test" ||
   die "#353 controlled reference no longer reissues bundled source navigation after paint"
 grep -Fq 'fun scrollToSourceAnchor(): String' "$controlled_reference_bridge" ||
   die "#353 controlled reference lost post-paint source-anchor navigation"
-grep -Fq 'controller.currentScrollElement = null' "$controlled_reference_bridge" ||
-  die "#353 controlled reference no longer clears stale bundled ScrollController state"
-grep -Fq 'controller.scrollTo($offset, false)' "$controlled_reference_bridge" ||
-  die "#353 controlled reference no longer re-runs pinned platform source navigation"
+grep -Fq 'MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(state.cef, offset)' "$controlled_reference_bridge" ||
+  die "#353 controlled reference no longer uses the shared source-anchor navigator"
+grep -Fq 'MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(' "$differential_bridge" ||
+  die "#353 reviewed bundled Preview no longer uses the shared source-anchor navigator"
+grep -Fq 'controller.currentScrollElement = null' "$source_anchor_navigator" ||
+  die "#353 shared navigator no longer clears stale bundled ScrollController state"
+grep -Fq 'controller.scrollTo($sourceOffset, false)' "$source_anchor_navigator" ||
+  die "#353 shared navigator no longer re-resolves the current DOM source offset"
+if grep -Fq 'currentScrollElement = null' "$controlled_reference_bridge" "$differential_bridge"; then
+  die "#353 pinned ScrollController workaround must remain centralized"
+fi
+grep -Fq '"scrollToLine", Editor::class.java, Int::class.javaPrimitiveType' "$differential_bridge" ||
+  die "#353 reviewed bundled Preview bypassed real platform source-line navigation"
 if grep -Fq 'scrollToMarkdownSrcOffset(offset, false)' "$controlled_reference_bridge"; then
   die "#353 controlled reference regressed to deprecated cached-element source scrolling"
 fi
