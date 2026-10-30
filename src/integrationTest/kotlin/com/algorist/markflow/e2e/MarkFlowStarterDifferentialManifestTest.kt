@@ -129,6 +129,20 @@ class MarkFlowStarterDifferentialManifestTest {
             reviewCases.none { it.id in indexed })
         val selected = reviewCases +
             selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
+        // Independently reviewed long-document captures must show their exact
+        // source region on BOTH surfaces, not merely a nonblank Preview.
+        val reviewedSourceAnchorLines = mapOf(
+            "md-blockquote" to 50,
+            "md-task-list" to 46,
+            "md-table-basic" to 63,
+            "md-autolink" to 296,
+        )
+        check(reviewedSourceAnchorLines.all { (id, line) ->
+            indexed[id]?.let {
+                it.line == line && it.comparable &&
+                    it.visualExpectation == "source-anchored-geometry"
+            } == true
+        }) { "Reviewed paired source-anchor inventory drifted" }
         val expectedNonComparableIds = setOf(
             "md-raw-html-hostile",
             "mermaid-agentflow",
@@ -407,12 +421,10 @@ class MarkFlowStarterDifferentialManifestTest {
                         driver.withContext(OnDispatcher.EDT) {
                             visual.normalizeEditorChromeForCapture(remoteEditor)
                         }
-                        // #353 reviewed evidence found md-autolink captured an earlier
-                        // Mermaid region even though its declared anchor is line 296.
-                        // Derived block inlays can settle after the initial scroll, so
-                        // re-center only this rejected review case after convergence and
-                        // prove the requested source line is inside the actual viewport.
-                        if (entry.id == "md-autolink") {
+                        // Long-document visual review previously captured unrelated
+                        // regions after async derived layout convergence. Re-center each
+                        // reviewed source anchor and prove it is actually in the viewport.
+                        if (entry.id in reviewedSourceAnchorLines) {
                             driver.withContext(OnDispatcher.EDT) {
                                 preview.showNativeAtSourceLine(remoteEditor, entry.line)
                             }
@@ -545,7 +557,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         }
                         check(native.width == 1200 && native.height == 760)
                         robot.waitForIdle()
-                        if (entry.id == "md-autolink") {
+                        if (entry.id in reviewedSourceAnchorLines) {
                             // Recheck at the actual screenshot boundary; prior inlay
                             // convergence must not be mistaken for a retained viewport.
                             val evidence = driver.withContext(OnDispatcher.EDT) {
@@ -1309,7 +1321,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                     checker = { it }
                                 )
                             }
-                            if (entry.id == "md-autolink") {
+                            if (entry.id in reviewedSourceAnchorLines) {
                                 // A successfully painted JCEF surface may still be scrolled
                                 // to an unrelated earlier section. Reissue the real bundled
                                 // Preview navigation only after its panel is ready, then apply
@@ -1330,16 +1342,22 @@ class MarkFlowStarterDifferentialManifestTest {
                                     } }
                                 )
                                 val anchored = driver.ui.jcef().callJs(probe)
-                                Files.writeString(
-                                    dest.resolve("preview-source-anchor-viewport.txt"),
-                                    anchored + "\n", StandardCharsets.UTF_8
-                                )
                                 check(anchored.lineSequence().any {
                                     it == "target_visible=true"
                                 }) { "Bundled Preview source anchor drifted before screenshot" }
                                 check(captureReferencePaint()) {
                                     "Reviewed bundled Preview source-anchor capture is blank"
                                 }
+                                // Prove the retained image still shows this source
+                                // section after Robot capture, not an earlier JCEF DOM.
+                                val screenshotAnchor = driver.ui.jcef().callJs(probe)
+                                Files.writeString(
+                                    dest.resolve("preview-source-anchor-viewport.txt"),
+                                    screenshotAnchor + "\n", StandardCharsets.UTF_8
+                                )
+                                check(screenshotAnchor.lineSequence().any {
+                                    it == "target_visible=true"
+                                }) { "Bundled Preview source anchor drifted at screenshot boundary" }
                             }
                             heartbeat("case-reference-painted", entry.id)
                         } else {
