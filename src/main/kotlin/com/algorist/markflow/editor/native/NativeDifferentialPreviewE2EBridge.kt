@@ -1026,24 +1026,41 @@ internal object NativeDifferentialPreviewE2EBridge {
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
         val (selected, preview) = editors(editor)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_PREVIEW)
-        val panel = previewPanel(preview) as? JBCefBrowser
-            ?: error("Bundled Markdown panel is not JBCefBrowser")
-        val sourceOffset = editor.document.getLineStartOffset(line)
-
-        // Preserve the real bundled Preview navigation contract first.
+        // This is intentionally panel-independent. The bundled Preview attaches its
+        // JCEF panel asynchronously, so initial navigation must not require browser
+        // ownership before referencePanelShowing() has proven it is ready.
         preview.javaClass.getMethod(
             "scrollToLine", Editor::class.java, Int::class.javaPrimitiveType
         ).invoke(preview, editor, line)
+        return selected.javaClass.name + ";" + preview.javaClass.name + ";line=" + line
+    }
 
-        // IDEA 2026.2.3 may let the platform call return early against a stale
-        // ScrollController.currentScrollElement after asynchronous layout shifts.
-        // Re-resolve through the same compatibility seam used by the controlled
-        // reference so provider ownership stays separate from scroll semantics.
+    /**
+     * #353 post-paint compatibility guard for the real bundled Preview.
+     * Call only after the harness has proven the platform panel is showing.
+     * Browser ownership stays with IDEA; only the pinned stale-scroll workaround
+     * is shared with the controlled reference path.
+     */
+    fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Markdown Preview panel is not attached"
+        } as? JBCefBrowser ?: error(
+            "Bundled Markdown panel is not JBCefBrowser: " + previewPanel(preview)?.javaClass?.name
+        )
+        check(referencePanelShowing(editor)) {
+            "Bundled Markdown Preview source re-resolution requires a showing panel"
+        }
+        val sourceOffset = editor.document.getLineStartOffset(line)
         MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(
             panel.getCefBrowser(), sourceOffset
         )
-        return selected.javaClass.name + ";" + preview.javaClass.name +
-            ";line=" + line + ";source_offset=" + sourceOffset
+        return "schema=markflow-bundled-preview-source-anchor-reresolve/v1\n" +
+            "source_line_zero_based=" + line + "\n" +
+            "source_offset=" + sourceOffset + "\n" +
+            "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
     }
 
     fun referenceShowing(editor: Editor): Boolean {
