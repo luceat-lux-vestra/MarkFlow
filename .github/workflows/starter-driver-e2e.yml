@@ -259,7 +259,7 @@ jobs:
             STARTER_SUITES="${suites[0]}"
             gradle_args+=(
               -PdifferentialContract=capture
-              -PdifferentialCaseIds=md-blockquote,md-task-list,md-table-basic,md-autolink
+              "-PdifferentialCaseIds=md-blockquote,md-task-list,md-table-basic,md-autolink"
             )
             printf '%s\n' \
               'schema=markflow-353-source-anchor-four-case-capture/v1' \
