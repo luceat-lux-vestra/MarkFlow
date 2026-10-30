@@ -129,11 +129,20 @@ class MarkFlowStarterDifferentialManifestTest {
             reviewCases.none { it.id in indexed })
         val selected = reviewCases +
             selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
+        val expectedNonComparableIds = setOf(
+            "md-raw-html-hostile",
+            "mermaid-agentflow",
+        )
         if (contract == "capture") {
             check(selected.all { it.comparable && it.classification == "supported" })
         } else {
             check(reviewCases.isEmpty() && selected.size == inventory.size)
             check(selected.map { it.id }.toSet() == inventory.map { it.id }.toSet())
+            val nonComparableIds = inventory.filter { !it.comparable }.map { it.id }.toSet()
+            check(nonComparableIds == expectedNonComparableIds) {
+                "Full-corpus IntelliJ Preview comparability inventory changed: " +
+                    nonComparableIds.sorted()
+            }
         }
         // Isolated controlled-reference migration proof. Never substitute this for
         // reviewed full acceptance or silently turn on a second reference renderer.
@@ -155,9 +164,7 @@ class MarkFlowStarterDifferentialManifestTest {
             }
         }
         if (controlledFullCorpus) {
-            val nonComparableIds = inventory.filter { !it.comparable }.map { it.id }.toSet()
-            check(selected.size == 89 && controlledCaseIds?.size == 87 &&
-                nonComparableIds == setOf("md-raw-html-hostile", "mermaid-agentflow")) {
+            check(selected.size == 89 && controlledCaseIds?.size == 87) {
                 "89-case controlled scope or Manifest preview classification changed"
             }
         }
@@ -1336,9 +1343,9 @@ class MarkFlowStarterDifferentialManifestTest {
                             }
                             heartbeat("case-reference-painted", entry.id)
                         } else {
-                            check(entry.classification == "degraded" &&
-                                entry.visualExpectation == "diagnostic-only") {
-                                "Only manifest-declared diagnostic cases may omit IntelliJ Preview"
+                            check(entry.id in expectedNonComparableIds) {
+                                "Only manifest-declared non-comparable cases may omit IntelliJ Preview: " +
+                                    entry.id
                             }
                             Files.writeString(
                                 dest.resolve("reference-disposition.txt"),

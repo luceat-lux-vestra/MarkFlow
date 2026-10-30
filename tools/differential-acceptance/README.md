@@ -135,9 +135,13 @@ Two explicitly named test contracts are available:
   `release_eligible=false`, with all unexecuted/unknown cases retained.
 - `-PdifferentialContract=acceptance`: ignores the bounded default cohort,
   rejects any explicit case selector, and executes the complete 89-expanded-case
-  inventory in one Starter/IDE session. Manifest-declared supported cases retain
-  source-identical IntelliJ Preview pairs; explicit degraded/unsupported cases
-  are still executed and classified without inventing parity requirements.
+  inventory in one Starter/IDE session. Cases with `intellij_preview=yes`
+  retain source-identical IntelliJ Preview pairs regardless of product
+  classification. Cases explicitly marked `intellij_preview=no` remain fully
+  executed on the MarkFlow side and retain
+  `NOT_APPLICABLE_BY_MANIFEST` reference disposition instead of fabricating a
+  Preview oracle. The current fail-closed non-comparable inventory is exactly
+  `md-raw-html-hostile` and `mermaid-agentflow`.
   The full contract explicitly gives Starter a **75-minute IDE process lifetime**
   while the ordinary bounded capture remains at Starter's **10-minute** limit;
   the workflow's outer command timeout remains 85 minutes so cleanup/artifact
