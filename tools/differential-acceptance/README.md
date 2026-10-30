@@ -933,14 +933,16 @@ autolink product defect.
 
 The rejected review case now re-centers the native editor only after derived
 layout has converged and fails closed unless that exact source line occupies
-the real editor viewport. The controlled bundled Markdown reference likewise
-reissues the pinned IDEA 2026.2.3 `ScrollController.scrollTo` after paint,
-first clearing its stale `currentScrollElement` cache so the platform controller
-re-resolves the reviewed source offset against the current DOM. It then queries
-JetBrains Markdown's generated `md-src-pos="start..end"` DOM identity
-and requires the narrowest element containing the reviewed source offset to
-intersect the browser viewport. Only after that proof is the retained
-`intellij-preview.png` replaced with the source-verified screenshot.
+the real editor viewport. Controlled-reference ownership and real bundled
+Preview ownership remain separate, but both source-anchor paths now share one
+test-only IDEA 2026.2.3 compatibility seam. That navigator clears the pinned
+`ScrollController.currentScrollElement` cache and re-runs
+`ScrollController.scrollTo` so the reviewed source offset is resolved against
+the current DOM. The real bundled Preview path still invokes
+`MarkdownPreviewFileEditor.scrollToLine` before that compatibility guard.
+Both paths then require JetBrains Markdown's generated
+`md-src-pos="start..end"` target to intersect the browser viewport before
+retaining the review screenshot.
 
 This is intentionally bounded to the rejected `md-autolink` review evidence.
 It does not loosen visual criteria, change corpus classification, or populate
