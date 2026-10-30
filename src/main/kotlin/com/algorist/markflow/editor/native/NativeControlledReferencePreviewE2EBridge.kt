@@ -439,20 +439,12 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "Controlled source anchor line is outside the Document"
         }
         val offset = editor.document.getLineStartOffset(state.sourceLine)
-        val javascript = """
-            (() => {
-              const controller = window.scrollController;
-              if (!controller) return;
-              controller.currentScrollElement = null;
-              controller.scrollTo($offset, false);
-            })();
-        """.trimIndent()
-        state.cef.executeJavaScript(javascript, state.cef.url, 0)
+        MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(state.cef, offset)
         state.record("source-anchor-scroll")
         return "schema=markflow-controlled-reference-source-anchor-scroll/v1\n" +
             "source_line_zero_based=" + state.sourceLine + "\n" +
             "source_offset=" + offset + "\n" +
-            "scroll_api=ScrollController.reset-current-element+scrollTo\n"
+            "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
     }
 
     /** CEF callback writes the result directly; never waits for it on EDT. */

@@ -1305,10 +1305,11 @@ class MarkFlowStarterDifferentialManifestTest {
                             if (entry.id == "md-autolink") {
                                 // A successfully painted JCEF surface may still be scrolled
                                 // to an unrelated earlier section. Reissue the real bundled
-                                // Preview navigation after paint and prove its DOM source offset
-                                // before retaining the review screenshot.
+                                // Preview navigation only after its panel is ready, then apply
+                                // the shared IDEA 2026.2.3 current-DOM compatibility guard.
                                 driver.withContext(OnDispatcher.EDT) {
                                     preview.showReferenceAtSourceLine(remoteEditor, entry.line)
+                                    preview.reResolveReferenceSourceAnchor(remoteEditor, entry.line)
                                 }
                                 val offset = source.split('\n').take(entry.line)
                                     .sumOf { it.length + 1 }
@@ -3897,6 +3898,7 @@ private interface DifferentialManifestPreviewRemote {
     fun nativeSourceAnchorViewport(editor: Editor, line: Int): String
     fun sourceAnchorViewportNegativeControls(): Boolean
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
+    fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
     fun referencePanelAttached(editor: Editor): Boolean
