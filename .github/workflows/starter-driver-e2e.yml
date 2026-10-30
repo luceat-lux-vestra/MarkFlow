@@ -4,6 +4,11 @@ on:
   workflow_call:
   workflow_dispatch:
     inputs:
+      source_anchor_four_case_capture:
+        description: '#353 diagnostic: target four Markdown source-anchor cases in derived-content (not 89-case acceptance)'
+        required: false
+        type: boolean
+        default: false
       release_candidate_repeat:
         description: 'Run a second independent canonical full-product journey for release-candidate evidence'
         required: false
@@ -227,6 +232,7 @@ jobs:
         env:
           STARTER_SHARD: ${{ matrix.shard }}
           STARTER_SUITES: ${{ matrix.suites }}
+          SOURCE_ANCHOR_FOUR_CASE_CAPTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_anchor_four_case_capture && 'true' || 'false' }}
         run: |
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
@@ -245,6 +251,24 @@ jobs:
             -PstarterPackagedPlugin=true
             --stacktrace
           )
+          if [[ "$SOURCE_ANCHOR_FOUR_CASE_CAPTURE" == "true" && "$STARTER_SHARD" == "derived-content" ]]; then
+            # Diagnostic only: the default PR/CI suite and full 89-case
+            # acceptance contract are unchanged. Select only the four reviewed
+            # source-anchor gaps, using the already-supported Gradle property.
+            suites=(com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest)
+            STARTER_SUITES="${suites[0]}"
+            gradle_args+=(
+              -PdifferentialContract=capture
+              -PdifferentialCaseIds=md-blockquote,md-task-list,md-table-basic,md-autolink
+            )
+            printf '%s\n' \
+              'schema=markflow-353-source-anchor-four-case-capture/v1' \
+              "source_head=$STARTER_SOURCE_SHA" \
+              'case_ids=md-blockquote,md-task-list,md-table-basic,md-autolink' \
+              'mode=CAPTURED_UNVERIFIED_NOT_89_CASE_ACCEPTANCE' \
+              > "$pass_dir/source-anchor-capture.txt"
+            echo "::notice::#353 targeted four-case capture; independent paired review still required"
+          fi
           diagnostics_args=()
           for suite in "${suites[@]}"; do
             gradle_args+=(--tests "$suite")
