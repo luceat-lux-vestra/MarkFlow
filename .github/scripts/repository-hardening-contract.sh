@@ -832,8 +832,10 @@ grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
 grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
   die "Markdown source-anchor ledger lost its reviewed snapshot pin"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
-grep -Fq 'nativeSourceAnchorViewport(remoteEditor, entry.line)' "$manifest_test" ||
-  die "#353 reviewed native capture no longer proves the source anchor is in the viewport"
+grep -Fq 'val reviewAnchorLine = reviewedSourceAnchorLines[entry.id]' "$manifest_test" ||
+  die "#353 reviewed native capture no longer derives the manifest-owned review anchor"
+grep -Fq 'nativeSourceAnchorViewport(remoteEditor, reviewAnchorLine)' "$manifest_test" ||
+  die "#353 reviewed native capture no longer proves the generalized source anchor is in the viewport"
 grep -Fq 'fun nativeSourceAnchorViewport(editor: Editor, line: Int)' "$differential_bridge" ||
   die "#353 native source-anchor viewport bridge is missing"
 source_anchor_navigator="src/main/kotlin/com/algorist/markflow/editor/native/MarkdownPreviewSourceAnchorNavigator.kt"
