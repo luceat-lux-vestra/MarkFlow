@@ -444,12 +444,291 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
-     * Request source-line navigation on the native editor without moving the caret
-     * into a folded Mermaid block. Navigation is not a geometry-parity assertion.
+     * Evidence-only source-to-rendered-row mapping for fully concealed native lists/tables.
+     * Each row is selected by its parser-bounded source span, never by viewport Y alone.
+     * No caret movement, fold expansion, or synthetic screenshot is performed here.
+     */
+    private data class NativeAnchorRow(
+        val kind: String,
+        val sourceRange: ProjectionRange,
+        val rowIndex: Int,
+        val rowCount: Int,
+        val inlayBounds: Rectangle,
+        val top: Int,
+        val bottom: Int,
+        val allowOversizeSlice: Boolean = false,
+    )
+
+    /** An unambiguous source row must be wholly contained in the requested physical line. */
+    private fun sourceRowIndex(
+        lineStart: Int, lineEnd: Int, rows: List<ProjectionRange>,
+    ): Int? {
+        val matches = rows.indices.filter { index ->
+            val range = rows[index]
+            range.endOffset > range.startOffset &&
+                range.startOffset >= lineStart && range.endOffset <= lineEnd
+        }
+        return matches.singleOrNull()
+    }
+
+    private fun ProjectionRange.intersectsPhysicalLine(lineStart: Int, lineEnd: Int): Boolean {
+        val effectiveEnd = if (lineEnd > lineStart) lineEnd else lineStart + 1
+        return endOffset > lineStart && startOffset < effectiveEnd
+    }
+
+    private fun wholeTarget(
+        kind: String,
+        range: ProjectionRange,
+        bounds: Rectangle,
+        allowOversizeSlice: Boolean = true,
+    ): NativeAnchorRow? {
+        if (range.endOffset <= range.startOffset || bounds.width <= 0 || bounds.height <= 0) {
+            return null
+        }
+        return NativeAnchorRow(
+            kind = kind,
+            sourceRange = range,
+            rowIndex = 0,
+            rowCount = 1,
+            inlayBounds = bounds,
+            top = bounds.y,
+            bottom = bounds.y + bounds.height,
+            allowOversizeSlice = allowOversizeSlice,
+        )
+    }
+
+    /**
+     * Full target visibility is mandatory whenever the painted target fits.
+     * If the genuine target is taller than one viewport, accept only a centered
+     * slice; this proves the screenshot belongs to that source target without
+     * pretending the whole oversized artifact was reviewed in one image.
+     */
+    private fun sourceAnchorVisibilityMode(
+        top: Int, bottom: Int, viewportTop: Int, viewportHeight: Int,
+        allowOversizeSlice: Boolean,
+    ): String? {
+        if (viewportHeight <= 0 || bottom <= top) return null
+        val viewportBottom = viewportTop.toLong() + viewportHeight
+        val targetHeight = bottom.toLong() - top
+        if (targetHeight <= viewportHeight) {
+            return if (top >= viewportTop && bottom <= viewportBottom) "FULL_TARGET" else null
+        }
+        if (!allowOversizeSlice) return null
+        val viewportCenter = viewportTop.toLong() + viewportHeight / 2L
+        val intersects = top < viewportBottom && bottom > viewportTop
+        return if (intersects && top <= viewportCenter && bottom >= viewportCenter) {
+            "OVERSIZE_CENTERED_SLICE"
+        } else {
+            null
+        }
+    }
+
+    /** Geometry alone is never sufficient: both ownership and current source are required. */
+    private fun inlayRowFullyVisible(
+        top: Int, bottom: Int, bounds: Rectangle, viewport: Rectangle,
+        sourceCurrent: Boolean, inlayValid: Boolean,
+    ): Boolean = sourceCurrent && inlayValid &&
+        bounds.width > 0 && bounds.height > 0 &&
+        viewport.width > 0 && viewport.height > 0 &&
+        bounds.x < viewport.x.toLong() + viewport.width &&
+        bounds.x.toLong() + bounds.width > viewport.x &&
+        top >= bounds.y && bottom <= bounds.y.toLong() + bounds.height &&
+        sourceAnchorFullyVisible(top, bottom, viewport.y, viewport.height)
+
+    /**
+     * Resolve the narrowest current MarkFlow presentation that actually owns the
+     * requested source line. Lists/tables retain row-level identity; other rich
+     * owners use their exact parser/planner source range. Multiple equal-span
+     * owners are ambiguous and fail closed.
+     */
+    @Suppress("UnstableApiUsage")
+    private fun nativeSourceBoundInlayRow(editor: Editor, line: Int): NativeAnchorRow? {
+        val controller = NativeMarkFlowProductionLifecycle.controller(editor) ?: return null
+        val plan = controller.currentPlan ?: return null
+        if (plan.status != ProjectionPlanStatus.READY ||
+            ProjectionSnapshot.capture(editor.document, plan.identity.configGeneration).identity != plan.identity
+        ) return null
+
+        val document = editor.document
+        val lineStart = document.getLineStartOffset(line)
+        val lineEnd = document.getLineEndOffset(line)
+        val blockInlays = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+            .filter { it.isValid && it.bounds != null }
+        val inlineInlays = editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+            .filter { it.isValid && it.bounds != null }
+        val allInlays = blockInlays + inlineInlays
+        val candidates = mutableListOf<NativeAnchorRow>()
+
+        NativeListProjectionPlanner.plan(plan).forEach { model ->
+            val rowRanges = model.rows.map { row ->
+                ProjectionRange(row.markerRange.startOffset, row.contentRange.endOffset)
+            }
+            val rowIndex = sourceRowIndex(lineStart, lineEnd, rowRanges) ?: return@forEach
+            val inlay = blockInlays.singleOrNull { candidate ->
+                candidate.offset == model.sourceRange.endOffset &&
+                    (candidate.renderer as? NativeListInlayRenderer)?.sourceRange == model.sourceRange
+            } ?: return@forEach
+            val renderer = inlay.renderer as NativeListInlayRenderer
+            if (renderer.row(rowIndex).markerRange != model.rows[rowIndex].markerRange ||
+                renderer.row(rowIndex).contentRange != model.rows[rowIndex].contentRange
+            ) return@forEach
+            val bounds = inlay.bounds ?: return@forEach
+            if (bounds.width <= 0 || bounds.height <= 0) return@forEach
+            val ys = (bounds.y until bounds.y + bounds.height).filter { y ->
+                renderer.rowAt(java.awt.Point(bounds.x, y), bounds) == rowIndex
+            }
+            if (ys.isEmpty()) return@forEach
+            candidates += NativeAnchorRow(
+                "list_inlay_row", rowRanges[rowIndex], rowIndex, model.rows.size,
+                bounds, ys.first(), ys.last() + 1,
+            )
+        }
+
+        NativeTableProjectionPlanner.plan(plan).forEach { model ->
+            val rowIndex = sourceRowIndex(lineStart, lineEnd, model.rows.map { it.sourceRange })
+                ?: return@forEach
+            val inlay = blockInlays.singleOrNull { candidate ->
+                candidate.offset == model.sourceRange.endOffset &&
+                    (candidate.renderer as? NativeTableInlayRenderer)?.sourceRange == model.sourceRange
+            } ?: return@forEach
+            val bounds = inlay.bounds ?: return@forEach
+            if (bounds.width <= 0 || bounds.height <= 0 || model.rows.isEmpty() ||
+                bounds.height % model.rows.size != 0
+            ) return@forEach
+            val height = bounds.height / model.rows.size
+            if (height <= 0) return@forEach
+            candidates += NativeAnchorRow(
+                "table_inlay_row", model.rows[rowIndex].sourceRange, rowIndex, model.rows.size,
+                bounds, bounds.y + height * rowIndex, bounds.y + height * (rowIndex + 1),
+            )
+        }
+
+        blockInlays.forEach { inlay ->
+            val renderer = inlay.renderer
+            val owned = when (renderer) {
+                is NativeHeadingInlayRenderer -> "heading_inlay" to renderer.sourceRange
+                is NativeBlockQuoteInlayRenderer -> "blockquote_inlay" to renderer.sourceRange
+                is NativeFencedCodeInlayRenderer -> "fenced_code_inlay" to renderer.sourceRange
+                is NativeIndentedCodeInlayRenderer -> "indented_code_inlay" to renderer.sourceRange
+                else -> null
+            } ?: return@forEach
+            val range = owned.second
+            if (!range.intersectsPhysicalLine(lineStart, lineEnd)) return@forEach
+            wholeTarget(owned.first, range, inlay.bounds ?: return@forEach)?.let(candidates::add)
+        }
+
+        editor.foldingModel.allFoldRegions
+            .filterIsInstance<com.intellij.openapi.editor.CustomFoldRegion>()
+            .filter { it.isValid && !it.isExpanded }
+            .forEach { fold ->
+                val renderer = fold.renderer as? NativeHeadingCustomFoldRenderer ?: return@forEach
+                val range = renderer.sourceRange
+                if (!range.intersectsPhysicalLine(lineStart, lineEnd)) return@forEach
+                val origin = editor.offsetToXY(fold.startOffset)
+                wholeTarget(
+                    "heading_custom_fold", range,
+                    Rectangle(origin.x, origin.y, fold.widthInPixels, fold.heightInPixels),
+                )?.let(candidates::add)
+            }
+
+        inlineInlays.forEach { inlay ->
+            val renderer = inlay.renderer as? NativeHeadingInlineFoldRenderer ?: return@forEach
+            val range = renderer.sourceRange
+            if (!range.intersectsPhysicalLine(lineStart, lineEnd)) return@forEach
+            wholeTarget("heading_inline_fold", range, inlay.bounds ?: return@forEach)
+                ?.let(candidates::add)
+        }
+
+        allInlays.forEach { inlay ->
+            val renderer = inlay.renderer
+            if (!renderer.javaClass.name.endsWith(".NativeRasterInlayRenderer")) return@forEach
+            val field = renderer.javaClass.getDeclaredField("projection")
+            check(field.trySetAccessible()) { "Cannot inspect exact derived source projection" }
+            val projection = field.get(renderer) as? NativeDerivedProjection
+                ?: error("Unexpected native derived projection type")
+            val range = projection.sourceRange
+            if (!range.intersectsPhysicalLine(lineStart, lineEnd)) return@forEach
+            wholeTarget(
+                "derived_" + projection.kind.name.lowercase(),
+                range, inlay.bounds ?: return@forEach,
+            )?.let(candidates::add)
+        }
+
+        NativeHostResourceProjectionPlanner.plan(plan)
+            .filter { it.kind == NativeHostResourceKind.LOCAL_IMAGE }
+            .filter { it.sourceRange.intersectsPhysicalLine(lineStart, lineEnd) }
+            .forEach { projection ->
+                val inlay = allInlays.singleOrNull {
+                    it.offset == projection.sourceRange.endOffset &&
+                        it.renderer.javaClass.name.endsWith(".NativeLocalImageInlayRenderer")
+                } ?: return@forEach
+                wholeTarget(
+                    "local_image_inlay", projection.sourceRange,
+                    inlay.bounds ?: return@forEach,
+                )?.let(candidates::add)
+            }
+
+        NativeRawHtmlProjectionPlanner.plan(plan)
+            .filter { it.sourceRange.intersectsPhysicalLine(lineStart, lineEnd) }
+            .forEach { projection ->
+                val inlay = allInlays.singleOrNull {
+                    it.offset == projection.sourceRange.endOffset &&
+                        it.renderer.javaClass.name.endsWith(".NativeRawHtmlRasterInlayRenderer")
+                } ?: return@forEach
+                wholeTarget(
+                    "raw_html_inlay", projection.sourceRange,
+                    inlay.bounds ?: return@forEach,
+                )?.let(candidates::add)
+            }
+
+        plan.projections
+            .filter { it.kind == NativeProjectionKind.THEMATIC_BREAK }
+            .filter { it.sourceRange.intersectsPhysicalLine(lineStart, lineEnd) }
+            .forEach { projection ->
+                val fold = editor.foldingModel.allFoldRegions.singleOrNull {
+                    it.isValid && !it.isExpanded &&
+                        it.startOffset == projection.sourceRange.startOffset &&
+                        it.endOffset == projection.sourceRange.endOffset
+                } ?: return@forEach
+                val point = editor.offsetToXY(fold.startOffset)
+                wholeTarget(
+                    "thematic_break_fold", projection.sourceRange,
+                    Rectangle(point.x, point.y, 1, editor.lineHeight),
+                    allowOversizeSlice = false,
+                )?.let(candidates::add)
+            }
+
+        if (candidates.isEmpty()) return null
+        val ordered = candidates.sortedWith(
+            compareBy<NativeAnchorRow> { it.sourceRange.endOffset - it.sourceRange.startOffset }
+                .thenBy { it.sourceRange.startOffset }
+                .thenBy { it.kind }
+        )
+        val first = ordered.first()
+        val firstSpan = first.sourceRange.endOffset - first.sourceRange.startOffset
+        if (ordered.drop(1).any {
+                it.sourceRange.endOffset - it.sourceRange.startOffset == firstSpan
+            }
+        ) return null
+        return first
+    }
+
+    /**
+     * Request source-line navigation without moving the caret into a folded
+     * construct. For a rich list/table, center its actual source-bound painted
+     * row rather than the invisible logical source line.
      */
     fun showNativeAtSourceLine(editor: Editor, line: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid native source anchor" }
+        val row = nativeSourceBoundInlayRow(editor, line)
+        if (row != null) {
+            val viewport = editor.scrollingModel.visibleArea
+            editor.scrollingModel.scrollVertically(
+                (row.top - (viewport.height - (row.bottom - row.top)) / 2).coerceAtLeast(0)
+            )
+            return "line=" + line + ";kind=" + row.kind + ";row=" + row.rowIndex
+        }
         val offset = editor.document.getLineStartOffset(line)
         editor.scrollingModel.scrollTo(
             editor.offsetToLogicalPosition(offset),
@@ -458,32 +737,41 @@ internal object NativeDifferentialPreviewE2EBridge {
         return "line=" + line + ";offset=" + offset
     }
 
-    /**
-     * #353 reviewed-capture guard: prove the requested source line still occupies
-     * the real editor viewport after asynchronous block/inlay layout has settled.
-     * A prior scroll request alone is not evidence because derived inlays above the
-     * target can move its final visual position after that request.
-     */
+    /** A requested source position must have the complete represented row visible. */
     private fun sourceAnchorFullyVisible(
         top: Int, bottom: Int, viewportTop: Int, viewportHeight: Int,
-    ): Boolean = viewportHeight > 0 && bottom > top &&
-        top >= viewportTop && bottom <= viewportTop.toLong() + viewportHeight
+    ): Boolean = sourceAnchorVisibilityMode(
+        top, bottom, viewportTop, viewportHeight, allowOversizeSlice = false
+    ) == "FULL_TARGET"
 
-    /** Reject an off-screen or partially cropped source line, including zero-height viewports. */
-    fun sourceAnchorViewportNegativeControls(): Boolean =
-        sourceAnchorFullyVisible(200, 220, 100, 400) &&
+    /** Positive, missing/wrong/ambiguous row, stale owner, cropped and oversize controls. */
+    fun sourceAnchorViewportNegativeControls(): Boolean {
+        val rows = listOf(ProjectionRange(10, 20), ProjectionRange(30, 40))
+        val bounds = Rectangle(0, 150, 500, 200)
+        val viewport = Rectangle(0, 100, 600, 400)
+        return sourceAnchorFullyVisible(200, 220, 100, 400) &&
             !sourceAnchorFullyVisible(80, 110, 100, 400) &&
             !sourceAnchorFullyVisible(490, 510, 100, 400) &&
-            !sourceAnchorFullyVisible(200, 220, 100, 0)
+            !sourceAnchorFullyVisible(200, 220, 100, 0) &&
+            sourceAnchorVisibilityMode(50, 550, 100, 400, true) ==
+                "OVERSIZE_CENTERED_SLICE" &&
+            sourceAnchorVisibilityMode(50, 550, 100, 400, false) == null &&
+            sourceAnchorVisibilityMode(-450, 50, 100, 400, true) == null &&
+            sourceRowIndex(30, 40, rows) == 1 &&
+            sourceRowIndex(50, 60, rows) == null &&
+            sourceRowIndex(10, 20, listOf(rows[0], rows[0])) == null &&
+            inlayRowFullyVisible(200, 220, bounds, viewport, true, true) &&
+            !inlayRowFullyVisible(200, 220, bounds, viewport, false, true) &&
+            !inlayRowFullyVisible(200, 220, bounds, viewport, true, false) &&
+            !inlayRowFullyVisible(120, 220, bounds, viewport, true, true) &&
+            !inlayRowFullyVisible(340, 360, bounds, viewport, true, true) &&
+            !inlayRowFullyVisible(490, 510, Rectangle(0, 150, 500, 400), viewport, true, true) &&
+            !inlayRowFullyVisible(200, 220, Rectangle(800, 150, 100, 200), viewport, true, true)
+    }
 
     /**
-     * Return a source offset on the requested line that is actually represented in the editor.
-     *
-     * Ordinary Markdown presentation can legitimately collapse only leading/trailing syntax
-     * delimiters (for example the '<' and '>' of an autolink). Treating a collapsed delimiter at
-     * line start as proof that the whole source line is invisible rejects valid reviewed evidence.
-     * Conversely, if every source character on the line is covered by a collapsed region, there is
-     * no visible source anchor and reviewed capture must still fail closed.
+     * Find an actually exposed source character for ordinary text and autolinks.
+     * Rich native list/table inlays use the separate strict source-bound row path.
      */
     private fun sourceAnchorProbeOffset(editor: Editor, line: Int): Int? {
         val document = editor.document
@@ -494,7 +782,6 @@ internal object NativeDifferentialPreviewE2EBridge {
                 editor.foldingModel.getCollapsedRegionAtOffset(it) == null
             }
         }
-
         var candidate = lineStart
         while (candidate < lineEnd) {
             val collapsed = editor.foldingModel.getCollapsedRegionAtOffset(candidate)
@@ -510,13 +797,43 @@ internal object NativeDifferentialPreviewE2EBridge {
         val lineStart = editor.document.getLineStartOffset(line)
         val lineEnd = editor.document.getLineEndOffset(line)
         val probeOffset = sourceAnchorProbeOffset(editor, line)
+        val richRow = nativeSourceBoundInlayRow(editor, line)
+        val viewport = editor.scrollingModel.visibleArea
         val geometryOffset = probeOffset ?: lineStart
         val visual = editor.offsetToVisualPosition(geometryOffset)
         val point = editor.visualPositionToXY(visual)
-        val viewport = editor.scrollingModel.visibleArea
-        val anchorBottom = point.y + editor.lineHeight
-        val visible = probeOffset != null &&
-            sourceAnchorFullyVisible(point.y, anchorBottom, viewport.y, viewport.height)
+        val top = richRow?.top ?: point.y
+        val bottom = richRow?.bottom ?: (point.y + editor.lineHeight)
+        val kind = richRow?.kind ?: "literal_source"
+        val visibilityMode = if (richRow != null) {
+            val geometryCurrent =
+                richRow.inlayBounds.width > 0 && richRow.inlayBounds.height > 0 &&
+                viewport.width > 0 && viewport.height > 0 &&
+                richRow.inlayBounds.x < viewport.x.toLong() + viewport.width &&
+                richRow.inlayBounds.x.toLong() + richRow.inlayBounds.width > viewport.x
+            if (!geometryCurrent) {
+                null
+            } else if (richRow.allowOversizeSlice) {
+                sourceAnchorVisibilityMode(
+                    top, bottom, viewport.y, viewport.height, allowOversizeSlice = true
+                )
+            } else if (inlayRowFullyVisible(
+                    top, bottom, richRow.inlayBounds, viewport,
+                    sourceCurrent = true, inlayValid = true,
+                )
+            ) {
+                "FULL_TARGET"
+            } else {
+                null
+            }
+        } else if (probeOffset != null &&
+            sourceAnchorFullyVisible(top, bottom, viewport.y, viewport.height)
+        ) {
+            "FULL_SOURCE_ROW"
+        } else {
+            null
+        }
+        val visible = visibilityMode != null
         return listOf(
             "schema=markflow-native-source-anchor-viewport/v1",
             "source_line_zero_based=" + line,
@@ -525,15 +842,25 @@ internal object NativeDifferentialPreviewE2EBridge {
             "source_probe_offset=" + (probeOffset ?: -1),
             "line_start_collapsed=" +
                 (editor.foldingModel.getCollapsedRegionAtOffset(lineStart) != null),
+            "anchor_kind=" + kind,
+            "anchor_source_range=" + (richRow?.sourceRange?.let {
+                it.startOffset.toString() + "-" + it.endOffset
+            } ?: "none"),
+            "anchor_row_index=" + (richRow?.rowIndex ?: -1),
+            "anchor_row_count=" + (richRow?.rowCount ?: 0),
+            "anchor_inlay_bounds=" + (richRow?.inlayBounds?.let {
+                it.x.toString() + "," + it.y + "," + it.width + "," + it.height
+            } ?: "none"),
+            "anchor_visibility_mode=" + (visibilityMode ?: "NOT_VISIBLE"),
+            "anchor_y_document_px=" + top,
+            "anchor_bottom_document_px=" + bottom,
             "anchor_visual_line=" + visual.line,
-            "anchor_y_document_px=" + point.y,
-            "anchor_bottom_document_px=" + anchorBottom,
             "viewport_y_document_px=" + viewport.y,
             "viewport_height_px=" + viewport.height,
+            "document_modification_stamp=" + editor.document.modificationStamp,
             "anchor_visible=" + visible,
         ).joinToString(separator = "\n", postfix = "\n")
     }
-
 
     /**
      * Stage D: read-only native raster dimensions from the actual installed inlays.
