@@ -132,20 +132,36 @@ class MarkFlowStarterDifferentialManifestTest {
             reviewCases.none { it.id in indexed })
         val selected = reviewCases +
             selectedIds.map { requireNotNull(indexed[it]) { "Unknown case: " + it } }
-        // Independently reviewed long-document captures must show their exact
-        // source region on BOTH surfaces, not merely a nonblank Preview.
-        val reviewedSourceAnchorLines = mapOf(
-            "md-blockquote" to 50,
-            "md-task-list" to 46,
-            "md-table-basic" to 63,
-            "md-autolink" to 296,
+        // Full WYSIWYG audit preparation: every supported, Preview-comparable
+        // Markdown case gets a deterministic display anchor derived from the
+        // reviewed markdown-anchors.tsv inventory. A reference definition has
+        // no rendered DOM row of its own, so review its visible consumer in the
+        // same exact fixture instead of manufacturing a Preview target.
+        val visualAnchorOverrides = mapOf(
+            "md-reference-definition" to 5,
         )
-        check(reviewedSourceAnchorLines.all { (id, line) ->
-            indexed[id]?.let {
-                it.line == line && it.comparable &&
-                    it.visualExpectation == "source-anchored-geometry"
-            } == true
-        }) { "Reviewed paired source-anchor inventory drifted" }
+        val supportedComparableMarkdown = inventory.filter {
+            it.domain == "markdown" &&
+                it.classification == "supported" &&
+                it.comparable &&
+                it.visualExpectation == "source-anchored-geometry"
+        }
+        val reviewedSourceAnchorLines = supportedComparableMarkdown.associate { entry ->
+            entry.id to (visualAnchorOverrides[entry.id] ?: entry.line)
+        }
+        check(reviewedSourceAnchorLines.size == 46 &&
+            reviewedSourceAnchorLines.keys == supportedComparableMarkdown.map { it.id }.toSet()) {
+            "Supported comparable Markdown source-anchor inventory drifted"
+        }
+        check(visualAnchorOverrides.keys.all(reviewedSourceAnchorLines::containsKey)) {
+            "Visual source-anchor override is outside supported comparable Markdown"
+        }
+        val referenceDefinition = indexed.getValue("md-reference-definition")
+        check(
+            String(referenceDefinition.bytes, StandardCharsets.UTF_8)
+                .split('\n').getOrNull(reviewedSourceAnchorLines.getValue("md-reference-definition")) ==
+                "A [reference link][guide] and a collapsed [reference link][]."
+        ) { "Reference-definition visible consumer anchor drifted" }
         val expectedNonComparableIds = setOf(
             "md-raw-html-hostile",
             "mermaid-agentflow",
@@ -268,6 +284,8 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\nsource_sha256=" + sha(entry.bytes) +
                     "\nblock_sha256=" + (entry.blockHash ?: "none") +
                     "\nsource_line_zero_based=" + entry.line +
+                    "\nreview_source_line_zero_based=" +
+                    (reviewedSourceAnchorLines[entry.id]?.toString() ?: "none") +
                     "\nsource_head=" + sourceHead +
                     "\nmanifest_sha256=" + sha(manifest) + "\n")
             }
@@ -424,25 +442,27 @@ class MarkFlowStarterDifferentialManifestTest {
                         driver.withContext(OnDispatcher.EDT) {
                             visual.normalizeEditorChromeForCapture(remoteEditor)
                         }
-                        // Long-document visual review previously captured unrelated
-                        // regions after async derived layout convergence. Re-center each
-                        // reviewed source anchor and prove it is actually in the viewport.
-                        if (entry.id in reviewedSourceAnchorLines) {
+                        // Every supported/comparable Markdown case now carries an
+                        // exact reviewed display anchor. Keep the caret inactive and
+                        // navigate the real source-owned native presentation instead of
+                        // moving into hidden Markdown merely to make it visible.
+                        val reviewAnchorLine = reviewedSourceAnchorLines[entry.id]
+                        if (reviewAnchorLine != null) {
                             driver.withContext(OnDispatcher.EDT) {
-                                preview.showNativeAtSourceLine(remoteEditor, entry.line)
+                                preview.showNativeAtSourceLine(remoteEditor, reviewAnchorLine)
                             }
                             waitFor(
                                 message = "Native reviewed source anchor visible: " + entry.id,
                                 timeout = 15.seconds,
                                 getter = { driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                                    preview.nativeSourceAnchorViewport(remoteEditor, reviewAnchorLine)
                                 } },
                                 checker = { it.lineSequence().any { line ->
                                     line == "anchor_visible=true"
                                 } }
                             )
                             val anchorViewport = driver.withContext(OnDispatcher.EDT) {
-                                preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                                preview.nativeSourceAnchorViewport(remoteEditor, reviewAnchorLine)
                             }
                             check(anchorViewport.lineSequence().any {
                                 it == "anchor_visible=true"
@@ -560,11 +580,11 @@ class MarkFlowStarterDifferentialManifestTest {
                         }
                         check(native.width == 1200 && native.height == 760)
                         robot.waitForIdle()
-                        if (entry.id in reviewedSourceAnchorLines) {
+                        if (reviewAnchorLine != null) {
                             // Recheck at the actual screenshot boundary; prior inlay
                             // convergence must not be mistaken for a retained viewport.
                             val evidence = driver.withContext(OnDispatcher.EDT) {
-                                preview.nativeSourceAnchorViewport(remoteEditor, entry.line)
+                                preview.nativeSourceAnchorViewport(remoteEditor, reviewAnchorLine)
                             }
                             Files.writeString(dest.resolve("native-source-anchor-viewport.txt"),
                                 evidence, StandardCharsets.UTF_8)
@@ -1324,16 +1344,16 @@ class MarkFlowStarterDifferentialManifestTest {
                                     checker = { it }
                                 )
                             }
-                            if (entry.id in reviewedSourceAnchorLines) {
+                            if (reviewAnchorLine != null) {
                                 // A successfully painted JCEF surface may still be scrolled
                                 // to an unrelated earlier section. Reissue the real bundled
                                 // Preview navigation only after its panel is ready, then apply
                                 // the shared IDEA 2026.2.3 current-DOM compatibility guard.
                                 driver.withContext(OnDispatcher.EDT) {
-                                    preview.showReferenceAtSourceLine(remoteEditor, entry.line)
-                                    preview.reResolveReferenceSourceAnchor(remoteEditor, entry.line)
+                                    preview.showReferenceAtSourceLine(remoteEditor, reviewAnchorLine)
+                                    preview.reResolveReferenceSourceAnchor(remoteEditor, reviewAnchorLine)
                                 }
-                                val offset = source.split('\n').take(entry.line)
+                                val offset = source.split('\n').take(reviewAnchorLine)
                                     .sumOf { it.length + 1 }
                                 // The platform source-scroll contract only promises to
                                 // intersect the selected node; it previously clipped the
@@ -3052,31 +3072,53 @@ class MarkFlowStarterDifferentialManifestTest {
      * intersection: a clipped first list/table row is not a reviewed reference.
      * The DOM probe below implements this exact predicate on the real browser.
      */
-    private fun controlledReferenceFullRect(
+    private fun controlledReferenceViewportMode(
         left: Double, top: Double, right: Double, bottom: Double,
         viewportWidth: Double, viewportHeight: Double,
-    ): Boolean = listOf(
-        left, top, right, bottom, viewportWidth, viewportHeight,
-    ).all(Double::isFinite) &&
-        viewportWidth > 0.0 && viewportHeight > 0.0 &&
-        right > left && bottom > top &&
-        left >= 0.0 && top >= 0.0 &&
-        right <= viewportWidth && bottom <= viewportHeight
+    ): String? {
+        if (!listOf(left, top, right, bottom, viewportWidth, viewportHeight)
+                .all(Double::isFinite) ||
+            viewportWidth <= 0.0 || viewportHeight <= 0.0 ||
+            right <= left || bottom <= top
+        ) return null
+        if (left >= 0.0 && top >= 0.0 &&
+            right <= viewportWidth && bottom <= viewportHeight
+        ) return "FULL_TARGET"
 
-    /** Do not permit partial intersection, empty, invalid, or wrong-source evidence. */
+        val targetWidth = right - left
+        val targetHeight = bottom - top
+        val oversizeX = targetWidth > viewportWidth
+        val oversizeY = targetHeight > viewportHeight
+        if (!oversizeX && !oversizeY) return null
+        val centerX = viewportWidth / 2.0
+        val centerY = viewportHeight / 2.0
+        val xVisible = if (oversizeX) left <= centerX && right >= centerX
+            else left >= 0.0 && right <= viewportWidth
+        val yVisible = if (oversizeY) top <= centerY && bottom >= centerY
+            else top >= 0.0 && bottom <= viewportHeight
+        return if (xVisible && yVisible) "OVERSIZE_CENTERED_SLICE" else null
+    }
+
+    /** Reject ordinary clipping while explicitly distinguishing genuine oversize targets. */
     private fun controlledReferenceAnchorViewportNegativeControls(): Boolean =
-        controlledReferenceFullRect(2.0, 3.0, 98.0, 97.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, -0.1, 98.0, 97.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 98.0, 100.1, 100.0, 100.0) &&
-            !controlledReferenceFullRect(-0.1, 3.0, 98.0, 97.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 100.1, 97.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 2.0, 97.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 98.0, 3.0, 100.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 98.0, 97.0, 0.0, 100.0) &&
-            !controlledReferenceFullRect(2.0, 3.0, 98.0, 97.0, 100.0, 0.0) &&
-            !controlledReferenceFullRect(
+        controlledReferenceViewportMode(2.0, 3.0, 98.0, 97.0, 100.0, 100.0) ==
+            "FULL_TARGET" &&
+            controlledReferenceViewportMode(2.0, -20.0, 98.0, 120.0, 100.0, 100.0) ==
+                "OVERSIZE_CENTERED_SLICE" &&
+            controlledReferenceViewportMode(-20.0, 2.0, 120.0, 98.0, 100.0, 100.0) ==
+                "OVERSIZE_CENTERED_SLICE" &&
+            controlledReferenceViewportMode(2.0, -120.0, 98.0, 20.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, -0.1, 98.0, 97.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 98.0, 100.1, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(-0.1, 3.0, 98.0, 97.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 100.1, 97.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 2.0, 97.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 98.0, 3.0, 100.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 98.0, 97.0, 0.0, 100.0) == null &&
+            controlledReferenceViewportMode(2.0, 3.0, 98.0, 97.0, 100.0, 0.0) == null &&
+            controlledReferenceViewportMode(
                 2.0, Double.NaN, 98.0, 97.0, 100.0, 100.0
-            )
+            ) == null
 
     /**
      * #353 reviewed-capture proof for the *actual bundled IntelliJ Markdown DOM*.
@@ -3087,9 +3129,9 @@ class MarkFlowStarterDifferentialManifestTest {
      *
      * A single explicit scroll request centers that real source-bound target;
      * subsequent calls are read-only so the boundary proof reflects exactly
-     * what Robot captures. The full bounding rect, not mere intersection, must
-     * fit within the browser viewport. Oversize, clipped or stale targets fail
-     * closed rather than silently changing the review target.
+     * what Robot captures. Targets that fit must be wholly visible. A genuinely
+     * oversized target may retain only a centered slice and is explicitly marked
+     * OVERSIZE_CENTERED_SLICE so it cannot be confused with full visual review.
      */
     private fun controlledReferenceSourceAnchorViewportProbe(
         sourceOffset: Int, scrollTargetIntoView: Boolean = false,
@@ -3104,32 +3146,52 @@ class MarkFlowStarterDifferentialManifestTest {
                 Number.isSafeInteger(start) && Number.isSafeInteger(end) &&
                 Number.isSafeInteger(offset) && end > start &&
                 start <= offset && offset < end;
-              const fullViewport = (rect, width, height) =>
-                [rect.left, rect.top, rect.right, rect.bottom, width, height]
-                  .every(Number.isFinite) &&
-                width > 0 && height > 0 &&
-                rect.right > rect.left && rect.bottom > rect.top &&
-                rect.left >= 0 && rect.top >= 0 &&
-                rect.right <= width && rect.bottom <= height;
+              const viewportMode = (rect, width, height) => {
+                const finite = [rect.left, rect.top, rect.right, rect.bottom, width, height]
+                  .every(Number.isFinite);
+                if (!finite || width <= 0 || height <= 0 ||
+                    rect.right <= rect.left || rect.bottom <= rect.top) return 'NONE';
+                if (rect.left >= 0 && rect.top >= 0 &&
+                    rect.right <= width && rect.bottom <= height) return 'FULL_TARGET';
+                const targetWidth = rect.right - rect.left;
+                const targetHeight = rect.bottom - rect.top;
+                const oversizeX = targetWidth > width;
+                const oversizeY = targetHeight > height;
+                if (!oversizeX && !oversizeY) return 'NONE';
+                const centerX = width / 2;
+                const centerY = height / 2;
+                const xVisible = oversizeX
+                  ? rect.left <= centerX && rect.right >= centerX
+                  : rect.left >= 0 && rect.right <= width;
+                const yVisible = oversizeY
+                  ? rect.top <= centerY && rect.bottom >= centerY
+                  : rect.top >= 0 && rect.bottom <= height;
+                return xVisible && yVisible ? 'OVERSIZE_CENTERED_SLICE' : 'NONE';
+              };
               const rect = (left, top, right, bottom) =>
                 ({left, top, right, bottom});
               const negativeControls =
-                fullViewport(rect(2, 3, 98, 97), 100, 100) &&
-                !fullViewport(rect(2, -0.1, 98, 97), 100, 100) &&
-                !fullViewport(rect(2, 3, 98, 100.1), 100, 100) &&
-                !fullViewport(rect(-0.1, 3, 98, 97), 100, 100) &&
-                !fullViewport(rect(2, 3, 100.1, 97), 100, 100) &&
-                !fullViewport(rect(2, 3, 2, 97), 100, 100) &&
-                !fullViewport(rect(2, 3, 98, 3), 100, 100) &&
-                !fullViewport(rect(2, 3, 98, 97), 0, 100) &&
-                !fullViewport(rect(2, 3, 98, 97), 100, 0) &&
-                !fullViewport(rect(2, NaN, 98, 97), 100, 100) &&
+                viewportMode(rect(2, 3, 98, 97), 100, 100) === 'FULL_TARGET' &&
+                viewportMode(rect(2, -20, 98, 120), 100, 100) ===
+                  'OVERSIZE_CENTERED_SLICE' &&
+                viewportMode(rect(-20, 2, 120, 98), 100, 100) ===
+                  'OVERSIZE_CENTERED_SLICE' &&
+                viewportMode(rect(2, -120, 98, 20), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, -0.1, 98, 97), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 98, 100.1), 100, 100) === 'NONE' &&
+                viewportMode(rect(-0.1, 3, 98, 97), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 100.1, 97), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 2, 97), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 98, 3), 100, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 98, 97), 0, 100) === 'NONE' &&
+                viewportMode(rect(2, 3, 98, 97), 100, 0) === 'NONE' &&
+                viewportMode(rect(2, NaN, 98, 97), 100, 100) === 'NONE' &&
                 sourceContains(10, 20, 10) && sourceContains(10, 20, 19) &&
                 !sourceContains(10, 20, 20) &&
                 !sourceContains(10, 20, 9) &&
                 !sourceContains(20, 20, 20);
               if (!negativeControls) {
-                return 'FAIL: source/viewport full-bounds negative controls';
+                return 'FAIL: source/viewport visibility negative controls';
               }
               if (!document.documentElement || !document.body) {
                 return 'FAIL: no live bundled Preview document';
@@ -3157,12 +3219,14 @@ class MarkFlowStarterDifferentialManifestTest {
               }
               if (requestScroll) {
                 target.element.scrollIntoView({
-                  behavior: 'auto', block: 'center', inline: 'nearest'
+                  behavior: 'auto', block: 'center', inline: 'center'
                 });
               }
               const targetRect = target.element.getBoundingClientRect();
-              const visible = target.element.isConnected &&
-                fullViewport(targetRect, window.innerWidth, window.innerHeight);
+              const visibilityMode = target.element.isConnected
+                ? viewportMode(targetRect, window.innerWidth, window.innerHeight)
+                : 'NONE';
+              const visible = visibilityMode !== 'NONE';
               return [
                 'schema=markflow-controlled-reference-source-anchor-viewport/v1',
                 'source_offset=' + sourceOffset,
@@ -3170,6 +3234,7 @@ class MarkFlowStarterDifferentialManifestTest {
                 'target_tag=' + (target.element.tagName || 'UNKNOWN').toLowerCase(),
                 'target_connected=' + target.element.isConnected,
                 'target_scroll_requested=' + requestScroll,
+                'target_visibility_mode=' + visibilityMode,
                 'target_left=' + targetRect.left.toFixed(3),
                 'target_top=' + targetRect.top.toFixed(3),
                 'target_right=' + targetRect.right.toFixed(3),
