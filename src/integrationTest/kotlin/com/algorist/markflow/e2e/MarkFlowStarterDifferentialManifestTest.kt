@@ -1353,26 +1353,42 @@ class MarkFlowStarterDifferentialManifestTest {
                                     preview.showReferenceAtSourceLine(remoteEditor, reviewAnchorLine)
                                     preview.reResolveReferenceSourceAnchor(remoteEditor, reviewAnchorLine)
                                 }
-                                val offset = source.split('\n').take(reviewAnchorLine)
+                                val sourceLines = source.split('\n')
+                                check(reviewAnchorLine in sourceLines.indices) {
+                                    "Reviewed source anchor line is outside fixture: " + entry.id
+                                }
+                                val offset = sourceLines.take(reviewAnchorLine)
                                     .sumOf { it.length + 1 }
+                                val lineEndOffset = offset + sourceLines[reviewAnchorLine].length
+                                check(lineEndOffset > offset) {
+                                    "Reviewed source anchor line is blank: " + entry.id
+                                }
                                 // The platform source-scroll contract only promises to
-                                // intersect the selected node; it previously clipped the
-                                // first task-list/table row by ~10 CSS px. Resolve the
-                                // exact md-src-pos target in the live bundled DOM and
-                                // center it before the read-only screenshot oracle.
+                                // intersect the selected node; Markdown syntax markers can
+                                // also sit outside the exact md-src-pos range owned by the
+                                // rendered node. Resolve a unique owner from an exact source
+                                // character on the reviewed physical line, never from nearby
+                                // DOM content, then center it before the screenshot oracle.
                                 val targetScroll = driver.ui.jcef().callJs(
                                     controlledReferenceSourceAnchorViewportProbe(
-                                        offset, scrollTargetIntoView = true
+                                        offset,
+                                        sourceLineEndOffset = lineEndOffset,
+                                        scrollTargetIntoView = true
                                     )
                                 )
                                 check(targetScroll.lineSequence().any {
                                     it == "target_scroll_requested=true"
-                                }) { "Bundled Preview exact source-target scroll was not requested" }
+                                }) {
+                                    "Bundled Preview exact source-target scroll was not requested:\n" +
+                                        targetScroll
+                                }
                                 Files.writeString(
                                     dest.resolve("preview-source-anchor-scroll.txt"),
                                     targetScroll + "\n", StandardCharsets.UTF_8
                                 )
-                                val probe = controlledReferenceSourceAnchorViewportProbe(offset)
+                                val probe = controlledReferenceSourceAnchorViewportProbe(
+                                    offset, sourceLineEndOffset = lineEndOffset
+                                )
                                 waitFor(
                                     message = "Bundled Preview fully visible source anchor: " + entry.id,
                                     timeout = 20.seconds,
@@ -3123,9 +3139,11 @@ class MarkFlowStarterDifferentialManifestTest {
     /**
      * #353 reviewed-capture proof for the *actual bundled IntelliJ Markdown DOM*.
      *
-     * JetBrains' Markdown HtmlGenerator emits md-src-pos="start..end". Resolve
-     * the narrowest unique parser-source-backed node containing the exact target
-     * offset; never accept an arbitrary visible element or nearest text match.
+     * JetBrains' Markdown HtmlGenerator emits md-src-pos="start..end". Prefer
+     * the reviewed line-start offset, but when Markdown syntax owns no rendered
+     * node there, scan only exact source characters on that same physical line
+     * for a unique narrowest owner. Ambiguity or no owner still fails closed;
+     * never accept an arbitrary visible element or nearest text match.
      *
      * A single explicit scroll request centers that real source-bound target;
      * subsequent calls are read-only so the boundary proof reflects exactly
@@ -3134,18 +3152,65 @@ class MarkFlowStarterDifferentialManifestTest {
      * OVERSIZE_CENTERED_SLICE so it cannot be confused with full visual review.
      */
     private fun controlledReferenceSourceAnchorViewportProbe(
-        sourceOffset: Int, scrollTargetIntoView: Boolean = false,
+        sourceOffset: Int,
+        sourceLineEndOffset: Int = sourceOffset + 1,
+        scrollTargetIntoView: Boolean = false,
     ): String {
         require(sourceOffset >= 0)
+        require(sourceLineEndOffset > sourceOffset)
         val requestScroll = if (scrollTargetIntoView) "true" else "false"
         return """
             (() => {
               const sourceOffset = $sourceOffset;
+              const sourceLineEndOffset = $sourceLineEndOffset;
               const requestScroll = $requestScroll;
               const sourceContains = (start, end, offset) =>
                 Number.isSafeInteger(start) && Number.isSafeInteger(end) &&
                 Number.isSafeInteger(offset) && end > start &&
                 start <= offset && offset < end;
+              const uniqueOwnerAt = (rows, offset) => {
+                const candidates = rows
+                  .filter(row => sourceContains(row.start, row.end, offset))
+                  .sort((a, b) => a.span - b.span || a.start - b.start);
+                if (!candidates.length) {
+                  return {target: null, reason: 'NO_OWNER'};
+                }
+                const target = candidates[0];
+                if (candidates.length > 1 && candidates[1].span === target.span) {
+                  return {target: null, reason: 'AMBIGUOUS_OWNER'};
+                }
+                return {target, reason: 'UNIQUE_OWNER'};
+              };
+              const resolveSourceTarget = (rows, anchorOffset, lineEndOffset) => {
+                const exact = uniqueOwnerAt(rows, anchorOffset);
+                if (exact.target) {
+                  return {
+                    target: exact.target,
+                    reason: exact.reason,
+                    mode: 'EXACT_OFFSET',
+                    probeOffset: anchorOffset
+                  };
+                }
+                let sawAmbiguous = exact.reason === 'AMBIGUOUS_OWNER';
+                for (let offset = anchorOffset + 1; offset < lineEndOffset; offset += 1) {
+                  const candidate = uniqueOwnerAt(rows, offset);
+                  if (candidate.target) {
+                    return {
+                      target: candidate.target,
+                      reason: candidate.reason,
+                      mode: 'SOURCE_LINE_SCAN',
+                      probeOffset: offset
+                    };
+                  }
+                  if (candidate.reason === 'AMBIGUOUS_OWNER') sawAmbiguous = true;
+                }
+                return {
+                  target: null,
+                  reason: sawAmbiguous ? 'AMBIGUOUS_LINE_OWNER' : 'NO_LINE_OWNER',
+                  mode: 'NONE',
+                  probeOffset: -1
+                };
+              };
               const viewportMode = (rect, width, height) => {
                 const finite = [rect.left, rect.top, rect.right, rect.bottom, width, height]
                   .every(Number.isFinite);
@@ -3170,6 +3235,22 @@ class MarkFlowStarterDifferentialManifestTest {
               };
               const rect = (left, top, right, bottom) =>
                 ({left, top, right, bottom});
+              const exactControl = resolveSourceTarget(
+                [{id: 'exact', start: 10, end: 20, span: 10}], 10, 20
+              );
+              const syntaxGapControl = resolveSourceTarget(
+                [{id: 'line', start: 12, end: 20, span: 8}], 10, 20
+              );
+              const ambiguousControl = resolveSourceTarget(
+                [
+                  {id: 'a', start: 12, end: 20, span: 8},
+                  {id: 'b', start: 12, end: 20, span: 8}
+                ],
+                10, 20
+              );
+              const outsideControl = resolveSourceTarget(
+                [{id: 'outside', start: 20, end: 30, span: 10}], 10, 20
+              );
               const negativeControls =
                 viewportMode(rect(2, 3, 98, 97), 100, 100) === 'FULL_TARGET' &&
                 viewportMode(rect(2, -20, 98, 120), 100, 100) ===
@@ -3189,7 +3270,17 @@ class MarkFlowStarterDifferentialManifestTest {
                 sourceContains(10, 20, 10) && sourceContains(10, 20, 19) &&
                 !sourceContains(10, 20, 20) &&
                 !sourceContains(10, 20, 9) &&
-                !sourceContains(20, 20, 20);
+                !sourceContains(20, 20, 20) &&
+                exactControl.target && exactControl.target.id === 'exact' &&
+                exactControl.mode === 'EXACT_OFFSET' &&
+                exactControl.probeOffset === 10 &&
+                syntaxGapControl.target && syntaxGapControl.target.id === 'line' &&
+                syntaxGapControl.mode === 'SOURCE_LINE_SCAN' &&
+                syntaxGapControl.probeOffset === 12 &&
+                !ambiguousControl.target &&
+                ambiguousControl.reason === 'AMBIGUOUS_LINE_OWNER' &&
+                !outsideControl.target &&
+                outsideControl.reason === 'NO_LINE_OWNER';
               if (!negativeControls) {
                 return 'FAIL: source/viewport visibility negative controls';
               }
@@ -3203,19 +3294,26 @@ class MarkFlowStarterDifferentialManifestTest {
                   if (!match) return null;
                   const start = Number(match[1]);
                   const end = Number(match[2]);
-                  if (!sourceContains(start, end, sourceOffset)) return null;
+                  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+                      end <= start) return null;
                   return { element, raw, start, end, span: end - start };
                 })
-                .filter(Boolean)
-                .sort((a, b) => a.span - b.span || a.start - b.start);
-              if (!rows.length) {
-                return 'FAIL: no md-src-pos element contains source offset=' + sourceOffset;
+                .filter(Boolean);
+              const resolution = resolveSourceTarget(
+                rows, sourceOffset, sourceLineEndOffset
+              );
+              if (!resolution.target) {
+                return 'FAIL: no unique md-src-pos owner on reviewed source line=' +
+                  sourceOffset + '..' + sourceLineEndOffset +
+                  ';reason=' + resolution.reason;
               }
-              const target = rows[0];
-              if ((rows.length > 1 && rows[1].span === target.span) ||
-                  !target.element.isConnected ||
-                  !sourceContains(target.start, target.end, sourceOffset)) {
-                return 'FAIL: ambiguous, stale or mismatched exact source target=' + sourceOffset;
+              const target = resolution.target;
+              if (!target.element.isConnected ||
+                  !sourceContains(
+                    target.start, target.end, resolution.probeOffset
+                  )) {
+                return 'FAIL: stale or mismatched source-line target=' +
+                  resolution.probeOffset;
               }
               if (requestScroll) {
                 target.element.scrollIntoView({
@@ -3230,6 +3328,9 @@ class MarkFlowStarterDifferentialManifestTest {
               return [
                 'schema=markflow-controlled-reference-source-anchor-viewport/v1',
                 'source_offset=' + sourceOffset,
+                'source_line_end_offset=' + sourceLineEndOffset,
+                'target_source_probe_offset=' + resolution.probeOffset,
+                'target_match_mode=' + resolution.mode,
                 'source_range=' + target.raw,
                 'target_tag=' + (target.element.tagName || 'UNKNOWN').toLowerCase(),
                 'target_connected=' + target.element.isConnected,
