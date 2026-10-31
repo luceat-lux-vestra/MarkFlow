@@ -72,6 +72,7 @@ Do not revive custom source revisions, epochs, ACKs, browser flush, whole-conten
 ## Native IntelliJ discipline
 
 - Use maintained IntelliJ Platform APIs; experimental/private APIs need an explicit compatibility decision and evidence.
+- For any version-sensitive IntelliJ API/runtime/DOM claim, the authority is the repository's exact pinned `platformVersion` and the matching JetBrains release build/tag/source commit. Current upstream/main may be consulted only as comparative context and must never substitute for pinned-version evidence. Record the pinned release, build number, and source identity before changing implementation or test contracts based on platform behavior.
 - Make EDT/write-action/command requirements explicit.
 - Preserve IntelliJ dirty/save/undo/redo behavior intentionally.
 - Treat IME/composition, keymaps, multicaret, clipboard, accessibility, caret/selection/scroll, split editors, external document changes, project close, editor recreate/dispose, and JCEF-unavailable operation as ordinary scenarios.

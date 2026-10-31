@@ -99,6 +99,29 @@ class MarkFlowStarterDifferentialManifestTest {
             (explicitCaseIds ?: defaultIds).split(',').map { it.trim() }
         }
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
+        val sourceOwnershipDiagnostic =
+            System.getProperty("markflow.differential.sourceOwnershipDiagnostic") == "true"
+        val sourceOwnershipDiagnosticIds = setOf(
+            "md-atx-headings-h1-h6",
+            "md-paragraph",
+            "md-unordered-list",
+            "md-ordered-list",
+            "md-nested-list",
+            "md-task-list",
+            "md-blockquote",
+            "md-table-basic",
+            "md-autolink",
+            "md-fenced-backtick",
+        )
+        if (sourceOwnershipDiagnostic) {
+            check(contract == "capture" && explicitCaseIds != null) {
+                "#497 source-ownership diagnostics require an explicit bounded capture"
+            }
+            check(selectedIds.size == sourceOwnershipDiagnosticIds.size &&
+                selectedIds.toSet() == sourceOwnershipDiagnosticIds) {
+                "#497 source-ownership diagnostic case set drifted: " + selectedIds
+            }
+        }
         if (contract == "capture" && explicitCaseIds == null) {
             val mermaidLayoutCohort = setOf(
                 "mermaid-gantt",
@@ -1344,7 +1367,87 @@ class MarkFlowStarterDifferentialManifestTest {
                                     checker = { it }
                                 )
                             }
-                            if (reviewAnchorLine != null) {
+                            if (sourceOwnershipDiagnostic && reviewAnchorLine != null) {
+                                // #497 is evidence-only. Preserve the real pinned platform
+                                // scroll result before applying either compatibility
+                                // re-resolution strategy, then compare the exact IDEA
+                                // 2026.2.3 line-end target with MarkFlow's historical
+                                // line-start target. Do not turn either observation into
+                                // an acceptance verdict in this diagnostic mode.
+                                driver.withContext(OnDispatcher.EDT) {
+                                    preview.showReferenceAtSourceLine(remoteEditor, reviewAnchorLine)
+                                }
+                                // The platform scroll is asynchronous. Do not gate #497
+                                // ownership evidence on an immediate raster sample: the
+                                // Preview was already proven paint-ready before this diagnostic
+                                // block, and this phase is about live DOM/source ownership.
+                                val coordinates = driver.withContext(OnDispatcher.EDT) {
+                                    preview.referenceSourcePositionCoordinates(
+                                        remoteEditor, reviewAnchorLine
+                                    )
+                                }
+                                Files.writeString(
+                                    dest.resolve("source-position-coordinates.txt"),
+                                    coordinates + "\n", StandardCharsets.UTF_8
+                                )
+                                val coordinateMap = coordinates.lineSequence()
+                                    .mapNotNull { line ->
+                                        val split = line.indexOf('=')
+                                        if (split <= 0) null else
+                                            line.substring(0, split) to line.substring(split + 1)
+                                    }.toMap()
+                                val lineStart = requireNotNull(
+                                    coordinateMap["document_line_start_offset"]?.toIntOrNull()
+                                )
+                                val lineEnd = requireNotNull(
+                                    coordinateMap["document_line_end_offset"]?.toIntOrNull()
+                                )
+                                val platformLineEnd = requireNotNull(
+                                    coordinateMap["platform_visual_line_end_offset"]?.toIntOrNull()
+                                )
+                                val ownershipProbe = referenceSourceOwnershipDomProbe(
+                                    lineStart, lineEnd, platformLineEnd
+                                )
+                                Files.writeString(
+                                    dest.resolve("preview-source-ownership-platform-scroll.txt"),
+                                    driver.ui.jcef().callJs(ownershipProbe) + "\n",
+                                    StandardCharsets.UTF_8
+                                )
+                                val platformReResolve = driver.withContext(OnDispatcher.EDT) {
+                                    preview.reResolveReferenceAtPlatformLineEnd(
+                                        remoteEditor, reviewAnchorLine
+                                    )
+                                }
+                                Files.writeString(
+                                    dest.resolve("preview-platform-target-reresolve.txt"),
+                                    platformReResolve + "\n", StandardCharsets.UTF_8
+                                )
+                                // Re-resolution mutates scroll state asynchronously. Retain
+                                // the DOM/source-position state first; raster readiness is not
+                                // an ownership invariant and is intentionally non-gating here.
+                                Files.writeString(
+                                    dest.resolve("preview-source-ownership-platform-target.txt"),
+                                    driver.ui.jcef().callJs(ownershipProbe) + "\n",
+                                    StandardCharsets.UTF_8
+                                )
+                                val lineStartReResolve = driver.withContext(OnDispatcher.EDT) {
+                                    preview.reResolveReferenceSourceAnchor(
+                                        remoteEditor, reviewAnchorLine
+                                    )
+                                }
+                                Files.writeString(
+                                    dest.resolve("preview-line-start-reresolve.txt"),
+                                    lineStartReResolve + "\n", StandardCharsets.UTF_8
+                                )
+                                // Keep the historical line-start comparison evidence-only.
+                                // A transient blank raster after scrolling must not suppress
+                                // the ownership snapshot that #497 exists to collect.
+                                Files.writeString(
+                                    dest.resolve("preview-source-ownership-line-start.txt"),
+                                    driver.ui.jcef().callJs(ownershipProbe) + "\n",
+                                    StandardCharsets.UTF_8
+                                )
+                            } else if (reviewAnchorLine != null) {
                                 // A successfully painted JCEF surface may still be scrolled
                                 // to an unrelated earlier section. Reissue the real bundled
                                 // Preview navigation only after its panel is ready, then apply
@@ -3249,6 +3352,120 @@ class MarkFlowStarterDifferentialManifestTest {
         """.trimIndent()
     }
 
+    /**
+     * #497 runtime-only DOM inventory for the pinned IDEA 2026.2.3 bundled Preview.
+     *
+     * This records ownership; it deliberately does not select an owner or define
+     * acceptance semantics. Rows are limited to source ranges intersecting the
+     * reviewed physical line or containing the platform visual-line-end target.
+     */
+    private fun referenceSourceOwnershipDomProbe(
+        lineStartOffset: Int,
+        lineEndOffset: Int,
+        platformLineEndOffset: Int,
+    ): String {
+        require(lineStartOffset >= 0)
+        require(lineEndOffset >= lineStartOffset)
+        require(platformLineEndOffset >= 0)
+        return """
+            (() => {
+              const lineStart = $lineStartOffset;
+              const lineEnd = $lineEndOffset;
+              const platformTarget = $platformLineEndOffset;
+              const parseRange = element => {
+                const raw = element?.getAttribute?.('md-src-pos') || '';
+                const match = /^(\d+)\.\.(\d+)$/.exec(raw);
+                if (!match) return null;
+                const start = Number(match[1]);
+                const end = Number(match[2]);
+                if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null;
+                return { raw, start, end };
+              };
+              const intersectsReviewedLine = range =>
+                range && range.end >= lineStart && range.start <= lineEnd;
+              const containsInclusive = (range, offset) =>
+                range && range.start <= offset && offset <= range.end;
+              const depthOf = element => {
+                let depth = 0;
+                for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+                  if (parseRange(parent)) depth += 1;
+                }
+                return depth;
+              };
+              const rows = Array.from(document.querySelectorAll('[md-src-pos]'))
+                .map(element => {
+                  const range = parseRange(element);
+                  if (!range) return null;
+                  if (!intersectsReviewedLine(range) &&
+                      !containsInclusive(range, platformTarget)) return null;
+                  const parent = element.parentElement?.closest?.('[md-src-pos]') || null;
+                  const parentRange = parseRange(parent);
+                  const rect = element.getBoundingClientRect();
+                  const visible = element.isConnected &&
+                    rect.right > 0 && rect.bottom > 0 &&
+                    rect.left < window.innerWidth && rect.top < window.innerHeight;
+                  return {
+                    element,
+                    range,
+                    parentRange,
+                    rect,
+                    visible,
+                    depth: depthOf(element),
+                    tag: (element.tagName || 'UNKNOWN').toLowerCase(),
+                    display: getComputedStyle(element).display || 'unknown'
+                  };
+                })
+                .filter(Boolean)
+                .sort((a, b) =>
+                  a.range.start - b.range.start ||
+                  a.range.end - b.range.end ||
+                  a.depth - b.depth ||
+                  a.tag.localeCompare(b.tag)
+                );
+              const current = window.scrollController?.currentScrollElement || null;
+              const currentRange = parseRange(current);
+              const result = [
+                'schema=markflow-preview-source-ownership/v1',
+                'platform_release=2026.2.3',
+                'platform_build=262.10968.63',
+                'intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7',
+                'document_ready_state=' + document.readyState,
+                'line_start_offset=' + lineStart,
+                'line_end_offset=' + lineEnd,
+                'platform_visual_line_end_offset=' + platformTarget,
+                'window_scroll_y=' + window.scrollY,
+                'viewport_width=' + window.innerWidth,
+                'viewport_height=' + window.innerHeight,
+                'current_scroll_tag=' +
+                  (current ? (current.tagName || 'UNKNOWN').toLowerCase() : 'NONE'),
+                'current_scroll_range=' + (currentRange ? currentRange.raw : 'NONE'),
+                'relevant_row_count=' + rows.length
+              ];
+              rows.forEach((row, index) => {
+                const parentRange = row.parentRange ? row.parentRange.raw : 'NONE';
+                result.push(
+                  'row_' + String(index).padStart(2, '0') + '=' +
+                  'tag:' + row.tag +
+                  ';range:' + row.range.raw +
+                  ';parent:' + parentRange +
+                  ';depth:' + row.depth +
+                  ';display:' + row.display +
+                  ';connected:' + row.element.isConnected +
+                  ';visible:' + row.visible +
+                  ';contains_line_start:' + containsInclusive(row.range, lineStart) +
+                  ';contains_line_end:' + containsInclusive(row.range, lineEnd) +
+                  ';contains_platform_target:' +
+                    containsInclusive(row.range, platformTarget) +
+                  ';rect:' +
+                    [row.rect.left, row.rect.top, row.rect.right, row.rect.bottom]
+                      .map(value => Number(value).toFixed(3)).join(',')
+                );
+              });
+              return result.join('\n');
+            })()
+        """.trimIndent()
+    }
+
     /** Source-backed visual oracle: real Mermaid SVG, not generated fallback HTML. */
     private fun mermaidReferenceSvgProbe(sourceLabel: String): String {
         require(sourceLabel == "Rendered correctly?" ||
@@ -4096,6 +4313,8 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceAnchorViewportNegativeControls(): Boolean
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String
+    fun referenceSourcePositionCoordinates(editor: Editor, line: Int): String
+    fun reResolveReferenceAtPlatformLineEnd(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
     fun referenceBounds(editor: Editor): String
     fun referencePanelAttached(editor: Editor): Boolean
