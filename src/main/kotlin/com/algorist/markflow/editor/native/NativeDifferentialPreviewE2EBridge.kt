@@ -541,6 +541,7 @@ internal object NativeDifferentialPreviewE2EBridge {
      * owners use their exact parser/planner source range. Multiple equal-span
      * owners are ambiguous and fail closed.
      */
+    @Suppress("UnstableApiUsage")
     private fun nativeSourceBoundInlayRow(editor: Editor, line: Int): NativeAnchorRow? {
         val controller = NativeMarkFlowProductionLifecycle.controller(editor) ?: return null
         val plan = controller.currentPlan ?: return null
@@ -804,9 +805,8 @@ internal object NativeDifferentialPreviewE2EBridge {
         val top = richRow?.top ?: point.y
         val bottom = richRow?.bottom ?: (point.y + editor.lineHeight)
         val kind = richRow?.kind ?: "literal_source"
-        val sourceCurrent = richRow != null
         val visibilityMode = if (richRow != null) {
-            val geometryCurrent = sourceCurrent &&
+            val geometryCurrent =
                 richRow.inlayBounds.width > 0 && richRow.inlayBounds.height > 0 &&
                 viewport.width > 0 && viewport.height > 0 &&
                 richRow.inlayBounds.x < viewport.x.toLong() + viewport.width &&
@@ -818,7 +818,8 @@ internal object NativeDifferentialPreviewE2EBridge {
                     top, bottom, viewport.y, viewport.height, allowOversizeSlice = true
                 )
             } else if (inlayRowFullyVisible(
-                    top, bottom, richRow.inlayBounds, viewport, sourceCurrent, true,
+                    top, bottom, richRow.inlayBounds, viewport,
+                    sourceCurrent = true, inlayValid = true,
                 )
             ) {
                 "FULL_TARGET"
