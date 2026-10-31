@@ -1390,6 +1390,69 @@ internal object NativeDifferentialPreviewE2EBridge {
             "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
     }
 
+    /**
+     * #497 evidence-only coordinates for the exact IDEA 2026.2.3 Preview scroll contract.
+     *
+     * IDEA 2026.2.3 is build 262.10968.63 / intellij-community tag
+     * idea/2026.2.3 (8062c061ff33e22041d9f1844db5b8b8a6b5e4d7).
+     * Its MarkdownHtmlPanel.scrollTo(Editor, line) delegates to
+     * EditorUtil.getVisualLineEndOffset(Editor, line). Resolve that method from
+     * the pinned runtime rather than compiling against a newer convenience API.
+     */
+    fun referenceSourcePositionCoordinates(editor: Editor, line: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(line in 0 until editor.document.lineCount) { "Invalid source coordinate line" }
+        val editorUtil = Class.forName("com.intellij.openapi.editor.ex.util.EditorUtil")
+        val method = editorUtil.getMethod(
+            "getVisualLineEndOffset", Editor::class.java, Int::class.javaPrimitiveType
+        )
+        val platformVisualLineEndOffset = method.invoke(null, editor, line) as Int
+        val documentLineStart = editor.document.getLineStartOffset(line)
+        val documentLineEnd = editor.document.getLineEndOffset(line)
+        check(platformVisualLineEndOffset in 0..editor.document.textLength) {
+            "Pinned Preview visual-line end offset is outside the Document"
+        }
+        return listOf(
+            "schema=markflow-preview-source-position-coordinates/v1",
+            "source_line_zero_based=" + line,
+            "document_line_start_offset=" + documentLineStart,
+            "document_line_end_offset=" + documentLineEnd,
+            "platform_visual_line_end_offset=" + platformVisualLineEndOffset,
+            "platform_release=2026.2.3",
+            "platform_build=262.10968.63",
+            "intellij_source_tag=idea/2026.2.3",
+            "intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7",
+        ).joinToString("\n")
+    }
+
+    fun reResolveReferenceAtPlatformLineEnd(editor: Editor, line: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(line in 0 until editor.document.lineCount) { "Invalid source coordinate line" }
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Markdown Preview panel is not attached"
+        } as? JBCefBrowser ?: error(
+            "Bundled Markdown panel is not JBCefBrowser: " + previewPanel(preview)?.javaClass?.name
+        )
+        check(referencePanelShowing(editor)) {
+            "Bundled Markdown Preview source re-resolution requires a showing panel"
+        }
+        val editorUtil = Class.forName("com.intellij.openapi.editor.ex.util.EditorUtil")
+        val method = editorUtil.getMethod(
+            "getVisualLineEndOffset", Editor::class.java, Int::class.javaPrimitiveType
+        )
+        val sourceOffset = method.invoke(null, editor, line) as Int
+        MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(
+            panel.getCefBrowser(), sourceOffset
+        )
+        return "schema=markflow-bundled-preview-platform-target-reresolve/v1\n" +
+            "source_line_zero_based=" + line + "\n" +
+            "source_offset=" + sourceOffset + "\n" +
+            "platform_release=2026.2.3\n" +
+            "platform_build=262.10968.63\n" +
+            "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
+    }
+
     fun referenceShowing(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (_, preview) = editors(editor)

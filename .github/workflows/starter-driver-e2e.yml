@@ -9,6 +9,11 @@ on:
         required: false
         type: boolean
         default: false
+      source_ownership_diagnostic:
+        description: '#497 diagnostic: inspect pinned IDEA 2026.2.3 Preview source ownership on representative Markdown structures'
+        required: false
+        type: boolean
+        default: false
       release_candidate_repeat:
         description: 'Run a second independent canonical full-product journey for release-candidate evidence'
         required: false
@@ -233,6 +238,7 @@ jobs:
           STARTER_SHARD: ${{ matrix.shard }}
           STARTER_SUITES: ${{ matrix.suites }}
           SOURCE_ANCHOR_FOUR_CASE_CAPTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_anchor_four_case_capture && 'true' || 'false' }}
+          SOURCE_OWNERSHIP_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ownership_diagnostic && 'true' || 'false' }}
         run: |
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
@@ -244,6 +250,10 @@ jobs:
           touch "$marker"
 
           IFS='|' read -r -a suites <<< "$STARTER_SUITES"
+          if [[ "$SOURCE_ANCHOR_FOUR_CASE_CAPTURE" == "true" && "$SOURCE_OWNERSHIP_DIAGNOSTIC" == "true" ]]; then
+            echo "::error::#353 source-anchor capture and #497 ownership diagnostic are mutually exclusive"
+            exit 1
+          fi
           gradle_args=(
             integrationTest
             -x buildPlugin
@@ -268,6 +278,30 @@ jobs:
               'mode=CAPTURED_UNVERIFIED_NOT_89_CASE_ACCEPTANCE' \
               > "$pass_dir/source-anchor-capture.txt"
             echo "::notice::#353 targeted four-case capture; independent paired review still required"
+          fi
+          if [[ "$SOURCE_OWNERSHIP_DIAGNOSTIC" == "true" && "$STARTER_SHARD" == "derived-content" ]]; then
+            # #497 evidence-only probe for the exact pinned IDEA 2026.2.3 runtime.
+            # This does not apply #353 source-anchor acceptance assertions and
+            # must never substitute for the 89-case acceptance workflow.
+            suites=(com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest)
+            STARTER_SUITES="${suites[0]}"
+            ownership_case_ids='md-atx-headings-h1-h6,md-paragraph,md-unordered-list,md-ordered-list,md-nested-list,md-task-list,md-blockquote,md-table-basic,md-autolink,md-fenced-backtick'
+            gradle_args+=(
+              -PdifferentialContract=capture
+              -PdifferentialSourceOwnershipDiagnostic=true
+              "-PdifferentialCaseIds=$ownership_case_ids"
+            )
+            printf '%s\n' \
+              'schema=markflow-497-source-ownership-diagnostic/v1' \
+              "source_head=$STARTER_SOURCE_SHA" \
+              'platform_release=2026.2.3' \
+              'platform_build=262.10968.63' \
+              'intellij_source_tag=idea/2026.2.3' \
+              'intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7' \
+              "case_ids=$ownership_case_ids" \
+              'mode=EVIDENCE_ONLY_NOT_ACCEPTANCE' \
+              > "$pass_dir/source-ownership-diagnostic.txt"
+            echo "::notice::#497 pinned-runtime source-ownership diagnostic; no acceptance verdict"
           fi
           diagnostics_args=()
           for suite in "${suites[@]}"; do
