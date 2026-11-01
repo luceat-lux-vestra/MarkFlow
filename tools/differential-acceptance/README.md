@@ -73,7 +73,7 @@ JCEF runtime evidence. `differential-manifest/summary.json` keeps **all**
 expanded cases, including those not run. The current bounded CI slice attempts **ten real source-identical pairs in one
 Starter IDE session**, with no additional runners or shards:
 `md-atx-headings-h1-h6`, `mermaid-flowchart-minimal`, `mermaid-gantt`,
-`md-setext-headings`, `md-tight-loose-lists`, `mermaid-sequence`,
+`md-setext-headings`, `md-unordered-list`, `mermaid-sequence`,
 `mermaid-class`, `mermaid-state`, and both independently expanded blocks of
 `mermaid-flowchart-large`.
 The added #352 layout cohort supplies retained real-IDE geometry, aspect-ratio and
@@ -86,7 +86,7 @@ authorized Starter run:
 
 ```sh
 ./gradlew integrationTest -x buildPlugin -PplatformVersion=2026.2.3 \
-  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt,md-setext-headings,md-tight-loose-lists,mermaid-sequence,mermaid-class,mermaid-state,mermaid-flowchart-large--block-01,mermaid-flowchart-large--block-02 \
+  -PdifferentialCaseIds=md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt,md-setext-headings,md-unordered-list,mermaid-sequence,mermaid-class,mermaid-state,mermaid-flowchart-large--block-01,mermaid-flowchart-large--block-02 \
   --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
 ```
 

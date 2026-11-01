@@ -95,7 +95,7 @@ class MarkFlowStarterDifferentialManifestTest {
         // #352's retained subset covers Gantt + sequence + class/state plus both large-flowchart
         // blocks so actual native geometry/scroll evidence includes normal, wide and tall diagrams.
         val defaultIds = "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt" +
-            ",md-setext-headings,md-tight-loose-lists,mermaid-sequence" +
+            ",md-setext-headings,md-unordered-list,mermaid-sequence" +
             ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
             ",mermaid-flowchart-large--block-02"
         val explicitCaseIds = System.getProperty("markflow.differential.caseIds")
