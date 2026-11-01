@@ -3356,9 +3356,14 @@ class MarkFlowStarterDifferentialManifestTest {
      * not a single offset. The narrowest source span that contains that range
      * defines an ownership cohort. Multiple DOM wrappers are allowed only when
      * they expose the exact same minimal md-src-pos range; a unique deepest
-     * connected representative is then used for viewport control. Competing
-     * minimal source ranges, stale nodes, or duplicate deepest representatives
-     * fail closed.
+     * connected member is the identity owner.
+     *
+     * Source identity and screenshot geometry are deliberately separate. If the
+     * identity owner has no usable box (for example a zero-width syntax-marker
+     * span), viewport control may use only the nearest connected non-empty
+     * md-src-pos ancestor in that exact owner's DOM ancestry whose source span
+     * still contains the owned source range. Arbitrary nearest-visible/text DOM
+     * fallback is forbidden and malformed/stale ownership hierarchies fail closed.
      */
     private fun controlledReferenceSourceRangeViewportProbe(
         sourceStartOffset: Int,
@@ -3385,6 +3390,26 @@ class MarkFlowStarterDifferentialManifestTest {
                 }
                 return depth;
               };
+              const parseSourceRange = element => {
+                const raw = element.getAttribute && (element.getAttribute('md-src-pos') || '');
+                const match = /^(\d+)\.\.(\d+)$/.exec(raw || '');
+                if (!match) return null;
+                const start = Number(match[1]);
+                const end = Number(match[2]);
+                if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) {
+                  return null;
+                }
+                return {raw, start, end, span: end - start};
+              };
+              const usableBox = element => {
+                const rect = element.getBoundingClientRect();
+                const finite = [rect.left, rect.top, rect.right, rect.bottom]
+                  .every(Number.isFinite);
+                return {
+                  rect,
+                  usable: finite && rect.right > rect.left && rect.bottom > rect.top,
+                };
+              };
               const resolveRows = rows => {
                 if (!rows.length) return {status: 'MISSING'};
                 const minSpan = Math.min(...rows.map(row => row.span));
@@ -3397,19 +3422,124 @@ class MarkFlowStarterDifferentialManifestTest {
                   return {status: 'STALE_SOURCE_COHORT'};
                 }
                 const maxDepth = Math.max(...minimal.map(row => row.depth));
-                const representatives = minimal.filter(row => row.depth === maxDepth);
-                if (representatives.length !== 1) {
-                  return {status: 'AMBIGUOUS_REPRESENTATIVE'};
+                const identityOwners = minimal.filter(row => row.depth === maxDepth);
+                if (identityOwners.length !== 1) {
+                  return {status: 'AMBIGUOUS_IDENTITY_OWNER'};
                 }
                 return {
                   status: 'OWNED',
                   range: ranges[0],
                   cohort: minimal,
-                  representative: representatives[0],
+                  identityOwner: identityOwners[0],
                 };
+              };
+              const resolveVisualRepresentative = ownership => {
+                const identity = ownership.identityOwner;
+                const ownedStart = identity.start;
+                const ownedEnd = identity.end;
+                let node = identity.element;
+                let hierarchyHops = 0;
+                while (node) {
+                  if (!node.isConnected) {
+                    return {status: 'STALE_VISUAL_HIERARCHY'};
+                  }
+                  const parsed = parseSourceRange(node);
+                  if (parsed) {
+                    if (!rangeContains(parsed.start, parsed.end, ownedStart, ownedEnd)) {
+                      return {status: 'BROKEN_SOURCE_HIERARCHY'};
+                    }
+                    const geometry = usableBox(node);
+                    if (geometry.usable) {
+                      return {
+                        status: 'OWNED_VISUAL_REPRESENTATIVE',
+                        element: node,
+                        raw: parsed.raw,
+                        start: parsed.start,
+                        end: parsed.end,
+                        depth: depthOf(node),
+                        hierarchyHops,
+                        rect: geometry.rect,
+                      };
+                    }
+                  }
+                  node = node.parentElement;
+                  hierarchyHops++;
+                }
+                return {status: 'NO_VISIBLE_OWNERSHIP_REPRESENTATIVE'};
               };
               const synthetic = (raw, start, end, connected, depth) =>
                 ({raw, start, end, span: end - start, connected, depth});
+              const resolveSyntheticVisual = (nodes, identityKey, ownedStart, ownedEnd) => {
+                const byKey = new Map(nodes.map(node => [node.key, node]));
+                const visited = new Set();
+                let current = byKey.get(identityKey) || null;
+                while (current) {
+                  if (visited.has(current.key)) return {status: 'CYCLIC_VISUAL_HIERARCHY'};
+                  visited.add(current.key);
+                  if (!current.connected) return {status: 'STALE_VISUAL_HIERARCHY'};
+                  if (!rangeContains(
+                    current.start, current.end, ownedStart, ownedEnd
+                  )) {
+                    return {status: 'BROKEN_SOURCE_HIERARCHY'};
+                  }
+                  if (current.usable) {
+                    return {
+                      status: 'OWNED_VISUAL_REPRESENTATIVE',
+                      key: current.key,
+                    };
+                  }
+                  current = current.parentKey ? (byKey.get(current.parentKey) || null) : null;
+                }
+                return {status: 'NO_VISIBLE_OWNERSHIP_REPRESENTATIVE'};
+              };
+              const positiveFallback = resolveSyntheticVisual([
+                {
+                  key: 'identity', parentKey: 'owner-parent',
+                  start: 42, end: 50, connected: true, usable: false,
+                },
+                {
+                  key: 'owner-parent', parentKey: null,
+                  start: 40, end: 80, connected: true, usable: true,
+                },
+                {
+                  key: 'unrelated-visible', parentKey: null,
+                  start: 42, end: 50, connected: true, usable: true,
+                },
+              ], 'identity', 42, 50);
+              const noArbitraryFallback = resolveSyntheticVisual([
+                {
+                  key: 'identity', parentKey: 'owner-parent',
+                  start: 42, end: 50, connected: true, usable: false,
+                },
+                {
+                  key: 'owner-parent', parentKey: null,
+                  start: 40, end: 80, connected: true, usable: false,
+                },
+                {
+                  key: 'unrelated-visible', parentKey: null,
+                  start: 42, end: 50, connected: true, usable: true,
+                },
+              ], 'identity', 42, 50);
+              const brokenHierarchy = resolveSyntheticVisual([
+                {
+                  key: 'identity', parentKey: 'bad-parent',
+                  start: 42, end: 50, connected: true, usable: false,
+                },
+                {
+                  key: 'bad-parent', parentKey: null,
+                  start: 60, end: 80, connected: true, usable: true,
+                },
+              ], 'identity', 42, 50);
+              const staleHierarchy = resolveSyntheticVisual([
+                {
+                  key: 'identity', parentKey: 'stale-parent',
+                  start: 42, end: 50, connected: true, usable: false,
+                },
+                {
+                  key: 'stale-parent', parentKey: null,
+                  start: 40, end: 80, connected: false, usable: true,
+                },
+              ], 'identity', 42, 50);
               const negativeControls =
                 rangeContains(10, 20, 10, 20) &&
                 rangeContains(0, 30, 10, 20) &&
@@ -3429,28 +3559,32 @@ class MarkFlowStarterDifferentialManifestTest {
                 resolveRows([
                   synthetic('0..10', 0, 10, true, 3),
                   synthetic('0..10', 0, 10, true, 3),
-                ]).status === 'AMBIGUOUS_REPRESENTATIVE' &&
-                resolveRows([]).status === 'MISSING';
+                ]).status === 'AMBIGUOUS_IDENTITY_OWNER' &&
+                resolveRows([]).status === 'MISSING' &&
+                positiveFallback.status === 'OWNED_VISUAL_REPRESENTATIVE' &&
+                positiveFallback.key === 'owner-parent' &&
+                noArbitraryFallback.status === 'NO_VISIBLE_OWNERSHIP_REPRESENTATIVE' &&
+                brokenHierarchy.status === 'BROKEN_SOURCE_HIERARCHY' &&
+                staleHierarchy.status === 'STALE_VISUAL_HIERARCHY';
               if (!negativeControls) {
-                return 'FAIL: #498 source-range ownership negative controls';
+                return 'FAIL: #498 source-range ownership/visual-representative controls';
               }
               if (!document.documentElement || !document.body) {
                 return 'FAIL: no live bundled Preview document';
               }
               const rows = Array.from(document.querySelectorAll('[md-src-pos]'))
                 .map(element => {
-                  const raw = element.getAttribute('md-src-pos') || '';
-                  const match = /^(\d+)\.\.(\d+)$/.exec(raw);
-                  if (!match) return null;
-                  const start = Number(match[1]);
-                  const end = Number(match[2]);
-                  if (!rangeContains(start, end, targetStart, targetEnd)) return null;
+                  const parsed = parseSourceRange(element);
+                  if (!parsed) return null;
+                  if (!rangeContains(
+                    parsed.start, parsed.end, targetStart, targetEnd
+                  )) return null;
                   return {
                     element,
-                    raw,
-                    start,
-                    end,
-                    span: end - start,
+                    raw: parsed.raw,
+                    start: parsed.start,
+                    end: parsed.end,
+                    span: parsed.span,
                     connected: element.isConnected,
                     depth: depthOf(element),
                   };
@@ -3459,7 +3593,7 @@ class MarkFlowStarterDifferentialManifestTest {
               const resolved = resolveRows(rows);
               if (resolved.status !== 'OWNED') {
                 return [
-                  'schema=markflow-498-source-range-viewport/v1',
+                  'schema=markflow-498-source-range-viewport/v2',
                   'source_start_offset=' + targetStart,
                   'source_end_offset_exclusive=' + targetEnd,
                   'ownership_status=' + resolved.status,
@@ -3468,7 +3602,24 @@ class MarkFlowStarterDifferentialManifestTest {
                   'target_visible=false',
                 ].join('\n');
               }
-              const target = resolved.representative;
+              const visual = resolveVisualRepresentative(resolved);
+              if (visual.status !== 'OWNED_VISUAL_REPRESENTATIVE') {
+                return [
+                  'schema=markflow-498-source-range-viewport/v2',
+                  'source_start_offset=' + targetStart,
+                  'source_end_offset_exclusive=' + targetEnd,
+                  'ownership_status=OWNED',
+                  'cohort_source_range=' + resolved.range,
+                  'cohort_size=' + resolved.cohort.length,
+                  'identity_owner_tag=' +
+                    (resolved.identityOwner.element.tagName || 'UNKNOWN').toLowerCase(),
+                  'identity_owner_depth=' + resolved.identityOwner.depth,
+                  'visual_representative_status=' + visual.status,
+                  'negative_controls=true',
+                  'target_visible=false',
+                ].join('\n');
+              }
+              const target = visual;
               if (requestScroll) {
                 target.element.scrollIntoView({
                   behavior: 'auto', block: 'center', inline: 'center'
@@ -3496,13 +3647,25 @@ class MarkFlowStarterDifferentialManifestTest {
               const visibilityMode = fullyVisible
                 ? 'FULL_TARGET'
                 : (centeredOversize ? 'OVERSIZE_CENTERED_SLICE' : 'NONE');
+              const identity = resolved.identityOwner;
+              const visualMode = target.element === identity.element
+                ? 'IDENTITY_OWNER'
+                : 'ENCLOSING_MD_SRC_POS_ANCESTOR';
               return [
-                'schema=markflow-498-source-range-viewport/v1',
+                'schema=markflow-498-source-range-viewport/v2',
                 'source_start_offset=' + targetStart,
                 'source_end_offset_exclusive=' + targetEnd,
                 'ownership_status=OWNED',
                 'cohort_source_range=' + resolved.range,
                 'cohort_size=' + resolved.cohort.length,
+                'identity_owner_tag=' +
+                  (identity.element.tagName || 'UNKNOWN').toLowerCase(),
+                'identity_owner_depth=' + identity.depth,
+                'identity_owner_connected=' + identity.element.isConnected,
+                'visual_representative_status=OWNED_VISUAL_REPRESENTATIVE',
+                'visual_representative_mode=' + visualMode,
+                'visual_representative_source_range=' + target.raw,
+                'visual_representative_hierarchy_hops=' + target.hierarchyHops,
                 'representative_tag=' +
                   (target.element.tagName || 'UNKNOWN').toLowerCase(),
                 'representative_depth=' + target.depth,
