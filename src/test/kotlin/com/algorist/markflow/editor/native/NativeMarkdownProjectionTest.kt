@@ -303,7 +303,7 @@ Setext two
         assertEquals(original, ProjectionSourceIdentity(11L, "same", 2L))
     }
 
-    fun testWrappedAutolinksRemainSupportedWhileBareGfmAutolinkLiteralsFailClosed() {
+    fun testWrappedHttpAutolinksRemainSupportedWhileUnsupportedEmailAndBareGfmLiteralsFailClosed() {
         val source = """<https://example.com/path>
 <http://example.com/plain>
 <user@example.com>
@@ -319,7 +319,7 @@ user@example.com
         assertEquals(ProjectionPlanStatus.READY, plan.status)
         val links = plan.projections.filter { it.kind == NativeProjectionKind.LINK }
         assertEquals(
-            listOf("<https://example.com/path>", "<http://example.com/plain>", "<user@example.com>"),
+            listOf("<https://example.com/path>", "<http://example.com/plain>"),
             links.map { link -> source.substring(link.sourceRange.startOffset, link.sourceRange.endOffset) },
         )
         links.forEach { link ->
@@ -327,6 +327,18 @@ user@example.com
             assertEquals("<", source.substring(link.syntaxRanges.first().startOffset, link.syntaxRanges.first().endOffset))
             assertEquals(">", source.substring(link.syntaxRanges.last().startOffset, link.syntaxRanges.last().endOffset))
         }
+
+        val wrappedEmailStart = source.indexOf("<user@example.com>")
+        assertTrue(wrappedEmailStart >= 0)
+        assertTrue(
+            "unsupported wrapped email autolink acquired LINK presentation",
+            links.none {
+                link -> link.sourceRange.intersects(
+                    wrappedEmailStart,
+                    wrappedEmailStart + "<user@example.com>".length,
+                )
+            },
+        )
 
         val bareRegionStart = source.indexOf("\n\n") + 2
         listOf("https://example.com/bare", "www.example.com", "user@example.com").forEach { literal ->
