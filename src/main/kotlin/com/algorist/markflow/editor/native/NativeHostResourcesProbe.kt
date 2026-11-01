@@ -108,10 +108,11 @@ internal object NativeHostResourcesProbe {
                     check(plan.status == ProjectionPlanStatus.READY)
                     val resources = NativeHostResourceProjectionPlanner.plan(plan)
                     check(resources.count { it.kind == NativeHostResourceKind.LOCAL_IMAGE } == 4)
-                    check(resources.count { it.kind == NativeHostResourceKind.EXTERNAL_LINK } == 1)
+                    check(resources.count { it.kind == NativeHostResourceKind.EXTERNAL_LINK } == 2)
                     check(resources.none { it.target.startsWith("javascript:") || it.target == "relative.md" })
+                    check(resources.none { it.target == "https://example.com/bare" || it.target == "https://example.com/footnote" })
                     check(resources.all { it.sourceRange.isInside(sourceBefore) })
-                    "localImages=4 externalLinks=1 unsafeLinks=0 rangesInBounds=true"
+                    "localImages=4 externalLinks=2 unsupportedLinkLike=0 unsafeLinks=0 rangesInBounds=true"
                 }
 
                 firstHost = createHost(first, firstNavigations)
@@ -194,14 +195,17 @@ internal object NativeHostResourcesProbe {
                     check(!firstHost.activateExternalLinkAt(fixture.allowedLinkOffset, explicitUserGesture = false))
                     check(firstNavigations.isEmpty())
                     check(firstHost.activateExternalLinkAt(fixture.allowedLinkOffset, explicitUserGesture = true))
-                    check(firstNavigations == listOf("https://example.com/docs"))
+                    check(firstHost.activateExternalLinkAt(fixture.autolinkOffset, explicitUserGesture = true))
+                    check(firstNavigations == listOf("https://example.com/docs", "https://example.com/autolink"))
                     check(!firstHost.activateExternalLinkAt(fixture.unsafeLinkOffset, explicitUserGesture = true))
                     check(!firstHost.activateExternalLinkAt(fixture.relativeLinkOffset, explicitUserGesture = true))
+                    check(!firstHost.activateExternalLinkAt(fixture.bareAutolinkOffset, explicitUserGesture = true))
+                    check(!firstHost.activateExternalLinkAt(fixture.footnoteOffset, explicitUserGesture = true))
                     val evidence = firstHost.evidenceSnapshot()
-                    check(evidence.navigationAccepted == 1L)
-                    check(evidence.navigationRejected == 3L)
+                    check(evidence.navigationAccepted == 2L)
+                    check(evidence.navigationRejected == 5L)
                     checkSourceStable()
-                    "httpAccepted=1 implicitGestureRejected=true javascriptRejected=true relativeRejected=true sourceStable=true"
+                    "httpAccepted=2 implicitGestureRejected=true javascriptRejected=true relativeRejected=true bareGfmRejected=true footnoteRejected=true sourceStable=true"
                 }
 
                 case("split-editor-presentation-isolation") {
@@ -452,8 +456,12 @@ internal object NativeHostResourcesProbe {
 ![unsupported](images/vector.svg)
 
 [allowed link](https://example.com/docs)
+<https://example.com/autolink>
 [unsafe link](javascript:alert(1))
 [relative link](relative.md)
+https://example.com/bare
+Footnote-like syntax.[^note]
+[^note]: https://example.com/footnote
 
 Plain body line for inactive caret state.
 """
@@ -478,8 +486,11 @@ Plain body line for inactive caret state.
                     secondImageStart = secondImageStart,
                     secondImageEnd = secondImageEnd,
                     allowedLinkOffset = source.indexOf("allowed link") + 2,
+                    autolinkOffset = source.indexOf("https://example.com/autolink") + 2,
                     unsafeLinkOffset = source.indexOf("unsafe link") + 2,
                     relativeLinkOffset = source.indexOf("relative link") + 2,
+                    bareAutolinkOffset = source.indexOf("https://example.com/bare") + 2,
+                    footnoteOffset = source.indexOf("[^note]") + 2,
                     bodyOffset = source.indexOf("Plain body") + 2,
                 )
                 "sourceLength=${source.length} png=true jpeg=true missing=true unsupported=true insideProject=true"
@@ -650,8 +661,11 @@ Plain body line for inactive caret state.
         val secondImageStart: Int,
         val secondImageEnd: Int,
         val allowedLinkOffset: Int,
+        val autolinkOffset: Int,
         val unsafeLinkOffset: Int,
         val relativeLinkOffset: Int,
+        val bareAutolinkOffset: Int,
+        val footnoteOffset: Int,
         val bodyOffset: Int,
     )
 

@@ -101,4 +101,50 @@ class NativeHostResourcePresentationControllerTest : BasePlatformTestCase() {
         assertEquals(400 to 200, calculateNativeLocalImageDimensions(800, 400, 400))
         assertEquals(102 to 1024, calculateNativeLocalImageDimensions(1000, 10_000, 2000))
     }
+
+    fun testWrappedHttpAutolinkUsesExplicitHostNavigationWhileUnsupportedLinkLikeSyntaxStaysInert() {
+        val source = """<https://example.com/docs>
+<user@example.com>
+https://example.com/bare
+Footnote-like syntax.[^note]
+[^note]: https://example.com/footnote
+"""
+        myFixture.configureByText("autolink-navigation.md", source)
+        val opened = mutableListOf<String>()
+        val host = NativeHostResourcePresentationController(
+            editor = myFixture.editor,
+            documentPathProvider = { null },
+            externalNavigator = { uri -> opened += uri.toString() },
+            richPresentationEnabled = { false },
+        )
+        val controller = NativePresentationController(
+            editor = myFixture.editor,
+            hostResources = host,
+        )
+        try {
+            val sourceBefore = myFixture.editor.document.text
+            val stampBefore = myFixture.editor.document.modificationStamp
+            val wrappedOffset = source.indexOf("https://example.com/docs") + 2
+            val emailOffset = source.indexOf("user@example.com") + 2
+            val bareOffset = source.indexOf("https://example.com/bare") + 2
+            val footnoteOffset = source.indexOf("[^note]") + 2
+
+            assertFalse(host.activateExternalLinkAt(wrappedOffset, explicitUserGesture = false))
+            assertTrue(host.activateExternalLinkAt(wrappedOffset, explicitUserGesture = true))
+            assertFalse(host.activateExternalLinkAt(emailOffset, explicitUserGesture = true))
+            assertFalse(host.activateExternalLinkAt(bareOffset, explicitUserGesture = true))
+            assertFalse(host.activateExternalLinkAt(footnoteOffset, explicitUserGesture = true))
+            assertEquals(listOf("https://example.com/docs"), opened)
+
+            val evidence = host.evidenceSnapshot()
+            assertEquals(1, evidence.externalLinks)
+            assertEquals(1L, evidence.navigationAccepted)
+            assertEquals(4L, evidence.navigationRejected)
+            assertEquals(sourceBefore, myFixture.editor.document.text)
+            assertEquals(stampBefore, myFixture.editor.document.modificationStamp)
+        } finally {
+            Disposer.dispose(controller)
+        }
+    }
+
 }
