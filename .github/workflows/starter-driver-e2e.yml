@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+      source_range_capture_diagnostic:
+        description: '#498 diagnostic: prove exact logical source-range ownership on representative Markdown structures'
+        required: false
+        type: boolean
+        default: false
       release_candidate_repeat:
         description: 'Run a second independent canonical full-product journey for release-candidate evidence'
         required: false
@@ -239,6 +244,7 @@ jobs:
           STARTER_SUITES: ${{ matrix.suites }}
           SOURCE_ANCHOR_FOUR_CASE_CAPTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_anchor_four_case_capture && 'true' || 'false' }}
           SOURCE_OWNERSHIP_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ownership_diagnostic && 'true' || 'false' }}
+          SOURCE_RANGE_CAPTURE_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.source_range_capture_diagnostic && 'true' || 'false' }}
         run: |
           set -euo pipefail
           python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
@@ -250,8 +256,12 @@ jobs:
           touch "$marker"
 
           IFS='|' read -r -a suites <<< "$STARTER_SUITES"
-          if [[ "$SOURCE_ANCHOR_FOUR_CASE_CAPTURE" == "true" && "$SOURCE_OWNERSHIP_DIAGNOSTIC" == "true" ]]; then
-            echo "::error::#353 source-anchor capture and #497 ownership diagnostic are mutually exclusive"
+          diagnostic_count=0
+          [[ "$SOURCE_ANCHOR_FOUR_CASE_CAPTURE" == "true" ]] && diagnostic_count=$((diagnostic_count + 1))
+          [[ "$SOURCE_OWNERSHIP_DIAGNOSTIC" == "true" ]] && diagnostic_count=$((diagnostic_count + 1))
+          [[ "$SOURCE_RANGE_CAPTURE_DIAGNOSTIC" == "true" ]] && diagnostic_count=$((diagnostic_count + 1))
+          if (( diagnostic_count > 1 )); then
+            echo "::error::#353/#497/#498 targeted diagnostic modes are mutually exclusive"
             exit 1
           fi
           gradle_args=(
@@ -302,6 +312,28 @@ jobs:
               'mode=EVIDENCE_ONLY_NOT_ACCEPTANCE' \
               > "$pass_dir/source-ownership-diagnostic.txt"
             echo "::notice::#497 pinned-runtime source-ownership diagnostic; no acceptance verdict"
+          fi
+          if [[ "$SOURCE_RANGE_CAPTURE_DIAGNOSTIC" == "true" && "$STARTER_SHARD" == "derived-content" ]]; then
+            # #498 bounded candidate: source identity is an exact logical source range.
+            # This bypasses Preview scrollToLine's visual-line coordinate contract and
+            # validates source-equivalent md-src-pos ownership cohorts only.
+            suites=(com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest)
+            STARTER_SUITES="${suites[0]}"
+            source_range_case_ids='md-atx-headings-h1-h6,md-paragraph,md-unordered-list,md-ordered-list,md-nested-list,md-task-list,md-blockquote,md-table-basic,md-autolink,md-fenced-backtick'
+            gradle_args+=(
+              -PdifferentialContract=capture
+              -PdifferentialSourceRangeCaptureDiagnostic=true
+              "-PdifferentialCaseIds=$source_range_case_ids"
+            )
+            printf '%s\n' \
+              'schema=markflow-498-source-range-capture-diagnostic/v1' \
+              "source_head=$STARTER_SOURCE_SHA" \
+              "case_ids=$source_range_case_ids" \
+              'ownership=EXACT_LOGICAL_RANGE_SOURCE_EQUIVALENT_COHORT' \
+              'whole_document_scroll_proof=OUT_OF_SCOPE' \
+              'mode=EVIDENCE_ONLY_NOT_ACCEPTANCE' \
+              > "$pass_dir/source-range-capture-diagnostic.txt"
+            echo "::notice::#498 exact logical source-range capture diagnostic; no acceptance verdict"
           fi
           diagnostics_args=()
           for suite in "${suites[@]}"; do

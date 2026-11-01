@@ -31,10 +31,19 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Stage D: capture proof only. Missing captures and visual acceptance never become PASS. */
 class MarkFlowStarterDifferentialManifestTest {
+    private data class ReviewedSourceTarget(
+        val sourceSha256: String,
+        val line: Int,
+        val startOffset: Int,
+        val endOffsetExclusive: Int,
+        val text: String,
+    )
+
     private class Case(
         val id: String, val parent: String, val domain: String, val classification: String,
         val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
-        val visualExpectation: String, val comparable: Boolean
+        val visualExpectation: String, val comparable: Boolean,
+        val sourceTarget: ReviewedSourceTarget? = null,
     )
 
     private data class AcceptanceDecision(
@@ -101,7 +110,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check(selectedIds.isNotEmpty() && selectedIds.toSet().size == selectedIds.size)
         val sourceOwnershipDiagnostic =
             System.getProperty("markflow.differential.sourceOwnershipDiagnostic") == "true"
-        val sourceOwnershipDiagnosticIds = setOf(
+        val sourceRangeCaptureDiagnostic =
+            System.getProperty("markflow.differential.sourceRangeCaptureDiagnostic") == "true"
+        val representativeSourceCaseIds = setOf(
             "md-atx-headings-h1-h6",
             "md-paragraph",
             "md-unordered-list",
@@ -113,13 +124,25 @@ class MarkFlowStarterDifferentialManifestTest {
             "md-autolink",
             "md-fenced-backtick",
         )
+        check(!(sourceOwnershipDiagnostic && sourceRangeCaptureDiagnostic)) {
+            "#497 ownership and #498 source-range diagnostics are mutually exclusive"
+        }
         if (sourceOwnershipDiagnostic) {
             check(contract == "capture" && explicitCaseIds != null) {
                 "#497 source-ownership diagnostics require an explicit bounded capture"
             }
-            check(selectedIds.size == sourceOwnershipDiagnosticIds.size &&
-                selectedIds.toSet() == sourceOwnershipDiagnosticIds) {
+            check(selectedIds.size == representativeSourceCaseIds.size &&
+                selectedIds.toSet() == representativeSourceCaseIds) {
                 "#497 source-ownership diagnostic case set drifted: " + selectedIds
+            }
+        }
+        if (sourceRangeCaptureDiagnostic) {
+            check(contract == "capture" && explicitCaseIds != null) {
+                "#498 source-range capture diagnostics require an explicit bounded capture"
+            }
+            check(selectedIds.size == representativeSourceCaseIds.size &&
+                selectedIds.toSet() == representativeSourceCaseIds) {
+                "#498 source-range capture diagnostic case set drifted: " + selectedIds
             }
         }
         if (contract == "capture" && explicitCaseIds == null) {
@@ -1447,6 +1470,96 @@ class MarkFlowStarterDifferentialManifestTest {
                                     driver.ui.jcef().callJs(ownershipProbe) + "\n",
                                     StandardCharsets.UTF_8
                                 )
+                            } else if (sourceRangeCaptureDiagnostic && entry.sourceTarget != null) {
+                                val target = requireNotNull(entry.sourceTarget)
+                                check(target.sourceSha256 == sha(entry.bytes)) {
+                                    "#498 exact source target SHA drifted: " + entry.id
+                                }
+                                check(target.startOffset < target.endOffsetExclusive &&
+                                    target.endOffsetExclusive <= source.length &&
+                                    source.substring(target.startOffset, target.endOffsetExclusive) ==
+                                        target.text) {
+                                    "#498 exact logical source range drifted: " + entry.id
+                                }
+                                Files.writeString(
+                                    dest.resolve("source-range-target.txt"),
+                                    listOf(
+                                        "schema=markflow-498-reviewed-source-target/v1",
+                                        "case_id=" + entry.id,
+                                        "fixture_path=" + entry.path,
+                                        "source_sha256=" + target.sourceSha256,
+                                        "source_line_zero_based=" + target.line,
+                                        "source_start_offset=" + target.startOffset,
+                                        "source_end_offset_exclusive=" + target.endOffsetExclusive,
+                                        "target_text_sha256=" +
+                                            sha(target.text.toByteArray(StandardCharsets.UTF_8)),
+                                        "coordinate_space=LOGICAL_SOURCE_OFFSET",
+                                    ).joinToString("\n") + "\n",
+                                    StandardCharsets.UTF_8,
+                                )
+                                val reResolve = driver.withContext(OnDispatcher.EDT) {
+                                    preview.reResolveReferenceSourceOffset(
+                                        remoteEditor, target.startOffset
+                                    )
+                                }
+                                Files.writeString(
+                                    dest.resolve("preview-source-range-reresolve.txt"),
+                                    reResolve + "\n", StandardCharsets.UTF_8
+                                )
+                                val scrollProbe = controlledReferenceSourceRangeViewportProbe(
+                                    target.startOffset,
+                                    target.endOffsetExclusive,
+                                    scrollTargetIntoView = true,
+                                )
+                                val scrollEvidence = driver.ui.jcef().callJs(scrollProbe)
+                                Files.writeString(
+                                    dest.resolve("preview-source-range-scroll.txt"),
+                                    scrollEvidence + "\n", StandardCharsets.UTF_8
+                                )
+                                check(scrollEvidence.lineSequence().any {
+                                    it == "ownership_status=OWNED"
+                                }) { "#498 bundled Preview exact source range is not uniquely owned" }
+                                check(scrollEvidence.lineSequence().any {
+                                    it == "target_scroll_requested=true"
+                                }) { "#498 bundled Preview exact source-range scroll was not requested" }
+                                val viewportProbe = controlledReferenceSourceRangeViewportProbe(
+                                    target.startOffset, target.endOffsetExclusive
+                                )
+                                waitFor(
+                                    message = "Bundled Preview exact source range visible: " + entry.id,
+                                    timeout = 20.seconds,
+                                    getter = { driver.ui.jcef().callJs(viewportProbe) },
+                                    checker = { evidence ->
+                                        evidence.lineSequence().any {
+                                            it == "ownership_status=OWNED"
+                                        } && evidence.lineSequence().any {
+                                            it == "target_visible=true"
+                                        }
+                                    }
+                                )
+                                val anchored = driver.ui.jcef().callJs(viewportProbe)
+                                Files.writeString(
+                                    dest.resolve("preview-source-range-viewport.txt"),
+                                    anchored + "\n", StandardCharsets.UTF_8
+                                )
+                                check(anchored.lineSequence().any {
+                                    it == "ownership_status=OWNED"
+                                } && anchored.lineSequence().any {
+                                    it == "target_visible=true"
+                                }) { "#498 bundled Preview exact source range drifted before screenshot" }
+                                check(captureReferencePaint()) {
+                                    "#498 reviewed bundled Preview source-range capture is blank"
+                                }
+                                val screenshotBoundary = driver.ui.jcef().callJs(viewportProbe)
+                                Files.writeString(
+                                    dest.resolve("preview-source-range-screenshot-boundary.txt"),
+                                    screenshotBoundary + "\n", StandardCharsets.UTF_8
+                                )
+                                check(screenshotBoundary.lineSequence().any {
+                                    it == "ownership_status=OWNED"
+                                } && screenshotBoundary.lineSequence().any {
+                                    it == "target_visible=true"
+                                }) { "#498 bundled Preview source range drifted at screenshot boundary" }
                             } else if (reviewAnchorLine != null) {
                                 // A successfully painted JCEF surface may still be scrolled
                                 // to an unrelated earlier section. Reissue the real bundled
@@ -2979,9 +3092,22 @@ class MarkFlowStarterDifferentialManifestTest {
                     "Reviewed Markdown source anchor drifted: " + id +
                         " line=" + anchor.line
                 }
+                val targetStartOffset = sourceLines.take(anchor.line).sumOf { it.length + 1 }
+                val targetEndOffsetExclusive = targetStartOffset + anchor.text.length
+                check(targetEndOffsetExclusive <= source.length &&
+                    source.substring(targetStartOffset, targetEndOffsetExclusive) == anchor.text) {
+                    "Reviewed Markdown source range drifted: " + id
+                }
+                val sourceTarget = ReviewedSourceTarget(
+                    sourceSha256 = sha(bytes),
+                    line = anchor.line,
+                    startOffset = targetStartOffset,
+                    endOffsetExclusive = targetEndOffsetExclusive,
+                    text = anchor.text,
+                )
                 items += Case(
                     id, id, domain, classification, path, bytes, anchor.line, null,
-                    visualExpectation, comparable
+                    visualExpectation, comparable, sourceTarget
                 )
             } else {
                 val lines = source.split('\n')
@@ -3222,6 +3348,180 @@ class MarkFlowStarterDifferentialManifestTest {
             controlledReferenceViewportMode(
                 2.0, Double.NaN, 98.0, 97.0, 100.0, 100.0
             ) == null
+
+    /**
+     * #498 source-bound capture proof for the actual bundled IntelliJ Markdown DOM.
+     *
+     * Source identity is the full reviewed logical range, not a line number and
+     * not a single offset. The narrowest source span that contains that range
+     * defines an ownership cohort. Multiple DOM wrappers are allowed only when
+     * they expose the exact same minimal md-src-pos range; a unique deepest
+     * connected representative is then used for viewport control. Competing
+     * minimal source ranges, stale nodes, or duplicate deepest representatives
+     * fail closed.
+     */
+    private fun controlledReferenceSourceRangeViewportProbe(
+        sourceStartOffset: Int,
+        sourceEndOffsetExclusive: Int,
+        scrollTargetIntoView: Boolean = false,
+    ): String {
+        require(sourceStartOffset >= 0)
+        require(sourceEndOffsetExclusive > sourceStartOffset)
+        val requestScroll = if (scrollTargetIntoView) "true" else "false"
+        return """
+            (() => {
+              const targetStart = $sourceStartOffset;
+              const targetEnd = $sourceEndOffsetExclusive;
+              const requestScroll = $requestScroll;
+              const rangeContains = (start, end, innerStart, innerEnd) =>
+                Number.isSafeInteger(start) && Number.isSafeInteger(end) &&
+                Number.isSafeInteger(innerStart) && Number.isSafeInteger(innerEnd) &&
+                end > start && innerEnd > innerStart &&
+                start <= innerStart && innerEnd <= end;
+              const depthOf = element => {
+                let depth = 0;
+                for (let node = element; node && node.parentElement; node = node.parentElement) {
+                  depth++;
+                }
+                return depth;
+              };
+              const resolveRows = rows => {
+                if (!rows.length) return {status: 'MISSING'};
+                const minSpan = Math.min(...rows.map(row => row.span));
+                const minimal = rows.filter(row => row.span === minSpan);
+                const ranges = [...new Set(minimal.map(row => row.raw))];
+                if (ranges.length !== 1) {
+                  return {status: 'AMBIGUOUS_SOURCE_RANGE'};
+                }
+                if (minimal.some(row => !row.connected)) {
+                  return {status: 'STALE_SOURCE_COHORT'};
+                }
+                const maxDepth = Math.max(...minimal.map(row => row.depth));
+                const representatives = minimal.filter(row => row.depth === maxDepth);
+                if (representatives.length !== 1) {
+                  return {status: 'AMBIGUOUS_REPRESENTATIVE'};
+                }
+                return {
+                  status: 'OWNED',
+                  range: ranges[0],
+                  cohort: minimal,
+                  representative: representatives[0],
+                };
+              };
+              const synthetic = (raw, start, end, connected, depth) =>
+                ({raw, start, end, span: end - start, connected, depth});
+              const negativeControls =
+                rangeContains(10, 20, 10, 20) &&
+                rangeContains(0, 30, 10, 20) &&
+                !rangeContains(11, 20, 10, 20) &&
+                !rangeContains(10, 19, 10, 20) &&
+                resolveRows([
+                  synthetic('0..10', 0, 10, true, 2),
+                  synthetic('0..10', 0, 10, true, 3),
+                ]).status === 'OWNED' &&
+                resolveRows([
+                  synthetic('0..10', 0, 10, true, 2),
+                  synthetic('1..11', 1, 11, true, 3),
+                ]).status === 'AMBIGUOUS_SOURCE_RANGE' &&
+                resolveRows([
+                  synthetic('0..10', 0, 10, false, 2),
+                ]).status === 'STALE_SOURCE_COHORT' &&
+                resolveRows([
+                  synthetic('0..10', 0, 10, true, 3),
+                  synthetic('0..10', 0, 10, true, 3),
+                ]).status === 'AMBIGUOUS_REPRESENTATIVE' &&
+                resolveRows([]).status === 'MISSING';
+              if (!negativeControls) {
+                return 'FAIL: #498 source-range ownership negative controls';
+              }
+              if (!document.documentElement || !document.body) {
+                return 'FAIL: no live bundled Preview document';
+              }
+              const rows = Array.from(document.querySelectorAll('[md-src-pos]'))
+                .map(element => {
+                  const raw = element.getAttribute('md-src-pos') || '';
+                  const match = /^(\d+)\.\.(\d+)$/.exec(raw);
+                  if (!match) return null;
+                  const start = Number(match[1]);
+                  const end = Number(match[2]);
+                  if (!rangeContains(start, end, targetStart, targetEnd)) return null;
+                  return {
+                    element,
+                    raw,
+                    start,
+                    end,
+                    span: end - start,
+                    connected: element.isConnected,
+                    depth: depthOf(element),
+                  };
+                })
+                .filter(Boolean);
+              const resolved = resolveRows(rows);
+              if (resolved.status !== 'OWNED') {
+                return [
+                  'schema=markflow-498-source-range-viewport/v1',
+                  'source_start_offset=' + targetStart,
+                  'source_end_offset_exclusive=' + targetEnd,
+                  'ownership_status=' + resolved.status,
+                  'candidate_count=' + rows.length,
+                  'negative_controls=true',
+                  'target_visible=false',
+                ].join('\n');
+              }
+              const target = resolved.representative;
+              if (requestScroll) {
+                target.element.scrollIntoView({
+                  behavior: 'auto', block: 'center', inline: 'center'
+                });
+              }
+              const rect = target.element.getBoundingClientRect();
+              const finite = [rect.left, rect.top, rect.right, rect.bottom,
+                window.innerWidth, window.innerHeight].every(Number.isFinite);
+              const nonEmpty = finite && rect.right > rect.left && rect.bottom > rect.top;
+              const fullyVisible = nonEmpty &&
+                rect.left >= 0 && rect.top >= 0 &&
+                rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+              const oversizeX = nonEmpty && (rect.right - rect.left) > window.innerWidth;
+              const oversizeY = nonEmpty && (rect.bottom - rect.top) > window.innerHeight;
+              const centerX = window.innerWidth / 2;
+              const centerY = window.innerHeight / 2;
+              const xVisible = oversizeX
+                ? rect.left <= centerX && rect.right >= centerX
+                : rect.left >= 0 && rect.right <= window.innerWidth;
+              const yVisible = oversizeY
+                ? rect.top <= centerY && rect.bottom >= centerY
+                : rect.top >= 0 && rect.bottom <= window.innerHeight;
+              const centeredOversize = nonEmpty && (oversizeX || oversizeY) &&
+                xVisible && yVisible;
+              const visibilityMode = fullyVisible
+                ? 'FULL_TARGET'
+                : (centeredOversize ? 'OVERSIZE_CENTERED_SLICE' : 'NONE');
+              return [
+                'schema=markflow-498-source-range-viewport/v1',
+                'source_start_offset=' + targetStart,
+                'source_end_offset_exclusive=' + targetEnd,
+                'ownership_status=OWNED',
+                'cohort_source_range=' + resolved.range,
+                'cohort_size=' + resolved.cohort.length,
+                'representative_tag=' +
+                  (target.element.tagName || 'UNKNOWN').toLowerCase(),
+                'representative_depth=' + target.depth,
+                'target_connected=' + target.element.isConnected,
+                'target_scroll_requested=' + requestScroll,
+                'target_visibility_mode=' + visibilityMode,
+                'target_left=' + rect.left.toFixed(3),
+                'target_top=' + rect.top.toFixed(3),
+                'target_right=' + rect.right.toFixed(3),
+                'target_bottom=' + rect.bottom.toFixed(3),
+                'viewport_width=' + window.innerWidth,
+                'viewport_height=' + window.innerHeight,
+                'window_scroll_y=' + window.scrollY,
+                'negative_controls=true',
+                'target_visible=' + (visibilityMode !== 'NONE'),
+              ].join('\n');
+            })()
+        """.trimIndent()
+    }
 
     /**
      * #353 reviewed-capture proof for the *actual bundled IntelliJ Markdown DOM*.
@@ -4313,6 +4613,7 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceAnchorViewportNegativeControls(): Boolean
     fun showReferenceAtSourceLine(editor: Editor, line: Int): String
     fun reResolveReferenceSourceAnchor(editor: Editor, line: Int): String
+    fun reResolveReferenceSourceOffset(editor: Editor, sourceOffset: Int): String
     fun referenceSourcePositionCoordinates(editor: Editor, line: Int): String
     fun reResolveReferenceAtPlatformLineEnd(editor: Editor, line: Int): String
     fun referenceShowing(editor: Editor): Boolean
