@@ -1391,6 +1391,38 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
+     * #498 source-bound capture primitive.
+     *
+     * The caller owns the logical source range. Only its exact start offset is
+     * used to ask the live bundled Preview to re-resolve nearby DOM state;
+     * source identity and ambiguity are proven independently against the full
+     * range by the harness. This deliberately bypasses scrollToLine(Editor, Int),
+     * whose pinned 2026.2.3 implementation consumes a visual-line index.
+     */
+    fun reResolveReferenceSourceOffset(editor: Editor, sourceOffset: Int): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        require(sourceOffset in 0 until editor.document.textLength) {
+            "Invalid exact source offset"
+        }
+        val (_, preview) = editors(editor)
+        val panel = checkNotNull(previewPanel(preview)) {
+            "Bundled Markdown Preview panel is not attached"
+        } as? JBCefBrowser ?: error(
+            "Bundled Markdown panel is not JBCefBrowser: " + previewPanel(preview)?.javaClass?.name
+        )
+        check(referencePanelShowing(editor)) {
+            "Bundled Markdown Preview source re-resolution requires a showing panel"
+        }
+        MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom(
+            panel.getCefBrowser(), sourceOffset
+        )
+        return "schema=markflow-bundled-preview-exact-source-offset-reresolve/v1\n" +
+            "source_offset=" + sourceOffset + "\n" +
+            "coordinate_space=LOGICAL_SOURCE_OFFSET\n" +
+            "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
+    }
+
+    /**
      * #497 evidence-only coordinates for the exact IDEA 2026.2.3 Preview scroll contract.
      *
      * IDEA 2026.2.3 is build 262.10968.63 / intellij-community tag

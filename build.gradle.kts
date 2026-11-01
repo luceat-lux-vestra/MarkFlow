@@ -520,6 +520,9 @@ intellijPlatformTesting {
             providers.gradleProperty("differentialSourceOwnershipDiagnostic").orNull?.let { enabled ->
                 systemProperty("markflow.differential.sourceOwnershipDiagnostic", enabled)
             }
+            providers.gradleProperty("differentialSourceRangeCaptureDiagnostic").orNull?.let { enabled ->
+                systemProperty("markflow.differential.sourceRangeCaptureDiagnostic", enabled)
+            }
             // #353 controlled-provider diagnostic: source-bound reference path only.
             providers.gradleProperty("differentialControlledCaseId").orNull?.let { id ->
                 systemProperty("markflow.differential.controlledCaseId", id)
