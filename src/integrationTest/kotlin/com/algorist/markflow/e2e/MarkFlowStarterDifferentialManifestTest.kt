@@ -195,7 +195,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val reviewedSourceAnchorLines = supportedComparableMarkdown.associate { entry ->
             entry.id to (visualAnchorOverrides[entry.id] ?: entry.line)
         }
-        check(reviewedSourceAnchorLines.size == 46 &&
+        check(reviewedSourceAnchorLines.size == 38 &&
             reviewedSourceAnchorLines.keys == supportedComparableMarkdown.map { it.id }.toSet()) {
             "Supported comparable Markdown source-anchor inventory drifted"
         }

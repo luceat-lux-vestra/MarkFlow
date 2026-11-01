@@ -31,10 +31,21 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set([]);
 // Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
-const reviewedManifestGitBlobSha = "57e02d9569c31b1694b21bb9e11186ae0e4ef496";
+const reviewedManifestGitBlobSha = "efe4e3a57e00e851c33128385ca0790641d95f7b";
 const reviewedManifestRows = 88;
 const reviewedMarkdownAnchorGitBlobSha = "cefb6ca6770559a0b606eb988af9ff114594ee13";
 const reviewedMarkdownAnchorRows = 49;
+
+const correctedMarkdownDegradedCaseIds = new Set([
+  "md-blockquote",
+  "md-tight-loose-lists",
+  "md-table-alignment",
+  "md-hard-break",
+  "md-escaped-punctuation",
+  "md-entity-reference",
+  "md-autolink-email",
+  "md-tabs-indentation",
+]);
 
 const mermaidDetectorPrefix = new Map([
   ["eventmodeling", /^eventmodeling\b/],
@@ -203,6 +214,19 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
 
   const mermaidDetectors = new Set(entries.filter((entry) => entry.domain === "mermaid").map((entry) => entry.mermaid_detector));
   assert.deepEqual([...mermaidDetectors].sort(), [...expectedMermaidDetectors].sort(), "Mermaid detector inventory drifted");
+});
+
+test("#502 corrected Markdown authority stays degraded and non-interactive", () => {
+  const entries = new Map(parseManifest().map((entry) => [entry.case_id, entry]));
+  assert.equal(correctedMarkdownDegradedCaseIds.size, 8);
+  for (const caseId of correctedMarkdownDegradedCaseIds) {
+    const entry = entries.get(caseId);
+    assert.ok(entry, caseId + ": corrected authority row is missing");
+    assert.equal(entry.classification, "degraded", caseId + ": must remain degraded");
+    assert.equal(entry.visual_reference_expectation, "diagnostic-only",
+      caseId + ": degraded authority must remain diagnostic-only");
+    assert.equal(entry.interaction, "none", caseId + ": degraded authority must not claim interaction capability");
+  }
 });
 
 test("49 Markdown visual anchors are explicit, source-identical and reviewed", () => {
