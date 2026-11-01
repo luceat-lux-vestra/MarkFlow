@@ -79,7 +79,11 @@ internal object NativeHostResourceProjectionPlanner {
             val target = parsed.target
             val kind = when {
                 image && isPotentialDocumentRelativeImage(target) -> NativeHostResourceKind.LOCAL_IMAGE
-                !image && label.isNotEmpty() && ExternalNavigationPolicy.validateHttpUrl(target) != null -> NativeHostResourceKind.EXTERNAL_LINK
+                !image &&
+                    label.isNotEmpty() &&
+                    parsed.referenceLabel?.startsWith("^") != true &&
+                    ExternalNavigationPolicy.validateHttpUrl(target) != null ->
+                    NativeHostResourceKind.EXTERNAL_LINK
                 else -> null
             }
             if (kind != null) {
@@ -97,12 +101,46 @@ internal object NativeHostResourceProjectionPlanner {
             index = parsed.syntaxEnd
         }
 
+        output += wrappedHttpAutolinkResources(basePlan, source)
+
         return output.sortedWith(
             compareBy<NativeHostResourceProjection> { it.sourceRange.startOffset }
                 .thenBy { it.sourceRange.endOffset }
                 .thenBy { it.kind.ordinal }
         )
     }
+
+    /**
+     * Angle-autolink navigation is derived only from parser-proven LINK projections. Bare GFM URL
+     * text fails closed in the projection layer and cannot reacquire host capability here.
+     */
+    private fun wrappedHttpAutolinkResources(
+        basePlan: NativeProjectionPlan,
+        source: String,
+    ): List<NativeHostResourceProjection> =
+        basePlan.projections
+            .asSequence()
+            .filter { projection -> projection.kind == NativeProjectionKind.LINK }
+            .mapNotNull { projection ->
+                val range = projection.sourceRange
+                if (
+                    range.endOffset - range.startOffset <= 2 ||
+                    source[range.startOffset] != '<' ||
+                    source[range.endOffset - 1] != '>'
+                ) {
+                    return@mapNotNull null
+                }
+                val activationRange = ProjectionRange(range.startOffset + 1, range.endOffset - 1)
+                val target = source.substring(activationRange.startOffset, activationRange.endOffset)
+                if (ExternalNavigationPolicy.validateHttpUrl(target) == null) return@mapNotNull null
+                NativeHostResourceProjection(
+                    kind = NativeHostResourceKind.EXTERNAL_LINK,
+                    sourceRange = range,
+                    activationRange = activationRange,
+                    target = target,
+                )
+            }
+            .toList()
 
     private fun collectDefinitions(
         source: String,
@@ -133,12 +171,12 @@ internal object NativeHostResourceProjectionPlanner {
     ): ParsedTarget? {
         if (offset >= source.length || excluded.any { it.covers(offset) }) {
             val shortcut = definitions[normalizeLabel(label)] ?: return null
-            return ParsedTarget(shortcut, offset)
+            return ParsedTarget(shortcut, offset, referenceLabel = label)
         }
         return when (source[offset]) {
             '(' -> parseInlineTarget(source, offset, excluded)
             '[' -> parseReferenceTarget(source, offset, label, definitions, excluded)
-            else -> definitions[normalizeLabel(label)]?.let { ParsedTarget(it, offset) }
+            else -> definitions[normalizeLabel(label)]?.let { ParsedTarget(it, offset, referenceLabel = label) }
         }
     }
 
@@ -226,7 +264,7 @@ internal object NativeHostResourceProjectionPlanner {
         val explicit = source.substring(openBracket + 1, close)
         val label = explicit.ifEmpty { fallbackLabel }
         val target = definitions[normalizeLabel(label)] ?: return null
-        return ParsedTarget(target, close + 1)
+        return ParsedTarget(target, close + 1, referenceLabel = label)
     }
 
     private fun findClosingBracket(
@@ -284,6 +322,7 @@ internal object NativeHostResourceProjectionPlanner {
     private data class ParsedTarget(
         val target: String,
         val syntaxEnd: Int,
+        val referenceLabel: String? = null,
     )
 
     private const val MAX_TARGET_LENGTH = 4096

@@ -302,4 +302,85 @@ Setext two
         assertFalse(original == ProjectionSourceIdentity(11L, "same", 3L))
         assertEquals(original, ProjectionSourceIdentity(11L, "same", 2L))
     }
+
+    fun testWrappedHttpAutolinksRemainSupportedWhileUnsupportedEmailAndBareGfmLiteralsFailClosed() {
+        val source = """<https://example.com/path>
+<http://example.com/plain>
+<user@example.com>
+
+https://example.com/bare
+www.example.com
+user@example.com
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(3L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val links = plan.projections.filter { it.kind == NativeProjectionKind.LINK }
+        assertEquals(
+            listOf("<https://example.com/path>", "<http://example.com/plain>"),
+            links.map { link -> source.substring(link.sourceRange.startOffset, link.sourceRange.endOffset) },
+        )
+        links.forEach { link ->
+            assertEquals(2, link.syntaxRanges.size)
+            assertEquals("<", source.substring(link.syntaxRanges.first().startOffset, link.syntaxRanges.first().endOffset))
+            assertEquals(">", source.substring(link.syntaxRanges.last().startOffset, link.syntaxRanges.last().endOffset))
+        }
+
+        val wrappedEmailStart = source.indexOf("<user@example.com>")
+        assertTrue(wrappedEmailStart >= 0)
+        assertTrue(
+            "unsupported wrapped email autolink acquired LINK presentation",
+            links.none {
+                link -> link.sourceRange.intersects(
+                    wrappedEmailStart,
+                    wrappedEmailStart + "<user@example.com>".length,
+                )
+            },
+        )
+
+        val bareRegionStart = source.indexOf("\n\n") + 2
+        listOf("https://example.com/bare", "www.example.com", "user@example.com").forEach { literal ->
+            val start = source.indexOf(literal, bareRegionStart)
+            assertTrue(start >= 0)
+            assertTrue(
+                "unsupported bare GFM autolink literal acquired LINK presentation: $literal",
+                links.none { link -> link.sourceRange.intersects(start, start + literal.length) },
+            )
+        }
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testFootnoteLikeReferenceFailsClosedWithoutRegressingOrdinaryReferenceLinks() {
+        val source = """A [reference link][guide] and [shortcut].
+
+Footnote-like syntax remains unsupported.[^note]
+
+[guide]: https://example.com/guide
+[shortcut]: https://example.com/shortcut
+[^note]: https://example.com/footnote
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(4L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val links = plan.projections.filter { it.kind == NativeProjectionKind.LINK }
+        assertEquals(
+            listOf("reference link", "shortcut"),
+            links.map { link ->
+                val visible = link.contentRanges.single()
+                source.substring(visible.startOffset, visible.endOffset)
+            },
+        )
+        val footnoteStart = source.indexOf("[^note]")
+        assertTrue(footnoteStart >= 0)
+        assertTrue(
+            "unsupported footnote-like reference acquired LINK presentation",
+            links.none { link -> link.sourceRange.intersects(footnoteStart, footnoteStart + "[^note]".length) },
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
 }

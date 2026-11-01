@@ -111,4 +111,39 @@ class NativeHostResourceProjectionTest {
         assertEquals(ProjectionPlanStatus.READY, base.status)
         return NativeHostResourceProjectionPlanner.plan(base)
     }
+
+    @Test
+    fun plansWrappedHttpAutolinksWithoutGrantingCapabilityToUnsupportedLinkLikeSyntax() {
+        val source = """<https://example.com/docs>
+<http://example.com/plain>
+<user@example.com>
+
+https://example.com/bare
+www.example.com
+user@example.com
+
+Footnote-like syntax.[^note]
+[^note]: https://example.com/footnote
+"""
+        val projections = plan(source)
+
+        assertEquals(2, projections.size)
+        assertEquals(
+            listOf("https://example.com/docs", "http://example.com/plain"),
+            projections.map { it.target },
+        )
+        assertTrue(projections.all { it.kind == NativeHostResourceKind.EXTERNAL_LINK })
+        assertEquals(
+            listOf("https://example.com/docs", "http://example.com/plain"),
+            projections.map { projection ->
+                val activation = projection.activationRange ?: error("wrapped HTTP autolink must be activatable")
+                source.substring(activation.startOffset, activation.endOffset)
+            },
+        )
+        assertTrue(projections.all { projection ->
+            source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset) ==
+                "<${projection.target}>"
+        })
+    }
+
 }

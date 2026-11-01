@@ -216,6 +216,9 @@ internal object NativeMarkdownProjectionPlanner {
         check(sourceRange.isInside(source)) {
             "parser produced an out-of-bounds projection range"
         }
+        if (kind == NativeProjectionKind.LINK && !isSupportedLinkProjection(node, source, sourceRange)) {
+            return null
+        }
 
         return NativeProjection(
             kind = kind,
@@ -373,6 +376,44 @@ internal object NativeMarkdownProjectionPlanner {
         return projectionRangeOrNull(start, end, source)
     }
 
+    /**
+     * Parser recognition is intentionally broader than MarkFlow's maintained link contract.
+     * Keep ordinary inline/reference links and CommonMark angle autolinks, but fail closed when the
+     * parser recognizes unsupported bare GFM autolink literals or footnote-like reference labels.
+     */
+    private fun isSupportedLinkProjection(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): Boolean = when (node.type) {
+        MarkdownElementTypes.AUTOLINK -> isWrappedAutolink(node, source, sourceRange)
+        MarkdownElementTypes.FULL_REFERENCE_LINK,
+        MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        -> !hasFootnoteLikeReferenceLabel(node, source, sourceRange)
+        else -> true
+    }
+
+    private fun isWrappedAutolink(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): Boolean =
+        node.type == MarkdownElementTypes.AUTOLINK &&
+            sourceRange.endOffset - sourceRange.startOffset >= 2 &&
+            source[sourceRange.startOffset] == '<' &&
+            source[sourceRange.endOffset - 1] == '>'
+
+    private fun hasFootnoteLikeReferenceLabel(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): Boolean =
+        node.children
+            .asSequence()
+            .filter { child -> child.type == MarkdownElementTypes.LINK_LABEL }
+            .mapNotNull { label -> bracketContentRange(label, source, sourceRange) }
+            .any { labelRange -> source[labelRange.startOffset] == '^' }
+
     private fun linkSyntaxRanges(
         node: ASTNode,
         source: String,
@@ -388,12 +429,7 @@ internal object NativeMarkdownProjectionPlanner {
 
         // Wrapped autolinks are a parser-proven LINK range whose exact source starts/ends in angle
         // brackets. Bare GFM autolinks intentionally keep no conceal ranges.
-        if (
-            node.type == MarkdownElementTypes.AUTOLINK &&
-            sourceRange.endOffset - sourceRange.startOffset >= 2 &&
-            source[sourceRange.startOffset] == '<' &&
-            source[sourceRange.endOffset - 1] == '>'
-        ) {
+        if (isWrappedAutolink(node, source, sourceRange)) {
             return listOf(
                 ProjectionRange(sourceRange.startOffset, sourceRange.startOffset + 1),
                 ProjectionRange(sourceRange.endOffset - 1, sourceRange.endOffset),
@@ -415,7 +451,15 @@ internal object NativeMarkdownProjectionPlanner {
             }
             ?: return null
 
-        val children = textContainer.children
+        return bracketContentRange(textContainer, source, sourceRange)
+    }
+
+    private fun bracketContentRange(
+        container: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): ProjectionRange? {
+        val children = container.children
         val first = children.firstOrNull() ?: return null
         val last = children.lastOrNull() ?: return null
         if (first.type != MarkdownTokenTypes.LBRACKET || last.type != MarkdownTokenTypes.RBRACKET) return null

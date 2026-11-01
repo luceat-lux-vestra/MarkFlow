@@ -914,7 +914,14 @@ jobs:
               if marker not in hostile:
                   raise SystemExit(f'hostile local-image proof missing {marker}: {hostile}')
           navigation = str(by_id['explicit-host-navigation-allow-deny'].get('detail', ''))
-          for marker in ('httpAccepted=1', 'implicitGestureRejected=true', 'javascriptRejected=true', 'relativeRejected=true'):
+          for marker in (
+              'httpAccepted=2',
+              'implicitGestureRejected=true',
+              'javascriptRejected=true',
+              'relativeRejected=true',
+              'bareGfmRejected=true',
+              'footnoteRejected=true',
+          ):
               if marker not in navigation:
                   raise SystemExit(f'navigation proof missing {marker}: {navigation}')
           moved = str(by_id['document-move-and-reopen-context'].get('detail', ''))
