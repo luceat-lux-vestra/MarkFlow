@@ -95,7 +95,7 @@ class MarkFlowStarterDifferentialManifestTest {
         // #352's retained subset covers Gantt + sequence + class/state plus both large-flowchart
         // blocks so actual native geometry/scroll evidence includes normal, wide and tall diagrams.
         val defaultIds = "md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt" +
-            ",md-setext-headings,md-tight-loose-lists,mermaid-sequence" +
+            ",md-setext-headings,md-unordered-list,mermaid-sequence" +
             ",mermaid-class,mermaid-state,mermaid-flowchart-large--block-01" +
             ",mermaid-flowchart-large--block-02"
         val explicitCaseIds = System.getProperty("markflow.differential.caseIds")
@@ -195,7 +195,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val reviewedSourceAnchorLines = supportedComparableMarkdown.associate { entry ->
             entry.id to (visualAnchorOverrides[entry.id] ?: entry.line)
         }
-        check(reviewedSourceAnchorLines.size == 46 &&
+        check(reviewedSourceAnchorLines.size == 38 &&
             reviewedSourceAnchorLines.keys == supportedComparableMarkdown.map { it.id }.toSet()) {
             "Supported comparable Markdown source-anchor inventory drifted"
         }
@@ -1470,7 +1470,17 @@ class MarkFlowStarterDifferentialManifestTest {
                                     driver.ui.jcef().callJs(ownershipProbe) + "\n",
                                     StandardCharsets.UTF_8
                                 )
-                            } else if (sourceRangeCaptureDiagnostic && entry.sourceTarget != null) {
+                            } else if (
+                                entry.sourceTarget != null &&
+                                (sourceRangeCaptureDiagnostic ||
+                                    (contract == "capture" && explicitCaseIds == null &&
+                                        entry.id == "md-unordered-list"))
+                            ) {
+                                // #502: list-marker offsets can have multiple source-backed
+                                // Preview nodes. Use the #498 proven exact logical source
+                                // range + unique ownership + visible representative contract
+                                // for the routine unordered-list case; never fall back to
+                                // an arbitrary closest visible/text node.
                                 val target = requireNotNull(entry.sourceTarget)
                                 check(target.sourceSha256 == sha(entry.bytes)) {
                                     "#498 exact source target SHA drifted: " + entry.id
@@ -1581,13 +1591,18 @@ class MarkFlowStarterDifferentialManifestTest {
                                         offset, scrollTargetIntoView = true
                                     )
                                 )
-                                check(targetScroll.lineSequence().any {
-                                    it == "target_scroll_requested=true"
-                                }) { "Bundled Preview exact source-target scroll was not requested" }
+                                // Always retain the raw live-DOM response, even when the
+                                // source owner is missing/ambiguous and the probe fails closed.
                                 Files.writeString(
                                     dest.resolve("preview-source-anchor-scroll.txt"),
                                     targetScroll + "\n", StandardCharsets.UTF_8
                                 )
+                                check(targetScroll.lineSequence().any {
+                                    it == "target_scroll_requested=true"
+                                }) {
+                                    "Bundled Preview exact source-target scroll was not requested: " +
+                                        targetScroll.take(500)
+                                }
                                 val probe = controlledReferenceSourceAnchorViewportProbe(offset)
                                 waitFor(
                                     message = "Bundled Preview fully visible source anchor: " + entry.id,

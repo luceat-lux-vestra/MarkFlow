@@ -938,7 +938,7 @@ grep -Fq 'nativeHeadingGeometryNegativeControls()' "$manifest_test" ||
   die "Stage E1 lost deterministic heading source-span negative controls"
 grep -Fq 'md-atx-headings-h1-h6,mermaid-flowchart-minimal,mermaid-gantt' "$manifest_test" ||
   die "Stage E2 no longer captures the #352 Gantt diagnostic in bounded CI"
-grep -Fq ',md-setext-headings,md-tight-loose-lists,mermaid-sequence' "$manifest_test" ||
+grep -Fq ',md-setext-headings,md-unordered-list,mermaid-sequence' "$manifest_test" ||
   die "Stage E17 lost Setext/list/sequence cases from the single-session differential cohort"
 grep -Fq ',mermaid-class,mermaid-state,mermaid-flowchart-large--block-01' "$manifest_test" ||
   die "#352 lost class/state/wide Mermaid layout cases from the single-session cohort"
