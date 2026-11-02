@@ -39,6 +39,31 @@ class MarkFlowStarterDifferentialManifestTest {
         val text: String,
     )
 
+    // #353: the reviewed full-89 acceptance path must use the same source-range
+    // owner proof as routine capture for the unordered-list marker. The controlled
+    // provider uses a separate reference path and must remain unchanged.
+    private fun useSourceRangeProbeForCase(
+        contract: String,
+        caseId: String,
+        explicitCaseIds: String?,
+        sourceRangeCaptureDiagnostic: Boolean,
+    ): Boolean =
+        (contract == "capture" && explicitCaseIds != null && sourceRangeCaptureDiagnostic) ||
+            (caseId == "md-unordered-list" &&
+                (contract == "acceptance" ||
+                    (contract == "capture" && explicitCaseIds == null)))
+
+    // Pure mode/identity regression checks run before starting the real IDE.
+    private fun sourceRangeProbeModeNegativeControls(): Boolean =
+        useSourceRangeProbeForCase("capture", "md-unordered-list", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-unordered-list", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-unordered-list", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-unordered-list", "md-unordered-list", false) &&
+            useSourceRangeProbeForCase("capture", "md-ordered-list", "md-ordered-list", true) &&
+            !useSourceRangeProbeForCase("capture", "md-paragraph", null, false) &&
+            !useSourceRangeProbeForCase("acceptance", "md-ordered-list", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-paragraph", null, false)
+
     private class Case(
         val id: String, val parent: String, val domain: String, val classification: String,
         val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
@@ -82,6 +107,9 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         check(acceptanceLedgerNegativeControls()) {
             "Full #353 acceptance-ledger negative controls failed"
+        }
+        check(sourceRangeProbeModeNegativeControls()) {
+            "#353 exact source-range Preview probe mode/identity contract drifted"
         }
         // Stage D capture completion and full #353 acceptance are separate
         // contracts. Never infer release approval from a successful bounded
@@ -1472,15 +1500,14 @@ class MarkFlowStarterDifferentialManifestTest {
                                 )
                             } else if (
                                 entry.sourceTarget != null &&
-                                (sourceRangeCaptureDiagnostic ||
-                                    (contract == "capture" && explicitCaseIds == null &&
-                                        entry.id == "md-unordered-list"))
+                                useSourceRangeProbeForCase(
+                                    contract, entry.id, explicitCaseIds, sourceRangeCaptureDiagnostic
+                                )
                             ) {
-                                // #502: list-marker offsets can have multiple source-backed
-                                // Preview nodes. Use the #498 proven exact logical source
-                                // range + unique ownership + visible representative contract
-                                // for the routine unordered-list case; never fall back to
-                                // an arbitrary closest visible/text node.
+                                // #502/#353: list markers may map to multiple Preview nodes.
+                                // Use #498's exact logical range, unique owner and same-owner
+                                // visual representative for bounded and full acceptance.
+                                // Never fall back to arbitrary closest visible/text content.
                                 val target = requireNotNull(entry.sourceTarget)
                                 check(target.sourceSha256 == sha(entry.bytes)) {
                                     "#498 exact source target SHA drifted: " + entry.id
