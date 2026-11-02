@@ -64,6 +64,79 @@ class MarkFlowStarterDifferentialManifestTest {
             !useSourceRangeProbeForCase("acceptance", "md-ordered-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-paragraph", null, false)
 
+    /**
+     * #353: the CEF being native-created and showing does not prove that its
+     * pixels own the OS viewport. Three audited controlled-capture screenshots
+     * instead showed the IDE tab strip and an intervening Loading overlay.
+     *
+     * This is a pinned IDEA 2026.2.3 *rejection* oracle, not visual parity.
+     * The separate exact-source/browser DOM barrier must also succeed before
+     * the final Robot screenshot is retained.
+     */
+    private fun referenceScreenshotContainsIdeChrome(image: BufferedImage): Boolean {
+        if (image.width != 1200 || image.height != 800) return true
+        val left = image.width / 6
+        val right = image.width * 5 / 6
+        var occupiedTop = 0
+        var sampledTop = 0
+        for (y in 0 until 42 step 3) {
+            for (x in left until right step 3) {
+                val rgb = image.getRGB(x, y)
+                if (((rgb ushr 16) and 0xff) < 235 ||
+                    ((rgb ushr 8) and 0xff) < 235 ||
+                    (rgb and 0xff) < 235
+                ) occupiedTop++
+                sampledTop++
+            }
+        }
+        var occupiedSeparator = 0
+        var sampledSeparator = 0
+        for (x in left until right step 3) {
+            val rgb = image.getRGB(x, 38)
+            if (((rgb ushr 16) and 0xff) < 240 ||
+                ((rgb ushr 8) and 0xff) < 240 ||
+                (rgb and 0xff) < 240
+            ) occupiedSeparator++
+            sampledSeparator++
+        }
+        // Exact-source run #41391032150: all three polluted references are
+        // above 30% / 20%; the 84 uncontaminated references below 7% / 1%.
+        return occupiedTop * 100 >= sampledTop * 15 &&
+            occupiedSeparator * 100 >= sampledSeparator * 10
+    }
+
+    /** Deterministic valid-Preview and IDE-tabs/Loading negative images. */
+    private fun controlledReferenceScreenshotNegativeControls(): Boolean {
+        val clean = BufferedImage(1200, 800, BufferedImage.TYPE_INT_RGB)
+        val graphics = clean.createGraphics()
+        try {
+            graphics.color = java.awt.Color.WHITE
+            graphics.fillRect(0, 0, 1200, 800)
+            graphics.color = java.awt.Color.BLACK
+            graphics.fillRect(24, 80, 300, 20)
+        } finally {
+            graphics.dispose()
+        }
+        if (referenceScreenshotContainsIdeChrome(clean)) return false
+        val contaminated = BufferedImage(1200, 800, BufferedImage.TYPE_INT_RGB)
+        val ide = contaminated.createGraphics()
+        try {
+            ide.drawImage(clean, 0, 0, null)
+            ide.color = java.awt.Color(225, 229, 238)
+            ide.fillRect(200, 0, 800, 42) // native IDE tabs/separator
+            ide.color = java.awt.Color(240, 242, 245)
+            ide.fillRect(560, 360, 105, 76) // Loading overlay
+            ide.color = java.awt.Color.GRAY
+            ide.drawString("Loading...", 574, 423)
+        } finally {
+            ide.dispose()
+        }
+        return referenceScreenshotContainsIdeChrome(contaminated) &&
+            referenceScreenshotContainsIdeChrome(
+                BufferedImage(1199, 800, BufferedImage.TYPE_INT_RGB)
+            )
+    }
+
     private class Case(
         val id: String, val parent: String, val domain: String, val classification: String,
         val path: String, val bytes: ByteArray, val line: Int, val blockHash: String?,
@@ -110,6 +183,9 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         check(sourceRangeProbeModeNegativeControls()) {
             "#353 exact source-range Preview probe mode/identity contract drifted"
+        }
+        check(controlledReferenceScreenshotNegativeControls()) {
+            "#353 controlled reference OS screenshot negative controls failed"
         }
         // Stage D capture completion and full #353 acceptance are separate
         // contracts. Never infer release approval from a successful bounded
@@ -829,7 +905,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                             Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
                                         )
                                         check(ImageIO.write(image, "png",
-                                            ownedDest.resolve("intellij-preview.png").toFile()))
+                                            ownedDest.resolve("pre-dom-first-paint.png").toFile()))
                                         diagnostics.referenceHasVisibleContent(image)
                                     },
                                     checker = { it }
@@ -884,7 +960,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 // JavaScript may disagree. Record that distinction
                                 // instead of relabeling a blank screen as a PASS.
                                 val bitmap = ImageIO.read(
-                                    ownedDest.resolve("intellij-preview.png").toFile()
+                                    ownedDest.resolve("pre-dom-first-paint.png").toFile()
                                 )
                                 check(bitmap != null &&
                                     bitmap.width == bounds[2] && bitmap.height == bounds[3]) {
@@ -1079,20 +1155,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }) {
                                     "Reviewed bundled Preview source anchor is outside capture viewport"
                                 }
-                                // Replace the pre-scroll first-paint image with the reviewed,
-                                // source-verified viewport. The earlier image is only a liveness
-                                // probe; the retained review artifact must show the target case.
-                                robot.waitForIdle()
-                                val anchoredImage = robot.createScreenCapture(
-                                    Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
-                                )
-                                check(diagnostics.referenceHasVisibleContent(anchoredImage)) {
-                                    "Reviewed bundled Preview source-anchor capture is blank"
-                                }
-                                check(ImageIO.write(
-                                    anchoredImage, "png",
-                                    ownedDest.resolve("intellij-preview.png").toFile()
-                                ))
+                                // The source-anchor viewport is now checked before
+                                // the common post-DOM reviewed screenshot below.
                             }
                             val probeSnapshot = driver.withContext(OnDispatcher.EDT) {
                                 owned.snapshot()
@@ -1106,6 +1170,55 @@ class MarkFlowStarterDifferentialManifestTest {
                                 completedProbes >=
                                     (if (entry.id == "md-atx-headings-h1-h6") 2 else 1)
                             ) { "Controlled DOM callback barrier incomplete" }
+                            // The initial nonblank image is only diagnostic. No
+                            // CAPTURED_UNVERIFIED case may retain it as its reference.
+                            // This barrier follows exact-browser/source-bound DOM probes
+                            // and, when required, a source-target viewport scroll check.
+                            check(probeSnapshot.contains("source_sha256=$expectedSha\n") &&
+                                probeSnapshot.contains("native_created=true\n") &&
+                                probeSnapshot.contains("panel_showing=true\n") &&
+                                probeSnapshot.contains("callback_failure=NONE\n") &&
+                                !probeSnapshot.contains("cef_closed=true\n") &&
+                                created.lineSequence().filter {
+                                    it.startsWith("browser_identity=") ||
+                                        it.startsWith("cef_identity=")
+                                }.all { owner -> probeSnapshot.lineSequence().any { it == owner } }) {
+                                "Reviewed OS capture has no live exact-source/browser owner"
+                            }
+                            heartbeat("case-owned-reference-reviewed-paint-start", entry.id)
+                            waitFor(
+                                message = "Exact-browser reviewed OS reference paint: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = {
+                                    robot.waitForIdle()
+                                    val image = robot.createScreenCapture(
+                                        Rectangle(bounds[0], bounds[1], bounds[2], bounds[3])
+                                    )
+                                    if (!diagnostics.referenceHasVisibleContent(image) ||
+                                        referenceScreenshotContainsIdeChrome(image)) {
+                                        false
+                                    } else {
+                                        check(ImageIO.write(image, "png",
+                                            ownedDest.resolve("intellij-preview.png").toFile()))
+                                        true
+                                    }
+                                },
+                                checker = { it }
+                            )
+                            Files.writeString(
+                                ownedDest.resolve("reviewed-os-paint-proof.txt"),
+                                "schema=markflow-controlled-reference-reviewed-os-paint/v1\n" +
+                                    "case_id=" + entry.id + "\n" +
+                                    "source_sha256=$expectedSha\n" +
+                                    "reference_browser_identity=" +
+                                    created.lineSequence().single {
+                                        it.startsWith("browser_identity=")
+                                    }.substringAfter('=') + "\n" +
+                                    "exact_source_dom_barrier=COMPLETE\n" +
+                                    "known_ide_chrome_pattern=ABSENT\n" +
+                                    "result=CAPTURED_UNVERIFIED\n"
+                            )
+                            heartbeat("case-owned-reference-reviewed-paint-complete", entry.id)
                             heartbeat("case-owned-reference-close-start", entry.id)
                             val disposed = driver.withContext(OnDispatcher.EDT) { owned.close() }
                             Files.writeString(ownedDest.resolve("wrapper-disposed.txt"), disposed)
