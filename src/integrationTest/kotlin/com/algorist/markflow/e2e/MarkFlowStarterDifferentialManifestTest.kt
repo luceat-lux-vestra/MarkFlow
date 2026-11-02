@@ -64,6 +64,59 @@ class MarkFlowStarterDifferentialManifestTest {
             !useSourceRangeProbeForCase("acceptance", "md-ordered-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-paragraph", null, false)
 
+    private fun mermaidClosingLine(source: String, openingLine: Int): Int {
+        val sourceLines = source.split('\n')
+        val opening = Regex("^ {0,3}(`{3,}|~{3,})mermaid[ \\t]*$")
+            .matchEntire(sourceLines.getOrElse(openingLine) { "" })
+            ?: error("#352 selected Mermaid case does not point at its opening fence")
+        val fence = opening.groupValues[1]
+        return (openingLine + 1 until sourceLines.size).firstOrNull { line ->
+            val closing = sourceLines[line].trim()
+            closing.length >= fence.length && closing.all { it == fence[0] }
+        } ?: error("#352 selected Mermaid case has no closing fence")
+    }
+
+    private fun nativeRasterGeometryOwnsSourceLine(
+        geometry: String,
+        sourceLine: Int,
+    ): Boolean {
+        val rasterCount = geometry.lineSequence()
+            .firstOrNull { it.startsWith("raster_count=") }
+            ?.substringAfter('=')?.toIntOrNull()
+            ?: return false
+        val rasterLines = geometry.lineSequence()
+            .filter { it.startsWith("index=") }
+            .mapNotNull { row ->
+                row.split('\t')
+                    .firstOrNull { it.startsWith("source_line_zero_based=") }
+                    ?.substringAfter('=')?.toIntOrNull()
+            }.toList()
+        return rasterLines.size == rasterCount &&
+            rasterLines.count { it == sourceLine } == 1
+    }
+
+    private fun mermaidRasterReadinessNegativeControls(): Boolean {
+        val firstOnly =
+            "schema=markflow-native-raster-geometry/v1\nraster_count=1\n" +
+                "index=0\tsource_line_zero_based=65\n"
+        val both =
+            "schema=markflow-native-raster-geometry/v1\nraster_count=2\n" +
+                "index=0\tsource_line_zero_based=65\n" +
+                "index=1\tsource_line_zero_based=146\n"
+        val duplicateTarget =
+            "schema=markflow-native-raster-geometry/v1\nraster_count=2\n" +
+                "index=0\tsource_line_zero_based=146\n" +
+                "index=1\tsource_line_zero_based=146\n"
+        val malformed =
+            "schema=markflow-native-raster-geometry/v1\nraster_count=2\n" +
+                "index=0\tsource_line_zero_based=146\n"
+        return mermaidClosingLine("```mermaid\nflowchart LR\n```", 0) == 2 &&
+            !nativeRasterGeometryOwnsSourceLine(firstOnly, 146) &&
+            nativeRasterGeometryOwnsSourceLine(both, 146) &&
+            !nativeRasterGeometryOwnsSourceLine(duplicateTarget, 146) &&
+            !nativeRasterGeometryOwnsSourceLine(malformed, 146)
+    }
+
     /**
      * #353: the CEF being native-created and showing does not prove that its
      * pixels own the OS viewport. Three audited controlled-capture screenshots
@@ -183,6 +236,9 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         check(sourceRangeProbeModeNegativeControls()) {
             "#353 exact source-range Preview probe mode/identity contract drifted"
+        }
+        check(mermaidRasterReadinessNegativeControls()) {
+            "#353 source-owned Mermaid raster readiness controls failed"
         }
         check(controlledReferenceScreenshotNegativeControls()) {
             "#353 controlled reference OS screenshot negative controls failed"
@@ -535,6 +591,9 @@ class MarkFlowStarterDifferentialManifestTest {
                         caseRemoteEditor = remoteEditor
                         val source = String(entry.bytes, StandardCharsets.UTF_8)
                         check(markFlow.source(editor) == source)
+                        val targetMermaidClosingLine = if (entry.domain == "mermaid") {
+                            mermaidClosingLine(source, entry.line)
+                        } else null
                         val stamp = markFlow.modificationStamp(editor)
                         caseStamp = stamp
                         heartbeat("case-opened", entry.id)
@@ -588,6 +647,18 @@ class MarkFlowStarterDifferentialManifestTest {
                                         (values["derivedDecoded"] ?: 0) > 0)
                             }
                         )
+                        targetMermaidClosingLine?.let { closingLine ->
+                            waitFor(
+                                message = "Native source-owned Mermaid raster readiness: " + entry.id,
+                                timeout = 20.seconds,
+                                getter = { driver.withContext(OnDispatcher.EDT) {
+                                    preview.nativeRasterGeometry(remoteEditor)
+                                } },
+                                checker = { geometry ->
+                                    nativeRasterGeometryOwnsSourceLine(geometry, closingLine)
+                                }
+                            )
+                        }
                         heartbeat("case-native-ready", entry.id)
                         driver.withContext(OnDispatcher.EDT) {
                             visual.normalizeEditorChromeForCapture(remoteEditor)
@@ -671,15 +742,9 @@ class MarkFlowStarterDifferentialManifestTest {
                             // file contains multiple fences. Native raster inlays are installed at
                             // each projection's source end, so resolve the exact target by that
                             // fence's closing source line instead of assuming one raster per file.
-                            val sourceLines = source.split('\n')
-                            val opening = Regex("^ {0,3}(`{3,}|~{3,})mermaid[ \\t]*$")
-                                .matchEntire(sourceLines.getOrElse(entry.line) { "" })
-                                ?: error("#352 selected Mermaid case does not point at its opening fence")
-                            val fence = opening.groupValues[1]
-                            val closingLine = (entry.line + 1 until sourceLines.size).firstOrNull { line ->
-                                val closing = sourceLines[line].trim()
-                                closing.length >= fence.length && closing.all { it == fence[0] }
-                            } ?: error("#352 selected Mermaid case has no closing fence")
+                            val closingLine = requireNotNull(targetMermaidClosingLine) {
+                                "#352 Mermaid target closing line was not resolved"
+                            }
                             val matches = rasterRecords.filter { record ->
                                 record["source_line_zero_based"]?.toIntOrNull() == closingLine
                             }
