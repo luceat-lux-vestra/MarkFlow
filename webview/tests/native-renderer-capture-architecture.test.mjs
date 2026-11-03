@@ -3,6 +3,7 @@ import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 const bootstrap = await readFile(new URL("../src/renderer/derived-renderer-bootstrap.ts", import.meta.url), "utf8");
+const mermaidBrowserAcceptance = await readFile(new URL("./mermaid-browser-acceptance.html", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const packageLock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
 
@@ -22,6 +23,23 @@ test("capture is bounded before raster allocation", () => {
     assert.match(bootstrap, /Math\.sqrt\(MAX_CAPTURE_PIXELS \/ \(width \* height\)\)/);
     assert.match(bootstrap, /canvas\.width = width/);
     assert.match(bootstrap, /canvas\.height = height/);
+});
+
+test("responsive Mermaid info SVGs measure live layout instead of collapsing to 1x1", () => {
+    assert.equal(mermaidBrowserAcceptance.includes('if (name === "info")'), true);
+    assert.equal(mermaidBrowserAcceptance.includes('svg.getAttribute("width") !== "100%"'), true);
+    assert.equal(mermaidBrowserAcceptance.includes("max-width:\\s*400px"), true);
+    assert.equal(mermaidBrowserAcceptance.includes("does not emit a viewBox"), true);
+
+    assert.match(bootstrap, /const staticWidth = parsePositiveDimension\(svg\.getAttribute\("width"\)\) \?\? viewBox\?\.width/);
+    assert.match(bootstrap, /const staticHeight = parsePositiveDimension\(svg\.getAttribute\("height"\)\) \?\? viewBox\?\.height/);
+    assert.match(bootstrap, /await measureSvgDimensions\(svg\)/);
+    assert.match(bootstrap, /document\.importNode\(svg, true\)/);
+    assert.match(bootstrap, /wrapper\.style\.width = `\$\{MAX_CAPTURE_DIMENSION\}px`/);
+    assert.match(bootstrap, /measured\.getBoundingClientRect\(\)/);
+    assert.match(bootstrap, /renderer SVG has no measurable layout bounds/);
+    assert.equal(bootstrap.includes("viewBox?.width ?? 1"), false);
+    assert.equal(bootstrap.includes("viewBox?.height ?? 1"), false);
 });
 
 test("KaTeX capture reuses packaged KaTeX CSS and applies bounded host presentation settings", () => {

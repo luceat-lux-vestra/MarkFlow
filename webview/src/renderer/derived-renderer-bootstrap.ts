@@ -111,14 +111,44 @@ const captureSvg = async (source: string): Promise<PresentationCapture> => {
     }
 
     const viewBox = parseViewBox(svg.getAttribute("viewBox"));
-    const rawWidth = parsePositiveDimension(svg.getAttribute("width")) ?? viewBox?.width ?? 1;
-    const rawHeight = parsePositiveDimension(svg.getAttribute("height")) ?? viewBox?.height ?? 1;
-    const dimensions = boundedDimensions(rawWidth, rawHeight);
+    const staticWidth = parsePositiveDimension(svg.getAttribute("width")) ?? viewBox?.width;
+    const staticHeight = parsePositiveDimension(svg.getAttribute("height")) ?? viewBox?.height;
+    const rawDimensions = staticWidth != null && staticHeight != null
+        ? {width: staticWidth, height: staticHeight}
+        : await measureSvgDimensions(svg);
+    const dimensions = boundedDimensions(rawDimensions.width, rawDimensions.height);
     svg.setAttribute("width", String(dimensions.width));
     svg.setAttribute("height", String(dimensions.height));
 
     const serialized = new XMLSerializer().serializeToString(svg);
     return rasterizeSvg(serialized, dimensions.width, dimensions.height);
+};
+
+const measureSvgDimensions = async (svg: Element): Promise<{width: number; height: number}> => {
+    const wrapper = document.createElement("div");
+    wrapper.style.position = "fixed";
+    wrapper.style.left = "-100000px";
+    wrapper.style.top = "0";
+    wrapper.style.width = `${MAX_CAPTURE_DIMENSION}px`;
+    wrapper.style.height = "auto";
+    wrapper.style.visibility = "hidden";
+    wrapper.style.pointerEvents = "none";
+
+    const measured = document.importNode(svg, true);
+    wrapper.appendChild(measured);
+    document.body.appendChild(wrapper);
+    try {
+        await document.fonts.ready;
+        await nextAnimationFrame();
+        const rect = measured.getBoundingClientRect();
+        if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) ||
+            !(rect.width > 0) || !(rect.height > 0)) {
+            throw new Error("renderer SVG has no measurable layout bounds");
+        }
+        return {width: rect.width, height: rect.height};
+    } finally {
+        wrapper.remove();
+    }
 };
 
 const captureKatex = async (
