@@ -95,3 +95,26 @@ requirements (#348/#309) remain independent.
 - A failure or missing source-bound result cannot be reclassified as accepted.
 - Workflow topology edits require hardening/actionlint checks and the normal
   fail-closed exact-HEAD PR CI before merge.
+
+## Reuse a plugin ZIP between targeted runs of one exact HEAD
+
+Manual `mode=targeted` runs now look up completed successful runs of the two
+allowlisted workflows in the **same repository and exact immutable source SHA**.
+A subsequent targeted run can use an earlier Starter or Differential plugin
+package; the first run after **any** HEAD change necessarily builds once.
+
+The helper .github/scripts/targeted-e2e-artifact-reuse.py checks workflow/run
+provenance, a non-expired run-bound artifact, source SHA, pinned platform,
+producer scenario declaration, safe archive name, actual ZIP format and the
+manifest SHA-256. It emits the current consumer's native scenario manifest
+while preserving the verified plugin ZIP bytes. The current run reuploads its
+validated package for the existing E2E job. Artifact lookup failures, expired
+or malformed data, wrong SHA/platform and digest mismatches fall back to one
+fresh `buildPlugin` invocation.
+
+This reuse is disabled for canonical PR `workflow_call`, full manual validation,
+scheduled full corpus and release-repeat paths. It does not reuse test results:
+the selected real-IDE test still executes every time. Repo-scoped `actions: read`
+is required only to fetch prior artifacts. No user-supplied artifact URI or
+run ID can act as provenance. Check the actual discovery/verification steps and
+ZIP hash before claiming a cache hit or runtime performance improvement.

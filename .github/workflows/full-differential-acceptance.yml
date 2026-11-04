@@ -210,21 +210,66 @@ jobs:
             exit 1
           }
 
+      # Only completed trusted same-SHA dispatch artifacts can be reused.
+      - name: Discover reusable exact-HEAD plugin
+        id: reuse_lookup
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --self-test
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --discover \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$STARTER_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download reusable exact-HEAD plugin
+        id: reuse_download
+        if: ${{ steps.reuse_lookup.outputs.hit == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ steps.reuse_lookup.outputs.artifact_name }}
+          run-id: ${{ steps.reuse_lookup.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: build/e2e-reuse
+
+      - name: Verify and stage reusable exact-HEAD plugin
+        id: reuse_verify
+        if: ${{ steps.reuse_download.outcome == 'success' }}
+        shell: bash
+        env:
+          PRODUCER: ${{ steps.reuse_lookup.outputs.producer }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --verify \
+            --source-sha "$STARTER_SOURCE_SHA" \
+            --platform-version "$STARTER_PLATFORM_VERSION" \
+            --producer "$PRODUCER" --consumer differential \
+            --input-dir build/e2e-reuse --output-dir build/e2e-package >> "$GITHUB_OUTPUT"
+
       - name: Setup Java
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Gradle
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
 
       - name: Build exact plugin artifact once
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
+          # On a cache miss or rejected download, never upload stale partial bytes.
+          rm -rf build/e2e-package
           ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
 
           mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
