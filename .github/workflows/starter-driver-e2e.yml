@@ -4,6 +4,28 @@ on:
   workflow_call:
   workflow_dispatch:
     inputs:
+      target_sha:
+        description: 'Exact current work-branch HEAD SHA for manual targeted validation'
+        required: false
+        type: string
+      mode:
+        description: 'Full canonical suite or bounded manual diagnostic'
+        required: false
+        type: choice
+        options: [full, targeted]
+        default: full
+      target_shard:
+        description: 'Manual targeted shard: canonical/core-editing/ordinary-markdown/derived-content/lifecycle/visual; validated by allowlist'
+        required: false
+        type: string
+      target_suite:
+        description: 'Optional exact allowlisted fully qualified E2E suite in target_shard'
+        required: false
+        type: string
+      differential_case_ids:
+        description: 'Optional exact comma-separated supported/comparable case IDs for manifest suite only'
+        required: false
+        type: string
       source_anchor_four_case_capture:
         description: '#353 diagnostic: target four Markdown source-anchor cases in derived-content (not 89-case acceptance)'
         required: false
@@ -34,7 +56,7 @@ concurrency:
 
 env:
   STARTER_PLATFORM_VERSION: '2026.2.3'
-  STARTER_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  STARTER_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha) }}
 
 jobs:
   package:
@@ -42,7 +64,35 @@ jobs:
     name: Package exact Starter plugin
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    outputs:
+      test_matrix: ${{ steps.selection.outputs.test_matrix }}
+      targeted_case_ids: ${{ steps.selection.outputs.case_ids }}
+      targeted_case_count: ${{ steps.selection.outputs.case_count }}
     steps:
+      - name: Validate exact manual branch identity
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.target_sha || '' }}
+          DISPATCH_SHA: ${{ github.sha }}
+          SELECTED_MODE: ${{ inputs.mode || 'full' }}
+          RELEASE_REPEAT: ${{ inputs.release_candidate_repeat || false }}
+          ANCHOR_DIAGNOSTIC: ${{ inputs.source_anchor_four_case_capture || false }}
+          OWNERSHIP_DIAGNOSTIC: ${{ inputs.source_ownership_diagnostic || false }}
+          RANGE_DIAGNOSTIC: ${{ inputs.source_range_capture_diagnostic || false }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED_SHA" ]; then
+            [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid exact target SHA"; exit 1; }
+            [ "$REQUESTED_SHA" = "$DISPATCH_SHA" ] || { echo "::error::Manual target_sha must equal the --ref branch HEAD"; exit 1; }
+          fi
+          if [ "$SELECTED_MODE" = "targeted" ]; then
+            [ -n "$REQUESTED_SHA" ] || { echo "::error::Targeted mode requires explicit target_sha"; exit 1; }
+            [ "$RELEASE_REPEAT" != "true" ] && [ "$ANCHOR_DIAGNOSTIC" != "true" ] &&
+              [ "$OWNERSHIP_DIAGNOSTIC" != "true" ] && [ "$RANGE_DIAGNOSTIC" != "true" ] ||
+              { echo "::error::Targeted mode cannot combine with release repeat or legacy diagnostic modes"; exit 1; }
+          fi
+
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -58,6 +108,19 @@ jobs:
             echo "::error::Starter package checkout drifted: expected=$STARTER_SOURCE_SHA actual=$actual"
             exit 1
           }
+
+      - name: Validate manual selection and canonical matrix
+        id: selection
+        shell: bash
+        env:
+          SELECTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+          TARGET_SHARD: ${{ github.event_name == 'workflow_dispatch' && inputs.target_shard || '' }}
+          TARGET_SUITE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_suite || '' }}
+          TARGET_CASE_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.differential_case_ids || '' }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-selection.py --self-test
+          python3 .github/scripts/targeted-e2e-selection.py --workflow starter             --mode "$SELECTED_MODE" --shard "$TARGET_SHARD"             --suite "$TARGET_SUITE" --case-ids "$TARGET_CASE_IDS" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
@@ -109,28 +172,13 @@ jobs:
 
   shards:
     needs: [ package ]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted' || inputs.target_shard != 'visual' }}
     name: Real IDE Starter Driver (${{ matrix.shard }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - shard: canonical
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest
-          - shard: core-editing
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterSmokeTest
-          - shard: ordinary-markdown
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterTableTest|com.algorist.markflow.e2e.MarkFlowStarterTaskListTest|com.algorist.markflow.e2e.MarkFlowStarterListIndentTest
-          - shard: derived-content
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterSharedJcefDerivedContentTest|com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest|com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest
-          - shard: lifecycle
-            runner: ubuntu-24.04-arm
-            suites: com.algorist.markflow.e2e.MarkFlowStarterSplitEditorTest|com.algorist.markflow.e2e.MarkFlowStarterDegradedPathTest
+      matrix: ${{ fromJSON(needs.package.outputs.test_matrix) }}
     steps:
       - name: Fetch Sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -242,6 +290,9 @@ jobs:
         env:
           STARTER_SHARD: ${{ matrix.shard }}
           STARTER_SUITES: ${{ matrix.suites }}
+          TARGETED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+          TARGETED_CASE_IDS: ${{ needs.package.outputs.targeted_case_ids }}
+          TARGETED_CASE_COUNT: ${{ needs.package.outputs.targeted_case_count }}
           SOURCE_ANCHOR_FOUR_CASE_CAPTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.source_anchor_four_case_capture && 'true' || 'false' }}
           SOURCE_OWNERSHIP_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ownership_diagnostic && 'true' || 'false' }}
           SOURCE_RANGE_CAPTURE_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.source_range_capture_diagnostic && 'true' || 'false' }}
@@ -341,6 +392,10 @@ jobs:
             diagnostics_args+=(--required-suite "$suite")
           done
 
+          if [ -n "$TARGETED_CASE_IDS" ]; then
+            gradle_args+=("-PdifferentialContract=capture" "-PdifferentialCaseIds=$TARGETED_CASE_IDS")
+          fi
+
           test_status=0
           set +e
           timeout --signal=TERM --kill-after=30s 24m ./gradlew "${gradle_args[@]}"
@@ -392,6 +447,28 @@ jobs:
             exit "$diagnostics_status"
           fi
 
+          if [ -n "$TARGETED_CASE_IDS" ]; then
+            jq -e --arg sha "$STARTER_SOURCE_SHA" --argjson count "$TARGETED_CASE_COUNT" '
+              .schema == "markflow-stage-d-capture/v1" and
+              .source_head == $sha and
+              .expanded_cases == 89 and
+              .selected_cases == $count and
+              .captured_unverified == $count and
+              .capture_failed == 0 and
+              .not_executed == (89 - $count) and
+              .candidate_structural_failure_count == 0 and
+              .capture_contract == "capture" and
+              .full_differential_acceptance == false and
+              .release_eligible == false
+            ' "$pass_dir/differential-manifest/summary.json" >/dev/null || {
+              echo "::error::Targeted Starter differential selection was not completely executed"
+              exit 1
+            }
+          fi
+          if [ "$TARGETED_MODE" = "targeted" ]; then
+            printf 'status=TARGETED_E2E_PASS\nsource_sha=%s\nrun_id=%s\nrun_attempt=%s\nshard=%s\nsuites=%s\ncase_ids=%s\ncase_count=%s\nplugin_sha256=%s\n'               "$STARTER_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"               "$STARTER_SHARD" "$STARTER_SUITES" "$TARGETED_CASE_IDS"               "$TARGETED_CASE_COUNT" "$E2E_PLUGIN_SHA256" > "$pass_dir/targeted-result.txt"
+          fi
+
       - name: Upload shard diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -413,6 +490,7 @@ jobs:
 
   visual:
     needs: [ package ]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted' || inputs.target_shard == 'visual' }}
     name: Deterministic Visual Acceptance
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
@@ -565,7 +643,7 @@ jobs:
             ${{ runner.temp }}/markflow-visual-xvfb.log
 
   visual-gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}
     needs: [ package, visual ]
     name: Deterministic Visual Acceptance Gate
     runs-on: ubuntu-24.04-arm
@@ -726,7 +804,7 @@ jobs:
             ${{ runner.temp }}/markflow-starter-driver-repeat-xvfb.log
 
   gate:
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
     runs-on: ubuntu-24.04-arm
@@ -747,3 +825,27 @@ jobs:
             echo "::error::Stable Starter shard result: $SHARDS_RESULT"
             exit 1
           }
+
+  targeted-gate:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}
+    needs: [ package, shards, visual ]
+    name: Targeted E2E Diagnostic Gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require exactly selected diagnostic evidence
+        shell: bash
+        env:
+          SELECTED_SHARD: ${{ inputs.target_shard }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: |
+          set -euo pipefail
+          [ "$PACKAGE_RESULT" = success ] || exit 1
+          if [ "$SELECTED_SHARD" = visual ]; then
+            [ "$VISUAL_RESULT" = success ] && [ "$SHARDS_RESULT" = skipped ] || exit 1
+          else
+            [ "$SHARDS_RESULT" = success ] && [ "$VISUAL_RESULT" = skipped ] || exit 1
+          fi
+          echo "TARGETED_E2E_PASS — diagnostic only, not the canonical Starter Driver E2E Gate" >> "$GITHUB_STEP_SUMMARY"
