@@ -1109,6 +1109,7 @@ jobs:
     uses: ./.github/workflows/starter-driver-e2e.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
+      actions: read
 
   mergeGate:
     name: Merge Gate
