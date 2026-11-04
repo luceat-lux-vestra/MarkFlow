@@ -39,9 +39,11 @@ class MarkFlowStarterDifferentialManifestTest {
         val text: String,
     )
 
-    // #353: the reviewed full-89 acceptance path must use the same source-range
-    // owner proof as routine capture for the unordered-list marker. The controlled
-    // provider uses a separate reference path and must remain unchanged.
+    // #353: reviewed full-89 acceptance must use exact source-range ownership
+    // where one logical target can map to multiple Preview DOM nodes or where the
+    // identity owner is a zero-width syntax marker. Routine default capture keeps
+    // its existing unordered-list-only behavior; the controlled provider remains
+    // on its separate reference path.
     private fun useSourceRangeProbeForCase(
         contract: String,
         caseId: String,
@@ -51,14 +53,34 @@ class MarkFlowStarterDifferentialManifestTest {
         (contract == "capture" && explicitCaseIds != null && sourceRangeCaptureDiagnostic) ||
             (caseId == "md-unordered-list" &&
                 (contract == "acceptance" ||
-                    (contract == "capture" && explicitCaseIds == null)))
+                    (contract == "capture" && explicitCaseIds == null))) ||
+            (caseId == "md-nested-list" && contract == "acceptance") ||
+            (caseId == "md-fenced-backtick" && contract == "acceptance") ||
+            (caseId == "md-fenced-tilde" && contract == "acceptance") ||
+            (caseId == "md-fence-length-info" && contract == "acceptance") ||
+            (caseId == "md-katex-display" && contract == "acceptance")
 
     // Pure mode/identity regression checks run before starting the real IDE.
     private fun sourceRangeProbeModeNegativeControls(): Boolean =
         useSourceRangeProbeForCase("capture", "md-unordered-list", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-unordered-list", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-nested-list", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-fenced-backtick", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-fenced-tilde", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-fence-length-info", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-unordered-list", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-nested-list", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-fenced-backtick", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-fenced-tilde", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-fence-length-info", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-unordered-list", "md-unordered-list", false) &&
+            !useSourceRangeProbeForCase("capture", "md-nested-list", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-fenced-backtick", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-fenced-tilde", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-fence-length-info", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-katex-display", null, false) &&
             useSourceRangeProbeForCase("capture", "md-ordered-list", "md-ordered-list", true) &&
             !useSourceRangeProbeForCase("capture", "md-paragraph", null, false) &&
             !useSourceRangeProbeForCase("acceptance", "md-ordered-list", null, false) &&
