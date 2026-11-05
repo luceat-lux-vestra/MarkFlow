@@ -295,6 +295,33 @@ This protocol does not alter MarkFlow's exact-HEAD rule.
 - CI green alone is never sufficient;
 - deterministic failures are classified and fixed rather than hidden by blind reruns.
 
+## Base advancement with unchanged HEAD
+
+This section clarifies evidence provenance when the PR HEAD is unchanged but `main` advances. It does not weaken MarkFlow's strict merge gate, exact-HEAD rule, or current-composition requirements.
+
+Classify movement before deciding what prior evidence still proves:
+
+1. **PR HEAD moved** — prior HEAD-specific CI/review/runtime evidence is invalid. Validate the new exact final HEAD as required.
+2. **PR HEAD unchanged; base unchanged** — apply the ordinary exact-HEAD merge gate.
+3. **PR HEAD unchanged; base advanced** — prior evidence may still support claims that depend only on the unchanged HEAD, but it does not by itself prove the newly composed base+HEAD result or authorize merge.
+4. **Material authority or semantic interaction is unavailable or `UNKNOWN`** — fail closed and refresh/revalidate.
+
+Before relying on same-HEAD evidence after base advancement, fresh-read the current PR HEAD, `main`, merge-base, live ruleset, required checks, review threads, and mergeability. Determine whether the evidence was produced for the unchanged HEAD itself or for an old synthetic merge/base+HEAD composition.
+
+For MarkFlow specifically, the live `main protection` ruleset requires the GitHub Actions `Merge Gate` with strict required-status-check enforcement. `AGENTS.md` also requires fresh `main`/merge-base/ruleset/exact-HEAD/check/thread readback before merge. Those stricter requirements remain authoritative. Same-HEAD evidence reuse therefore never authorizes an out-of-date or otherwise invalid current composition.
+
+Evidence reuse is claim-scoped, not blanket merge authorization:
+
+- exact-HEAD evidence may remain useful when its producer and claim are independent of the base movement;
+- evidence tied to an old synthetic merge result or old base+HEAD tree is not proof for the newly composed tree;
+- different filenames alone do not establish semantic independence;
+- dependency/lockfile, build/toolchain, generated-artifact, schema/API/protocol/feature-graph, workflow, test-fixture, renderer/runtime-contract, or other cross-cutting interactions require revalidation when material;
+- conflicts, changed required checks, policy/ruleset drift, or unresolved material interaction require fresh validation rather than reuse.
+
+If bringing the branch up to date, rebasing, conflict resolution, history cleanup, regeneration, or any other action changes the PR HEAD, the resulting SHA becomes a new exact-HEAD proof unit and all prior HEAD-specific PASS evidence is invalid.
+
+Do not change CI workflows, `.github/merge-gate-policy.json`, or live rulesets merely to make prior evidence reusable.
+
 ## Post-merge recovery
 
 A work unit is not done at `merged`.
