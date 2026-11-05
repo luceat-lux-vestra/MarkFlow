@@ -146,7 +146,7 @@ jobs:
           fi
           chmod 700 "$trusted_hardening" "$trusted_contract" "$trusted_seed"
 
-          python3 -I "$tmp/proof.py" \
+          if ! python3 -I "$tmp/proof.py" \
             --repository "$GITHUB_REPOSITORY" \
             --pr-number "$PR_NUMBER" \
             --base-sha "$BASE_SHA" \
@@ -159,7 +159,18 @@ jobs:
             --workspace "$GITHUB_WORKSPACE" \
             --trusted-hardening-audit "$trusted_hardening" \
             --trusted-repository-contract "$trusted_contract" \
-            --trusted-gradle-cache-seed "$trusted_seed" > "$tmp/proof.out"
+            --trusted-gradle-cache-seed "$trusted_seed" \
+            > "$tmp/proof.out" 2> "$tmp/proof.err"; then
+            {
+              echo "reuse_product_evidence=false"
+              echo "prior_head_sha="
+              echo "prior_run_id="
+            } >> "$GITHUB_OUTPUT"
+            echo "Trusted-base replacement proof could not establish reusable evidence; falling back to FULL CI."
+            cat "$tmp/proof.err" >&2 || true
+            cat "$tmp/proof.out" >&2 || true
+            exit 0
+          fi
 
           reuse_line="$(grep -E '^reuse_product_evidence=(true|false)$' "$tmp/proof.out" || true)"
           prior_line="$(grep -E '^prior_head_sha=([0-9a-f]{40})?$' "$tmp/proof.out" || true)"
@@ -1109,6 +1120,7 @@ jobs:
     uses: ./.github/workflows/starter-driver-e2e.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
+      actions: read
 
   mergeGate:
     name: Merge Gate

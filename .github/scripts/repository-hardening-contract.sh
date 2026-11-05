@@ -218,8 +218,7 @@ hardening_audit_workflow=".github/workflows/hardening-audit.yml"
 [ -f "$qodana_release_gate" ] || die "Stage B Qodana release verifier is missing"
 grep -Fq 'python3 .github/scripts/release-qodana-gate.py --self-test' "$hardening_audit_workflow" ||
   die "Stage B Qodana negative controls must execute in Hardening audit"
-python3 -I - "$release_workflow" "$qodana_release_gate" <<'PY' ||
-  die "Stage B dual release-preflight contract failed"
+if ! python3 -I - "$release_workflow" "$qodana_release_gate" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -342,6 +341,9 @@ qodana_change("steps.recovery.outputs.skip != 'true'",
               "inverted published recovery")
 print("Stage B dual release Qodana/CodeQL gate negative controls passed")
 PY
+then
+  die "Stage B dual release-preflight contract failed"
+fi
 
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
@@ -594,9 +596,19 @@ grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" 
 grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
 grep -Fq -- '-PdifferentialContract=controlled-capture' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its canonical full-corpus route"
 grep -Fq 'controlled_reference:' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its explicit manual opt-in"
-if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
-  die "#353 canonical full corpus must never reduce the 89-case inventory"
-fi
+targeted_case_arg_count="$(grep -Fc -- '-PdifferentialCaseIds=' "$full_differential_workflow")"
+[ "$targeted_case_arg_count" -eq 1 ] ||
+  die "#353 targeted diagnostics must own the only differential case-subset argument"
+grep -Fq 'if [ "$RUN_MODE" = targeted ]; then' "$full_differential_workflow" ||
+  die "#353 targeted differential mode lost its explicit bounded route"
+grep -Fq 'if [ "$contract" = "capture" ]; then' "$full_differential_workflow" ||
+  die "#353 targeted differential capture lost its isolated execution branch"
+grep -Fq -- '-PdifferentialContract=capture "-PdifferentialCaseIds=$TARGETED_CASE_IDS"' "$full_differential_workflow" ||
+  die "#353 targeted differential subset is not bound exclusively to capture mode"
+grep -Fq -- '-PdifferentialContract=controlled-capture --stacktrace' "$full_differential_workflow" ||
+  die "#353 controlled full-corpus route must not consume targeted case IDs"
+grep -Fq -- '-PdifferentialContract=acceptance --stacktrace' "$full_differential_workflow" ||
+  die "#353 canonical 89-case acceptance route must not consume targeted case IDs"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$full_differential_workflow" || die "#353 full differential no longer executes the differential manifest suite"
 grep -Fq '.captured_unverified == 89' "$full_differential_workflow" || die "#353 full differential failure diagnostics no longer distinguish complete capture from review failure"
 grep -Fq '.full_differential_acceptance == true' "$full_differential_workflow" || die "#353 full differential no longer requires the reviewed final verdict"
@@ -641,10 +653,86 @@ fi
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
 grep -Fq 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
 grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance' "$starter_workflow" || die "Starter package manifest does not freeze the maintained semantic and visual acceptance sets"
-for shard in canonical core-editing ordinary-markdown derived-content lifecycle; do
-  grep -Fq "shard: $shard" "$starter_workflow" || die "Starter workflow is missing $shard shard"
-done
-grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_workflow" || die "Starter workflow is missing canonical full-product journey"
+starter_selector=".github/scripts/targeted-e2e-selection.py"
+[ -f "$starter_selector" ] || die "Starter validated matrix selector is missing"
+grep -Fq 'test_matrix: ${{ steps.selection.outputs.test_matrix }}' "$starter_workflow" ||
+  die "Starter package job no longer publishes the validated matrix"
+grep -Fq 'matrix: ${{ fromJSON(needs.package.outputs.test_matrix) }}' "$starter_workflow" ||
+  die "Starter shard job no longer consumes the validated matrix"
+grep -Fq -- '--workflow starter' "$starter_workflow" ||
+  die "Starter workflow no longer obtains its matrix from the validated selector"
+python3 "$starter_selector" --self-test >/dev/null ||
+  die "Starter validated matrix selector self-test failed"
+starter_full_matrix="$(python3 "$starter_selector" --workflow starter --mode full | sed -n 's/^test_matrix=//p')"
+[ -n "$starter_full_matrix" ] || die "Starter selector did not emit the full matrix"
+if ! python3 -I - "$starter_full_matrix" <<'PY'
+import json
+import sys
+
+prefix = "com.algorist.markflow.e2e."
+expected = {
+    "canonical": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": prefix + "MarkFlowStarterFullProductJourneyTest",
+    },
+    "core-editing": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": prefix + "MarkFlowStarterSmokeTest",
+    },
+    "ordinary-markdown": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterTableTest",
+            prefix + "MarkFlowStarterTaskListTest",
+            prefix + "MarkFlowStarterListIndentTest",
+        ]),
+    },
+    "derived-content": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterSharedJcefDerivedContentTest",
+            prefix + "MarkFlowStarterDifferentialManifestTest",
+            prefix + "MarkFlowStarterHeadingRobotTest",
+        ]),
+    },
+    "lifecycle": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterSplitEditorTest",
+            prefix + "MarkFlowStarterDegradedPathTest",
+        ]),
+    },
+}
+
+payload = json.loads(sys.argv[1])
+entries = payload.get("include")
+if not isinstance(entries, list) or len(entries) != len(expected):
+    raise SystemExit("full Starter matrix inventory drifted")
+
+actual = {}
+for entry in entries:
+    if not isinstance(entry, dict) or set(entry) != {"shard", "runner", "suites"}:
+        raise SystemExit("full Starter matrix entry schema drifted")
+    shard = entry["shard"]
+    if shard in actual:
+        raise SystemExit(f"duplicate Starter shard: {shard}")
+    actual[shard] = {"runner": entry["runner"], "suites": entry["suites"]}
+
+if actual != expected:
+    raise SystemExit(f"full Starter matrix drifted: {actual!r}")
+
+derived = set(actual["derived-content"]["suites"].split("|"))
+for forbidden in (
+    prefix + "MarkFlowStarterProductionWiringTest",
+    prefix + "MarkFlowStarterDifferentialPreviewSmokeTest",
+):
+    if forbidden in derived:
+        raise SystemExit(f"derived-content regressed to duplicate isolated JCEF lifecycle: {forbidden}")
+PY
+then
+  die "Starter validated/generated full matrix contract drifted"
+fi
+
 grep -Fq 'release_candidate_repeat:' "$starter_workflow" || die "Starter workflow has no explicit release-candidate repeat control"
 grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "Starter workflow has no independent canonical repeat job"
 grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
@@ -656,41 +744,19 @@ grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starte
 # #353 genuine platform Markdown Preview uses JCEF. Keep every maintained
 # Linux Starter shard on ARM64 with native EGL and the scoped AppArmor profile.
 grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
-  die "Starter shards no longer use audited per-shard runner mapping"
-grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for canonical (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: core-editing' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for core-editing (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for derived-content (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+  die "Starter shards no longer consume the audited per-shard runner mapping"
 if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
   die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
 fi
 shared_jcef_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterSharedJcefDerivedContentTest.kt"
 [ -f "$shared_jcef_test" ] ||
   die "#451 production shared-JCEF derived-content suite is missing"
-grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_workflow" ||
-  die "#451 Starter workflow lost the shared JCEF derived-content suite"
 grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_diagnostics" ||
   die "#451 Starter diagnostics lost the shared JCEF derived-content suite"
 grep -Fq 'MarkFlowStarterProductionWiringTest().proveInOpenProject(' "$shared_jcef_test" ||
   die "#451 shared suite no longer executes the original Production Wiring proof body"
 grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest().proveInOpenProject(' "$shared_jcef_test" ||
   die "#451 shared suite no longer executes the original bundled Preview Smoke proof body"
-derived_content_matrix="$(grep -F -A2 -- '- shard: derived-content' "$starter_workflow")"
-if grep -Fq 'MarkFlowStarterProductionWiringTest|' <<<"$derived_content_matrix" ||
-   grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest|' <<<"$derived_content_matrix"; then
-  die "#451 derived-content matrix regressed to duplicate isolated JCEF lifecycles"
-fi
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
 grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
@@ -903,8 +969,6 @@ grep -Fq 'intellij_preview=NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
   die "#353 non-comparable Preview disposition evidence is missing"
 
 [ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
-grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
-  die "Starter workflow silently dropped Stage D manifest capture"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped Stage D manifest suite"
 grep -Fq 'full_differential_acceptance' "$manifest_test" ||
@@ -1181,8 +1245,21 @@ for gated_job in visual-gate gate; do
   actual_guard="$(awk -v wanted="$gated_job" '
     $0 == "  " wanted ":" { getline; print; exit }
   ' "$starter_workflow")"
-  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
+  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}" ] ||
+    die "$gated_job must skip intentionally unvalidated Draft PRs and targeted diagnostics while failing closed for Ready/full execution"
 done
+targeted_guard="$(awk '
+  $0 == "  targeted-gate:" { getline; print; exit }
+' "$starter_workflow")"
+[ "$targeted_guard" = "    if: \${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}" ] ||
+  die "Targeted E2E diagnostic gate lost its targeted-only dispatch guard"
+awk '
+  $0 == "  targeted-gate:" { in_targeted=1; next }
+  in_targeted && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_targeted && $0 == "    name: Targeted E2E Diagnostic Gate" { found=1 }
+  END { exit !found }
+' "$starter_workflow" ||
+  die "Targeted E2E diagnostic gate identity is missing or drifted"
 # #362: Paired x64/ARM64 negative controls found a missing Liberation Sans
 # fallback on ARM64. Keep the strict reviewed x64 PNG goldens unchanged;
 # require EGL, real ARM CPU and exact font file SHA-256 before capture.
