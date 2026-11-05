@@ -272,6 +272,8 @@ jobs:
 
       - name: Restore and verify packaged plugin identity
         shell: bash
+        env:
+          STARTER_SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           manifest="build/e2e-package/manifest.txt"
@@ -297,8 +299,8 @@ jobs:
             echo "::error::Starter artifact platform drifted: expected=$STARTER_PLATFORM_VERSION actual=$platform_version"
             exit 1
           }
-          [[ "$scenario_sets" == *"${{ matrix.shard }}"* ]] || {
-            echo "::error::Starter artifact manifest does not declare shard ${{ matrix.shard }}"
+          [[ "$scenario_sets" == *"$STARTER_SHARD"* ]] || {
+            echo "::error::Starter artifact manifest does not declare shard $STARTER_SHARD"
             exit 1
           }
           [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]] || {
