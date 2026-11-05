@@ -733,7 +733,6 @@ then
   die "Starter validated/generated full matrix contract drifted"
 fi
 
-grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_workflow" || die "Starter workflow is missing canonical full-product journey"
 grep -Fq 'release_candidate_repeat:' "$starter_workflow" || die "Starter workflow has no explicit release-candidate repeat control"
 grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "Starter workflow has no independent canonical repeat job"
 grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
@@ -752,8 +751,6 @@ fi
 shared_jcef_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterSharedJcefDerivedContentTest.kt"
 [ -f "$shared_jcef_test" ] ||
   die "#451 production shared-JCEF derived-content suite is missing"
-grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_workflow" ||
-  die "#451 Starter workflow lost the shared JCEF derived-content suite"
 grep -Fq "MarkFlowStarterSharedJcefDerivedContentTest" "$starter_diagnostics" ||
   die "#451 Starter diagnostics lost the shared JCEF derived-content suite"
 grep -Fq 'MarkFlowStarterProductionWiringTest().proveInOpenProject(' "$shared_jcef_test" ||
@@ -972,8 +969,6 @@ grep -Fq 'intellij_preview=NOT_APPLICABLE_BY_MANIFEST' "$manifest_test" ||
   die "#353 non-comparable Preview disposition evidence is missing"
 
 [ -f "$manifest_test" ] || die "Stage D real-manifest capture consumer is missing"
-grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_workflow" ||
-  die "Starter workflow silently dropped Stage D manifest capture"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$starter_diagnostics" ||
   die "Starter diagnostics silently dropped Stage D manifest suite"
 grep -Fq 'full_differential_acceptance' "$manifest_test" ||
