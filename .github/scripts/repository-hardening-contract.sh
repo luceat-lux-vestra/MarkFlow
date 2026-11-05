@@ -1297,6 +1297,8 @@ grep -Fq 'chrome-version: 156.0.8078.80' ".github/workflows/build.yml" || die "A
 grep -Fq 'install-dependencies: true' ".github/workflows/build.yml" || die "ARM64 Chrome for Testing runtime dependencies are not explicitly provisioned"
 grep -Fq 'CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}' ".github/workflows/build.yml" || die "ARM64 browser acceptance does not consume the setup-chrome executable path"
 grep -Fq '[[ "$version" == *"156.0.8078.80"* ]]' ".github/workflows/build.yml" || die "ARM64 browser acceptance does not verify the installed Chrome for Testing version"
+grep -Fq -- 'exec "$CHROME_BIN" --no-sandbox "\$@"' ".github/workflows/build.yml" || die "ARM64 CfT CI wrapper does not apply the required no-sandbox flag"
+grep -Fq 'CHROME_BIN: ${{ runner.temp }}/markflow-chrome-no-sandbox' ".github/workflows/build.yml" || die "webview source tests do not use the CI-only CfT wrapper"
 ! grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "legacy Snap-backed chromium-browser provisioning is still present"
 ! grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "legacy Snap Chromium path is still present"
 for native_workflow in "$starter_workflow" "$native_evidence_workflow"; do

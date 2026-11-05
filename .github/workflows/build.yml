@@ -987,10 +987,29 @@ jobs:
             exit 1
           }
 
+      # Chrome for Testing is not installed through Ubuntu's Snap confinement. GitHub-hosted
+      # Ubuntu 24.04 blocks the unprivileged namespace path CfT expects, so isolate the
+      # required --no-sandbox workaround to this ephemeral CI browser wrapper only.
+      - name: Prepare CI-only Chrome no-sandbox wrapper
+        if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && needs.headEvidence.outputs.dependency_fast_lane != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
+        shell: bash
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          set -euo pipefail
+          wrapper="$RUNNER_TEMP/markflow-chrome-no-sandbox"
+          cat > "$wrapper" <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec "$CHROME_BIN" --no-sandbox "\$@"
+          EOF
+          chmod 0755 "$wrapper"
+          "$wrapper" --version
+
       - name: Run webview source tests
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && needs.headEvidence.outputs.dependency_fast_lane != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
         env:
-          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROME_BIN: ${{ runner.temp }}/markflow-chrome-no-sandbox
         run: ./gradlew testWebviewSource
 
       - name: Collect Tests Result
