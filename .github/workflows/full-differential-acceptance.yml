@@ -13,6 +13,16 @@ on:
         required: false
         type: boolean
         default: false
+      mode:
+        description: 'Complete strict 89 cases, or selected source-bound diagnostic cases'
+        required: false
+        type: choice
+        options: [full, targeted]
+        default: full
+      case_ids:
+        description: 'Comma-separated exact supported/comparable case IDs (targeted only)'
+        required: false
+        type: string
   # Temporary stabilization health check. Remove this schedule once the
   # full-corpus path has proven stable; manual exact-SHA execution remains.
   schedule:
@@ -38,6 +48,9 @@ jobs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       run_full: ${{ steps.decision.outputs.run_full }}
       reason: ${{ steps.decision.outputs.reason }}
+      case_ids: ${{ steps.selection.outputs.case_ids }}
+      case_count: ${{ steps.selection.outputs.case_count }}
+      run_mode: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
     steps:
       - name: Validate exact requested source
         id: source
@@ -83,6 +96,28 @@ jobs:
           ref: ${{ steps.source.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate selected differential cases and exact targeted ref
+        id: selection
+        shell: bash
+        env:
+          SELECTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+          SELECTED_CASE_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.case_ids || '' }}
+          CONTROLLED_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.controlled_reference || false }}
+          REQUESTED_SHA: ${{ steps.source.outputs.source_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-selection.py --self-test
+          if [ "$SELECTED_MODE" = targeted ]; then
+            [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] ||
+              { echo "::error::Scheduled runs cannot select a subset"; exit 1; }
+            [ "$REQUESTED_SHA" = "$DISPATCH_SHA" ] ||
+              { echo "::error::Targeted differential SHA must equal dispatched --ref HEAD"; exit 1; }
+            [ "$CONTROLLED_REFERENCE" != true ] ||
+              { echo "::error::Targeted capture cannot use full controlled-reference mode"; exit 1; }
+          fi
+          python3 .github/scripts/targeted-e2e-selection.py --workflow differential             --mode "$SELECTED_MODE" --case-ids "$SELECTED_CASE_IDS" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether scheduled corpus changed
         id: decision
@@ -175,21 +210,66 @@ jobs:
             exit 1
           }
 
+      # Only completed trusted same-SHA dispatch artifacts can be reused.
+      - name: Discover reusable exact-HEAD plugin
+        id: reuse_lookup
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --self-test
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --discover \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$STARTER_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download reusable exact-HEAD plugin
+        id: reuse_download
+        if: ${{ steps.reuse_lookup.outputs.hit == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ steps.reuse_lookup.outputs.artifact_name }}
+          run-id: ${{ steps.reuse_lookup.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: build/e2e-reuse
+
+      - name: Verify and stage reusable exact-HEAD plugin
+        id: reuse_verify
+        if: ${{ steps.reuse_download.outcome == 'success' }}
+        shell: bash
+        env:
+          PRODUCER: ${{ steps.reuse_lookup.outputs.producer }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/targeted-e2e-artifact-reuse.py --verify \
+            --source-sha "$STARTER_SOURCE_SHA" \
+            --platform-version "$STARTER_PLATFORM_VERSION" \
+            --producer "$PRODUCER" --consumer differential \
+            --input-dir build/e2e-reuse --output-dir build/e2e-package >> "$GITHUB_OUTPUT"
+
       - name: Setup Java
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: zulu
           java-version: 25
 
       - name: Setup Gradle
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-read-only: true
 
       - name: Build exact plugin artifact once
+        if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
+          # On a cache miss or rejected download, never upload stale partial bytes.
+          rm -rf build/e2e-package
           ./gradlew buildPlugin -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
 
           mapfile -t archives < <(find build/distributions -maxdepth 1 -type f -name '*.zip' -print | sort)
@@ -312,11 +392,14 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-full-differential-xvfb.log" 2>&1 &
           printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
 
-      - name: Run complete 89-case reviewed acceptance
+      - name: Run full corpus or targeted source-bound capture
         shell: bash
         env:
           POLICY_REASON: ${{ needs.policy.outputs.reason }}
           CONTROLLED_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.controlled_reference || false }}
+          RUN_MODE: ${{ needs.policy.outputs.run_mode }}
+          TARGETED_CASE_IDS: ${{ needs.policy.outputs.case_ids }}
+          TARGETED_CASE_COUNT: ${{ needs.policy.outputs.case_count }}
         run: |
           set -euo pipefail
           pass_dir="build/e2e-evidence/derived-content/differential-manifest"
@@ -326,13 +409,23 @@ jobs:
           mkdir -p "$pass_dir"
 
           contract=acceptance
-          if [ "$CONTROLLED_REFERENCE" = "true" ]; then
+          if [ "$RUN_MODE" = targeted ]; then
+            contract=capture
+          elif [ "$CONTROLLED_REFERENCE" = "true" ]; then
             contract=controlled-capture
           fi
 
           test_status=0
           set +e
-          if [ "$contract" = "controlled-capture" ]; then
+          if [ "$contract" = "capture" ]; then
+            MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
+              bash .github/scripts/run-full-differential-with-watchdog.sh \
+                "$progress_file" "$watchdog_file" -- \
+                ./gradlew integrationTest -x buildPlugin \
+                  -PplatformVersion="$STARTER_PLATFORM_VERSION" -PstarterPackagedPlugin=true \
+                  -PdifferentialContract=capture "-PdifferentialCaseIds=$TARGETED_CASE_IDS" --stacktrace \
+                  --tests com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest
+          elif [ "$contract" = "controlled-capture" ]; then
             MARKFLOW_DIFFERENTIAL_PROGRESS_FILE="$progress_file" \
               bash .github/scripts/run-full-differential-with-watchdog.sh \
                 "$progress_file" "$watchdog_file" -- \
@@ -359,8 +452,9 @@ jobs:
 
           mkdir -p "$pass_dir"
           cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
-          printf 'source_sha=%s\ncontract=%s\ntrigger=%s\npolicy_reason=%s\n' \
-            "$STARTER_SOURCE_SHA" "$contract" "$GITHUB_EVENT_NAME" "$POLICY_REASON" > "$pass_dir/run-contract.txt"
+          printf 'source_sha=%s\ncontract=%s\ntrigger=%s\npolicy_reason=%s\nmode=%s\ncase_ids=%s\n' \
+            "$STARTER_SOURCE_SHA" "$contract" "$GITHUB_EVENT_NAME" "$POLICY_REASON" \
+            "$RUN_MODE" "$TARGETED_CASE_IDS" > "$pass_dir/run-contract.txt"
 
           if [ "$test_status" -ne 0 ]; then
             if [ -f "$pass_dir/summary.json" ]; then
@@ -375,6 +469,38 @@ jobs:
               fi
             fi
             exit "$test_status"
+          fi
+
+          if [ "$contract" = capture ]; then
+            summary="$pass_dir/summary.json"
+            [ -f "$summary" ] || { echo "::error::Missing targeted source-bound summary"; exit 1; }
+            jq -e --arg sha "$STARTER_SOURCE_SHA" --argjson count "$TARGETED_CASE_COUNT" '
+              .schema == "markflow-stage-d-capture/v1" and
+              .source_head == $sha and
+              .expanded_cases == 89 and
+              .selected_cases == $count and
+              .captured_unverified == $count and
+              .capture_failed == 0 and
+              .not_executed == (89 - $count) and
+              .candidate_structural_failure_count == 0 and
+              .capture_contract == "capture" and
+              .full_differential_acceptance == false and
+              .release_eligible == false
+            ' "$summary" >/dev/null || {
+              echo "::error::Targeted cases were not all captured successfully"
+              cat "$summary"
+              exit 1
+            }
+            [ ! -e "$pass_dir/acceptance.json" ] || {
+              echo "::error::Targeted capture must never emit acceptance.json"
+              exit 1
+            }
+            printf 'status=TARGETED_DIFFERENTIAL_CAPTURED_UNVERIFIED\nsource_sha=%s\nrun_id=%s\nrun_attempt=%s\ncase_ids=%s\ncase_count=%s\nplugin_sha256=%s\n' \
+              "$STARTER_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+              "$TARGETED_CASE_IDS" "$TARGETED_CASE_COUNT" "$E2E_PLUGIN_SHA256" \
+              > "$pass_dir/targeted-result.txt"
+            echo "TARGETED_DIFFERENTIAL_CAPTURED_UNVERIFIED; NOT 89-case acceptance" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
           if [ "$contract" = "controlled-capture" ]; then
