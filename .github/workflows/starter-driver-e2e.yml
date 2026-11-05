@@ -89,9 +89,11 @@ jobs:
           fi
           if [ "$SELECTED_MODE" = "targeted" ]; then
             [ -n "$REQUESTED_SHA" ] || { echo "::error::Targeted mode requires explicit target_sha"; exit 1; }
-            [ "$RELEASE_REPEAT" != "true" ] && [ "$ANCHOR_DIAGNOSTIC" != "true" ] &&
-              [ "$OWNERSHIP_DIAGNOSTIC" != "true" ] && [ "$RANGE_DIAGNOSTIC" != "true" ] ||
-              { echo "::error::Targeted mode cannot combine with release repeat or legacy diagnostic modes"; exit 1; }
+            if [ "$RELEASE_REPEAT" = "true" ] || [ "$ANCHOR_DIAGNOSTIC" = "true" ] ||
+              [ "$OWNERSHIP_DIAGNOSTIC" = "true" ] || [ "$RANGE_DIAGNOSTIC" = "true" ]; then
+              echo "::error::Targeted mode cannot combine with release repeat or legacy diagnostic modes"
+              exit 1
+            fi
           fi
 
       - name: Fetch Sources
