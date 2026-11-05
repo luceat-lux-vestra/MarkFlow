@@ -653,9 +653,86 @@ fi
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
 grep -Fq 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
 grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance' "$starter_workflow" || die "Starter package manifest does not freeze the maintained semantic and visual acceptance sets"
-for shard in canonical core-editing ordinary-markdown derived-content lifecycle; do
-  grep -Fq "shard: $shard" "$starter_workflow" || die "Starter workflow is missing $shard shard"
-done
+starter_selector=".github/scripts/targeted-e2e-selection.py"
+[ -f "$starter_selector" ] || die "Starter validated matrix selector is missing"
+grep -Fq 'test_matrix: ${{ steps.selection.outputs.test_matrix }}' "$starter_workflow" ||
+  die "Starter package job no longer publishes the validated matrix"
+grep -Fq 'matrix: ${{ fromJSON(needs.package.outputs.test_matrix) }}' "$starter_workflow" ||
+  die "Starter shard job no longer consumes the validated matrix"
+grep -Fq -- '--workflow starter' "$starter_workflow" ||
+  die "Starter workflow no longer obtains its matrix from the validated selector"
+python3 "$starter_selector" --self-test >/dev/null ||
+  die "Starter validated matrix selector self-test failed"
+starter_full_matrix="$(python3 "$starter_selector" --workflow starter --mode full | sed -n 's/^test_matrix=//p')"
+[ -n "$starter_full_matrix" ] || die "Starter selector did not emit the full matrix"
+if ! python3 -I - "$starter_full_matrix" <<'PY'
+import json
+import sys
+
+prefix = "com.algorist.markflow.e2e."
+expected = {
+    "canonical": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": prefix + "MarkFlowStarterFullProductJourneyTest",
+    },
+    "core-editing": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": prefix + "MarkFlowStarterSmokeTest",
+    },
+    "ordinary-markdown": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterTableTest",
+            prefix + "MarkFlowStarterTaskListTest",
+            prefix + "MarkFlowStarterListIndentTest",
+        ]),
+    },
+    "derived-content": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterSharedJcefDerivedContentTest",
+            prefix + "MarkFlowStarterDifferentialManifestTest",
+            prefix + "MarkFlowStarterHeadingRobotTest",
+        ]),
+    },
+    "lifecycle": {
+        "runner": "ubuntu-24.04-arm",
+        "suites": "|".join([
+            prefix + "MarkFlowStarterSplitEditorTest",
+            prefix + "MarkFlowStarterDegradedPathTest",
+        ]),
+    },
+}
+
+payload = json.loads(sys.argv[1])
+entries = payload.get("include")
+if not isinstance(entries, list) or len(entries) != len(expected):
+    raise SystemExit("full Starter matrix inventory drifted")
+
+actual = {}
+for entry in entries:
+    if not isinstance(entry, dict) or set(entry) != {"shard", "runner", "suites"}:
+        raise SystemExit("full Starter matrix entry schema drifted")
+    shard = entry["shard"]
+    if shard in actual:
+        raise SystemExit(f"duplicate Starter shard: {shard}")
+    actual[shard] = {"runner": entry["runner"], "suites": entry["suites"]}
+
+if actual != expected:
+    raise SystemExit(f"full Starter matrix drifted: {actual!r}")
+
+derived = set(actual["derived-content"]["suites"].split("|"))
+for forbidden in (
+    prefix + "MarkFlowStarterProductionWiringTest",
+    prefix + "MarkFlowStarterDifferentialPreviewSmokeTest",
+):
+    if forbidden in derived:
+        raise SystemExit(f"derived-content regressed to duplicate isolated JCEF lifecycle: {forbidden}")
+PY
+then
+  die "Starter validated/generated full matrix contract drifted"
+fi
+
 grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_workflow" || die "Starter workflow is missing canonical full-product journey"
 grep -Fq 'release_candidate_repeat:' "$starter_workflow" || die "Starter workflow has no explicit release-candidate repeat control"
 grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "Starter workflow has no independent canonical repeat job"
@@ -668,22 +745,7 @@ grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starte
 # #353 genuine platform Markdown Preview uses JCEF. Keep every maintained
 # Linux Starter shard on ARM64 with native EGL and the scoped AppArmor profile.
 grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
-  die "Starter shards no longer use audited per-shard runner mapping"
-grep -F -A1 -- '- shard: canonical' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for canonical (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: core-editing' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for core-editing (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: ordinary-markdown' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for ordinary-markdown (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: derived-content' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for derived-content (ubuntu-24.04-arm)"
-grep -F -A1 -- '- shard: lifecycle' "$starter_workflow" |
-  grep -Fq 'runner: ubuntu-24.04-arm' ||
-  die "Starter runner drift for lifecycle (ubuntu-24.04-arm)"
+  die "Starter shards no longer consume the audited per-shard runner mapping"
 if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
   die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
 fi
@@ -698,11 +760,6 @@ grep -Fq 'MarkFlowStarterProductionWiringTest().proveInOpenProject(' "$shared_jc
   die "#451 shared suite no longer executes the original Production Wiring proof body"
 grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest().proveInOpenProject(' "$shared_jcef_test" ||
   die "#451 shared suite no longer executes the original bundled Preview Smoke proof body"
-derived_content_matrix="$(grep -F -A2 -- '- shard: derived-content' "$starter_workflow")"
-if grep -Fq 'MarkFlowStarterProductionWiringTest|' <<<"$derived_content_matrix" ||
-   grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest|' <<<"$derived_content_matrix"; then
-  die "#451 derived-content matrix regressed to duplicate isolated JCEF lifecycles"
-fi
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
 grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
