@@ -218,8 +218,7 @@ hardening_audit_workflow=".github/workflows/hardening-audit.yml"
 [ -f "$qodana_release_gate" ] || die "Stage B Qodana release verifier is missing"
 grep -Fq 'python3 .github/scripts/release-qodana-gate.py --self-test' "$hardening_audit_workflow" ||
   die "Stage B Qodana negative controls must execute in Hardening audit"
-python3 -I - "$release_workflow" "$qodana_release_gate" <<'PY' ||
-  die "Stage B dual release-preflight contract failed"
+if ! python3 -I - "$release_workflow" "$qodana_release_gate" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -342,6 +341,9 @@ qodana_change("steps.recovery.outputs.skip != 'true'",
               "inverted published recovery")
 print("Stage B dual release Qodana/CodeQL gate negative controls passed")
 PY
+then
+  die "Stage B dual release-preflight contract failed"
+fi
 
 assert_gradle_catalog_trigger() {
   local workflow="$1" label="$2" count
@@ -594,9 +596,19 @@ grep -Fq 'run-full-differential-with-watchdog.sh' "$full_differential_workflow" 
 grep -Fq -- '-PdifferentialContract=acceptance' "$full_differential_workflow" || die "#353 full differential no longer executes the acceptance contract"
 grep -Fq -- '-PdifferentialContract=controlled-capture' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its canonical full-corpus route"
 grep -Fq 'controlled_reference:' "$full_differential_workflow" || die "#353 controlled-provider diagnostic lost its explicit manual opt-in"
-if grep -Fq -- '-PdifferentialCaseIds=' "$full_differential_workflow"; then
-  die "#353 canonical full corpus must never reduce the 89-case inventory"
-fi
+targeted_case_arg_count="$(grep -Fc -- '-PdifferentialCaseIds=' "$full_differential_workflow")"
+[ "$targeted_case_arg_count" -eq 1 ] ||
+  die "#353 targeted diagnostics must own the only differential case-subset argument"
+grep -Fq 'if [ "$RUN_MODE" = targeted ]; then' "$full_differential_workflow" ||
+  die "#353 targeted differential mode lost its explicit bounded route"
+grep -Fq 'if [ "$contract" = "capture" ]; then' "$full_differential_workflow" ||
+  die "#353 targeted differential capture lost its isolated execution branch"
+grep -Fq -- '-PdifferentialContract=capture "-PdifferentialCaseIds=$TARGETED_CASE_IDS"' "$full_differential_workflow" ||
+  die "#353 targeted differential subset is not bound exclusively to capture mode"
+grep -Fq -- '-PdifferentialContract=controlled-capture --stacktrace' "$full_differential_workflow" ||
+  die "#353 controlled full-corpus route must not consume targeted case IDs"
+grep -Fq -- '-PdifferentialContract=acceptance --stacktrace' "$full_differential_workflow" ||
+  die "#353 canonical 89-case acceptance route must not consume targeted case IDs"
 grep -Fq 'MarkFlowStarterDifferentialManifestTest' "$full_differential_workflow" || die "#353 full differential no longer executes the differential manifest suite"
 grep -Fq '.captured_unverified == 89' "$full_differential_workflow" || die "#353 full differential failure diagnostics no longer distinguish complete capture from review failure"
 grep -Fq '.full_differential_acceptance == true' "$full_differential_workflow" || die "#353 full differential no longer requires the reviewed final verdict"
