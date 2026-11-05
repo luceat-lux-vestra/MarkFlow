@@ -1292,8 +1292,13 @@ awk '
   END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
 ' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
-grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium installer"
-grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks native Chromium path"
+grep -Fq 'browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks immutable Chrome for Testing setup action"
+grep -Fq 'chrome-version: 156.0.8078.80' ".github/workflows/build.yml" || die "ARM64 browser acceptance Chrome for Testing version drifted"
+grep -Fq 'install-dependencies: true' ".github/workflows/build.yml" || die "ARM64 Chrome for Testing runtime dependencies are not explicitly provisioned"
+grep -Fq 'CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}' ".github/workflows/build.yml" || die "ARM64 browser acceptance does not consume the setup-chrome executable path"
+grep -Fq '[[ "$version" == *"156.0.8078.80"* ]]' ".github/workflows/build.yml" || die "ARM64 browser acceptance does not verify the installed Chrome for Testing version"
+! grep -Fq 'sudo apt-get install -y chromium-browser' ".github/workflows/build.yml" || die "legacy Snap-backed chromium-browser provisioning is still present"
+! grep -Fq 'CHROME_BIN: /snap/bin/chromium' ".github/workflows/build.yml" || die "legacy Snap Chromium path is still present"
 for native_workflow in "$starter_workflow" "$native_evidence_workflow"; do
   grep -Fq 'sudo apt-get install -y --no-install-recommends libegl1' "$native_workflow" || die "$native_workflow lacks required ARM64 Skiko EGL runtime"
   grep -Fq 'ldconfig -p | grep -F libEGL.so.1' "$native_workflow" || die "$native_workflow does not prove EGL availability"
