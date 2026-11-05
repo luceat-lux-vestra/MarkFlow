@@ -403,10 +403,10 @@ jobs:
           echo "Qodana Stage C shadow only: required=$qodana_shadow_required reason=$qodana_shadow_reason changed_count=$qodana_shadow_changed_count classifier_source=$qodana_shadow_classifier_source"
           {
             echo "### Qodana Stage C shadow classifier"
-            echo "- required: `$qodana_shadow_required`"
-            echo "- reason: `$qodana_shadow_reason`"
-            echo "- changed count: `$qodana_shadow_changed_count`"
-            echo "- trusted classifier source: `$qodana_shadow_classifier_source`"
+            printf -- '- required: `%s`\n' "$qodana_shadow_required"
+            printf -- '- reason: `%s`\n' "$qodana_shadow_reason"
+            printf -- '- changed count: `%s`\n' "$qodana_shadow_changed_count"
+            printf -- '- trusted classifier source: `%s`\n' "$qodana_shadow_classifier_source"
             echo "- authority: observational only; Inspect code and Merge Gate ignore this decision"
           } >> "$GITHUB_STEP_SUMMARY"
 
