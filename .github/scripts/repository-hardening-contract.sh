@@ -1245,8 +1245,21 @@ for gated_job in visual-gate gate; do
   actual_guard="$(awk -v wanted="$gated_job" '
     $0 == "  " wanted ":" { getline; print; exit }
   ' "$starter_workflow")"
-  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}" ] || die "$gated_job must skip intentionally unvalidated Draft PRs but fail closed for Ready/release"
+  [ "$actual_guard" = "    if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}" ] ||
+    die "$gated_job must skip intentionally unvalidated Draft PRs and targeted diagnostics while failing closed for Ready/full execution"
 done
+targeted_guard="$(awk '
+  $0 == "  targeted-gate:" { getline; print; exit }
+' "$starter_workflow")"
+[ "$targeted_guard" = "    if: \${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}" ] ||
+  die "Targeted E2E diagnostic gate lost its targeted-only dispatch guard"
+awk '
+  $0 == "  targeted-gate:" { in_targeted=1; next }
+  in_targeted && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_targeted && $0 == "    name: Targeted E2E Diagnostic Gate" { found=1 }
+  END { exit !found }
+' "$starter_workflow" ||
+  die "Targeted E2E diagnostic gate identity is missing or drifted"
 # #362: Paired x64/ARM64 negative controls found a missing Liberation Sans
 # fallback on ARM64. Keep the strict reviewed x64 PNG goldens unchanged;
 # require EGL, real ARM CPU and exact font file SHA-256 before capture.
