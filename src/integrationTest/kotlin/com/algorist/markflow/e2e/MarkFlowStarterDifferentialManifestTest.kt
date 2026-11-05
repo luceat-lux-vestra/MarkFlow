@@ -58,6 +58,7 @@ class MarkFlowStarterDifferentialManifestTest {
             (caseId == "md-fenced-backtick" && contract == "acceptance") ||
             (caseId == "md-fenced-tilde" && contract == "acceptance") ||
             (caseId == "md-fence-length-info" && contract == "acceptance") ||
+            (caseId == "md-mermaid-block" && contract == "acceptance") ||
             (caseId == "md-katex-display" && contract == "acceptance")
 
     // Pure mode/identity regression checks run before starting the real IDE.
@@ -68,18 +69,21 @@ class MarkFlowStarterDifferentialManifestTest {
             useSourceRangeProbeForCase("acceptance", "md-fenced-backtick", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-fenced-tilde", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-fence-length-info", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-mermaid-block", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-unordered-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-nested-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-fenced-backtick", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-fenced-tilde", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-fence-length-info", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-mermaid-block", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-unordered-list", "md-unordered-list", false) &&
             !useSourceRangeProbeForCase("capture", "md-nested-list", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-fenced-backtick", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-fenced-tilde", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-fence-length-info", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-mermaid-block", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-katex-display", null, false) &&
             useSourceRangeProbeForCase("capture", "md-ordered-list", "md-ordered-list", true) &&
             !useSourceRangeProbeForCase("capture", "md-paragraph", null, false) &&
