@@ -38,7 +38,7 @@ assert_contract() {
   grep -Fxq '          cache-read-only: true' "$workflow" || die "publisher must never write Gradle caches"
   grep -Fxq '          dependency-graph: generate-and-submit' "$workflow" || die "publisher is not in submit mode"
   grep -Fxq '          dependency-graph-continue-on-failure: false' "$workflow" || die "publisher must fail closed"
-  grep -Fq 'gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6' "$workflow" || die "dependency-submission action pin drifted"
+  grep -Fq 'gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c' "$workflow" || die "dependency-submission action pin drifted"
   grep -Fq '          persist-credentials: false' "$workflow" || die "checkout credentials must not persist"
   grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "publisher must checkout exact trigger SHA"
   grep -Fq 'len(resolved) < 450' "$workflow" || die "minimum graph coverage assertion drifted"
