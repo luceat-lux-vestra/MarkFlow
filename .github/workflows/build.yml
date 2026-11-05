@@ -36,6 +36,10 @@ jobs:
       docs_only: ${{ steps.change-scope.outputs.docs_only }}
       dependency_fast_lane: ${{ steps.change-scope.outputs.dependency_fast_lane }}
       dependency_ecosystem: ${{ steps.change-scope.outputs.dependency_ecosystem }}
+      qodana_shadow_required: ${{ steps.change-scope.outputs.qodana_shadow_required }}
+      qodana_shadow_reason: ${{ steps.change-scope.outputs.qodana_shadow_reason }}
+      qodana_shadow_changed_count: ${{ steps.change-scope.outputs.qodana_shadow_changed_count }}
+      qodana_shadow_classifier_source: ${{ steps.change-scope.outputs.qodana_shadow_classifier_source }}
       run_native: ${{ steps.evidence-scope.outputs.run_native }}
       run_starter: ${{ steps.evidence-scope.outputs.run_starter }}
       reuse_product_evidence: ${{ steps.replacement-evidence.outputs.reuse_product_evidence }}
@@ -214,6 +218,10 @@ jobs:
           dependency_fast_lane=false
           dependency_ecosystem=none
           dependency_reason=not-applicable
+          qodana_shadow_required=true
+          qodana_shadow_reason=unknown:not-evaluated
+          qodana_shadow_changed_count=0
+          qodana_shadow_classifier_source=unavailable
 
           fetch_content() {
             local ref="$1" path="$2" output="$3"
@@ -223,10 +231,13 @@ jobs:
           }
 
           if [ "$EVENT_NAME" != "pull_request" ]; then
+            qodana_shadow_reason=not-applicable:non-pr
             echo "Non-PR validation always uses the full product-validation path."
           elif [ "$EVENT_ACTION" = "edited" ]; then
+            qodana_shadow_reason=not-applicable:metadata-edit
             echo "PR metadata edit uses the dedicated metadata-only fast path."
           elif ! [[ "$EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            qodana_shadow_reason=unknown:changed-file-count-invalid
             echo "::warning::Changed-file count is empty or malformed; using full validation."
           else
             tmp="$(mktemp -d)"
@@ -235,6 +246,7 @@ jobs:
             if ! gh api --paginate -H 'Accept: application/vnd.github+json' \
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
               --jq '.[] | [.status, .filename, (.previous_filename // "")] | @tsv' > "$tmp/files"; then
+              qodana_shadow_reason=unknown:changed-file-api-failed
               echo "::warning::Changed-file API read failed; using full validation."
             else
               if fetch_content "$BASE_SHA" ".github/scripts/docs-only-scope.py" "$tmp/docs-classifier.py"; then
@@ -329,6 +341,44 @@ jobs:
               else
                 echo "::warning::Trusted dependency classifier unavailable or self-test failed; using full validation."
               fi
+
+              if fetch_content "$BASE_SHA" ".github/scripts/pr-qodana-shadow-scope.py" "$tmp/qodana-shadow-classifier.py" && \
+                 python3 "$tmp/qodana-shadow-classifier.py" --self-test >/dev/null; then
+                qodana_shadow_classifier_source="$BASE_SHA"
+                if python3 "$tmp/qodana-shadow-classifier.py" --expected-count "$EXPECTED_COUNT" \
+                     < "$tmp/files" > "$tmp/qodana-shadow.out" 2>"$tmp/qodana-shadow.err"; then
+                  mapfile -t qodana_lines < "$tmp/qodana-shadow.out"
+                  required_line="${qodana_lines[0]:-}"
+                  reason_line="${qodana_lines[1]:-}"
+                  count_line="${qodana_lines[2]:-}"
+                  if [ "${#qodana_lines[@]}" -eq 3 ] && \
+                     [[ "$required_line" =~ ^qodana_required=(true|false)$ ]] && \
+                     [[ "$reason_line" =~ ^reason=.+$ ]] && \
+                     [[ "$count_line" =~ ^changed_count=[0-9]+$ ]]; then
+                    candidate_required="${required_line#*=}"
+                    candidate_reason="${reason_line#*=}"
+                    candidate_count="${count_line#*=}"
+                    if [ "$candidate_count" = "$EXPECTED_COUNT" ]; then
+                      qodana_shadow_required="$candidate_required"
+                      qodana_shadow_reason="$candidate_reason"
+                      qodana_shadow_changed_count="$candidate_count"
+                    else
+                      qodana_shadow_reason=unknown:classifier-count-mismatch
+                      echo "::warning::Qodana shadow classifier count mismatched GitHub metadata; fail-closed shadow decision retained."
+                    fi
+                  else
+                    qodana_shadow_reason=unknown:classifier-output-malformed
+                    echo "::warning::Qodana shadow classifier returned malformed output; fail-closed shadow decision retained."
+                  fi
+                else
+                  qodana_shadow_reason=unknown:classifier-execution-failed
+                  echo "::warning::Qodana shadow classifier execution failed; fail-closed shadow decision retained."
+                  cat "$tmp/qodana-shadow.err" >&2 2>/dev/null || true
+                fi
+              else
+                qodana_shadow_reason=unknown:trusted-base-classifier-unavailable
+                echo "::warning::Trusted-base Qodana shadow classifier unavailable or self-test failed; fail-closed shadow decision retained."
+              fi
             fi
           fi
 
@@ -343,9 +393,22 @@ jobs:
             echo "docs_only=$docs_only"
             echo "dependency_fast_lane=$dependency_fast_lane"
             echo "dependency_ecosystem=$dependency_ecosystem"
+            echo "qodana_shadow_required=$qodana_shadow_required"
+            echo "qodana_shadow_reason=$qodana_shadow_reason"
+            echo "qodana_shadow_changed_count=$qodana_shadow_changed_count"
+            echo "qodana_shadow_classifier_source=$qodana_shadow_classifier_source"
           } >> "$GITHUB_OUTPUT"
           echo "docs-only fast path: $docs_only"
           echo "dependency fast lane: $dependency_fast_lane ecosystem=$dependency_ecosystem reason=$dependency_reason"
+          echo "Qodana Stage C shadow only: required=$qodana_shadow_required reason=$qodana_shadow_reason changed_count=$qodana_shadow_changed_count classifier_source=$qodana_shadow_classifier_source"
+          {
+            echo "### Qodana Stage C shadow classifier"
+            printf '%s\n' "- required: \`$qodana_shadow_required\`"
+            printf '%s\n' "- reason: \`$qodana_shadow_reason\`"
+            printf '%s\n' "- changed count: \`$qodana_shadow_changed_count\`"
+            printf '%s\n' "- trusted classifier source: \`$qodana_shadow_classifier_source\`"
+            echo "- authority: observational only; Inspect code and Merge Gate ignore this decision"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Route specialized PR evidence using trusted base
         id: evidence-scope

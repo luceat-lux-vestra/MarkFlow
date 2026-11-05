@@ -1361,6 +1361,27 @@ dependency_fast_lane_scope=".github/scripts/dependency-pr-fast-lane.py"
 [ -f "$dependency_fast_lane_scope" ] || die "dependency fast-lane classifier is missing"
 python3 "$dependency_fast_lane_scope" --self-test >/dev/null || die "dependency fast-lane classifier fixtures failed"
 
+# R2A #104 Stage C: the Qodana applicability classifier is observational only.
+# It must execute from the exact trusted PR base, fail closed on uncertainty and
+# self-change, and must not influence Inspect code or Merge Gate until a
+# separately approved Stage D.
+qodana_shadow_scope=".github/scripts/pr-qodana-shadow-scope.py"
+[ -f "$qodana_shadow_scope" ] || die "Qodana Stage C shadow classifier is missing"
+python3 "$qodana_shadow_scope" --self-test >/dev/null || die "Qodana Stage C shadow classifier fixtures failed"
+shadow_self_change="$(printf 'modified\t.github/scripts/pr-qodana-shadow-scope.py\t\n' | python3 "$qodana_shadow_scope" --expected-count 1)"
+grep -Fq 'qodana_required=true' <<<"$shadow_self_change" || die "Qodana shadow classifier can self-exempt its own changes"
+grep -Fq 'reason=qodana-relevant:.github/scripts/pr-qodana-shadow-scope.py' <<<"$shadow_self_change" || die "Qodana shadow self-change reason is not deterministic"
+grep -Fq 'fetch_content "$BASE_SHA" ".github/scripts/pr-qodana-shadow-scope.py"' "$build_workflow" || die "Build does not load Qodana shadow policy from the trusted PR base"
+grep -Fq 'qodana_shadow_required=true' "$build_workflow" || die "Qodana shadow classifier lacks fail-closed required default"
+grep -Fq 'qodana_shadow_required: ${{ steps.change-scope.outputs.qodana_shadow_required }}' "$build_workflow" || die "head evidence does not export Qodana shadow decision"
+grep -Fq 'qodana_shadow_reason: ${{ steps.change-scope.outputs.qodana_shadow_reason }}' "$build_workflow" || die "head evidence does not export Qodana shadow reason"
+grep -Fq 'qodana_shadow_changed_count: ${{ steps.change-scope.outputs.qodana_shadow_changed_count }}' "$build_workflow" || die "head evidence does not export Qodana shadow changed-file count"
+grep -Fq 'qodana_shadow_classifier_source: ${{ steps.change-scope.outputs.qodana_shadow_classifier_source }}' "$build_workflow" || die "head evidence does not export Qodana shadow trusted source identity"
+grep -Fq 'authority: observational only; Inspect code and Merge Gate ignore this decision' "$build_workflow" || die "Qodana Stage C shadow output lost its explicit non-authority notice"
+[ "$(grep -Fc 'needs.headEvidence.outputs.qodana_shadow_' "$build_workflow" || true)" = "0" ] || die "Stage C Qodana shadow output must not control downstream jobs"
+grep -Fq '      - name: Qodana - Code Inspection' "$build_workflow" || die "Stage C must preserve PR-time Qodana inspection"
+grep -Fq 'needs.inspectCode.result' "$build_workflow" || die "Stage C must preserve Inspect code as Merge Gate input"
+
 replacement_reuse_scope=".github/scripts/replacement-head-evidence-reuse.py"
 [ -f "$replacement_reuse_scope" ] || die "#467 replacement-head evidence-reuse classifier is missing"
 python3 -I "$replacement_reuse_scope" --self-test >/dev/null || die "#467 replacement-head evidence-reuse fixtures failed"
