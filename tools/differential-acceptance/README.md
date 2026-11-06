@@ -157,15 +157,19 @@ continue to require the full independently reviewed acceptance contract.
 ## Stage E20 — source-bound reviewed acceptance ledger
 
 `fixtures/differential-acceptance/acceptance-ledger.tsv` is the explicit review
-boundary for the complete acceptance contract. It is intentionally **header-only**
-until a complete 89-expanded-case artifact from one workflow run has been inspected.
+boundary for the complete acceptance contract. After one complete 89-expanded-case
+artifact exists, reviewed rows may be committed **incrementally at each bounded
+review checkpoint** so completed human/agent review survives session boundaries.
+A partial ledger is intentionally fail-closed: the canonical `acceptance` contract
+still requires exact coverage of all 89 expanded identities before it can pass.
 
-Each future review row must bind the expanded case ID to its manifest parent,
-exact fixture SHA-256, Mermaid block SHA-256 where applicable, classification,
-visual-reference contract, explicit `ACCEPT`/`REJECT` decision, and the exact
-evidence workflow run/source HEAD used for review. The parser rejects missing,
-duplicate, stale-source, stale-block, reclassified, malformed, mixed-run or
-mixed-evidence-HEAD ledgers.
+Each review row must bind the expanded case ID to its manifest parent, exact fixture
+SHA-256, Mermaid block SHA-256 where applicable, classification, visual-reference
+contract, explicit `ACCEPT`/`REJECT` decision, and the exact evidence workflow
+run/source HEAD used for review. All rows contributing to one final verdict must
+remain bound to one evidence run and one evidence source HEAD. The parser rejects
+missing final coverage, duplicate, stale-source, stale-block, reclassified,
+malformed, mixed-run or mixed-evidence-HEAD ledgers.
 
 A complete real-IDE capture is therefore necessary but insufficient. Only after
 all 89 runtime cases capture without structural failures **and** the reviewed
