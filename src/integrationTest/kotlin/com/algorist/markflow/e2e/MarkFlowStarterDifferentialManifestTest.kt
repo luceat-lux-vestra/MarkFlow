@@ -60,7 +60,8 @@ class MarkFlowStarterDifferentialManifestTest {
             (caseId == "md-fence-length-info" && contract == "acceptance") ||
             (caseId == "md-mermaid-block" && contract == "acceptance") ||
             (caseId == "md-katex-display" && contract == "acceptance") ||
-            (caseId == "md-blank-lines-whitespace" && contract == "acceptance")
+            (caseId == "md-blank-lines-whitespace" && contract == "acceptance") ||
+            (caseId == "md-list-marker-variants" && contract == "acceptance")
 
     // Pure mode/identity regression checks run before starting the real IDE.
     private fun sourceRangeProbeModeNegativeControls(): Boolean =
@@ -73,6 +74,7 @@ class MarkFlowStarterDifferentialManifestTest {
             useSourceRangeProbeForCase("acceptance", "md-mermaid-block", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-katex-display", null, false) &&
             useSourceRangeProbeForCase("acceptance", "md-blank-lines-whitespace", null, false) &&
+            useSourceRangeProbeForCase("acceptance", "md-list-marker-variants", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-unordered-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-nested-list", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-fenced-backtick", null, false) &&
@@ -81,6 +83,7 @@ class MarkFlowStarterDifferentialManifestTest {
             !useSourceRangeProbeForCase("controlled-capture", "md-mermaid-block", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("controlled-capture", "md-blank-lines-whitespace", null, false) &&
+            !useSourceRangeProbeForCase("controlled-capture", "md-list-marker-variants", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-unordered-list", "md-unordered-list", false) &&
             !useSourceRangeProbeForCase("capture", "md-nested-list", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-fenced-backtick", null, false) &&
@@ -89,6 +92,7 @@ class MarkFlowStarterDifferentialManifestTest {
             !useSourceRangeProbeForCase("capture", "md-mermaid-block", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-katex-display", null, false) &&
             !useSourceRangeProbeForCase("capture", "md-blank-lines-whitespace", null, false) &&
+            !useSourceRangeProbeForCase("capture", "md-list-marker-variants", null, false) &&
             useSourceRangeProbeForCase("capture", "md-ordered-list", "md-ordered-list", true) &&
             !useSourceRangeProbeForCase("capture", "md-paragraph", null, false) &&
             !useSourceRangeProbeForCase("acceptance", "md-ordered-list", null, false) &&
