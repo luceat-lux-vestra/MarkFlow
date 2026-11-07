@@ -1,0 +1,276 @@
+name: Release Candidate Canonical Repeat
+run-name: Release candidate repeat for ${{ github.event.workflow_run.id }} @ ${{ github.event.workflow_run.head_sha }}
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- #348 accepts only successful first-attempt same-repository main workflow_dispatch runs and revalidates parent SHA/artifact identity
+    workflows: [Starter Driver E2E]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-candidate-canonical-repeat-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+env:
+  STARTER_PLATFORM_VERSION: '2026.2.3'
+  CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+  PARENT_RUN_ID: ${{ github.event.workflow_run.id }}
+  PARENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+
+jobs:
+  qualify:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.run_attempt == 1
+    name: Validate trusted parent Starter run
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.parent.outputs.eligible }}
+    steps:
+      - name: Validate immutable parent identity and full acceptance gates
+        id: parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_RUN_ATTEMPT" = "1" ] || {
+            echo "::error::Release-candidate repeat evidence cannot be created by rerunning the follow-up workflow"
+            exit 1
+          }
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Triggering Starter run did not provide an exact candidate SHA"
+            exit 1
+          }
+          [ "$PARENT_RUN_ATTEMPT" = "1" ] || {
+            echo "::error::Only the first successful parent attempt may create independent repeat evidence"
+            exit 1
+          }
+
+          parent="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          jq -e             --arg repo "$GITHUB_REPOSITORY"             --arg sha "$CANDIDATE_SHA"             --argjson run_id "$PARENT_RUN_ID"             '
+              .id == $run_id and
+              .name == "Starter Driver E2E" and
+              .event == "workflow_dispatch" and
+              .head_branch == "main" and
+              .head_sha == $sha and
+              .head_repository.full_name == $repo and
+              .status == "completed" and
+              .conclusion == "success" and
+              .run_attempt == 1
+            ' <<<"$parent" >/dev/null || {
+              echo "::error::Triggering Starter run provenance is not trusted exact-main first-attempt success"
+              exit 1
+            }
+
+          jobs="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/jobs?filter=latest&per_page=100")"
+          job_conclusion() {
+            local name="$1"
+            mapfile -t matches < <(jq -r --arg name "$name" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")
+            [ "${#matches[@]}" -eq 1 ] || {
+              echo "::error::Expected exactly one parent job named: $name"
+              exit 1
+            }
+            printf '%s' "${matches[0]}"
+          }
+
+          package_result="$(job_conclusion "Package exact Starter plugin")"
+          canonical_result="$(job_conclusion "Real IDE Starter Driver (canonical)")"
+          stable_gate_result="$(job_conclusion "Starter Driver E2E Gate")"
+          visual_gate_result="$(job_conclusion "Deterministic Visual Acceptance Gate")"
+          targeted_gate_result="$(job_conclusion "Targeted E2E Diagnostic Gate")"
+
+          if [ "$targeted_gate_result" = "success" ]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "Targeted main diagnostic is not a release-candidate parent; no repeat is launched." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          [ "$package_result" = "success" ] || { echo "::error::Parent exact package did not pass"; exit 1; }
+          [ "$canonical_result" = "success" ] || { echo "::error::Parent canonical journey did not pass"; exit 1; }
+          [ "$stable_gate_result" = "success" ] || { echo "::error::Parent Starter aggregate gate did not pass"; exit 1; }
+          [ "$visual_gate_result" = "success" ] || { echo "::error::Parent visual acceptance gate did not pass"; exit 1; }
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "Trusted parent Starter run: $PARENT_RUN_ID"
+            echo "Pinned candidate SHA: $CANDIDATE_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  repeat:
+    needs: [qualify]
+    if: needs.qualify.outputs.eligible == 'true'
+    name: Independent canonical repeat
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - name: Fetch exact candidate sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$CANDIDATE_SHA" ] || {
+            echo "::error::Repeat source checkout drifted: expected=$CANDIDATE_SHA actual=$actual"
+            exit 1
+          }
+
+      - name: Download triggering run exact Starter plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: starter-driver-plugin-${{ github.event.workflow_run.id }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: build/e2e-package
+
+      - name: Restore and verify parent packaged plugin identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="build/e2e-package/manifest.txt"
+          [ -f "$manifest" ] || { echo "::error::Parent package manifest missing"; exit 1; }
+          [ -f build/e2e-package/plugin.zip ] || { echo "::error::Parent plugin artifact missing"; exit 1; }
+
+          source_sha="$(sed -n 's/^source_sha=//p' "$manifest")"
+          expected_digest="$(sed -n 's/^plugin_sha256=//p' "$manifest")"
+          platform_version="$(sed -n 's/^platform_version=//p' "$manifest")"
+
+          [ "$source_sha" = "$CANDIDATE_SHA" ] || {
+            echo "::error::Parent artifact source drifted: expected=$CANDIDATE_SHA actual=$source_sha"
+            exit 1
+          }
+          [ "$platform_version" = "$STARTER_PLATFORM_VERSION" ] || {
+            echo "::error::Parent artifact platform drifted: expected=$STARTER_PLATFORM_VERSION actual=$platform_version"
+            exit 1
+          }
+          [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Parent artifact digest is malformed"
+            exit 1
+          }
+          actual_digest="$(sha256sum build/e2e-package/plugin.zip | awk '{print $1}')"
+          [ "$actual_digest" = "$expected_digest" ] || {
+            echo "::error::Parent artifact digest mismatch"
+            exit 1
+          }
+
+          mkdir -p build/distributions
+          cp build/e2e-package/plugin.zip build/distributions/release-candidate-plugin.zip
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-release-candidate-repeat-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run independent canonical repeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/check-starter-driver-diagnostics.py --self-test
+          suite="com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest"
+          E2E_PLUGIN_PATH="build/distributions/release-candidate-plugin.zip"
+          E2E_PLUGIN_SHA256="$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')"
+          export E2E_PLUGIN_PATH E2E_PLUGIN_SHA256
+          pass_dir="build/e2e-evidence/release-candidate-repeat"
+          marker="$RUNNER_TEMP/markflow-release-candidate-repeat-start"
+          rm -rf "$pass_dir" build/test-results/integrationTest build/reports/tests/integrationTest
+          mkdir -p "$pass_dir"
+          touch "$marker"
+
+          {
+            echo "parent_run_id=$PARENT_RUN_ID"
+            echo "parent_run_attempt=$PARENT_RUN_ATTEMPT"
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "plugin_sha256=$E2E_PLUGIN_SHA256"
+            echo "platform_version=$STARTER_PLATFORM_VERSION"
+            echo "follow_up_run_id=$GITHUB_RUN_ID"
+            echo "follow_up_run_attempt=$GITHUB_RUN_ATTEMPT"
+          } | tee "$pass_dir/provenance.txt"
+
+          test_status=0
+          set +e
+          timeout --signal=TERM --kill-after=30s 24m             ./gradlew integrationTest -x buildPlugin               -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace --tests "$suite"
+          test_status=$?
+          set -e
+
+          if [ -d build/test-results/integrationTest ]; then
+            cp -R build/test-results/integrationTest "$pass_dir/test-results"
+          fi
+          if [ -d build/reports/tests/integrationTest ]; then
+            cp -R build/reports/tests/integrationTest "$pass_dir/test-report"
+          fi
+          while IFS= read -r -d '' log; do
+            log_dir="$(dirname "$log")"
+            relative="${log_dir#./}"
+            destination="$pass_dir/logs/$relative"
+            mkdir -p "$(dirname "$destination")"
+            rm -rf "$destination"
+            cp -R "$log_dir" "$destination"
+          done < <(
+            find out/ide-tests build/idea-sandbox .intellijPlatform/sandbox               -type f -name idea.log -newer "$marker" -print0 2>/dev/null || true
+          )
+
+          diagnostics_status=0
+          set +e
+          python3 .github/scripts/check-starter-driver-diagnostics.py             --root "$pass_dir"             --output "$pass_dir/diagnostics.json"             --required-suite "$suite"
+          diagnostics_status=$?
+          set -e
+
+          [ "$(sha256sum "$E2E_PLUGIN_PATH" | awk '{print $1}')" = "$E2E_PLUGIN_SHA256" ] || {
+            echo "::error::Canonical repeat mutated the parent packaged plugin artifact"
+            exit 1
+          }
+          cp build/e2e-package/manifest.txt "$pass_dir/package-manifest.txt"
+
+          [ "$test_status" -eq 0 ] || exit "$test_status"
+          [ "$diagnostics_status" -eq 0 ] || exit "$diagnostics_status"
+
+      - name: Upload repeat diagnostics and provenance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-candidate-canonical-repeat-${{ github.event.workflow_run.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/e2e-evidence/**
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+            build/e2e-package/manifest.txt
+            out/ide-tests/**/log/**
+            build/idea-sandbox/**/log/idea.log
+            ${{ runner.temp }}/markflow-release-candidate-repeat-xvfb.log
