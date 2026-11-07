@@ -805,6 +805,8 @@ if grep -Eq '^[[:space:]]+[A-Za-z0-9_-]+:[[:space:]]+write([[:space:]]|$)' "$rel
 fi
 [ "$(grep -Fc -- '-x buildPlugin' "$release_repeat_workflow" || true)" = "1" ] ||
   die "#348 repeat must execute against the parent artifact without rebuilding it"
+[ "$(grep -Fc -- '-PstarterPackagedPlugin=true' "$release_repeat_workflow" || true)" = "1" ] ||
+  die "#348 repeat must activate the exact packaged-plugin Gradle consumer"
 grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
 grep -Fq -- '--required-suite "$suite"' "$starter_workflow" || die "Starter shard diagnostics are not scoped to their declared suites"
 grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "Starter diagnostics do not recognize the canonical full-product journey"
