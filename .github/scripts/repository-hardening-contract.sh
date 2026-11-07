@@ -548,7 +548,9 @@ if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle
 fi
 
 starter_workflow=".github/workflows/starter-driver-e2e.yml"
+release_repeat_workflow=".github/workflows/release-candidate-repeat.yml"
 full_differential_workflow=".github/workflows/full-differential-acceptance.yml"
+[ -f "$release_repeat_workflow" ] || die "#348 automatic release-candidate repeat workflow is missing"
 [ -f "$full_differential_workflow" ] || die "#353 canonical full differential workflow is missing"
 [ ! -e .github/workflows/full-differential-acceptance-post-main.yml ] || die "#353 obsolete post-main push workflow must stay deleted"
 grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$full_differential_workflow" || die "#353 full differential must retain manual exact-SHA execution"
@@ -733,8 +735,76 @@ then
   die "Starter validated/generated full matrix contract drifted"
 fi
 
-grep -Fq 'release_candidate_repeat:' "$starter_workflow" || die "Starter workflow has no explicit release-candidate repeat control"
-grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow" || die "Starter workflow has no independent canonical repeat job"
+if grep -Fq 'release_candidate_repeat:' "$starter_workflow"; then
+  die "#348 manual release-candidate repeat control must stay retired"
+fi
+if grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow"; then
+  die "#348 independent repeat must stay outside the parent Starter workflow"
+fi
+grep -Eq '^  workflow_run:([[:space:]]|$)' "$release_repeat_workflow" ||
+  die "#348 repeat must be triggered by workflow_run"
+
+[ "$(grep -Fc '# zizmor: ignore[dangerous-triggers]' "$release_repeat_workflow" || true)" = "1" ] ||
+  die "#348 workflow_run must keep exactly one reviewed dangerous-trigger waiver"
+grep -Fq 'workflow_run: # zizmor: ignore[dangerous-triggers] -- #348 accepts only successful first-attempt same-repository main workflow_dispatch runs and revalidates parent SHA/artifact identity' "$release_repeat_workflow" ||
+  die "#348 workflow_run dangerous-trigger waiver lost its reviewed trust-boundary rationale"
+grep -Fq 'workflows: [Starter Driver E2E]' "$release_repeat_workflow" ||
+  die "#348 repeat must listen only to Starter Driver E2E"
+grep -Fq 'types: [completed]' "$release_repeat_workflow" ||
+  die "#348 repeat must wait for parent completion"
+if grep -Eq '^  (pull_request|pull_request_target|push|workflow_dispatch|schedule|repository_dispatch):([[:space:]]|$)' "$release_repeat_workflow"; then
+  die "#348 repeat must not expose alternate trigger paths"
+fi
+grep -Fq "github.event.workflow_run.conclusion == 'success'" "$release_repeat_workflow" ||
+  die "#348 repeat lost successful-parent gating"
+grep -Fq "github.event.workflow_run.event == 'workflow_dispatch'" "$release_repeat_workflow" ||
+  die "#348 repeat lost trusted standalone-parent gating"
+grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release_repeat_workflow" ||
+  die "#348 repeat lost protected-main provenance gating"
+grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$release_repeat_workflow" ||
+  die "#348 repeat lost same-repository provenance gating"
+grep -Fq 'github.event.workflow_run.run_attempt == 1' "$release_repeat_workflow" ||
+  die "#348 repeat must not auto-accept rerun parent attempts"
+grep -Fq '[ "$GITHUB_RUN_ATTEMPT" = "1" ]' "$release_repeat_workflow" ||
+  die "#348 repeat must fail closed when its own failed run is rerun"
+grep -Fq 'CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}' "$release_repeat_workflow" ||
+  die "#348 repeat is not pinned to workflow_run.head_sha"
+grep -Fq 'PARENT_RUN_ID: ${{ github.event.workflow_run.id }}' "$release_repeat_workflow" ||
+  die "#348 repeat lost parent run identity"
+grep -Fq 'run-id: ${{ github.event.workflow_run.id }}' "$release_repeat_workflow" ||
+  die "#348 repeat does not consume the parent run artifact"
+grep -Fq 'name: starter-driver-plugin-${{ github.event.workflow_run.id }}' "$release_repeat_workflow" ||
+  die "#348 repeat artifact name is not bound to the parent run"
+grep -Fq 'ref: ${{ env.CANDIDATE_SHA }}' "$release_repeat_workflow" ||
+  die "#348 repeat checkout is not exact-SHA pinned"
+grep -Fq 'job_conclusion "Starter Driver E2E Gate"' "$release_repeat_workflow" ||
+  die "#348 repeat does not prove the parent stable-shard gate"
+grep -Fq 'job_conclusion "Deterministic Visual Acceptance Gate"' "$release_repeat_workflow" ||
+  die "#348 repeat does not prove the parent visual gate"
+grep -Fq 'job_conclusion "Targeted E2E Diagnostic Gate"' "$release_repeat_workflow" ||
+  die "#348 repeat cannot distinguish bounded targeted diagnostics"
+grep -Fq 'parent_run_id=$PARENT_RUN_ID' "$release_repeat_workflow" ||
+  die "#348 repeat evidence lost parent run provenance"
+grep -Fq 'candidate_sha=$CANDIDATE_SHA' "$release_repeat_workflow" ||
+  die "#348 repeat evidence lost exact candidate provenance"
+grep -Fq 'plugin_sha256=$E2E_PLUGIN_SHA256' "$release_repeat_workflow" ||
+  die "#348 repeat evidence lost packaged-plugin identity"
+grep -Fq 'E2E_PLUGIN_PATH="build/distributions/release-candidate-plugin.zip"' "$release_repeat_workflow" ||
+  die "#348 repeat must use a fixed local plugin path"
+grep -Fq 'export E2E_PLUGIN_PATH E2E_PLUGIN_SHA256' "$release_repeat_workflow" ||
+  die "#348 repeat plugin identity must remain process-local to the canonical execution step"
+if grep -Eq 'E2E_PLUGIN_(PATH|SHA256)=.*GITHUB_ENV' "$release_repeat_workflow"; then
+  die "#348 repeat must not propagate parent artifact-derived plugin identity through GITHUB_ENV"
+fi
+grep -Fq '  contents: read' "$release_repeat_workflow" ||
+  die "#348 repeat must use read-only repository contents permission"
+grep -Fq '  actions: read' "$release_repeat_workflow" ||
+  die "#348 repeat requires only read access to parent artifacts"
+if grep -Eq '^[[:space:]]+[A-Za-z0-9_-]+:[[:space:]]+write([[:space:]]|$)' "$release_repeat_workflow"; then
+  die "#348 repeat must not gain write permissions"
+fi
+[ "$(grep -Fc -- '-x buildPlugin' "$release_repeat_workflow" || true)" = "1" ] ||
+  die "#348 repeat must execute against the parent artifact without rebuilding it"
 grep -Fq 'name: Starter Driver E2E Gate' "$starter_workflow" || die "Starter workflow has no aggregate stable-shard gate"
 grep -Fq -- '--required-suite "$suite"' "$starter_workflow" || die "Starter shard diagnostics are not scoped to their declared suites"
 grep -Fq 'MarkFlowStarterFullProductJourneyTest' "$starter_diagnostics" || die "Starter diagnostics do not recognize the canonical full-product journey"
