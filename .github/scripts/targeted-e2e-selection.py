@@ -182,8 +182,10 @@ def main() -> None:
     parser.add_argument("--shard", default="")
     parser.add_argument("--suite", default="")
     parser.add_argument("--case-ids", default="")
+    parser.add_argument("--root", type=Path, default=None,
+                        help="Exact candidate corpus root; script itself stays trusted")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[2]
+    root = args.root.resolve() if args.root is not None else Path(__file__).resolve().parents[2]
     if args.self_test:
         self_test(root)
         print("Targeted E2E selector negative controls: PASS")
