@@ -1680,8 +1680,8 @@ grep -q '^      target_sha:$' "$build_workflow" || die "required Build recovery 
 [ ! -e .github/workflows/dependency-review.yml ] || die "standalone Dependency Review workflow must stay deleted after graph consolidation"
 
 metadata_job="$(awk '
-  /^  metadataSafety:$/ { on=1 }
-  on && /^  dependencyReview:$/ { exit }
+  /^  metadataSafety:$/ { on=1; print; next }
+  on && /^  [A-Za-z0-9_-]+:$/ { exit }
   on { print }
 ' "$build_workflow")"
 [ -n "$metadata_job" ] || die "integrated PR Metadata Safety job could not be located"
@@ -1701,6 +1701,24 @@ fi
 grep -q 'python3 .github/scripts/check-squash-message-safety.py' <<<"$metadata_job" || die "PR Metadata Safety does not invoke squash message safety guard"
 jq -e '.repository_settings.squash_merge_commit_title == "PR_TITLE" and .repository_settings.squash_merge_commit_message == "BLANK"' .github/merge-gate-policy.json >/dev/null || die "canonical squash metadata policy must use PR_TITLE with a blank commit body"
 
+dependency_submission_validation_job="$(awk '
+  /^  dependencySubmissionValidation:$/ { on=1 }
+  on && /^  dependencyReview:$/ { exit }
+  on { print }
+' "$build_workflow")"
+[ -n "$dependency_submission_validation_job" ] || die "Dependency submission PR validation job could not be located"
+grep -q '^    name: Dependency submission PR validation$' <<<"$dependency_submission_validation_job" || die "Dependency submission PR validation component name drifted"
+grep -Fq '      contents: read' <<<"$dependency_submission_validation_job" || die "Dependency submission PR validation lost contents:read"
+grep -Fq '      pull-requests: read' <<<"$dependency_submission_validation_job" || die "Dependency submission PR validation lost pull-requests:read"
+if grep -Eq '^      [A-Za-z0-9_-]+: write([[:space:]]|$)' <<<"$dependency_submission_validation_job"; then
+  die "Dependency submission PR validation gained write authority"
+fi
+grep -Fq 'dependency-graph: generate-and-upload' <<<"$dependency_submission_validation_job" || die "Dependency submission PR validation is not in generate-and-upload mode"
+if grep -Fq 'dependency-graph: generate-and-submit' <<<"$dependency_submission_validation_job"; then
+  die "Dependency submission PR validation must never submit"
+fi
+grep -Fq 'persist-credentials: false' <<<"$dependency_submission_validation_job" || die "Dependency submission PR validation persists checkout credentials"
+
 dependency_job="$(awk '
   /^  dependencyReview:$/ { on=1 }
   on && /^  mergeGate:$/ { exit }
@@ -1717,13 +1735,14 @@ merge_gate_job="$(awk '
 ' "$build_workflow")"
 [ -n "$merge_gate_job" ] || die "Merge Gate job could not be located"
 grep -q '^    name: Merge Gate$' <<<"$merge_gate_job" || die "Merge Gate required context name drifted"
-grep -Fq 'needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]' <<<"$merge_gate_job" || die "Merge Gate component dependency set drifted"
+grep -Fq 'needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencySubmissionValidation, dependencyReview, nativeEvidence, starterEvidence ]' <<<"$merge_gate_job" || die "Merge Gate component dependency set drifted"
 grep -Fq 'if: ${{ always() }}' <<<"$merge_gate_job" || die "Merge Gate does not use always()"
 grep -Fq 'needs.build.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Build result"
 grep -Fq 'needs.test.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Test result"
 grep -Fq 'needs.inspectCode.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Inspect code result"
 grep -Fq 'needs.verify.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Verify plugin result"
 grep -Fq 'needs.metadataSafety.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect PR Metadata Safety result"
+grep -Fq 'needs.dependencySubmissionValidation.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Dependency submission PR validation result"
 grep -Fq 'needs.dependencyReview.result' <<<"$merge_gate_job" || die "Merge Gate does not inspect Dependency Review result"
 for proof in nativeEvidence starterEvidence; do
   grep -Fq "needs.$proof.result" <<<"$merge_gate_job" || die "Merge Gate does not inspect $proof"
@@ -1737,6 +1756,7 @@ grep -Fq 'product_expected=skipped' <<<"$merge_gate_job" || die "Merge Gate does
 grep -Fq 'product_expected=success' <<<"$merge_gate_job" || die "Merge Gate does not require successful product jobs without replacement reuse"
 grep -Fq 'if [ "$result" != "$product_expected" ]; then' <<<"$merge_gate_job" || die "Merge Gate does not enforce product result against replacement reuse state"
 grep -Fq 'if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate no longer keeps PR Metadata Safety fail-closed"
+grep -Fq 'if [ "$DEPENDENCY_SUBMISSION_VALIDATION_RESULT" != "success" ]; then' <<<"$merge_gate_job" || die "Merge Gate no longer keeps Dependency submission PR validation fail-closed"
 grep -Fq '[[ "$PRIOR_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]' <<<"$merge_gate_job" || die "Merge Gate does not require exact prior evidence identity"
 grep -Fq '[ "$failed" -eq 0 ]' <<<"$merge_gate_job" || die "Merge Gate does not enforce aggregate failure state"
 grep -Fq "github.event_name == 'workflow_dispatch' && inputs.target_sha" "$build_workflow" || die "required Build workflow does not checkout the requested recovery SHA"

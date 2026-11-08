@@ -119,6 +119,11 @@ copy_root "$metadata_reuse_guard"
 perl -0pi -e 's/  metadataSafety:\n    name: PR Metadata Safety\n/  metadataSafety:\n    name: PR Metadata Safety\n    if: \$\{\{ needs.headEvidence.outputs.reuse_product_evidence != '\''true'\'' \}\}\n/' "$metadata_reuse_guard/.github/workflows/build.yml"
 expect_fail "$metadata_reuse_guard" policy_producers "PR Metadata Safety must remain unconditional"
 
+dependency_submission_reuse_guard="$TMP/dependency-submission-reuse-guard"
+copy_root "$dependency_submission_reuse_guard"
+perl -0pi -e 's/  dependencySubmissionValidation:\n    name: Dependency submission PR validation\n/  dependencySubmissionValidation:\n    name: Dependency submission PR validation\n    if: \$\{\{ needs.headEvidence.outputs.reuse_product_evidence != '\''true'\'' \}\}\n/' "$dependency_submission_reuse_guard/.github/workflows/build.yml"
+expect_fail "$dependency_submission_reuse_guard" policy_producers "Dependency submission PR validation must remain unconditional"
+
 continue_component="$TMP/continue-component"
 copy_root "$continue_component"
 perl -0pi -e 's/  test:\n    name: Test\n/  test:\n    name: Test\n    continue-on-error: true\n/' "$continue_component/.github/workflows/build.yml"
@@ -126,7 +131,7 @@ expect_fail "$continue_component" policy_producers "component 'Test' continues o
 
 missing_component="$TMP/missing-component"
 copy_root "$missing_component"
-perl -0pi -e 's/needs: \[ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence \]/needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, nativeEvidence, starterEvidence ]/' "$missing_component/.github/workflows/build.yml"
+perl -0pi -e 's/needs: \[ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencySubmissionValidation, dependencyReview, nativeEvidence, starterEvidence \]/needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, nativeEvidence, starterEvidence ]/' "$missing_component/.github/workflows/build.yml"
 expect_fail "$missing_component" policy_producers "needs do not exactly match authoritative component jobs"
 
 unrouted_native="$TMP/unrouted-native"
@@ -156,7 +161,7 @@ expect_fail "$aggregate_continue" policy_producers "Merge Gate must not continue
 
 noop="$TMP/noop"
 copy_root "$noop"
-perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
+perl -0pi -e 's/  mergeGate:\n.*\z/  mergeGate:\n    name: Merge Gate\n    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencySubmissionValidation, dependencyReview, nativeEvidence, starterEvidence ]\n    if: \$\{\{ always\(\) \}\}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - name: Fake green\n        run: echo "passed"\n/s' "$noop/.github/workflows/build.yml"
 expect_fail "$noop" policy_producers "fake or no-op job"
 
 missing_result_check="$TMP/missing-result-check"
@@ -173,6 +178,11 @@ missing_metadata_fail_closed="$TMP/missing-metadata-fail-closed"
 copy_root "$missing_metadata_fail_closed"
 perl -0pi -e 's/if \[ "\$PR_METADATA_SAFETY_RESULT" != "success" \]; then/if false; then/' "$missing_metadata_fail_closed/.github/workflows/build.yml"
 expect_fail "$missing_metadata_fail_closed" policy_producers "does not keep PR Metadata Safety fail-closed"
+
+missing_dependency_submission_fail_closed="$TMP/missing-dependency-submission-fail-closed"
+copy_root "$missing_dependency_submission_fail_closed"
+perl -0pi -e 's/if \[ "\$DEPENDENCY_SUBMISSION_VALIDATION_RESULT" != "success" \]; then/if false; then/' "$missing_dependency_submission_fail_closed/.github/workflows/build.yml"
+expect_fail "$missing_dependency_submission_fail_closed" policy_producers "does not keep Dependency submission PR validation fail-closed"
 
 missing_prior_identity="$TMP/missing-prior-identity"
 copy_root "$missing_prior_identity"

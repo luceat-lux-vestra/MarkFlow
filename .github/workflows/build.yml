@@ -1177,6 +1177,86 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: python3 .github/scripts/check-squash-message-safety.py
 
+
+  dependencySubmissionValidation:
+    name: Dependency submission PR validation
+    needs: [ headEvidence ]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Fetch exact validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.target_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify dependency-submission PR adapter policy
+        run: |
+          python3 .github/scripts/trusted-dependency-submission-validation.py self-test
+          python3 .github/scripts/trusted-dependency-submission-validation.py check-contract \
+            --production .github/workflows/dependency-submission.yml \
+            --pr-workflow .github/workflows/build.yml \
+            --version-catalog gradle/libs.versions.toml
+
+      - name: Classify dependency-submission validation scope
+        id: dependency-scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ] || [ "$EVENT_ACTION" = "edited" ]; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "Dependency-submission runtime validation is not applicable to this event."
+            exit 0
+          fi
+          pull="$RUNNER_TEMP/dependency-pr.json"
+          files="$RUNNER_TEMP/dependency-pr-files.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pull"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" > "$files"
+          python3 .github/scripts/trusted-dependency-submission-validation.py classify \
+            --pull "$pull" \
+            --pages "$files" \
+            --head "$EXPECTED_HEAD" \
+            --version-catalog gradle/libs.versions.toml >> "$GITHUB_OUTPUT"
+
+      - name: Setup supported Java
+        if: ${{ steps.dependency-scope.outputs.required == 'true' }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Generate untrusted PR dependency graph without submission
+        if: ${{ steps.dependency-scope.outputs.required == 'true' }}
+        uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+          dependency-graph: generate-and-upload
+          dependency-graph-report-dir: dependency-graph-reports-pr
+          dependency-graph-continue-on-failure: false
+
+      - name: Verify PR dependency graph provenance and coverage
+        if: ${{ steps.dependency-scope.outputs.required == 'true' }}
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          python3 .github/scripts/trusted-dependency-submission-validation.py verify \
+            --dir dependency-graph-reports-pr \
+            --head "$EXPECTED_HEAD" \
+            --event-ref "$EVENT_REF" \
+            --version-catalog gradle/libs.versions.toml
+
   dependencyReview:
     name: Dependency Review
     needs: [ headEvidence ]
@@ -1221,7 +1301,7 @@ jobs:
 
   mergeGate:
     name: Merge Gate
-    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencyReview, nativeEvidence, starterEvidence ]
+    needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencySubmissionValidation, dependencyReview, nativeEvidence, starterEvidence ]
     if: ${{ always() }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -1242,6 +1322,7 @@ jobs:
           INSPECT_CODE_RESULT: ${{ needs.inspectCode.result }}
           VERIFY_PLUGIN_RESULT: ${{ needs.verify.result }}
           PR_METADATA_SAFETY_RESULT: ${{ needs.metadataSafety.result }}
+          DEPENDENCY_SUBMISSION_VALIDATION_RESULT: ${{ needs.dependencySubmissionValidation.result }}
           DEPENDENCY_REVIEW_RESULT: ${{ needs.dependencyReview.result }}
         run: |
           set -euo pipefail
@@ -1272,6 +1353,11 @@ jobs:
 
           if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then
             echo "::error::PR Metadata Safety concluded '$PR_METADATA_SAFETY_RESULT'; Merge Gate fails closed."
+            failed=1
+          fi
+
+          if [ "$DEPENDENCY_SUBMISSION_VALIDATION_RESULT" != "success" ]; then
+            echo "::error::Dependency submission PR validation concluded '$DEPENDENCY_SUBMISSION_VALIDATION_RESULT'; Merge Gate fails closed."
             failed=1
           fi
 
