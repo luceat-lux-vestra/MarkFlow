@@ -134,31 +134,31 @@ jobs:
           fetch_candidate_file "$manifest"
           mapfile -t mermaid_paths < <(
             python3 - "$corpus_root/$manifest" <<'PY'
-import csv
-import re
-import sys
-from pathlib import PurePosixPath
+          import csv
+          import re
+          import sys
+          from pathlib import PurePosixPath
 
-manifest = sys.argv[1]
-with open(manifest, encoding="utf-8", newline="") as handle:
-    rows = list(csv.DictReader(handle, delimiter="\t"))
-if len(rows) != 88:
-    raise SystemExit("Candidate corpus must contain exactly 88 reviewed rows")
+          manifest = sys.argv[1]
+          with open(manifest, encoding="utf-8", newline="") as handle:
+              rows = list(csv.DictReader(handle, delimiter="\t"))
+          if len(rows) != 88:
+              raise SystemExit("Candidate corpus must contain exactly 88 reviewed rows")
 
-paths = set()
-for row in rows:
-    if row.get("domain") != "mermaid":
-        continue
-    raw = row.get("fixture_path", "")
-    path = PurePosixPath(raw)
-    if (not raw or path.is_absolute() or ".." in path.parts or
-            re.fullmatch(r"[A-Za-z0-9._/-]+", raw) is None):
-        raise SystemExit(f"Unsafe Mermaid fixture path: {raw!r}")
-    paths.add(raw)
+          paths = set()
+          for row in rows:
+              if row.get("domain") != "mermaid":
+                  continue
+              raw = row.get("fixture_path", "")
+              path = PurePosixPath(raw)
+              if (not raw or path.is_absolute() or ".." in path.parts or
+                      re.fullmatch(r"[A-Za-z0-9._/-]+", raw) is None):
+                  raise SystemExit(f"Unsafe Mermaid fixture path: {raw!r}")
+              paths.add(raw)
 
-for path in sorted(paths):
-    print(path)
-PY
+          for path in sorted(paths):
+              print(path)
+          PY
           )
           [ "${#mermaid_paths[@]}" -gt 0 ] || {
             echo "::error::Candidate corpus contains no Mermaid fixtures"
