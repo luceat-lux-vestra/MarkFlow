@@ -548,8 +548,10 @@ if grep -Eq 'runIdeForUiTests|robotServerPlugin|robot-server\.port' build.gradle
 fi
 
 starter_workflow=".github/workflows/starter-driver-e2e.yml"
+release_candidate_parent_workflow=".github/workflows/release-candidate-starter-e2e.yml"
 release_repeat_workflow=".github/workflows/release-candidate-repeat.yml"
 full_differential_workflow=".github/workflows/full-differential-acceptance.yml"
+[ -f "$release_candidate_parent_workflow" ] || die "#527 dedicated release-candidate parent workflow is missing"
 [ -f "$release_repeat_workflow" ] || die "#348 automatic release-candidate repeat workflow is missing"
 [ -f "$full_differential_workflow" ] || die "#353 canonical full differential workflow is missing"
 [ ! -e .github/workflows/full-differential-acceptance-post-main.yml ] || die "#353 obsolete post-main push workflow must stay deleted"
@@ -741,15 +743,41 @@ fi
 if grep -Fq 'name: Release candidate canonical repeat' "$starter_workflow"; then
   die "#348 independent repeat must stay outside the parent Starter workflow"
 fi
+
+grep -Fq 'name: Release Candidate Starter E2E' "$release_candidate_parent_workflow" ||
+  die "#527 dedicated release-candidate parent workflow identity drifted"
+grep -Eq '^  workflow_dispatch:([[:space:]]|$)' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent must remain explicit manual-only dispatch"
+if grep -Eq '^  (workflow_call|pull_request|pull_request_target|push|schedule|repository_dispatch):([[:space:]]|$)' "$release_candidate_parent_workflow"; then
+  die "#527 release-candidate parent must not gain implicit trigger paths"
+fi
+grep -Fq 'target_sha:' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent lost exact-SHA declaration input"
+grep -Fq 'Release candidate dispatch must run from protected main' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent lost protected-main guard"
+grep -Fq 'Release candidate target must equal the dispatch main HEAD' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent lost exact dispatch-SHA binding"
+grep -Fq 'uses: ./.github/workflows/starter-driver-e2e.yml' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent must reuse maintained Starter authority"
+grep -Fq 'name: Starter Driver E2E' "$release_candidate_parent_workflow" ||
+  die "#527 reusable Starter parent job identity drifted"
+grep -Fq '  contents: read' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent must retain read-only contents"
+grep -Fq '  actions: read' "$release_candidate_parent_workflow" ||
+  die "#527 release-candidate parent must retain read-only actions"
+if grep -Eq '^[[:space:]]+[A-Za-z0-9_-]+:[[:space:]]+write([[:space:]]|$)' "$release_candidate_parent_workflow"; then
+  die "#527 release-candidate parent must not gain write permissions"
+fi
+
 grep -Eq '^  workflow_run:([[:space:]]|$)' "$release_repeat_workflow" ||
   die "#348 repeat must be triggered by workflow_run"
 
 [ "$(grep -Fc '# zizmor: ignore[dangerous-triggers]' "$release_repeat_workflow" || true)" = "1" ] ||
   die "#348 workflow_run must keep exactly one reviewed dangerous-trigger waiver"
-grep -Fq 'workflow_run: # zizmor: ignore[dangerous-triggers] -- #348 accepts only successful first-attempt same-repository main workflow_dispatch runs and revalidates parent SHA/artifact identity' "$release_repeat_workflow" ||
-  die "#348 workflow_run dangerous-trigger waiver lost its reviewed trust-boundary rationale"
-grep -Fq 'workflows: [Starter Driver E2E]' "$release_repeat_workflow" ||
-  die "#348 repeat must listen only to Starter Driver E2E"
+grep -Fq 'workflow_run: # zizmor: ignore[dangerous-triggers] -- #527 accepts only the dedicated successful first-attempt same-repository main release-candidate parent and revalidates SHA/artifact identity' "$release_repeat_workflow" ||
+  die "#527 workflow_run dangerous-trigger waiver lost its reviewed dedicated-parent rationale"
+grep -Fq 'workflows: [Release Candidate Starter E2E]' "$release_repeat_workflow" ||
+  die "#527 repeat must listen only to the dedicated release-candidate parent"
 grep -Fq 'types: [completed]' "$release_repeat_workflow" ||
   die "#348 repeat must wait for parent completion"
 if grep -Eq '^  (pull_request|pull_request_target|push|workflow_dispatch|schedule|repository_dispatch):([[:space:]]|$)' "$release_repeat_workflow"; then
@@ -759,6 +787,8 @@ grep -Fq "github.event.workflow_run.conclusion == 'success'" "$release_repeat_wo
   die "#348 repeat lost successful-parent gating"
 grep -Fq "github.event.workflow_run.event == 'workflow_dispatch'" "$release_repeat_workflow" ||
   die "#348 repeat lost trusted standalone-parent gating"
+grep -Fq '.name == "Release Candidate Starter E2E" and' "$release_repeat_workflow" ||
+  die "#527 repeat no longer revalidates dedicated parent workflow identity"
 grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release_repeat_workflow" ||
   die "#348 repeat lost protected-main provenance gating"
 grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$release_repeat_workflow" ||
@@ -775,13 +805,17 @@ grep -Fq 'run-id: ${{ github.event.workflow_run.id }}' "$release_repeat_workflow
   die "#348 repeat does not consume the parent run artifact"
 grep -Fq 'name: starter-driver-plugin-${{ github.event.workflow_run.id }}' "$release_repeat_workflow" ||
   die "#348 repeat artifact name is not bound to the parent run"
+grep -Fq 'job_conclusion "Starter Driver E2E / Package exact Starter plugin"' "$release_repeat_workflow" ||
+  die "#527 repeat no longer validates the dedicated parent's exact package job"
+grep -Fq 'job_conclusion "Starter Driver E2E / Real IDE Starter Driver (canonical)"' "$release_repeat_workflow" ||
+  die "#527 repeat no longer validates the dedicated parent's canonical job"
 grep -Fq 'ref: ${{ env.CANDIDATE_SHA }}' "$release_repeat_workflow" ||
   die "#348 repeat checkout is not exact-SHA pinned"
-grep -Fq 'job_conclusion "Starter Driver E2E Gate"' "$release_repeat_workflow" ||
-  die "#348 repeat does not prove the parent stable-shard gate"
-grep -Fq 'job_conclusion "Deterministic Visual Acceptance Gate"' "$release_repeat_workflow" ||
-  die "#348 repeat does not prove the parent visual gate"
-grep -Fq 'job_conclusion "Targeted E2E Diagnostic Gate"' "$release_repeat_workflow" ||
+grep -Fq 'job_conclusion "Starter Driver E2E / Starter Driver E2E Gate"' "$release_repeat_workflow" ||
+  die "#348 repeat does not prove the dedicated parent stable-shard gate"
+grep -Fq 'job_conclusion "Starter Driver E2E / Deterministic Visual Acceptance Gate"' "$release_repeat_workflow" ||
+  die "#348 repeat does not prove the dedicated parent visual gate"
+grep -Fq 'job_conclusion "Starter Driver E2E / Targeted E2E Diagnostic Gate"' "$release_repeat_workflow" ||
   die "#348 repeat cannot distinguish bounded targeted diagnostics"
 grep -Fq 'parent_run_id=$PARENT_RUN_ID' "$release_repeat_workflow" ||
   die "#348 repeat evidence lost parent run provenance"
