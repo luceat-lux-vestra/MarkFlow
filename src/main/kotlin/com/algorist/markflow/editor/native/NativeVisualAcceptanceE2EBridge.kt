@@ -287,7 +287,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         val window = requireNotNull(SwingUtilities.getWindowAncestor(component))
 
         return listOf(
-            "visual_contract=v1",
+            "visual_contract=v2",
             "window=${window.width}x${window.height}",
             "viewport=${editor.scrollingModel.visibleArea.width}x${editor.scrollingModel.visibleArea.height}",
             "screen=${screen.width}x${screen.height}",
@@ -313,7 +313,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             "mermaid_size=${runtime.mermaidSizeMode}",
             "mermaid_zoom=${runtime.mermaidZoomPercent}",
             "katex_density=${runtime.katexDisplayDensity}",
-        ).joinToString(separator = "\n", postfix = "\n")
+        ).let(::strictVisualEnvironmentIdentity)
     }
 
     fun contentScreenX(editor: Editor): Int =
@@ -367,3 +367,15 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     private fun format(value: Double): String = String.format(Locale.ROOT, "%.3f", value)
 }
+
+/**
+ * #529 strict visual identity excludes outer IDE frame geometry.
+ *
+ * The harness adjusts the top-level window only to reach the authoritative 1200x760 editor
+ * viewport, so different frame/chrome heights must not invalidate an otherwise identical capture.
+ */
+internal fun strictVisualEnvironmentIdentity(entries: List<String>): String =
+    entries
+        .asSequence()
+        .filterNot { it.startsWith("window=") }
+        .joinToString(separator = "\n", postfix = "\n")
