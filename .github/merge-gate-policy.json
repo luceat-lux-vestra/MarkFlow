@@ -6,7 +6,7 @@
     "The audit compares required producer definitions with workflow files and, when an explicit repository-administration credential is supplied, with the live rulesets.",
     "Scheduled/manual workflow execution is credential-less by default; privileged live readback is explicit opt-in or external exit-audit evidence, never inferred from CI."
   ],
-  "version": 3,
+  "version": 4,
   "repository": "luceat-lux-vestra/MarkFlow",
   "protected_branch": "main",
   "ruleset_name": "main protection",
@@ -28,7 +28,7 @@
       "workflow": ".github/workflows/build.yml",
       "job": "mergeGate",
       "trigger": "pull_request",
-      "covers": "Fail-closed aggregation of exact head routing, six unconditional jobs, and both conditionally required native/Starter real IDE evidence calls."
+      "covers": "Fail-closed aggregation of exact head routing, seven authoritative component jobs, and both conditionally required native/Starter real IDE evidence calls."
     }
   ],
   "staged_required": [],
@@ -154,6 +154,12 @@
       "workflow": ".github/workflows/build.yml",
       "job": "metadataSafety",
       "covers": "PR-title squash-message safety under the blank-body policy. Revalidates edited metadata and rejects GitHub Actions skip directives before they can enter the squash commit title."
+    },
+    {
+      "context": "Dependency submission PR validation",
+      "workflow": ".github/workflows/build.yml",
+      "job": "dependencySubmissionValidation",
+      "covers": "Read-only exact-PR-head execution of the production Gradle dependency-submission runtime in generate-and-upload mode; PR graphs are never production submission evidence."
     },
     {
       "context": "Dependency Review",

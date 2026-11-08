@@ -37,7 +37,7 @@ The maintainer is responsible for:
 
 ## Merge governance
 
-The intended merge contract for `main` is pull-request-only, squash-only, linear history, no force-push/deletion, fresh required checks, resolved review conversations, and no routine bypass. The live ruleset requires one GitHub Actions context, `Merge Gate`. That aggregate directly depends on the authoritative `Build`, `Test`, `Inspect code`, `Verify plugin`, `PR Metadata Safety`, and `Dependency Review` component jobs and fails unless every component result is exactly `success`. Live repository/ruleset readback remains authoritative when configuration changes.
+The intended merge contract for `main` is pull-request-only, squash-only, linear history, no force-push/deletion, fresh required checks, resolved review conversations, and no routine bypass. The live ruleset requires one GitHub Actions context, `Merge Gate`. That aggregate directly depends on the authoritative `Build`, `Test`, `Inspect code`, `Verify plugin`, `PR Metadata Safety`, `Dependency submission PR validation`, and `Dependency Review` component jobs and fails unless every component result is exactly `success`. Live repository/ruleset readback remains authoritative when configuration changes.
 
 A review PASS belongs to one exact PR HEAD SHA. If HEAD changes, review again. `UNKNOWN`, `UNVERIFIED`, or insufficient evidence are FAIL. Merge only the reviewed `expected_head_sha`, then verify resulting `main` SHA/tree/signature and post-main checks before closing the linked Task.
 

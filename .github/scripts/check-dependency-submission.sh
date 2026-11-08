@@ -56,4 +56,10 @@ if ( assert_contract "$fixtures/no-submit.yml" ) 2>/dev/null; then die "no-submi
 sed '/gradle\/\*\*/d' "$workflow" > "$fixtures/missing-gradle-input.yml"
 if ( assert_contract "$fixtures/missing-gradle-input.yml" ) 2>/dev/null; then die "missing-input fixture accepted"; fi
 
-echo "custom Gradle dependency submission contract passed (3 negative controls)"
+python3 .github/scripts/trusted-dependency-submission-validation.py self-test
+python3 .github/scripts/trusted-dependency-submission-validation.py check-contract \
+  --production "$workflow" \
+  --pr-workflow .github/workflows/build.yml \
+  --version-catalog gradle/libs.versions.toml
+
+echo "custom Gradle dependency submission contract passed (3 shell negative controls + PR adapter self-tests)"

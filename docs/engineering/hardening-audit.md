@@ -52,10 +52,10 @@ event policy therefore requires a reviewed policy change rather than being
 silently accepted.
 
 The main ruleset requires one GitHub Actions context: `Merge Gate`. The
-checked-in policy separately declares the six authoritative internal
+checked-in policy separately declares the seven authoritative internal
 components—`Build`, `Test`, `Inspect code`, `Verify plugin`,
-`PR Metadata Safety`, and `Dependency Review`. They execute in the same
-workflow dependency graph. The aggregate job uses `always()` and fails unless
+`PR Metadata Safety`, `Dependency submission PR validation`, and `Dependency Review`. They execute in the same
+workflow dependency graph. The dependency-submission component executes fresh on every merge-gate run (while its expensive Gradle runtime is selectively scoped to relevant PR changes), and the aggregate job uses `always()` and fails unless
 every component result is exactly `success`; a failed, cancelled, skipped, or
 missing component is therefore not treated as PASS.
 

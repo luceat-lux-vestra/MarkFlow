@@ -107,10 +107,10 @@ check_policy_shape() {
   fi
 
   component_count="$(jq '.merge_gate_components | length' "$POLICY")"
-  [ "$component_count" -eq 6 ] || { finding policy_shape "Merge Gate must declare exactly six authoritative components"; clean=0; }
+  [ "$component_count" -eq 7 ] || { finding policy_shape "Merge Gate must declare exactly seven authoritative components"; clean=0; }
   if ! jq -e '
     (.merge_gate_components | map(.context) | sort) ==
-    (["Build","Test","Inspect code","Verify plugin","PR Metadata Safety","Dependency Review"] | sort)
+    (["Build","Test","Inspect code","Verify plugin","PR Metadata Safety","Dependency submission PR validation","Dependency Review"] | sort)
   ' "$POLICY" >/dev/null; then
     finding policy_shape "Merge Gate authoritative component set drifted"; clean=0
   fi
@@ -196,7 +196,7 @@ check_policy_shape() {
     finding policy_shape "retired failure-triage.yml unexpectedly exists"; clean=0
   fi
 
-  [ "$clean" -eq 1 ] && info policy_shape "single required Merge Gate and its six authoritative components are internally consistent"
+  [ "$clean" -eq 1 ] && info policy_shape "single required Merge Gate and its seven authoritative components are internally consistent"
   return 0
 }
 
@@ -297,6 +297,11 @@ check_policy_producers() {
           finding policy_producers "PR Metadata Safety must remain unconditional across replacement-evidence reuse"; clean=0
         fi
         ;;
+      dependencySubmissionValidation)
+        if [ -n "$component_cond" ]; then
+          finding policy_producers "Dependency submission PR validation must remain unconditional across replacement-evidence reuse"; clean=0
+        fi
+        ;;
       *)
         finding policy_producers "Merge Gate component '$component_context' has unsupported policy job '$component_job'"; clean=0
         ;;
@@ -366,6 +371,9 @@ check_policy_producers() {
   if ! printf '%s\n' "$block" | grep -Fq 'if [ "$PR_METADATA_SAFETY_RESULT" != "success" ]; then'; then
     finding policy_producers "Merge Gate does not keep PR Metadata Safety fail-closed"; clean=0
   fi
+  if ! printf '%s\n' "$block" | grep -Fq 'if [ "$DEPENDENCY_SUBMISSION_VALIDATION_RESULT" != "success" ]; then'; then
+    finding policy_producers "Merge Gate does not keep Dependency submission PR validation fail-closed"; clean=0
+  fi
   if ! printf '%s\n' "$block" | grep -Fq '[[ "$PRIOR_HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]'; then
     finding policy_producers "Merge Gate does not require exact prior evidence identity for reuse"; clean=0
   fi
@@ -373,7 +381,7 @@ check_policy_producers() {
     finding policy_producers "Merge Gate does not enforce aggregate failure state"; clean=0
   fi
 
-  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' preserves Metadata Safety and either executes or provenance-reuses five product jobs plus route-selected native/Starter evidence"
+  [ "$clean" -eq 1 ] && info policy_producers "'Merge Gate' preserves Metadata Safety and fresh dependency-submission validation, and either executes or provenance-reuses five product jobs plus route-selected native/Starter evidence"
   return 0
 }
 
