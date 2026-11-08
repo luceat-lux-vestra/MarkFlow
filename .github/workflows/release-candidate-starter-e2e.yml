@@ -13,6 +13,10 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: release-candidate-starter-e2e-${{ github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate exact release candidate target
