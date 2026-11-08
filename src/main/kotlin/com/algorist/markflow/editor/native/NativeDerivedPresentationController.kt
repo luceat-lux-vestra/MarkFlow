@@ -50,6 +50,8 @@ internal data class NativeDerivedPresentationEvidence(
     val missingArtifacts: Long,
     val accessibilityFallbacks: Long,
     val mouseReveals: Long,
+    val renderRequests: Long,
+    val lastPlanCarriedArtifacts: Int,
 )
 
 /**
@@ -85,6 +87,8 @@ internal class NativeDerivedPresentationController(
     private var missingArtifacts = 0L
     private var accessibilityFallbacks = 0L
     private var mouseReveals = 0L
+    private var renderRequests = 0L
+    private var lastPlanCarriedArtifacts = 0
 
     private val mouseListener = object : EditorMouseListener {
         override fun mousePressed(event: EditorMouseEvent) {
@@ -110,37 +114,60 @@ internal class NativeDerivedPresentationController(
     fun applyPlan(plan: NativeProjectionPlan) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
+
+        val nextDerived = NativeDerivedProjectionPlanner.plan(plan)
+        val richEnabled = runCatching(richPresentationEnabled).getOrDefault(false)
+        val canCarryDecoded =
+            plan.status == ProjectionPlanStatus.READY &&
+                richEnabled &&
+                currentPlanIdentity?.configGeneration == plan.identity.configGeneration
+
         cancelPending()
-        clearOwnedPresentation()
-        clearErrorPresentation()
-        decoded.clear()
-        errorMessages.clear()
+        val carriedKeys = if (canCarryDecoded) {
+            carryForwardStableDecoded(nextDerived)
+        } else {
+            clearOwnedPresentation()
+            clearErrorPresentation()
+            decoded.clear()
+            errorMessages.clear()
+            emptySet()
+        }
+
         currentPlanIdentity = plan.identity
-        currentDerived = NativeDerivedProjectionPlanner.plan(plan)
+        currentDerived = nextDerived
+        lastPlanCarriedArtifacts = carriedKeys.size
 
         if (plan.status != ProjectionPlanStatus.READY || currentDerived.isEmpty()) return
-        if (!runCatching(richPresentationEnabled).getOrDefault(false)) {
+        if (!richEnabled) {
             accessibilityFallbacks += currentDerived.size
             return
         }
-        val selectedRuntime = runtime
-            ?: runtimeProvider?.invoke()?.also { runtime = it }
-            ?: run {
-                rendererFailures += currentDerived.size
-                return
-            }
-        val settings = runCatching(settingsProvider).getOrElse {
-            rendererFailures += currentDerived.size
+
+        val projectionsToRender = currentDerived.filter { ProjectionKey.of(it) !in carriedKeys }
+        if (projectionsToRender.isEmpty()) {
+            refreshActivity(plan)
             return
         }
 
-        currentDerived.forEach { projection ->
+        val selectedRuntime = runtime
+            ?: runtimeProvider?.invoke()?.also { runtime = it }
+            ?: run {
+                rendererFailures += projectionsToRender.size
+                return
+            }
+        val settings = runCatching(settingsProvider).getOrElse {
+            rendererFailures += projectionsToRender.size
+            return
+        }
+
+        projectionsToRender.forEach { projection ->
             // Reserve the exact derived source range while it is still expanded. This keeps exact
             // Markdown visible while rendering is pending, but prevents later platform Markdown
             // folding from claiming the same range before the renderer artifact arrives.
             reserveFold(projection)
             request(selectedRuntime, plan.identity, projection, settings)
         }
+        refreshActivity(plan)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan) {
@@ -160,6 +187,77 @@ internal class NativeDerivedPresentationController(
         }
     }
 
+    /**
+     * Preserve already-decoded presentation for source-identical projections across a Document
+     * generation change. IntelliJ fold/inlay ranges track edits, so their current offsets provide
+     * the authoritative remap target after an edit elsewhere in the document.
+     *
+     * A projection being edited changes its renderer source and is therefore never carried. Only
+     * unrelated, source-identical projections survive the plan replacement without a visible
+     * source/rendered oscillation or redundant renderer request.
+     */
+    private fun carryForwardStableDecoded(
+        nextDerived: List<NativeDerivedProjection>,
+    ): Set<ProjectionKey> {
+        if (decoded.isEmpty() || reservedFolds.isEmpty()) {
+            clearOwnedPresentation()
+            clearErrorPresentation()
+            decoded.clear()
+            errorMessages.clear()
+            return emptySet()
+        }
+
+        val oldProjectionByKey = currentDerived.associateBy { ProjectionKey.of(it) }
+        val carriedOldKeys = linkedSetOf<ProjectionKey>()
+        val carriedNextKeys = linkedSetOf<ProjectionKey>()
+        val nextDecoded = LinkedHashMap<ProjectionKey, DecodedArtifact>()
+        val nextFolds = LinkedHashMap<ProjectionKey, FoldRegion>()
+        val nextInlays = LinkedHashMap<ProjectionKey, Inlay<*>>()
+
+        decoded.forEach { (oldKey, artifact) ->
+            val oldProjection = oldProjectionByKey[oldKey] ?: return@forEach
+            val fold = reservedFolds[oldKey]?.takeIf(FoldRegion::isValid) ?: return@forEach
+            val nextProjection = nextDerived.firstOrNull { candidate ->
+                val candidateKey = ProjectionKey.of(candidate)
+                candidateKey !in carriedNextKeys &&
+                    candidate.kind == oldProjection.kind &&
+                    candidate.source == oldProjection.source &&
+                    candidate.sourceRange.startOffset == fold.startOffset &&
+                    candidate.sourceRange.endOffset == fold.endOffset
+            } ?: return@forEach
+
+            val nextKey = ProjectionKey.of(nextProjection)
+            carriedOldKeys += oldKey
+            carriedNextKeys += nextKey
+            nextDecoded[nextKey] = artifact
+            nextFolds[nextKey] = fold
+
+            ownedInlays[oldKey]?.takeIf { it.isValid }?.let { inlay ->
+                (inlay.renderer as? NativeRasterInlayRenderer)?.projection = nextProjection
+                nextInlays[nextKey] = inlay
+            }
+        }
+
+        val staleOwnedKeys = linkedSetOf<ProjectionKey>().apply {
+            addAll(reservedFolds.keys)
+            addAll(ownedInlays.keys)
+            removeAll(carriedOldKeys)
+        }
+        staleOwnedKeys.forEach(::releaseOwned)
+
+        clearErrorPresentation()
+        errorMessages.clear()
+
+        decoded.clear()
+        decoded.putAll(nextDecoded)
+        reservedFolds.clear()
+        reservedFolds.putAll(nextFolds)
+        ownedInlays.clear()
+        ownedInlays.putAll(nextInlays)
+
+        return carriedNextKeys
+    }
+
     fun evidenceSnapshot(): NativeDerivedPresentationEvidence = NativeDerivedPresentationEvidence(
         planIdentity = currentPlanIdentity,
         derivedFragments = currentDerived.size,
@@ -174,6 +272,8 @@ internal class NativeDerivedPresentationController(
         missingArtifacts = missingArtifacts,
         accessibilityFallbacks = accessibilityFallbacks,
         mouseReveals = mouseReveals,
+        renderRequests = renderRequests,
+        lastPlanCarriedArtifacts = lastPlanCarriedArtifacts,
     )
 
     /**
@@ -263,6 +363,7 @@ internal class NativeDerivedPresentationController(
             mermaidErrorDisplay = settings.mermaidErrorDisplay,
             mermaidErrorMessage = settings.mermaidSyntaxErrorMessage,
         )
+        renderRequests += 1
         selectedRuntime.render(request) { result -> onRendererResult(requestId, result) }
     }
 
@@ -452,7 +553,7 @@ internal class NativeDerivedPresentationController(
     private fun isActive(projection: NativeDerivedProjection): Boolean {
         val range = projection.sourceRange
         return editor.caretModel.allCarets.any { caret ->
-            (caret.offset >= range.startOffset && caret.offset <= range.endOffset) ||
+            (caret.offset >= range.startOffset && caret.offset < range.endOffset) ||
                 (caret.hasSelection() && range.intersects(caret.selectionStart, caret.selectionEnd))
         }
     }
@@ -640,7 +741,7 @@ internal fun calculateNativeRasterDimensions(
 
 private class NativeRasterInlayRenderer(
     private val editor: Editor,
-    val projection: NativeDerivedProjection,
+    var projection: NativeDerivedProjection,
     private val image: BufferedImage,
     private val settingsProvider: () -> MarkFlowRuntimeSettings,
 ) : EditorCustomElementRenderer {
