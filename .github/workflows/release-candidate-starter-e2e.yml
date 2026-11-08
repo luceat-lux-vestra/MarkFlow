@@ -1,0 +1,49 @@
+name: Release Candidate Starter E2E
+run-name: Release candidate Starter E2E @ ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Exact protected-main SHA being declared as the release candidate'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    name: Validate exact release candidate target
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Require exact current protected-main identity
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.target_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [ "$DISPATCH_REF" = "refs/heads/main" ] || {
+            echo "::error::Release candidate dispatch must run from protected main"
+            exit 1
+          }
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Release candidate target must be an exact 40-hex commit SHA"
+            exit 1
+          }
+          [ "$REQUESTED_SHA" = "$DISPATCH_SHA" ] || {
+            echo "::error::Release candidate target must equal the dispatch main HEAD"
+            exit 1
+          }
+
+  starter:
+    name: Starter Driver E2E
+    needs: [validate]
+    uses: ./.github/workflows/starter-driver-e2e.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+      actions: read

@@ -2,8 +2,8 @@ name: Release Candidate Canonical Repeat
 run-name: Release candidate repeat for ${{ github.event.workflow_run.id }} @ ${{ github.event.workflow_run.head_sha }}
 
 on:
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- #348 accepts only successful first-attempt same-repository main workflow_dispatch runs and revalidates parent SHA/artifact identity
-    workflows: [Starter Driver E2E]
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- #527 accepts only the dedicated successful first-attempt same-repository main release-candidate parent and revalidates SHA/artifact identity
+    workflows: [Release Candidate Starter E2E]
     types: [completed]
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
             exit 1
           }
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error::Triggering Starter run did not provide an exact candidate SHA"
+            echo "::error::Triggering release-candidate parent did not provide an exact candidate SHA"
             exit 1
           }
           [ "$PARENT_RUN_ATTEMPT" = "1" ] || {
@@ -57,7 +57,7 @@ jobs:
           parent="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
           jq -e             --arg repo "$GITHUB_REPOSITORY"             --arg sha "$CANDIDATE_SHA"             --argjson run_id "$PARENT_RUN_ID"             '
               .id == $run_id and
-              .name == "Starter Driver E2E" and
+              .name == "Release Candidate Starter E2E" and
               .event == "workflow_dispatch" and
               .head_branch == "main" and
               .head_sha == $sha and
@@ -66,7 +66,7 @@ jobs:
               .conclusion == "success" and
               .run_attempt == 1
             ' <<<"$parent" >/dev/null || {
-              echo "::error::Triggering Starter run provenance is not trusted exact-main first-attempt success"
+              echo "::error::Triggering release-candidate parent provenance is not trusted exact-main first-attempt success"
               exit 1
             }
 
@@ -81,11 +81,11 @@ jobs:
             printf '%s' "${matches[0]}"
           }
 
-          package_result="$(job_conclusion "Package exact Starter plugin")"
-          canonical_result="$(job_conclusion "Real IDE Starter Driver (canonical)")"
-          stable_gate_result="$(job_conclusion "Starter Driver E2E Gate")"
-          visual_gate_result="$(job_conclusion "Deterministic Visual Acceptance Gate")"
-          targeted_gate_result="$(job_conclusion "Targeted E2E Diagnostic Gate")"
+          package_result="$(job_conclusion "Starter Driver E2E / Package exact Starter plugin")"
+          canonical_result="$(job_conclusion "Starter Driver E2E / Real IDE Starter Driver (canonical)")"
+          stable_gate_result="$(job_conclusion "Starter Driver E2E / Starter Driver E2E Gate")"
+          visual_gate_result="$(job_conclusion "Starter Driver E2E / Deterministic Visual Acceptance Gate")"
+          targeted_gate_result="$(job_conclusion "Starter Driver E2E / Targeted E2E Diagnostic Gate")"
 
           if [ "$targeted_gate_result" = "success" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
@@ -100,7 +100,7 @@ jobs:
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
           {
-            echo "Trusted parent Starter run: $PARENT_RUN_ID"
+            echo "Trusted release-candidate parent run: $PARENT_RUN_ID"
             echo "Pinned candidate SHA: $CANDIDATE_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
 
