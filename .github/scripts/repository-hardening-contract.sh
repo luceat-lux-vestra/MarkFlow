@@ -563,6 +563,19 @@ if grep -Eq '^  (pull_request|pull_request_target|push):([[:space:]]|$)' "$full_
 fi
 grep -Fq 'target_sha:' "$full_differential_workflow" || die "#353 manual full corpus lost exact-SHA input"
 grep -Fq 'Full differential target must be an exact 40-character commit SHA' "$full_differential_workflow" || die "#353 manual full corpus no longer rejects mutable/ambiguous refs"
+grep -Fq 'name: Fetch trusted policy source' "$full_differential_workflow" || die "#353 policy job lost its protected-main executable policy checkout"
+grep -Fq 'ref: refs/heads/main' "$full_differential_workflow" || die "#353 policy job no longer pins executable policy to protected main"
+grep -Fq 'name: Fetch selected candidate as data' "$full_differential_workflow" || die "#353 policy job lost its isolated candidate data checkout"
+grep -Fq 'path: candidate-source' "$full_differential_workflow" || die "#353 selected candidate must stay isolated from trusted policy source"
+grep -Fq 'git -C candidate-source rev-parse HEAD' "$full_differential_workflow" || die "#353 policy job no longer verifies candidate data checkout identity"
+[ "$(grep -Fc 'python3 .github/scripts/targeted-e2e-selection.py --root candidate-source' "$full_differential_workflow" || true)" -eq 2 ] ||
+  die "#353 policy selection must execute only the trusted selector against candidate data"
+if grep -Fq 'name: Fetch exact source for cadence decision' "$full_differential_workflow"; then
+  die "#353 policy job must not replace trusted policy source with the selected candidate"
+fi
+if grep -Fq 'python3 .github/scripts/targeted-e2e-selection.py --self-test' "$full_differential_workflow"; then
+  die "#353 policy job must not run the selector without an explicit candidate data root"
+fi
 grep -Fq 'event=schedule&status=completed' "$full_differential_workflow" || die "#353 scheduled cadence no longer anchors its no-change guard to the previous scheduled attempt"
 grep -Fq 'git diff --name-only "$previous_sha" "$SOURCE_SHA"' "$full_differential_workflow" || die "#353 scheduled cadence no longer checks changes since the previous scheduled SHA"
 grep -Fq 'src/main/' "$full_differential_workflow" || die "#353 scheduled relevant-change guard lost production sources"
@@ -667,6 +680,8 @@ grep -Fq -- '--workflow starter' "$starter_workflow" ||
   die "Starter workflow no longer obtains its matrix from the validated selector"
 python3 "$starter_selector" --self-test >/dev/null ||
   die "Starter validated matrix selector self-test failed"
+python3 "$starter_selector" --root . --self-test >/dev/null ||
+  die "Trusted selector explicit-root compatibility self-test failed"
 starter_full_matrix="$(python3 "$starter_selector" --workflow starter --mode full | sed -n 's/^test_matrix=//p')"
 [ -n "$starter_full_matrix" ] || die "Starter selector did not emit the full matrix"
 if ! python3 -I - "$starter_full_matrix" <<'PY'

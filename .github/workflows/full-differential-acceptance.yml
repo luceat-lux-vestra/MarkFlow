@@ -90,11 +90,20 @@ jobs:
           esac
           echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch exact source for cadence decision
+      # Executable policy must come from protected main. The selected candidate
+      # is checked out separately and consumed only as corpus data in this job.
+      - name: Fetch trusted policy source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch selected candidate as data
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ steps.source.outputs.source_sha }}
-          fetch-depth: 0
+          path: candidate-source
           persist-credentials: false
 
       - name: Validate selected differential cases and exact targeted ref
@@ -108,7 +117,12 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/targeted-e2e-selection.py --self-test
+          candidate_actual="$(git -C candidate-source rev-parse HEAD)"
+          [ "$candidate_actual" = "$REQUESTED_SHA" ] || {
+            echo "::error::Candidate data checkout drifted: expected=$REQUESTED_SHA actual=$candidate_actual"
+            exit 1
+          }
+          python3 .github/scripts/targeted-e2e-selection.py --root candidate-source --self-test
           if [ "$SELECTED_MODE" = targeted ]; then
             [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] ||
               { echo "::error::Scheduled runs cannot select a subset"; exit 1; }
@@ -117,7 +131,7 @@ jobs:
             [ "$CONTROLLED_REFERENCE" != true ] ||
               { echo "::error::Targeted capture cannot use full controlled-reference mode"; exit 1; }
           fi
-          python3 .github/scripts/targeted-e2e-selection.py --workflow differential             --mode "$SELECTED_MODE" --case-ids "$SELECTED_CASE_IDS" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/targeted-e2e-selection.py --root candidate-source --workflow differential             --mode "$SELECTED_MODE" --case-ids "$SELECTED_CASE_IDS" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether scheduled corpus changed
         id: decision
