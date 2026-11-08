@@ -438,12 +438,33 @@ graph TD
                     mermaidContentStart,
                     " ",
                 )
+                val renderRequestsBeforeMermaidEdit = driver.withContext(OnDispatcher.EDT) {
+                    bridge.derivedRenderRequests(production.editor)
+                }
                 markFlow.typeText(production, " ")
                 waitFor(
                     message = "canonical Mermaid source accepts normal editor input after inlay reveal",
                     timeout = 10.seconds,
                     getter = { markFlow.source(production) },
                     checker = { it == editedProduction },
+                )
+                waitFor(
+                    message = "canonical Mermaid edit preserves unrelated derived presentations",
+                    timeout = 10.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            Triple(
+                                bridge.derivedOwnedInlays(production.editor),
+                                bridge.derivedLastPlanCarriedArtifacts(production.editor),
+                                bridge.derivedRenderRequests(production.editor),
+                            )
+                        }
+                    },
+                    checker = { (inlays, carried, requests) ->
+                        inlays == 2 &&
+                            carried == 2 &&
+                            requests == renderRequestsBeforeMermaidEdit + 1
+                    },
                 )
                 markFlow.undo(production)
                 waitFor(
@@ -465,6 +486,17 @@ graph TD
                     timeout = 10.seconds,
                     getter = { markFlow.source(production) },
                     checker = { it == productionSource },
+                )
+                markFlow.resetToSingleCaret(production, mermaidEnd)
+                waitFor(
+                    message = "canonical Mermaid source-end boundary is inactive and re-renders",
+                    timeout = 30.seconds,
+                    getter = {
+                        driver.withContext(OnDispatcher.EDT) {
+                            bridge.derivedOwnedInlays(production.editor)
+                        }
+                    },
+                    checker = { it == 3 },
                 )
                 markFlow.resetToSingleCaret(production, inactiveRichAnchor)
                 waitFor(
@@ -574,6 +606,8 @@ private interface FullProductProjectionBridgeRemote {
     fun derivedPendingRequests(editor: Editor): Int
     fun derivedDecodedArtifacts(editor: Editor): Int
     fun derivedOwnedInlays(editor: Editor): Int
+    fun derivedRenderRequests(editor: Editor): Long
+    fun derivedLastPlanCarriedArtifacts(editor: Editor): Int
     fun derivedRendererFailures(editor: Editor): Long
     fun derivedMissingArtifacts(editor: Editor): Long
     fun rawHtmlFragments(editor: Editor): Int

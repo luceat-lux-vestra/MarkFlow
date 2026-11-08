@@ -288,6 +288,16 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).derivedEvidenceSnapshot()?.mouseReveals ?: 0L
     }
 
+    fun derivedRenderRequests(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.renderRequests ?: 0L
+    }
+
+    fun derivedLastPlanCarriedArtifacts(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).derivedEvidenceSnapshot()?.lastPlanCarriedArtifacts ?: 0
+    }
+
     fun derivedInlayCenterX(editor: Editor, sourceEndOffset: Int): Int {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val bounds = requireDerivedRasterInlay(editor, sourceEndOffset).bounds ?: return -1
