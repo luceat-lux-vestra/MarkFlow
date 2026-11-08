@@ -55,9 +55,11 @@ jobs:
           }
 
           parent="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          # REST .name follows workflow run-name and is not a stable workflow identity.
+          # The workflow path is repository-controlled, exact, and already bound to same-repo provenance.
           jq -e             --arg repo "$GITHUB_REPOSITORY"             --arg sha "$CANDIDATE_SHA"             --argjson run_id "$PARENT_RUN_ID"             '
               .id == $run_id and
-              .name == "Release Candidate Starter E2E" and
+              .path == ".github/workflows/release-candidate-starter-e2e.yml" and
               .event == "workflow_dispatch" and
               .head_branch == "main" and
               .head_sha == $sha and

@@ -787,8 +787,11 @@ grep -Fq "github.event.workflow_run.conclusion == 'success'" "$release_repeat_wo
   die "#348 repeat lost successful-parent gating"
 grep -Fq "github.event.workflow_run.event == 'workflow_dispatch'" "$release_repeat_workflow" ||
   die "#348 repeat lost trusted standalone-parent gating"
-grep -Fq '.name == "Release Candidate Starter E2E" and' "$release_repeat_workflow" ||
-  die "#527 repeat no longer revalidates dedicated parent workflow identity"
+grep -Fq '.path == ".github/workflows/release-candidate-starter-e2e.yml" and' "$release_repeat_workflow" ||
+  die "#527 repeat no longer revalidates dedicated parent workflow path identity"
+if grep -Fq '.name == "Release Candidate Starter E2E" and' "$release_repeat_workflow"; then
+  die "#527 repeat must not trust mutable REST run name as workflow identity"
+fi
 grep -Fq "github.event.workflow_run.head_branch == 'main'" "$release_repeat_workflow" ||
   die "#348 repeat lost protected-main provenance gating"
 grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$release_repeat_workflow" ||
