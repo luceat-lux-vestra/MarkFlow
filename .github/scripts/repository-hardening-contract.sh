@@ -565,11 +565,19 @@ grep -Fq 'target_sha:' "$full_differential_workflow" || die "#353 manual full co
 grep -Fq 'Full differential target must be an exact 40-character commit SHA' "$full_differential_workflow" || die "#353 manual full corpus no longer rejects mutable/ambiguous refs"
 grep -Fq 'name: Fetch trusted policy source' "$full_differential_workflow" || die "#353 policy job lost its protected-main executable policy checkout"
 grep -Fq 'ref: refs/heads/main' "$full_differential_workflow" || die "#353 policy job no longer pins executable policy to protected main"
-grep -Fq 'name: Fetch selected candidate as data' "$full_differential_workflow" || die "#353 policy job lost its isolated candidate data checkout"
-grep -Fq 'path: candidate-source' "$full_differential_workflow" || die "#353 selected candidate must stay isolated from trusted policy source"
-grep -Fq 'git -C candidate-source rev-parse HEAD' "$full_differential_workflow" || die "#353 policy job no longer verifies candidate data checkout identity"
-[ "$(grep -Fc 'python3 .github/scripts/targeted-e2e-selection.py --root candidate-source' "$full_differential_workflow" || true)" -eq 2 ] ||
-  die "#353 policy selection must execute only the trusted selector against candidate data"
+grep -Fq 'name: Materialize selected candidate corpus as inert data' "$full_differential_workflow" || die "#353 policy job lost API-only candidate corpus materialization"
+grep -Fq 'gh api --method GET "repos/${GITHUB_REPOSITORY}/contents/${path}"' "$full_differential_workflow" || die "#353 candidate corpus must come from the GitHub Contents API"
+grep -Fq -- '-f ref="$REQUESTED_SHA"' "$full_differential_workflow" || die "#353 candidate corpus API reads must bind to the exact requested SHA"
+grep -Fq 'base64 --decode > "$dest"' "$full_differential_workflow" || die "#353 candidate corpus API payload is not materialized as inert bytes"
+grep -Fq 'CANDIDATE_CORPUS_ROOT: ${{ steps.corpus.outputs.root }}' "$full_differential_workflow" || die "#353 trusted selector lost candidate corpus root binding"
+[ "$(grep -Fc 'python3 .github/scripts/targeted-e2e-selection.py --root "$CANDIDATE_CORPUS_ROOT"' "$full_differential_workflow" || true)" -eq 2 ] ||
+  die "#353 policy selection must execute only the trusted selector against API-materialized candidate data"
+if grep -Fq 'name: Fetch selected candidate as data' "$full_differential_workflow" ||
+   grep -Fq 'path: candidate-source' "$full_differential_workflow" ||
+   grep -Fq 'ref: ${{ steps.source.outputs.source_sha }}' "$full_differential_workflow" ||
+   grep -Fq 'git -C candidate-source rev-parse HEAD' "$full_differential_workflow"; then
+  die "#353 policy job must not checkout the input-selected candidate"
+fi
 if grep -Fq 'name: Fetch exact source for cadence decision' "$full_differential_workflow"; then
   die "#353 policy job must not replace trusted policy source with the selected candidate"
 fi

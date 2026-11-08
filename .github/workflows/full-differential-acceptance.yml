@@ -90,8 +90,9 @@ jobs:
           esac
           echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
 
-      # Executable policy must come from protected main. The selected candidate
-      # is checked out separately and consumed only as corpus data in this job.
+      # Executable policy must come from protected main. Candidate corpus bytes
+      # are fetched through the GitHub Contents API and never checked out into
+      # this privileged/default-branch policy job.
       - name: Fetch trusted policy source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -99,12 +100,74 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Fetch selected candidate as data
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ steps.source.outputs.source_sha }}
-          path: candidate-source
-          persist-credentials: false
+      - name: Materialize selected candidate corpus as inert data
+        id: corpus
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          corpus_root="$RUNNER_TEMP/differential-candidate-corpus"
+          manifest="fixtures/differential-acceptance/corpus.tsv"
+          rm -rf "$corpus_root"
+          mkdir -p "$corpus_root"
+
+          fetch_candidate_file() {
+            local path="$1"
+            local dest="$corpus_root/$path"
+            [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+              echo "::error::Candidate corpus path contains unsupported characters: $path"
+              exit 1
+            }
+            case "$path" in
+              ""|/*|".."|"../"*|*/".."|*/"../"*)
+                echo "::error::Unsafe candidate corpus path: $path"
+                exit 1
+                ;;
+            esac
+            mkdir -p "$(dirname "$dest")"
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/contents/${path}"               -f ref="$REQUESTED_SHA" --jq '.content' |
+              tr -d '\n' | base64 --decode > "$dest"
+          }
+
+          fetch_candidate_file "$manifest"
+          mapfile -t mermaid_paths < <(
+            python3 - "$corpus_root/$manifest" <<'PY'
+import csv
+import re
+import sys
+from pathlib import PurePosixPath
+
+manifest = sys.argv[1]
+with open(manifest, encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+if len(rows) != 88:
+    raise SystemExit("Candidate corpus must contain exactly 88 reviewed rows")
+
+paths = set()
+for row in rows:
+    if row.get("domain") != "mermaid":
+        continue
+    raw = row.get("fixture_path", "")
+    path = PurePosixPath(raw)
+    if (not raw or path.is_absolute() or ".." in path.parts or
+            re.fullmatch(r"[A-Za-z0-9._/-]+", raw) is None):
+        raise SystemExit(f"Unsafe Mermaid fixture path: {raw!r}")
+    paths.add(raw)
+
+for path in sorted(paths):
+    print(path)
+PY
+          )
+          [ "${#mermaid_paths[@]}" -gt 0 ] || {
+            echo "::error::Candidate corpus contains no Mermaid fixtures"
+            exit 1
+          }
+          for path in "${mermaid_paths[@]}"; do
+            fetch_candidate_file "$path"
+          done
+          echo "root=$corpus_root" >> "$GITHUB_OUTPUT"
 
       - name: Validate selected differential cases and exact targeted ref
         id: selection
@@ -115,14 +178,14 @@ jobs:
           CONTROLLED_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.controlled_reference || false }}
           REQUESTED_SHA: ${{ steps.source.outputs.source_sha }}
           DISPATCH_SHA: ${{ github.sha }}
+          CANDIDATE_CORPUS_ROOT: ${{ steps.corpus.outputs.root }}
         run: |
           set -euo pipefail
-          candidate_actual="$(git -C candidate-source rev-parse HEAD)"
-          [ "$candidate_actual" = "$REQUESTED_SHA" ] || {
-            echo "::error::Candidate data checkout drifted: expected=$REQUESTED_SHA actual=$candidate_actual"
+          [ -d "$CANDIDATE_CORPUS_ROOT" ] || {
+            echo "::error::Candidate corpus root was not materialized"
             exit 1
           }
-          python3 .github/scripts/targeted-e2e-selection.py --root candidate-source --self-test
+          python3 .github/scripts/targeted-e2e-selection.py --root "$CANDIDATE_CORPUS_ROOT" --self-test
           if [ "$SELECTED_MODE" = targeted ]; then
             [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] ||
               { echo "::error::Scheduled runs cannot select a subset"; exit 1; }
@@ -131,7 +194,7 @@ jobs:
             [ "$CONTROLLED_REFERENCE" != true ] ||
               { echo "::error::Targeted capture cannot use full controlled-reference mode"; exit 1; }
           fi
-          python3 .github/scripts/targeted-e2e-selection.py --root candidate-source --workflow differential             --mode "$SELECTED_MODE" --case-ids "$SELECTED_CASE_IDS" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/targeted-e2e-selection.py --root "$CANDIDATE_CORPUS_ROOT" --workflow differential             --mode "$SELECTED_MODE" --case-ids "$SELECTED_CASE_IDS" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether scheduled corpus changed
         id: decision
