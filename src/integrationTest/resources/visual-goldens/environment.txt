@@ -1,5 +1,4 @@
-visual_contract=v1
-window=1809x875
+visual_contract=v2
 viewport=1200x760
 screen=1920x1080
 scale_x=1.000
