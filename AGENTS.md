@@ -22,6 +22,8 @@ The historical `plans/*` documents and superseded implementation-specific tests 
 
 Repository/delivery hardening is separate from runtime Leap work. The repository permits squash merges only. CI green is necessary but never sufficient.
 
+Trusted CodeQL `init` / `analyze` pin changes are pre-merge exercised inside the existing Merge-Gate-required read-only trusted-workflow validation lane using the representative Actions language, `build-mode: none`, local SARIF, and `upload: never`. That PR runtime output is untrusted compatibility evidence only and can never replace protected-main scheduled/manual CodeQL or release evidence; routine full PR CodeQL remains disabled.
+
 **Mandatory pre-merge branch-history cleanup:** inspect the work-branch commit history against the current merge-base and review the complete final diff. Before final CI and review, consolidate/remove transient experiment, fixup, checkpoint, and superseded commits into a small coherent, reviewable history; if no rewrite is necessary, explicitly record that the history was inspected and why it is already clean. GitHub Squash Merge does **not** replace this step. A rewritten branch HEAD invalidates earlier exact-HEAD evidence and requires fresh CI/review of the rewritten SHA; update branch refs safely (never rewrite merged `main`).
 
 A review PASS belongs only to the exact reviewed PR HEAD SHA. Any new commit invalidates the PASS and its evidence. Before merge re-read fresh `main`, merge-base, ruleset, exact HEAD, required checks, and review threads. Merge only with squash and `expected_head_sha=<reviewed SHA>`, then verify the resulting `main` SHA/tree/signature and post-main checks before closing the linked Task.
