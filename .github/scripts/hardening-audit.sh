@@ -521,7 +521,21 @@ check_workflow_static_analysis() {
   grep -qE 'Enforce actionlint negative control' "$audit" || { finding workflow_static_analysis "actionlint negative control is not enforced"; clean=0; }
   grep -qE 'Verify zizmor rejects unsafe fixture' "$audit" || { finding workflow_static_analysis "zizmor negative control is not executed"; clean=0; }
   grep -qE 'Enforce zizmor negative control' "$audit" || { finding workflow_static_analysis "zizmor negative control is not enforced"; clean=0; }
-  [ "$clean" -eq 1 ] && info workflow_static_analysis "actionlint and pinned zizmor cover the complete workflow tree"; return 0
+  local build="$WORKFLOW_DIR/build.yml" codeql_runtime="$ROOT/.github/scripts/trusted-codeql-runtime-validation.py"
+  [ -f "$codeql_runtime" ] || { finding workflow_static_analysis "CodeQL PR runtime validator is missing"; clean=0; }
+  grep -Fq 'Verify CodeQL PR runtime adapter policy' "$build" || { finding workflow_static_analysis "CodeQL PR runtime contract check is missing from Merge Gate authority"; clean=0; }
+  grep -Fq 'Classify CodeQL runtime validation scope' "$build" || { finding workflow_static_analysis "CodeQL PR runtime classifier is missing from Merge Gate authority"; clean=0; }
+  grep -Fq 'Initialize PR-only CodeQL runtime' "$build" || { finding workflow_static_analysis "CodeQL PR init runtime step is missing"; clean=0; }
+  grep -Fq 'Analyze PR-only CodeQL runtime without upload' "$build" || { finding workflow_static_analysis "CodeQL PR analyze runtime step is missing"; clean=0; }
+  grep -Fq 'Verify local PR-only CodeQL runtime SARIF and reject promotion' "$build" || { finding workflow_static_analysis "CodeQL PR SARIF verifier step is missing"; clean=0; }
+  grep -Fq '          upload: never' "$build" || { finding workflow_static_analysis "CodeQL PR runtime is allowed to upload security evidence"; clean=0; }
+  if [ -f "$codeql_runtime" ]; then
+    python3 "$codeql_runtime" self-test >/dev/null || { finding workflow_static_analysis "CodeQL PR runtime validator self-tests failed"; clean=0; }
+    python3 "$codeql_runtime" check-contract \
+      --codeql "$WORKFLOW_DIR/codeql.yml" \
+      --pr-workflow "$build" >/dev/null || { finding workflow_static_analysis "CodeQL PR runtime contract drifted"; clean=0; }
+  fi
+  [ "$clean" -eq 1 ] && info workflow_static_analysis "actionlint, pinned zizmor, and Merge-Gate-enforced read-only production-pinned CodeQL runtime validation cover trusted workflow changes"; return 0
 }
 
 check_release_preflight() {
