@@ -70,7 +70,7 @@ class ManualExamplesDerivedProjectionTest : BasePlatformTestCase() {
     }
 
     fun testMermaidFailureIsolationExampleProducesThreeIndependentFencedFragments() {
-        val source = example("mermaid-error.md")
+        val source = example("derived-mermaid-failure-isolation.md")
         val mermaid = NativeDerivedProjectionPlanner.plan(plan(source))
             .filter { it.kind == NativeDerivedProjectionKind.MERMAID }
 

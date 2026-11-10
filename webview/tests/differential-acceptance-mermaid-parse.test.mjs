@@ -13,13 +13,13 @@ import {loadMermaidAcceptanceSources} from "./mermaid-acceptance-fixtures.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const webviewRoot = resolve(repoRoot, "webview");
 const {sources, allCaseIds} = loadMermaidAcceptanceSources(repoRoot);
-const failureIsolationMarkdown = readFileSync(resolve(repoRoot, "examples/mermaid-error.md"), "utf8");
+const failureIsolationMarkdown = readFileSync(resolve(repoRoot, "examples/derived-mermaid-failure-isolation.md"), "utf8");
 const failureIsolationSources = [...failureIsolationMarkdown.matchAll(/```mermaid[ \t]*\r?\n([\s\S]*?)```/g)]
   .map((match) => match[1]);
 assert.equal(
   failureIsolationSources.length,
   3,
-  "examples/mermaid-error.md must keep exactly valid -> invalid -> valid Mermaid blocks",
+  "examples/derived-mermaid-failure-isolation.md must keep exactly valid -> invalid -> valid Mermaid blocks",
 );
 assert.match(failureIsolationSources[0], /^flowchart\s+LR/m);
 assert.match(failureIsolationSources[1], /this is not a valid Mermaid diagram/);

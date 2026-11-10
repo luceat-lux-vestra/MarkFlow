@@ -11,7 +11,7 @@ a new ad-hoc document.
 3. **`raw-html-support.md`** — safe raw-HTML presentation, fail-closed capability cases,
    unsupported browser semantics, malformed fragments, and source round-trip.
 4. **`mermaid-minimal.md`** — quickest Mermaid success sanity check.
-5. **`mermaid-error.md`** — failure isolation between valid and invalid Mermaid blocks.
+5. **`derived-mermaid-failure-isolation.md`** — failure isolation between valid and invalid Mermaid blocks.
 6. **`eg2.md`** — broad mixed Markdown/KaTeX/Mermaid stress document.
 7. The remaining **`mermaid-*.md`** files — diagram-family compatibility sweep.
 
@@ -33,7 +33,7 @@ A real-IDE PASS is more than “the file opens”:
 
 ## Coverage notes
 
-The many Mermaid files intentionally cover successful diagram-family breadth. `mermaid-error.md`
+The many Mermaid files intentionally cover successful diagram-family breadth. `derived-mermaid-failure-isolation.md`
 covers the complementary failure-isolation case.
 
 The focused Markdown and KaTeX files do not replace the automated differential/fixture corpus under

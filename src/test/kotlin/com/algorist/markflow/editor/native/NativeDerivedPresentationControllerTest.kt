@@ -160,7 +160,7 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
 
     fun testRepositoryMermaidFailureExampleKeepsSiblingRequestsAliveAndFailedSourceVisible() {
         val source = Files.readString(
-            Path.of("examples", "mermaid-error.md").toAbsolutePath().normalize()
+            Path.of("examples", "derived-mermaid-failure-isolation.md").toAbsolutePath().normalize()
         )
         myFixture.configureByText("mermaid-error-example.md", source)
         myFixture.editor.caretModel.moveToOffset(0)
