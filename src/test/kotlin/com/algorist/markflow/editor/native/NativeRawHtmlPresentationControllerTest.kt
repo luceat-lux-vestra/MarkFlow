@@ -4,6 +4,8 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.image.BufferedImage
+import java.nio.file.Files
+import java.nio.file.Path
 
 class NativeRawHtmlPresentationControllerTest : BasePlatformTestCase() {
     fun testSafeInlinePreviewIsSourceNeutralAndCaretRevealRestoresExactSource() {
@@ -31,6 +33,32 @@ class NativeRawHtmlPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(1, controller.evidenceSnapshot().ownedInlays)
         assertEquals(1, controller.evidenceSnapshot().ownedFolds)
         assertEquals(source, myFixture.editor.document.text)
+        Disposer.dispose(controller)
+    }
+
+    fun testRepositoryRawHtmlExampleProducesRealSafePresentationAndLocalFallbacks() {
+        val source = Files.readString(
+            Path.of("examples", "raw-html-support.md").toAbsolutePath().normalize()
+        )
+        myFixture.configureByText("raw-html-support.md", source)
+        myFixture.editor.caretModel.moveToOffset(0)
+        val stampBefore = myFixture.editor.document.modificationStamp
+        val controller = NativeRawHtmlPresentationController(
+            editor = myFixture.editor,
+            renderer = SynchronousProductionRenderer,
+        )
+
+        controller.applyPlan(plan())
+        val evidence = controller.evidenceSnapshot()
+
+        assertTrue("repository example produced no raw-HTML fragments", evidence.fragments > 0)
+        assertTrue("safe repository example fragments produced no decoded artifacts", evidence.decodedArtifacts > 0)
+        assertTrue("safe repository example fragments produced no visible inlays", evidence.ownedInlays > 0)
+        assertEquals(evidence.ownedInlays, evidence.ownedFolds)
+        assertTrue("blocked/unsupported example cases did not exercise exact-source fallback", evidence.blockedPreviews > 0)
+        assertEquals(0L, evidence.rendererFailures)
+        assertEquals(source, myFixture.editor.document.text)
+        assertEquals(stampBefore, myFixture.editor.document.modificationStamp)
         Disposer.dispose(controller)
     }
 
@@ -140,6 +168,19 @@ class NativeRawHtmlPresentationControllerTest : BasePlatformTestCase() {
 
         override fun render(source: String, callback: (NativeRawHtmlRenderResult) -> Unit) {
             callbacks += callback
+        }
+    }
+
+    private object SynchronousProductionRenderer : NativeRawHtmlRenderer {
+        override fun render(source: String, callback: (NativeRawHtmlRenderResult) -> Unit) {
+            when (val sanitized = NativeRawHtmlSanitizer.sanitize(source)) {
+                is NativeRawHtmlSanitizationResult.Blocked ->
+                    callback(NativeRawHtmlRenderResult.Blocked(sanitized.code))
+                is NativeRawHtmlSanitizationResult.Safe -> {
+                    val image = NativeSwingRawHtmlRenderer.rasterizeSanitized(sanitized.html)
+                    callback(NativeRawHtmlRenderResult.Success(image))
+                }
+            }
         }
     }
 

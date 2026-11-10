@@ -120,7 +120,7 @@ internal object NativeRawHtmlProjectionPlanner {
             }
 
             if (parsed.selfClosing || parsed.name in VOID_TAGS) {
-                if (stack.isEmpty()) {
+                if (stack.isEmpty() && parsed.name !in INLINE_LAYOUT_FALLBACK_TAGS) {
                     projection(
                         range.startOffset,
                         range.endOffset,
@@ -195,6 +195,13 @@ internal object NativeRawHtmlProjectionPlanner {
     )
 
     private val TAG_PATTERN = """^<\s*(/?)\s*([A-Za-z][A-Za-z0-9:-]*)\b[^>]*?(/?)\s*>$""".toRegex()
+
+    // A top-level <br> has no text-bearing raster of its own. Rendering it as an isolated
+    // inline image folds the exact tag but cannot move following native-editor text to a new line,
+    // producing a misleading blank preview. Keep that source visible until a layout-aware native
+    // projection can represent the line break. A <br> nested inside a balanced outer HTML fragment
+    // remains part of that outer raster and can therefore preserve its HTML layout semantics.
+    private val INLINE_LAYOUT_FALLBACK_TAGS = setOf("br")
 
     private val VOID_TAGS = setOf(
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"

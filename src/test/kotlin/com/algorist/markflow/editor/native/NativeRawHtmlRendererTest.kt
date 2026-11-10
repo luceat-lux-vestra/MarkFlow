@@ -23,6 +23,21 @@ class NativeRawHtmlRendererTest : BasePlatformTestCase() {
         assertEquals(BufferedImage.TYPE_INT_ARGB, image.type)
     }
 
+    fun testSanitizedInlineHtmlRasterContainsVisiblePaintedPixels() {
+        val source = "<strong>MF-SAFE-STRONG</strong>"
+        val sanitized = NativeRawHtmlSanitizer.sanitize(source)
+        assertTrue(sanitized is NativeRawHtmlSanitizationResult.Safe)
+
+        val image = onEdtResult {
+            NativeSwingRawHtmlRenderer.rasterizeSanitized(
+                (sanitized as NativeRawHtmlSanitizationResult.Safe).html
+            )
+        }
+
+        assertTrue("inline HTML raster unexpectedly collapsed to one pixel", image.width > 1)
+        assertTrue("inline HTML raster unexpectedly has no painted pixels", image.hasPaintedPixels())
+    }
+
     fun testBlockedHostileHtmlNeverProducesRasterInput() {
         listOf(
             "<script>alert(1)</script>",
@@ -36,6 +51,15 @@ class NativeRawHtmlRendererTest : BasePlatformTestCase() {
                 NativeRawHtmlSanitizer.sanitize(source) is NativeRawHtmlSanitizationResult.Blocked,
             )
         }
+    }
+
+    private fun BufferedImage.hasPaintedPixels(): Boolean {
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if ((getRGB(x, y) ushr 24) != 0) return true
+            }
+        }
+        return false
     }
 
     private fun <T> onEdtResult(action: () -> T): T {

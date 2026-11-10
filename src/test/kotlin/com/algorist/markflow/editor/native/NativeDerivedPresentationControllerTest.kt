@@ -10,6 +10,8 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.Base64
 import javax.imageio.ImageIO
 
@@ -153,6 +155,37 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(3, evidence.ownedFolds)
         assertEquals(0, evidence.collapsedFolds)
         assertEquals(sourceBefore, myFixture.editor.document.text)
+        Disposer.dispose(controller)
+    }
+
+    fun testRepositoryMermaidFailureExampleKeepsSiblingRequestsAliveAndFailedSourceVisible() {
+        val source = Files.readString(
+            Path.of("examples", "mermaid-error.md").toAbsolutePath().normalize()
+        )
+        myFixture.configureByText("mermaid-error-example.md", source)
+        myFixture.editor.caretModel.moveToOffset(0)
+        val stampBefore = myFixture.editor.document.modificationStamp
+        val runtime = MermaidFailureIsolationRuntime()
+        val controller = NativeDerivedPresentationController(
+            editor = myFixture.editor,
+            runtime = runtime,
+            settingsProvider = { runtimeSettings(mermaidErrorDisplay = "INLINE_ERROR_BOX") },
+            richPresentationEnabled = { true },
+        )
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        val evidence = controller.evidenceSnapshot()
+
+        assertEquals(3, evidence.derivedFragments)
+        assertEquals(1L, evidence.rendererFailures)
+        assertEquals(2, evidence.pendingRequests)
+        assertEquals(2, evidence.ownedFolds)
+        assertEquals(0, evidence.collapsedFolds)
+        assertEquals(1, evidence.ownedErrorInlays)
+        assertEquals(2, runtime.successes.size)
+        assertEquals(1, runtime.failures)
+        assertEquals(source, myFixture.editor.document.text)
+        assertEquals(stampBefore, myFixture.editor.document.modificationStamp)
         Disposer.dispose(controller)
     }
 
@@ -445,6 +478,33 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         override fun dispose() {
             disposeCalls += 1
         }
+    }
+
+    private class MermaidFailureIsolationRuntime : DerivedRendererRuntime {
+        val successes = mutableListOf<Rendered>()
+        var failures = 0
+
+        override fun render(request: DerivedRendererRuntimeRequest, callback: (DerivedRendererRuntimeResult) -> Unit) {
+            if (request.source.contains("this is not a valid Mermaid diagram")) {
+                failures += 1
+                callback(
+                    DerivedRendererRuntimeResult(
+                        requestId = request.requestId,
+                        status = "failure",
+                        kind = request.kind.wireName,
+                        identity = request.identity,
+                        code = "RENDER_FAILED",
+                        retryable = false,
+                        message = "synthetic failure for repository invalid Mermaid block",
+                    )
+                )
+            } else {
+                successes += Rendered(request, callback)
+            }
+        }
+
+        override fun cancel(requestId: String) = Unit
+        override fun dispose() = Unit
     }
 
     private class FailingRuntime : DerivedRendererRuntime {

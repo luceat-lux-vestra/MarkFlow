@@ -44,6 +44,21 @@ Inline <span data-kind="safe">HTML content</span> remains source text.
         assertTrue(projections(crossed).isEmpty())
     }
 
+    fun testStandaloneInlineBreakRemainsExactSourceInsteadOfBlankRasterProjection() {
+        val source = "before<br/>after\n"
+
+        assertTrue(projections(source).isEmpty())
+    }
+
+    fun testInlineBreakInsideBalancedFragmentRemainsPartOfOuterProjection() {
+        val source = "before <span>top<br/>bottom</span> after\n"
+
+        val projections = projections(source)
+
+        assertEquals(1, projections.size)
+        assertEquals("<span>top<br/>bottom</span>", projections.single().source)
+    }
+
     fun testHostileHtmlIsStillParserSelectedForSeparateSanitizerDecision() {
         val source = """# Hostile
 
