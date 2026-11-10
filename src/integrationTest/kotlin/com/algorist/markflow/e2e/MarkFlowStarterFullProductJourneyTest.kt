@@ -375,6 +375,12 @@ class MarkFlowStarterFullProductJourneyTest {
                                 failures = bridge.derivedRendererFailures(production.editor),
                                 missing = bridge.derivedMissingArtifacts(production.editor),
                                 rawHtml = bridge.rawHtmlFragments(production.editor),
+                                rawHtmlPending = bridge.rawHtmlPendingRequests(production.editor),
+                                rawHtmlDecoded = bridge.rawHtmlDecodedArtifacts(production.editor),
+                                rawHtmlInlays = bridge.rawHtmlOwnedInlays(production.editor),
+                                rawHtmlFolds = bridge.rawHtmlOwnedFolds(production.editor),
+                                rawHtmlBlocked = bridge.rawHtmlBlockedPreviews(production.editor),
+                                rawHtmlFailures = bridge.rawHtmlRendererFailures(production.editor),
                             )
                         }
                     },
@@ -387,7 +393,13 @@ class MarkFlowStarterFullProductJourneyTest {
                             state.inlays >= 3 &&
                             state.failures == 0L &&
                             state.missing == 0L &&
-                            state.rawHtml >= 2
+                            state.rawHtml >= 2 &&
+                            state.rawHtmlPending == 0 &&
+                            state.rawHtmlDecoded >= 2 &&
+                            state.rawHtmlInlays >= 2 &&
+                            state.rawHtmlFolds >= 2 &&
+                            state.rawHtmlBlocked == 0L &&
+                            state.rawHtmlFailures == 0L
                     },
                 )
                 check(markFlow.source(production) == productionSource)
@@ -594,6 +606,12 @@ graph TD
         val failures: Long,
         val missing: Long,
         val rawHtml: Int,
+        val rawHtmlPending: Int,
+        val rawHtmlDecoded: Int,
+        val rawHtmlInlays: Int,
+        val rawHtmlFolds: Int,
+        val rawHtmlBlocked: Long,
+        val rawHtmlFailures: Long,
     )
 }
 
@@ -611,4 +629,10 @@ private interface FullProductProjectionBridgeRemote {
     fun derivedRendererFailures(editor: Editor): Long
     fun derivedMissingArtifacts(editor: Editor): Long
     fun rawHtmlFragments(editor: Editor): Int
+    fun rawHtmlPendingRequests(editor: Editor): Int
+    fun rawHtmlDecodedArtifacts(editor: Editor): Int
+    fun rawHtmlOwnedInlays(editor: Editor): Int
+    fun rawHtmlOwnedFolds(editor: Editor): Int
+    fun rawHtmlBlockedPreviews(editor: Editor): Long
+    fun rawHtmlRendererFailures(editor: Editor): Long
 }

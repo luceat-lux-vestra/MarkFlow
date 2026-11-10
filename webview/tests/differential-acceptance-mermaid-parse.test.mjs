@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFileSync, execFile} from "node:child_process";
-import {mkdtempSync, rmSync} from "node:fs";
+import {mkdtempSync, readFileSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -13,6 +13,17 @@ import {loadMermaidAcceptanceSources} from "./mermaid-acceptance-fixtures.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const webviewRoot = resolve(repoRoot, "webview");
 const {sources, allCaseIds} = loadMermaidAcceptanceSources(repoRoot);
+const failureIsolationMarkdown = readFileSync(resolve(repoRoot, "examples/derived-mermaid-failure-isolation.md"), "utf8");
+const failureIsolationSources = [...failureIsolationMarkdown.matchAll(/```mermaid[ \t]*\r?\n([\s\S]*?)```/g)]
+  .map((match) => match[1]);
+assert.equal(
+  failureIsolationSources.length,
+  3,
+  "examples/derived-mermaid-failure-isolation.md must keep exactly valid -> invalid -> valid Mermaid blocks",
+);
+assert.match(failureIsolationSources[0], /^flowchart\s+LR/m);
+assert.match(failureIsolationSources[1], /this is not a valid Mermaid diagram/);
+assert.match(failureIsolationSources[2], /^sequenceDiagram/m);
 
 function chromeExecutable() {
   for (const executable of [process.env.CHROME_BIN, "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].filter(Boolean)) {
@@ -39,6 +50,10 @@ test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental block
           response.writeHead(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"});
           response.end(JSON.stringify(sources));
         });
+        vite.middlewares.use("/__markflow_mermaid_failure_isolation", (_request, response) => {
+          response.writeHead(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"});
+          response.end(JSON.stringify(failureIsolationSources));
+        });
       }
     }]
   });
@@ -55,6 +70,10 @@ test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental block
     assert.match(stdout, /id="markflow-mermaid-test-output"[^>]*data-status="passed"/,
       "Chromium Mermaid validation failed: " + stdout.slice(0, 5500));
     assert.ok(stdout.includes("PASS:" + allCaseIds.join(",")), "Missing complete browser validation proof: " + stdout.slice(0, 5500));
+    assert.ok(
+      stdout.includes("FAILURE_ISOLATION_PASS"),
+      "Mermaid valid -> invalid -> valid failure-isolation proof is missing: " + stdout.slice(0, 5500),
+    );
   } finally {
     await server.close();
     rmSync(profile, {recursive: true, force: true});

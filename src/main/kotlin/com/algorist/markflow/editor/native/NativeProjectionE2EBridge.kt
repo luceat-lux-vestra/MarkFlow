@@ -359,6 +359,36 @@ internal object NativeProjectionE2EBridge {
         return requireController(editor).rawHtmlEvidenceSnapshot()?.fragments ?: 0
     }
 
+    fun rawHtmlPendingRequests(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.pendingRequests ?: 0
+    }
+
+    fun rawHtmlDecodedArtifacts(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.decodedArtifacts ?: 0
+    }
+
+    fun rawHtmlOwnedInlays(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.ownedInlays ?: 0
+    }
+
+    fun rawHtmlOwnedFolds(editor: Editor): Int {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.ownedFolds ?: 0
+    }
+
+    fun rawHtmlBlockedPreviews(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.blockedPreviews ?: 0L
+    }
+
+    fun rawHtmlRendererFailures(editor: Editor): Long {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return requireController(editor).rawHtmlEvidenceSnapshot()?.rendererFailures ?: 0L
+    }
+
     private fun requireTaskListInlay(editor: Editor) =
         editor.inlayModel
             .getBlockElementsInRange(0, editor.document.textLength)

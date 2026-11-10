@@ -19,6 +19,17 @@ const browserBackendSource = readFileSync(
   "utf8",
 );
 
+const katexManualExample = readFileSync(resolve(repoRoot, "examples/katex-math.md"), "utf8");
+
+function between(source, prefix, suffix) {
+  const start = source.indexOf(prefix);
+  assert.ok(start >= 0, "missing manual example prefix: " + prefix);
+  const contentStart = start + prefix.length;
+  const end = source.indexOf(suffix, contentStart);
+  assert.ok(end >= contentStart, "missing manual example suffix after: " + prefix);
+  return source.slice(contentStart, end);
+}
+
 test("reviewed Mermaid dependency version remains explicit", () => {
   assert.equal(
     packageJson.dependencies.mermaid,
@@ -78,6 +89,47 @@ test("installed KaTeX preserves malformed-input fail-soft behavior", () => {
     displayMode: false,
   });
   assert.match(malformed, /katex-error/);
+});
+
+test("repository KaTeX manual example keeps malformed formulas fail-soft and later valid math renderable", () => {
+  const malformedInline = between(
+    katexManualExample,
+    "Malformed inline math: $",
+    "$.",
+  );
+  const malformedDisplay = between(
+    katexManualExample,
+    "Malformed display math:\n\n$$\n",
+    "\n$$",
+  );
+  const validAfterFailure = between(
+    katexManualExample,
+    "A valid formula after the failures must still render: $",
+    "$.",
+  );
+
+  const inlineError = katex.renderToString(malformedInline, {
+    throwOnError: false,
+    trust: false,
+    displayMode: false,
+  });
+  assert.match(inlineError, /katex-error/);
+
+  const displayError = katex.renderToString(malformedDisplay, {
+    throwOnError: false,
+    trust: false,
+    displayMode: true,
+  });
+  assert.match(displayError, /katex-error/);
+
+  const recovered = katex.renderToString(validAfterFailure, {
+    throwOnError: false,
+    trust: false,
+    displayMode: false,
+  });
+  assert.match(recovered, /class="katex"/);
+  assert.doesNotMatch(recovered, /katex-error/);
+  assert.match(recovered, /sqrt/);
 });
 
 test("installed KaTeX does not create trusted links when trust is disabled", () => {

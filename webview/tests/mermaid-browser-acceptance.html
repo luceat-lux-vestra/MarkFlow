@@ -38,7 +38,36 @@
       }
       passed.push(name);
     }
-    output.textContent = "PASS:" + passed.join(",");
+    const isolationResponse = await fetch("/__markflow_mermaid_failure_isolation", {cache: "no-store"});
+    if (!isolationResponse.ok) throw new Error("Failure-isolation fixture endpoint failed: " + isolationResponse.status);
+    const isolation = await isolationResponse.json();
+    if (!Array.isArray(isolation) || isolation.length !== 3) {
+      throw new Error("failure-isolation example must contain exactly three Mermaid blocks");
+    }
+
+    const first = await mermaid.render("markflow-failure-isolation-before", isolation[0]);
+    const firstSvg = new DOMParser().parseFromString(first.svg, "image/svg+xml");
+    if (firstSvg.documentElement.localName !== "svg" || firstSvg.querySelector("parsererror")) {
+      throw new Error("failure-isolation first valid block did not render");
+    }
+
+    let middleFailed = false;
+    try {
+      await mermaid.render("markflow-failure-isolation-invalid", isolation[1]);
+    } catch {
+      middleFailed = true;
+    }
+    if (!middleFailed) {
+      throw new Error("intentional invalid Mermaid block unexpectedly rendered successfully");
+    }
+
+    const third = await mermaid.render("markflow-failure-isolation-after", isolation[2]);
+    const thirdSvg = new DOMParser().parseFromString(third.svg, "image/svg+xml");
+    if (thirdSvg.documentElement.localName !== "svg" || thirdSvg.querySelector("parsererror")) {
+      throw new Error("failure-isolation valid block after renderer failure did not recover");
+    }
+
+    output.textContent = "PASS:" + passed.join(",") + ";FAILURE_ISOLATION_PASS";
     output.dataset.status = "passed";
   } catch (error) {
     output.textContent = "FAIL:" + (error?.stack ?? error);
