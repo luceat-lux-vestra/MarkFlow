@@ -301,6 +301,10 @@ val rendererNodePath = rendererNodeExecutable.map { executable ->
 val diagnosticsJvmProperty = "markflow.diagnostics"
 val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
 val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
+val leap2OwnedShellProbeOutput = layout.buildDirectory.file("leap2-owned-shell-probe/evidence-jcef.json")
+val leap2OwnedShellNoJcefProbeOutput = layout.buildDirectory.file("leap2-owned-shell-probe/evidence-no-jcef.json")
+val leap2OwnedShellProbeProjectDir = layout.buildDirectory.dir("leap2-owned-shell-probe/project-jcef")
+val leap2OwnedShellNoJcefProbeProjectDir = layout.buildDirectory.dir("leap2-owned-shell-probe/project-no-jcef")
 val nativeProjectionProbeOutput = layout.buildDirectory.file("native-projection-probe/evidence.json")
 val nativeProjectionProbeProjectDir = layout.buildDirectory.dir("native-projection-probe/project")
 val nativeEditingProbeOutput = layout.buildDirectory.file("native-editing-probe/evidence.json")
@@ -556,6 +560,65 @@ intellijPlatformTesting {
                 }
                 argumentProviders += CommandLineArgumentProvider {
                     listOf(nativeEditorShellProbeProjectDir.get().asFile.absolutePath)
+                }
+            }
+        }
+
+        register("runIdeForLeap2OwnedShellProbe") {
+            task {
+                doFirst {
+                    leap2OwnedShellProbeProjectDir.get().asFile.mkdirs()
+                }
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.leap2OwnedShellProbe.output=${leap2OwnedShellProbeOutput.get().asFile.absolutePath}",
+                        "-Dmarkflow.leap2OwnedShellProbe.expectJcef=true",
+                        "-Dmarkflow.leap2OwnedNativeFileEditor.enabled=true",
+                        "-Didea.trust.all.projects=true",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.consents.confirmation.enabled=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf(leap2OwnedShellProbeProjectDir.get().asFile.absolutePath)
+                }
+            }
+        }
+
+        register("runIdeForLeap2OwnedShellNoJcefProbe") {
+            plugins {
+                disablePlugin("com.intellij.modules.jcef")
+            }
+            task {
+                doFirst {
+                    leap2OwnedShellNoJcefProbeProjectDir.get().asFile.mkdirs()
+                }
+                jvmArgumentProviders += CommandLineArgumentProvider {
+                    listOf(
+                        "-Dmarkflow.leap2OwnedShellProbe.output=${leap2OwnedShellNoJcefProbeOutput.get().asFile.absolutePath}",
+                        "-Dmarkflow.leap2OwnedShellProbe.expectJcef=false",
+                        "-Dmarkflow.leap2OwnedNativeFileEditor.enabled=true",
+                        "-Didea.trust.all.projects=true",
+                        "-Didea.java.project.setup.disabled=true",
+                        "-Didea.is.integration.test=true",
+                        "-Didea.local.statistics.without.report=true",
+                        "-Dfeature.usage.event.log.send.on.ide.close=false",
+                        "-Didea.updates.url=http://127.0.0.1",
+                        "-Didea.fatal.error.notification=disabled",
+                        "-Dide.no.platform.update=true",
+                        "-Dide.enable.notification.trace.data.sharing=false",
+                        "-Dide.mac.message.dialogs.as.sheets=false",
+                        "-Djb.consents.confirmation.enabled=false",
+                        "-Djb.privacy.policy.text=<!--999.999-->",
+                        "-Djb.privacy.policy.ai.assistant.text=<!--999.999-->",
+                        "-Dmarketplace.eula.reviewed.and.accepted=true",
+                        "-Dwriterside.eula.reviewed.and.accepted=true",
+                        "-Dide.newUsersOnboarding=false",
+                    )
+                }
+                argumentProviders += CommandLineArgumentProvider {
+                    listOf(leap2OwnedShellNoJcefProbeProjectDir.get().asFile.absolutePath)
                 }
             }
         }
