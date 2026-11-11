@@ -345,7 +345,7 @@ jq -n '{
     target: "branch",
     conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
     rules: [{type: "required_status_checks", parameters: {
-      strict_required_status_checks_policy: true,
+      strict_required_status_checks_policy: false,
       required_status_checks: [{context: "Test", integration_id: 15368}]
     }}]
   },
@@ -384,7 +384,7 @@ jq -n '{
         allowed_merge_methods: ["squash"]
       }},
       {type: "required_status_checks", parameters: {
-        strict_required_status_checks_policy: true,
+        strict_required_status_checks_policy: false,
         required_status_checks: [
           {context: "Merge Gate", integration_id: 15368}
         ]
@@ -403,6 +403,10 @@ expect_fail "$baseline" ruleset_sync "review or squash-only parameters drifted" 
 scope_exclude_fixture="$TMP/scope-exclude-rulesets.json"
 jq '.main.conditions.ref_name.exclude = ["refs/heads/feature"] | .main.rules |= map(if .type == "pull_request" then .parameters.dismiss_stale_reviews_on_push = true else . end)' "$semantic_drift_fixture" > "$scope_exclude_fixture"
 expect_fail "$baseline" ruleset_sync "exclude scope is not empty" "$scope_exclude_fixture"
+
+strict_drift_fixture="$TMP/strict-drift-rulesets.json"
+jq '.main.rules |= map(if .type == "pull_request" then .parameters.dismiss_stale_reviews_on_push = true elif .type == "required_status_checks" then .parameters.strict_required_status_checks_policy = true else . end)' "$semantic_drift_fixture" > "$strict_drift_fixture"
+expect_fail "$baseline" ruleset_sync "strict policy drifted from declared policy" "$strict_drift_fixture"
 
 scope_target_fixture="$TMP/scope-target-rulesets.json"
 jq '.main.target = "tag" | .main.conditions.ref_name.exclude = [] | .main.rules |= map(if .type == "pull_request" then .parameters.dismiss_stale_reviews_on_push = true else . end)' "$semantic_drift_fixture" > "$scope_target_fixture"
@@ -430,6 +434,12 @@ jq 'del(.security_settings.secret_scanning_push_protection)' "$missing_security_
 mv "$missing_security_policy/.github/merge-gate-policy.json.tmp" "$missing_security_policy/.github/merge-gate-policy.json"
 expect_fail "$missing_security_policy" policy_shape "security_settings declaration is incomplete or unsupported"
 
+missing_strict_policy="$TMP/missing-strict-policy"
+copy_root "$missing_strict_policy"
+jq 'del(.strict_required_status_checks_policy)' "$missing_strict_policy/.github/merge-gate-policy.json" > "$missing_strict_policy/.github/merge-gate-policy.json.tmp"
+mv "$missing_strict_policy/.github/merge-gate-policy.json.tmp" "$missing_strict_policy/.github/merge-gate-policy.json"
+expect_fail "$missing_strict_policy" policy_shape "strict_required_status_checks_policy must be an explicit boolean"
+
 token_wrapper="$TMP/token-wrapper"
 copy_root "$token_wrapper"
 mock_bin="$TMP/mock-bin"
@@ -445,7 +455,7 @@ if [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets\?includes_parents=false ]]; t
     printf '%s\n' '[{"id":1,"name":"main protection"}]'
   fi
 elif [ "${1:-}" = api ] && [[ "${2:-}" == */rulesets/1 ]]; then
-  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"Merge Gate","integration_id":15368}]}}]}'
+  printf '%s\n' '{"name":"main protection","target":"branch","enforcement":"active","bypass_actors":[],"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":true,"required_review_thread_resolution":true,"require_code_owner_review":false,"require_last_push_approval":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["squash"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":false,"required_status_checks":[{"context":"Merge Gate","integration_id":15368}]}}]}'
 elif [ "${1:-}" = api ] && [ "${2:-}" = "repos/fixture" ]; then
   if [ "${MOCK_SECURITY_DRIFT:-}" = 1 ]; then
     printf '%s\n' '{"visibility":"public","security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"disabled"}}}'

@@ -96,6 +96,7 @@ check_policy_shape() {
   required_count="$(jq '.required | length' "$POLICY")"
   [ "$required_count" -eq 1 ] || { finding policy_shape "policy must declare exactly one live required context"; clean=0; }
   jq -e '.required[0].context == "Merge Gate"' "$POLICY" >/dev/null || { finding policy_shape "the sole live required context must be 'Merge Gate'"; clean=0; }
+  jq -e '.strict_required_status_checks_policy | type == "boolean"' "$POLICY" >/dev/null || { finding policy_shape "strict_required_status_checks_policy must be an explicit boolean"; clean=0; }
 
   if ! jq -e '
     (.conditional_evidence | length == 2)
@@ -740,14 +741,16 @@ validate_ruleset_common() {
 }
 
 check_ruleset_sync() {
-  local detail want got ctx integration_id clean=1
+  local detail want got ctx integration_id expected_strict clean=1
   if [ "$NETWORK" -eq 0 ]; then info ruleset_sync "skipped (--no-network)"; return 0; fi
   if ! command -v gh >/dev/null 2>&1 || [ -z "${GITHUB_REPOSITORY:-}" ]; then finding ruleset_sync "gh and GITHUB_REPOSITORY are required for live readback"; return 0; fi
   if ! ruleset_readback_available; then finding ruleset_sync "authoritative HARDENING_AUDIT_TOKEN is unavailable; ordinary token/auth cannot prove ruleset state"; return 0; fi
   if ! detail="$(read_ruleset_detail main)"; then finding ruleset_sync "could not read complete main ruleset"; return 0; fi
   if ! validate_ruleset_common main "$detail"; then return 0; fi
   jq -e '.rules | map(select(.type == "required_status_checks")) | length == 1' <<< "$detail" >/dev/null || { finding ruleset_sync "main ruleset lacks exactly one required_status_checks rule"; clean=0; }
-  jq -e '.rules[] | select(.type == "required_status_checks") | (.parameters.strict_required_status_checks_policy == true and (.parameters.required_status_checks | type == "array"))' <<< "$detail" >/dev/null || { finding ruleset_sync "main required-status-check rule is missing or not strict"; clean=0; }
+  if ! jq -e '.strict_required_status_checks_policy | type == "boolean"' "$POLICY" >/dev/null; then finding ruleset_sync "policy strict_required_status_checks_policy must be an explicit boolean"; return 0; fi
+  expected_strict="$(jq -r '.strict_required_status_checks_policy' "$POLICY")"
+  jq -e --argjson expected_strict "$expected_strict" '.rules[] | select(.type == "required_status_checks") | (.parameters.strict_required_status_checks_policy == $expected_strict and (.parameters.required_status_checks | type == "array"))' <<< "$detail" >/dev/null || { finding ruleset_sync "main required-status-check strict policy drifted from declared policy"; clean=0; }
   for required_type in deletion non_fast_forward required_linear_history; do
     jq -e --arg type "$required_type" '.rules | any(.type == $type)' <<< "$detail" >/dev/null || { finding ruleset_sync "main ruleset lacks '$required_type' protection"; clean=0; }
   done

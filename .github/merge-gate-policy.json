@@ -12,6 +12,7 @@
   "ruleset_name": "main protection",
   "release_ruleset_name": "publication tags",
   "actions_integration_id": 15368,
+  "strict_required_status_checks_policy": false,
   "repository_settings": {
     "allow_squash_merge": true,
     "allow_merge_commit": false,
