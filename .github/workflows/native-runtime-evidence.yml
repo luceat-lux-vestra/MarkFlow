@@ -839,6 +839,15 @@ jobs:
         with:
           cache-read-only: true
 
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
       - name: Start virtual display
         shell: bash
         run: |
@@ -868,15 +877,31 @@ jobs:
           if not path.is_file():
               raise SystemExit(f'#556 proof did not produce {path}')
           evidence = json.loads(path.read_text(encoding='utf-8'))
+          expected_jcef = os.environ['EXPECT_JCEF'] == 'true'
+
+          # Always emit the raw proof ledger before enforcing PASS so an INCOMPLETE/FAIL
+          # remains diagnosable from the Actions log without downloading the artifact.
+          print(
+              f"#556 raw evidence: verdict={evidence.get('verdict')} "
+              f"mode={'JCEF' if expected_jcef else 'NO_JCEF'} "
+              f"ideBuild={evidence.get('ideBuild')}"
+          )
+          for case in evidence.get('cases') or []:
+              print(
+                  f"case {case.get('id')}: outcome={case.get('outcome')} "
+                  f"detail={case.get('detail')}"
+              )
+          for snapshot in evidence.get('resourceSnapshots') or []:
+              print(f"resource: {snapshot}")
+
           if evidence.get('schemaVersion') != 1:
               raise SystemExit(f"unexpected #556 schema: {evidence.get('schemaVersion')}")
           if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PROOF':
               raise SystemExit(f"unexpected #556 shell: {evidence.get('selectedShell')}")
-          if evidence.get('verdict') != 'PASS':
-              raise SystemExit(f"#556 verdict is not PASS: {evidence.get('verdict')}")
-          expected_jcef = os.environ['EXPECT_JCEF'] == 'true'
           if evidence.get('expectJcef') is not expected_jcef:
               raise SystemExit(f"#556 JCEF mode mismatch: {evidence.get('expectJcef')} vs {expected_jcef}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"#556 verdict is not PASS: {evidence.get('verdict')}")
 
           required = {
               'runtime-boundary',
