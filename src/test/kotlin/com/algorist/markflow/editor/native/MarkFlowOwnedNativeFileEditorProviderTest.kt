@@ -6,28 +6,25 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
-    fun testProviderIsDormantOutsideDedicatedProbeAndUsesFutureCutoverPolicy() {
+    fun testProviderIsActiveWithoutProofFlagAndPreservesCoexistencePolicy() {
         myFixture.configureByText("proof.md", "# proof\n")
         val file = checkNotNull(myFixture.file.virtualFile)
         val provider = MarkFlowOwnedNativeFileEditorProvider()
 
         System.clearProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY)
-        assertFalse(provider.accept(project, file))
+        assertTrue(provider.accept(project, file))
         assertEquals(FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR, provider.policy)
         assertEquals("markflow-owned-native", provider.editorTypeId)
 
-        try {
-            System.setProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY, "true")
-            assertTrue(provider.accept(project, file))
-        } finally {
-            System.clearProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY)
-        }
+        myFixture.configureByText("plain.txt", "plain\n")
+        assertFalse(provider.accept(project, checkNotNull(myFixture.file.virtualFile)))
     }
 
     fun testOwnedEditorsShareAuthoritativeDocumentAndRegistryCleansUp() {
         myFixture.configureByText("owned.md", "# owned\n\nshared source\n")
         val file = checkNotNull(myFixture.file.virtualFile)
         val authoritative = myFixture.editor.document
+        assertNull(NativeMarkFlowProductionLifecycle.controller(myFixture.editor))
 
         assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
         assertEquals(0, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
@@ -42,13 +39,18 @@ class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
             assertNotNull(NativeMarkFlowProductionLifecycle.ownedController(second.editor))
             assertEquals(2, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
             assertEquals(2, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+            assertNull(NativeMarkFlowProductionLifecycle.controller(myFixture.editor))
 
             val firstController = checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(first.editor))
+            val secondController = checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(second.editor))
             val generationBefore = checkNotNull(firstController.currentPlan?.identity?.configGeneration)
+            val secondBefore = checkNotNull(secondController.currentPlan?.identity?.configGeneration)
             MarkFlowSettingsService.bumpRuntimeSettingsRevision()
             NativeMarkFlowProductionLifecycle.refreshOwned()
             val generationAfter = checkNotNull(firstController.currentPlan?.identity?.configGeneration)
             assertTrue(generationAfter > generationBefore)
+            assertTrue(checkNotNull(secondController.currentPlan?.identity?.configGeneration) > secondBefore)
+            assertNull(NativeMarkFlowProductionLifecycle.controller(myFixture.editor))
 
             first.setState(
                 MarkFlowOwnedNativeFileEditorState(
