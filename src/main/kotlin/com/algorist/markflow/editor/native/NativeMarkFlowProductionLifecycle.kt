@@ -198,7 +198,11 @@ internal object NativeMarkFlowProductionLifecycle {
     private val LOG = Logger.getInstance(NativeMarkFlowProductionLifecycle::class.java)
 }
 
-/** Maintained IntelliJ editor lifecycle hook selected by #143 and activated by #153. */
+/**
+ * Pre-ADR-0003 production lifecycle hook retained only as a source-control rollback boundary.
+ * Slice 4 owns deletion after post-cutover evidence.
+ */
+@Suppress("unused")
 class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
         if (skipAutomaticProductionAttachment()) return
