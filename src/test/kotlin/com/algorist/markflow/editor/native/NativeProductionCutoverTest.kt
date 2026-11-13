@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class NativeProductionCutoverTest : BasePlatformTestCase() {
-    fun testProductionLifecycleAttachesOnceAndPreservesAuthoritativeSource() {
+    fun testRetainedGenericLifecycleAttachesOnceButNeverBecomesOwned() {
         val source = "# Native production\n\nExact source stays authoritative.\n"
         myFixture.configureByText("cutover.md", source)
         val editor = myFixture.editor
@@ -44,6 +44,43 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         assertEquals(stampBefore, editor.document.modificationStamp)
     }
 
+    fun testProductionOwnedLifecycleSharesDocumentIsolatesBundledEditorAndRefreshesOwnedOnly() {
+        val source = "# Owned production\n\nExact source stays authoritative.\n"
+        myFixture.configureByText("owned-production.md", source)
+        val bundledEditor = myFixture.editor
+        val file = checkNotNull(myFixture.file.virtualFile)
+        val stampBefore = bundledEditor.document.modificationStamp
+
+        assertNull(NativeMarkFlowProductionLifecycle.controller(bundledEditor))
+        assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
+
+        val owned = MarkFlowOwnedNativeFileEditor(project, file)
+        try {
+            assertSame(bundledEditor.document, owned.editor.document)
+            assertNotSame(bundledEditor, owned.editor)
+            assertNull(NativeMarkFlowProductionLifecycle.controller(bundledEditor))
+            val controller = checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(owned.editor))
+            assertSame(controller, NativeMarkFlowProductionLifecycle.controller(owned.editor))
+            assertEquals(1, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
+
+            val generationBefore = checkNotNull(controller.currentPlan?.identity?.configGeneration)
+            MarkFlowSettingsService.bumpRuntimeSettingsRevision()
+            NativeMarkFlowPresentationSettingsSink().presentationSettingsChanged()
+            val generationAfter = checkNotNull(controller.currentPlan?.identity?.configGeneration)
+            assertTrue(generationAfter > generationBefore)
+
+            assertNull(NativeMarkFlowProductionLifecycle.controller(bundledEditor))
+            assertEquals(source, bundledEditor.document.text)
+            assertEquals(stampBefore, bundledEditor.document.modificationStamp)
+        } finally {
+            owned.dispose()
+        }
+
+        assertNull(NativeMarkFlowProductionLifecycle.controller(bundledEditor))
+        assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
+        assertEquals(0, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+    }
+
     fun testProductionLifecycleRejectsNonMarkdownEditor() {
         myFixture.configureByText("plain.txt", "plain\n")
         val editor = myFixture.editor
@@ -59,13 +96,12 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
             Path.of("src", "main", "resources", "META-INF", "markflow-jcef.xml").toAbsolutePath().normalize()
         )
 
-        assertTrue(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
+        assertFalse(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
         assertTrue(pluginXml.contains("NativeMarkFlowPresentationSettingsSink"))
         assertFalse(pluginXml.contains("com.algorist.markflow.editor.MarkFlowEditorProvider"))
 
-        // #561 packages the production-named provider infrastructure, but normal accept() remains
-        // fail-closed outside dedicated proof JVMs. The existing EditorFactoryListener is still the
-        // active production attachment path until Slice 2.
+        // #563 activates the production-owned provider and removes generic platform-editor
+        // presentation attachment from plugin registration.
         assertTrue(pluginXml.contains("MarkFlowOwnedNativeFileEditorProvider"))
         assertTrue(pluginXml.contains("markflow-owned-native"))
 

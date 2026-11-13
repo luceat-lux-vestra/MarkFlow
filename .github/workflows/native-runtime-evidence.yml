@@ -725,9 +725,9 @@ jobs:
               raise SystemExit('native editor shell probe did not produce evidence.json')
 
           evidence = json.loads(path.read_text(encoding='utf-8'))
-          if evidence.get('schemaVersion') != 5:
+          if evidence.get('schemaVersion') != 6:
               raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
-          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+          if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR':
               raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
           if evidence.get('jcefSupported') is not False:
               raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
@@ -747,7 +747,7 @@ jobs:
               'dirty-save-undo-redo',
               'exact-source-fallback',
               'create-recreate-dispose',
-              'owned-file-editor-rejection-boundary',
+              'production-owned-file-editor-boundary',
           }
           cases = evidence.get('cases') or []
           by_id = {case.get('id'): case for case in cases}
@@ -768,8 +768,14 @@ jobs:
           undo_detail = str(by_id['dirty-save-undo-redo'].get('detail', ''))
           if 'undoScope=project-text-editor' not in undo_detail:
               raise SystemExit(f'undo proof did not use project TextEditor context: {undo_detail}')
-          boundary_detail = str(by_id['owned-file-editor-rejection-boundary'].get('detail', ''))
-          for flag in ('platformTextAuthority=true', 'legacyBrowserProvider=false', 'presentationOnly=true'):
+          boundary_detail = str(by_id['production-owned-file-editor-boundary'].get('detail', ''))
+          for flag in (
+              'ownedProvider=true',
+              'bundledPlatform=true',
+              'policy=PLACE_BEFORE_DEFAULT_EDITOR',
+              'legacyBrowserProvider=false',
+              'sharedDocumentAuthority=true',
+          ):
               if flag not in boundary_detail:
                   raise SystemExit(f'production FileEditor ownership boundary incomplete: {boundary_detail}')
 
@@ -777,6 +783,9 @@ jobs:
           selected = [p for p in providers if p.get('selectedPlatformTextProvider') is True]
           if len(selected) != 1 or selected[0].get('accepted') is not True or selected[0].get('policy') != 'NONE':
               raise SystemExit(f'invalid selected platform text provider evidence: {selected}')
+          owned = [p for p in providers if p.get('ownedMarkFlowProvider') is True]
+          if len(owned) != 1 or owned[0].get('accepted') is not True or owned[0].get('policy') != 'PLACE_BEFORE_DEFAULT_EDITOR':
+              raise SystemExit(f'invalid production MarkFlow-owned provider evidence: {owned}')
           legacy = [p for p in providers if p.get('legacyMarkFlowProvider') is True]
           if legacy:
               raise SystemExit(f'legacy MarkFlow browser provider remained registered after native production cutover: {legacy}')

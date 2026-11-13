@@ -37,15 +37,15 @@ import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Real-IDE platform TextEditor shell regression proof retained across the #153 production cutover.
+ * Real-IDE native editor shell/control regression proof across the ADR 0003 production cutover.
  *
- * The probe exercises public FileEditor/TextEditor semantics in a real opened project while JCEF is
- * disabled. Production authority must remain the platform text editor and the legacy MarkFlow browser
- * FileEditorProvider must be absent from the extension inventory.
+ * The probe keeps exercising public platform TextEditor semantics as a coexistence control while
+ * proving that the production MarkFlow-owned provider is registered and the legacy browser provider
+ * remains absent.
  */
 internal object NativeEditorShellProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeEditorShellProbe.output"
-    const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
+    const val SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR"
 
     private val started = AtomicBoolean(false)
 
@@ -344,15 +344,20 @@ internal object NativeEditorShellProbe {
                     "created=$lifecycleCreated released=$lifecycleReleased neutralAttachments=$neutralAttachments retainedControllers=0"
                 }
 
-                case("owned-file-editor-rejection-boundary") {
+                case("production-owned-file-editor-boundary") {
                     val platformProvider = providerInventory.singleOrNull { it.selectedPlatformTextProvider }
                         ?: error("selected platform text provider missing from evidence")
                     check(platformProvider.policy == FileEditorPolicy.NONE.name)
                     check(platformProvider.accepted)
+                    val ownedProvider = providerInventory.singleOrNull { it.ownedMarkFlowProvider }
+                        ?: error("production MarkFlow-owned FileEditorProvider missing from evidence")
+                    check(ownedProvider.accepted)
+                    check(ownedProvider.policy == FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR.name)
                     check(providerInventory.none { it.legacyMarkFlowProvider }) {
                         "legacy MarkFlow browser FileEditorProvider remained registered after production cutover"
                     }
-                    "platformTextAuthority=true legacyBrowserProvider=false presentationOnly=true"
+                    "ownedProvider=true bundledPlatform=true policy=${ownedProvider.policy} " +
+                        "legacyBrowserProvider=false sharedDocumentAuthority=true"
                 }
 
                 finish("PASS")
@@ -418,6 +423,8 @@ internal object NativeEditorShellProbe {
                     }.getOrElse { false }
                     val isText = provider.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID
                     val isLegacyMarkFlow = provider.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS
+                    val isOwnedMarkFlow =
+                        provider.editorTypeId == MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID
                     providerInventory += ProviderResult(
                         className = provider.javaClass.name,
                         editorTypeId = provider.editorTypeId,
@@ -425,6 +432,7 @@ internal object NativeEditorShellProbe {
                         accepted = accepted,
                         selectedPlatformTextProvider = isText && accepted,
                         legacyMarkFlowProvider = isLegacyMarkFlow,
+                        ownedMarkFlowProvider = isOwnedMarkFlow,
                     )
                     if (isText && accepted && selected == null) {
                         selected = provider
@@ -540,7 +548,7 @@ internal object NativeEditorShellProbe {
                     output,
                     gson.toJson(
                         Evidence(
-                            schemaVersion = 5,
+                            schemaVersion = 6,
                             selectedShell = SELECTED_SHELL,
                             ideBuild = ApplicationInfo.getInstance().build.asString(),
                             jcefSupported = jcefSupported,
@@ -613,6 +621,7 @@ internal object NativeEditorShellProbe {
         val accepted: Boolean,
         val selectedPlatformTextProvider: Boolean,
         val legacyMarkFlowProvider: Boolean,
+        val ownedMarkFlowProvider: Boolean,
     )
 
     private data class CaseResult(

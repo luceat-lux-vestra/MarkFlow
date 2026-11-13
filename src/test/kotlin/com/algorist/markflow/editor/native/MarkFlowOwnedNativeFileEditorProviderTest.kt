@@ -6,22 +6,28 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
-    fun testProviderIsDormantOutsideDedicatedProbeAndUsesFutureCutoverPolicy() {
+    fun testProductionProviderAcceptsMarkdownWithoutDiagnosticGateAndUsesCoexistingPolicy() {
         myFixture.configureByText("proof.md", "# proof\n")
         val file = checkNotNull(myFixture.file.virtualFile)
         val provider = MarkFlowOwnedNativeFileEditorProvider()
 
         System.clearProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY)
-        assertFalse(provider.accept(project, file))
+        assertTrue(provider.accept(project, file))
         assertEquals(FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR, provider.policy)
         assertEquals("markflow-owned-native", provider.editorTypeId)
 
         try {
-            System.setProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY, "true")
+            System.setProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY, "false")
             assertTrue(provider.accept(project, file))
         } finally {
             System.clearProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY)
         }
+    }
+
+    fun testProductionProviderRejectsNonMarkdown() {
+        myFixture.configureByText("plain.txt", "plain\n")
+        val file = checkNotNull(myFixture.file.virtualFile)
+        assertFalse(MarkFlowOwnedNativeFileEditorProvider().accept(project, file))
     }
 
     fun testOwnedEditorsShareAuthoritativeDocumentAndRegistryCleansUp() {
