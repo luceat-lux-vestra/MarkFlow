@@ -7,7 +7,7 @@ MarkFlow's architecture is governed by **product/correctness invariants first, a
 When architecture sources disagree, use this order:
 
 1. #78 and `docs/product/leap-capability-fidelity-contract.md` — product and source-fidelity authority;
-2. accepted ADRs and architecture decisions produced through #139;
+2. accepted ADRs and architecture decisions, including Leap 2 ADR 0003;
 3. responsibility Tracks #79–#84 as reconciled against the accepted architecture;
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
