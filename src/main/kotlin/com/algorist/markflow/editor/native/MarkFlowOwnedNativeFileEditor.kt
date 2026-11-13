@@ -21,24 +21,19 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
 
 /**
- * #561 production-ready owned native FileEditor provider infrastructure.
+ * #563 production MarkFlow-owned native FileEditor provider.
  *
- * The provider remains deliberately dormant in normal product runs until Slice 2 performs the
- * atomic provider/presentation-ownership cutover. The extension is packaged now so the #556
- * real-IDE proof can keep exercising the exact production-named provider implementation.
+ * The provider coexists with the bundled IntelliJ Markdown/text surfaces and edits the exact same
+ * FileDocumentManager Document. Presentation ownership belongs only to the owned editor lifecycle.
  */
 class MarkFlowOwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean =
-        System.getProperty(PROOF_ENABLED_PROPERTY) == "true" && MarkFlowFileSupport.isMarkFlowTarget(file)
+        MarkFlowFileSupport.isMarkFlowTarget(file)
 
     override fun acceptRequiresReadAction(): Boolean = false
 
-    override fun createEditor(project: Project, file: VirtualFile): TextEditor {
-        check(System.getProperty(PROOF_ENABLED_PROPERTY) == "true") {
-            "MarkFlow owned editor provider is dormant until the production cutover"
-        }
-        return MarkFlowOwnedNativeFileEditor(project, file)
-    }
+    override fun createEditor(project: Project, file: VirtualFile): TextEditor =
+        MarkFlowOwnedNativeFileEditor(project, file)
 
     override fun getEditorTypeId(): String = EDITOR_TYPE_ID
 
@@ -47,7 +42,7 @@ class MarkFlowOwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
     companion object {
         const val EDITOR_TYPE_ID = "markflow-owned-native"
 
-        // #556 evidence switch only. Slice 2 removes this acceptance gate when production activates.
+        // Temporary #556 task compatibility only; production acceptance no longer consults it.
         const val PROOF_ENABLED_PROPERTY = "markflow.leap2OwnedNativeFileEditor.enabled"
     }
 }

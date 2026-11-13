@@ -32,18 +32,13 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
-        <!-- #561 production-named owned FileEditor infrastructure. The provider remains dormant:
-             accept() is false unless the dedicated #556 proof JVM enables it. Slice 2 owns normal
-             Markdown activation and the presentation-ownership cutover. -->
+        <!-- #563 production editor shell: MarkFlow owns a distinct native FileEditor over the same
+             authoritative Document while bundled IntelliJ Markdown remains independently selectable. -->
         <fileEditorProvider
                 id="markflow-owned-native"
                 implementation="com.algorist.markflow.editor.native.MarkFlowOwnedNativeFileEditorProvider"
                 order="first"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.Leap2OwnedShellProbeProjectActivity"/>
-        <!-- #153 production cutover: the platform text editor remains the real FileEditor/source owner.
-             MarkFlow attaches only source-neutral native presentation to eligible Editors. -->
-        <editorFactoryListener
-                implementation="com.algorist.markflow.editor.native.NativeMarkFlowEditorFactoryListener"/>
         <!-- IntelliJ 2026.2 bypasses customPasteProvider/copyPastePreProcessor for multicaret and
              column-mode paste. Wrap EditorPaste before bundled Markdown's table hook, transform only
              the exact active Transferable when #152's parser/locality gates allow it, then delegate
