@@ -3,20 +3,26 @@ package com.algorist.markflow.editor.native
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.CustomFoldRegion
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.vfs.VirtualFile
 
 /**
  * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
  *
  * The bridge never creates, attaches, detaches, or owns presentation controllers. Every query
- * resolves the controller installed by [NativeMarkFlowProductionLifecycle] through the normal
- * platform-editor opening path. Starter/Driver tests therefore observe production ownership rather
- * than constructing a parallel test-only editor lifecycle.
+ * resolves state from the production-owned native editor/controller path. Starter/Driver tests
+ * therefore observe production ownership rather than constructing a parallel test-only lifecycle.
  */
 @Suppress("unused", "UnstableApiUsage")
 internal object NativeProjectionE2EBridge {
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return NativeMarkFlowProductionLifecycle.controller(editor) != null
+    }
+
+    fun ownsFile(editor: Editor, file: VirtualFile): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return FileDocumentManager.getInstance().getFile(editor.document) === file
     }
 
     fun planReady(editor: Editor): Boolean {
