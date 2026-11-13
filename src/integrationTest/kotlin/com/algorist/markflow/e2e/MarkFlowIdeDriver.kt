@@ -45,12 +45,21 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             component = selectedFileEditor.getComponent(),
         )
 
-        return driver.ideFrame().editor().also { editor ->
-            check(editor.editor.getVirtualFile().getName() == fileName) {
-                "active native editor does not own expected Markdown file: $fileName"
+        // The owned FileEditor cutover means the frame can contain auxiliary EditorComponentImpl
+        // instances whose remote Editor has no VirtualFile. Resolve the visible native editor for
+        // the exact file instead of assuming the frame-global first editor is the selected file.
+        return driver.ideFrame()
+            .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
+            .list()
+            .firstOrNull { editor ->
+                val ownsFile = runCatching {
+                    editor.editor.getVirtualFile().getName() == fileName
+                }.getOrDefault(false)
+                ownsFile &&
+                    editor.isEditable() &&
+                    driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
             }
-            check(editor.isEditable()) { "opened Markdown editor is not editable: $fileName" }
-        }
+            ?: error("visible editable native editor unavailable for Markdown file: $fileName")
     }
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
