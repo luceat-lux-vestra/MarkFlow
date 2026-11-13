@@ -13,7 +13,6 @@ import com.intellij.driver.sdk.invokeActionByShortcut
 import com.intellij.driver.sdk.openFile
 import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
-import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
 import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
@@ -45,21 +44,23 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             component = selectedFileEditor.getComponent(),
         )
 
-        // The owned FileEditor cutover means the frame can contain auxiliary EditorComponentImpl
-        // instances whose remote Editor has no VirtualFile. Resolve the visible native editor for
-        // the exact file instead of assuming the frame-global first editor is the selected file.
+        // The owned FileEditor is the selected FileEditor's native Swing component. Driver's
+        // remote Editor.getVirtualFile() is not reliable for manually-owned native editors, so
+        // identify the visible JEditorUiComponent by the selected FileEditor's component boundary.
+        val selectedLocation = driver.withContext(OnDispatcher.EDT) {
+            selectedFileEditor.getComponent().getLocationOnScreen()
+        }
         return driver.ideFrame()
             .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
             .list()
             .firstOrNull { editor ->
-                val ownsFile = runCatching {
-                    editor.editor.getVirtualFile().getName() == fileName
-                }.getOrDefault(false)
-                ownsFile &&
-                    editor.isEditable() &&
-                    driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
+                editor.isEditable() &&
+                    driver.withContext(OnDispatcher.EDT) {
+                        editor.component.isShowing() &&
+                            editor.component.getLocationOnScreen() == selectedLocation
+                    }
             }
-            ?: error("visible editable native editor unavailable for Markdown file: $fileName")
+            ?: error("selected FileEditor has no visible editable native component: $fileName")
     }
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
