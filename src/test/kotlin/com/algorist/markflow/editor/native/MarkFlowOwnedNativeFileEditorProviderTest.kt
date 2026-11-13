@@ -11,7 +11,7 @@ class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
         val file = checkNotNull(myFixture.file.virtualFile)
         val provider = MarkFlowOwnedNativeFileEditorProvider()
 
-        System.clearProperty(MarkFlowOwnedNativeFileEditorProvider.PROOF_ENABLED_PROPERTY)
+        System.clearProperty("markflow.leap2OwnedNativeFileEditor.enabled")
         assertTrue(provider.accept(project, file))
         assertEquals(FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR, provider.policy)
         assertEquals("markflow-owned-native", provider.editorTypeId)
