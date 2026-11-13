@@ -15,7 +15,10 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         // Automatic listener attachment is intentionally disabled in unit-test mode so component
         // tests do not acquire a second owner. Exercise the exact production owner directly here.
         assertNull(NativeMarkFlowProductionLifecycle.controller(editor))
+        assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
         assertTrue(NativeMarkFlowProductionLifecycle.attach(editor))
+        assertNull(NativeMarkFlowProductionLifecycle.ownedController(editor))
+        assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
         val controller = checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor))
         assertEquals(ProjectionPlanStatus.READY, controller.currentPlan?.status)
         assertEquals(source, editor.document.text)
@@ -60,14 +63,14 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
         assertTrue(pluginXml.contains("NativeMarkFlowPresentationSettingsSink"))
         assertFalse(pluginXml.contains("com.algorist.markflow.editor.MarkFlowEditorProvider"))
 
-        // #556 temporarily packages a fail-closed provider so the real FileEditorManager can
-        // exercise Candidate B. Its accept() remains false outside dedicated proof JVMs; this is
-        // evidence plumbing, not a production cutover or resurrection of browser authority.
-        assertTrue(pluginXml.contains("Leap2OwnedNativeFileEditorProvider"))
-        assertTrue(pluginXml.contains("markflow-leap2-owned-native-proof"))
+        // #561 packages the production-named provider infrastructure, but normal accept() remains
+        // fail-closed outside dedicated proof JVMs. The existing EditorFactoryListener is still the
+        // active production attachment path until Slice 2.
+        assertTrue(pluginXml.contains("MarkFlowOwnedNativeFileEditorProvider"))
+        assertTrue(pluginXml.contains("markflow-owned-native"))
 
         assertFalse(jcefXml.contains("MarkFlowEditorProvider"))
-        assertFalse(jcefXml.contains("Leap2OwnedNativeFileEditorProvider"))
+        assertFalse(jcefXml.contains("MarkFlowOwnedNativeFileEditorProvider"))
         assertFalse(jcefXml.contains("MarkFlowStartupActivity"))
         assertTrue(jcefXml.contains("JcefDerivedRendererRuntimeFactory"))
     }
