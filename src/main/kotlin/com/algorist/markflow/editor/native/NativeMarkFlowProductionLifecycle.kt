@@ -15,21 +15,37 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
+import java.util.IdentityHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * #153 production owner for MarkFlow's native projection architecture.
+ * #153 production presentation owner, extended by #561 with the dormant ADR 0003 owned-shell
+ * lifecycle boundary.
  *
- * The platform text editor remains the FileEditor and authoritative source editor. MarkFlow owns
- * only one source-neutral presentation controller per eligible native Editor. Optional derived
- * renderer creation is fail-closed: renderer absence/failure never prevents the platform editor
- * from opening or editing exact Markdown source.
+ * Slice 1 deliberately keeps the platform-editor listener as the active production path. Generic
+ * [attach]/[release] therefore retain their existing behavior and never populate the owned-editor
+ * registry. [attachOwned]/[releaseOwned] are used only by the production-ready MarkFlow-owned
+ * FileEditor infrastructure until Slice 2 performs the atomic cutover.
+ *
+ * Optional derived renderer creation is fail-closed: renderer absence/failure never prevents exact
+ * Markdown source editing.
  */
 internal object NativeMarkFlowProductionLifecycle {
     private val controllerKey = Key.create<NativePresentationController>(
         "com.algorist.markflow.native.production.controller"
     )
+    private val ownedControllers = IdentityHashMap<Editor, NativePresentationController>()
+    private val liveOwnedControllers = AtomicInteger(0)
 
     fun controller(editor: Editor): NativePresentationController? = editor.getUserData(controllerKey)
+
+    fun ownedController(editor: Editor): NativePresentationController? {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return ownedControllers[editor]
+    }
+
+    internal val liveOwnedControllerCountForDiagnostics: Int
+        get() = liveOwnedControllers.get()
 
     fun attach(editor: Editor): Boolean {
         if (!ApplicationManager.getApplication().isDispatchThread) {
@@ -102,6 +118,51 @@ internal object NativeMarkFlowProductionLifecycle {
         return true
     }
 
+    /**
+     * Attach presentation under the MarkFlow-owned FileEditor lifecycle.
+     *
+     * This registry is intentionally separate from generic production attachment so a bundled
+     * IntelliJ editor can never become an owned MarkFlow editor merely by being eligible Markdown.
+     */
+    fun attachOwned(editor: Editor): Boolean {
+        if (!ApplicationManager.getApplication().isDispatchThread) {
+            ApplicationManager.getApplication().invokeLater { attachOwned(editor) }
+            return false
+        }
+        if (ownedControllers.containsKey(editor)) return false
+        if (!attach(editor)) return false
+        val controller = controller(editor) ?: return false
+        ownedControllers[editor] = controller
+        liveOwnedControllers.incrementAndGet()
+        return true
+    }
+
+    fun releaseOwned(editor: Editor): Boolean {
+        if (!ApplicationManager.getApplication().isDispatchThread) {
+            ApplicationManager.getApplication().invokeLater { releaseOwned(editor) }
+            return false
+        }
+        val owned = ownedControllers[editor] ?: return false
+        if (controller(editor) !== owned) return false
+        if (!release(editor)) return false
+        ownedControllers.remove(editor)
+        liveOwnedControllers.decrementAndGet()
+        return true
+    }
+
+    /**
+     * Prepared for Slice 2 settings routing. Slice 1 does not call this from the production
+     * settings sink; [refreshAll] remains the active behavior until provider cutover.
+     */
+    fun refreshOwned() {
+        val application = ApplicationManager.getApplication()
+        if (!application.isDispatchThread) {
+            application.invokeLater(::refreshOwned)
+            return
+        }
+        ownedControllers.values.toList().forEach(::refreshController)
+    }
+
     fun refreshAll() {
         val application = ApplicationManager.getApplication()
         if (!application.isDispatchThread) {
@@ -111,15 +172,19 @@ internal object NativeMarkFlowProductionLifecycle {
         EditorFactory.getInstance().allEditors.forEach { editor ->
             val controller = controller(editor) ?: return@forEach
             if (editor.isDisposed) return@forEach
-            runCatching { controller.refreshNow() }
-                .onFailure { failure ->
-                    if (failure is ProcessCanceledException) throw failure
-                    LOG.warn(
-                        "MarkFlow native production presentation refresh failed; exact source remains authoritative",
-                        failure,
-                    )
-                }
+            refreshController(controller)
         }
+    }
+
+    private fun refreshController(controller: NativePresentationController) {
+        runCatching { controller.refreshNow() }
+            .onFailure { failure ->
+                if (failure is ProcessCanceledException) throw failure
+                LOG.warn(
+                    "MarkFlow native production presentation refresh failed; exact source remains authoritative",
+                    failure,
+                )
+            }
     }
 
     private fun createRendererRuntimeOrNull(): DerivedRendererRuntime? = try {

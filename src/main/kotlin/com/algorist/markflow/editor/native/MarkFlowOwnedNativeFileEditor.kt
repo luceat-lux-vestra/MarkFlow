@@ -21,23 +21,23 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
 
 /**
- * #556 proof-only native FileEditor.
+ * #561 production-ready owned native FileEditor provider infrastructure.
  *
- * The extension is packaged so the real FileEditorManager can exercise provider ordering/tab
- * coexistence, but [Leap2OwnedNativeFileEditorProvider.accept] is fail-closed unless the dedicated
- * proof JVM explicitly enables it. This is not a production cutover.
+ * The provider remains deliberately dormant in normal product runs until Slice 2 performs the
+ * atomic provider/presentation-ownership cutover. The extension is packaged now so the #556
+ * real-IDE proof can keep exercising the exact production-named provider implementation.
  */
-class Leap2OwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
+class MarkFlowOwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean =
-        System.getProperty(ENABLED_PROPERTY) == "true" && MarkFlowFileSupport.isMarkFlowTarget(file)
+        System.getProperty(PROOF_ENABLED_PROPERTY) == "true" && MarkFlowFileSupport.isMarkFlowTarget(file)
 
     override fun acceptRequiresReadAction(): Boolean = false
 
     override fun createEditor(project: Project, file: VirtualFile): TextEditor {
-        check(System.getProperty(ENABLED_PROPERTY) == "true") {
-            "Leap 2 owned editor provider is diagnostic-only"
+        check(System.getProperty(PROOF_ENABLED_PROPERTY) == "true") {
+            "MarkFlow owned editor provider is dormant until the production cutover"
         }
-        return Leap2OwnedNativeFileEditor(project, file)
+        return MarkFlowOwnedNativeFileEditor(project, file)
     }
 
     override fun getEditorTypeId(): String = EDITOR_TYPE_ID
@@ -45,12 +45,21 @@ class Leap2OwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
     override fun getPolicy(): FileEditorPolicy = FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR
 
     companion object {
-        const val EDITOR_TYPE_ID = "markflow-leap2-owned-native-proof"
-        const val ENABLED_PROPERTY = "markflow.leap2OwnedNativeFileEditor.enabled"
+        const val EDITOR_TYPE_ID = "markflow-owned-native"
+
+        // #556 evidence switch only. Slice 2 removes this acceptance gate when production activates.
+        const val PROOF_ENABLED_PROPERTY = "markflow.leap2OwnedNativeFileEditor.enabled"
     }
 }
 
-internal class Leap2OwnedNativeFileEditor(
+/**
+ * Production-ready MarkFlow-owned native editor shell.
+ *
+ * Source authority remains FileDocumentManager's Document. This class owns only its native Editor,
+ * FileEditor state and the MarkFlow presentation attachment registered through the explicit owned
+ * lifecycle boundary.
+ */
+internal class MarkFlowOwnedNativeFileEditor(
     project: Project,
     private val file: VirtualFile,
 ) : UserDataHolderBase(), TextEditor {
@@ -66,8 +75,7 @@ internal class Leap2OwnedNativeFileEditor(
         ApplicationManager.getApplication().assertIsDispatchThread()
         liveEditors.incrementAndGet()
         try {
-            presentationAttached = NativeMarkFlowProductionLifecycle.attach(editor)
-            if (presentationAttached) livePresentationOwners.incrementAndGet()
+            presentationAttached = NativeMarkFlowProductionLifecycle.attachOwned(editor)
         } catch (failure: Throwable) {
             if (!editor.isDisposed) EditorFactory.getInstance().releaseEditor(editor)
             liveEditors.decrementAndGet()
@@ -87,7 +95,7 @@ internal class Leap2OwnedNativeFileEditor(
 
     override fun getState(level: FileEditorStateLevel): FileEditorState {
         val caret = editor.caretModel.primaryCaret
-        return Leap2OwnedNativeFileEditorState(
+        return MarkFlowOwnedNativeFileEditorState(
             caretOffset = caret.offset,
             selectionStart = if (caret.hasSelection()) caret.selectionStart else -1,
             selectionEnd = if (caret.hasSelection()) caret.selectionEnd else -1,
@@ -96,7 +104,7 @@ internal class Leap2OwnedNativeFileEditor(
     }
 
     override fun setState(state: FileEditorState) {
-        val owned = state as? Leap2OwnedNativeFileEditorState ?: return
+        val owned = state as? MarkFlowOwnedNativeFileEditorState ?: return
         val maxOffset = editor.document.textLength
         val caretOffset = owned.caretOffset.coerceIn(0, maxOffset)
         editor.caretModel.primaryCaret.moveToOffset(caretOffset)
@@ -133,9 +141,8 @@ internal class Leap2OwnedNativeFileEditor(
         disposed = true
         try {
             if (presentationAttached) {
-                NativeMarkFlowProductionLifecycle.release(editor)
+                NativeMarkFlowProductionLifecycle.releaseOwned(editor)
                 presentationAttached = false
-                livePresentationOwners.decrementAndGet()
             }
         } finally {
             if (!editor.isDisposed) EditorFactory.getInstance().releaseEditor(editor)
@@ -145,22 +152,21 @@ internal class Leap2OwnedNativeFileEditor(
 
     companion object {
         private val liveEditors = AtomicInteger(0)
-        private val livePresentationOwners = AtomicInteger(0)
 
         internal val liveEditorCountForDiagnostics: Int
             get() = liveEditors.get()
 
         internal val livePresentationOwnerCountForDiagnostics: Int
-            get() = livePresentationOwners.get()
+            get() = NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics
     }
 }
 
-internal data class Leap2OwnedNativeFileEditorState(
+internal data class MarkFlowOwnedNativeFileEditorState(
     val caretOffset: Int,
     val selectionStart: Int,
     val selectionEnd: Int,
     val verticalScrollOffset: Int,
 ) : FileEditorState {
     override fun canBeMergedWith(otherState: FileEditorState, level: FileEditorStateLevel): Boolean =
-        otherState is Leap2OwnedNativeFileEditorState
+        otherState is MarkFlowOwnedNativeFileEditorState
 }
