@@ -282,7 +282,7 @@ internal object Leap2OwnedShellProbe {
                         owned.editor.caretModel.moveToOffset(1)
                         split.editor.caretModel.moveToOffset((plain.document.textLength / 2).coerceAtLeast(2))
                     }
-                    check(owned.editor.caretModel.offset != split.editor.caretModel.offset)
+                    check(onEdt { owned.editor.caretModel.offset != split.editor.caretModel.offset })
                     check(NativeMarkFlowProductionLifecycle.controller(owned.editor) != null)
                     check(NativeMarkFlowProductionLifecycle.controller(split.editor) != null)
                     check(Leap2OwnedNativeFileEditor.liveEditorCountForDiagnostics >= 2)
@@ -304,7 +304,7 @@ internal object Leap2OwnedShellProbe {
                             owned.editor.scrollingModel.enableAnimation()
                         }
                     }
-                    val savedScroll = owned.editor.scrollingModel.verticalScrollOffset
+                    val savedScroll = onEdt { owned.editor.scrollingModel.verticalScrollOffset }
                     check(savedScroll > 0) { "MarkFlow-owned editor could not establish scroll state" }
                     val state = onEdt { owned.getState(FileEditorStateLevel.FULL) }
                     onEdt {
@@ -313,9 +313,11 @@ internal object Leap2OwnedShellProbe {
                         owned.editor.scrollingModel.scrollVertically(0)
                         owned.setState(state)
                     }
-                    check(owned.editor.caretModel.offset == target)
-                    check(owned.editor.selectionModel.selectionStart == target - 1)
-                    check(owned.editor.selectionModel.selectionEnd == target)
+                    onEdt {
+                        check(owned.editor.caretModel.offset == target)
+                        check(owned.editor.selectionModel.selectionStart == target - 1)
+                        check(owned.editor.selectionModel.selectionEnd == target)
+                    }
                     "caret=$target selection=${target - 1}..$target stateRoundTrip=true"
                 }
 
@@ -330,7 +332,7 @@ internal object Leap2OwnedShellProbe {
                         editor.selectionModel.removeSelection()
                         editor.caretModel.moveToOffset(1)
                     }
-                    val compositionOffset = editor.caretModel.offset
+                    val compositionOffset = onEdt { editor.caretModel.offset }
                     val composing = inputMethodEvent(editor, "ㅎ", committedCharacterCount = 0)
                     onEdt {
                         WriteCommandAction.writeCommandAction(project)
@@ -582,15 +584,12 @@ internal object Leap2OwnedShellProbe {
                 )
             }
             val runtime = Runtime.getRuntime()
-            val processStream = ProcessHandle.allProcesses()
-            val cefProcesses = try {
+            val cefProcesses = ProcessHandle.allProcesses().use { processStream ->
                 processStream.filter { handle ->
                     val command = handle.info().commandLine().orElse("")
                     command.contains("cef", ignoreCase = true) ||
                         command.contains("chromium", ignoreCase = true)
                 }.count().toInt()
-            } finally {
-                processStream.close()
             }
             return ResourceSnapshot(
                 name = name,
