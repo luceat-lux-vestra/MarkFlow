@@ -4,6 +4,7 @@ import com.intellij.driver.client.Driver
 import com.intellij.driver.client.Remote
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.Editor
+import com.intellij.driver.sdk.findOpenFile
 import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.common.ideFrame
@@ -287,18 +288,24 @@ class MarkFlowStarterSplitEditorTest {
 }
 
 private class SplitEditorDriver(private val driver: Driver) {
-    fun visibleEditorsForFile(fileName: String): List<JEditorUiComponent> =
-        driver.ideFrame()
+    fun visibleEditorsForFile(fileName: String): List<JEditorUiComponent> {
+        val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
+            "opened Markdown file not found while locating split editors: $fileName"
+        }
+        val bridge = driver.utility(SplitProjectionE2EBridgeRemote::class)
+        return driver.ideFrame()
             .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
             .list()
             .filter { editor ->
-                editor.editor.getVirtualFile()?.getName() == fileName &&
-                    editor.isEditable() &&
-                    driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
+                editor.isEditable() &&
+                    driver.withContext(OnDispatcher.EDT) {
+                        editor.component.isShowing() && bridge.ownsFile(editor.editor, file)
+                    }
             }
             .sortedBy { editor ->
                 driver.withContext(OnDispatcher.EDT) { editor.component.getLocationOnScreen().x }
             }
+    }
 
     fun splitVertically(editor: JEditorUiComponent) {
         editor.setFocus()
@@ -321,4 +328,5 @@ private class SplitEditorDriver(private val driver: Driver) {
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface SplitProjectionE2EBridgeRemote {
     fun sameDocument(first: Editor, second: Editor): Boolean
+    fun ownsFile(editor: Editor, file: com.intellij.driver.sdk.VirtualFile): Boolean
 }
