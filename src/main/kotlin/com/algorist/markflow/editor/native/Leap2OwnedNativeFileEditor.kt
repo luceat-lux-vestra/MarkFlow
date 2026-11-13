@@ -51,7 +51,7 @@ class Leap2OwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
 }
 
 internal class Leap2OwnedNativeFileEditor(
-    private val project: Project,
+    project: Project,
     private val file: VirtualFile,
 ) : UserDataHolderBase(), TextEditor {
     private val document = requireNotNull(FileDocumentManager.getInstance().getDocument(file)) {
