@@ -1,6 +1,8 @@
 # Native editor shell selection
 
-Status: production integration decision established by completed #143 under accepted ADR 0001
+> **Leap 2 supersession note (2026-11-14):** this document remains the historical #143 decision record for the first native Leap. #545 reopened the shell question after fresh product-fidelity evidence, and #556/PR #558 proved and accepted a MarkFlow-owned native `FileEditor` over the same authoritative `Document`. ADR 0003 supersedes #143's lower-level `PLATFORM_TEXT_EDITOR_AUGMENTATION` choice for future production work. ADR 0001 source authority/projection and ADR 0002 renderer continuity remain accepted. Use `0003-leap2-owned-native-file-editor-shell.md` and `leap2-owned-shell-cutover-inventory.md` for current work.
+
+Status: historical #143 production integration decision; superseded at the shell layer by ADR 0003 / #556
 
 > Completion note: #143 selected this shell and the downstream #144–#156 migration chain is closed. Sections below that describe proof dependencies or candidate work in future tense are retained as #143 decision-time evidence unless explicitly stated as a current production requirement.
 

@@ -12,7 +12,7 @@ When architecture sources disagree, use this order:
 4. PR-sized implementation Task contracts;
 5. current classes, packages, libraries, tests and historical design text as evidence only.
 
-Issue #52 established the replacement-first Leap policy. #139 and #141 are completed architecture-reset and repository-wide migration-reconciliation gates, PR #142 accepted ADR 0001/0002, #143–#152 established the native target capabilities, #153 completed production native-editor cutover, #154 purged the superseded browser editor/session/protocol/trust machinery, #155 converged retained renderer-only dependencies/tooling/settings, and #156 completed final compatibility/lifecycle/performance/release convergence. #84 and the parent Leap Epic #52 are closed; these records now provide acceptance and migration provenance rather than active work.
+Issue #52 established the replacement-first Leap policy. #139 and #141 are completed architecture-reset and repository-wide migration-reconciliation gates, PR #142 accepted ADR 0001/0002, #143–#156 completed the first native Leap migration, and #84/#52 then closed. Leap 2 #545 reopened only the editor-shell/product-fidelity question after fresh pre-1.0 manual evidence; #556/PR #558 accepted a MarkFlow-owned native FileEditor shell while retaining the original native source-authority and renderer boundaries.
 
 ## Current architecture
 
@@ -20,7 +20,7 @@ ADR 0001 establishes **IntelliJ-native authoritative editing with an in-place, s
 
 ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migration**. Native editor migration removes the browser from source-editing correctness; it does not authorize reimplementing or dropping supported Mermaid/KaTeX rendering. Existing maintained renderer engines are extracted from editor-specific integration and reused behind the derived-render boundary.
 
-#143 resolves ADR 0001's lower-level shell choice: the target **augments the normal IntelliJ platform text editor** and attaches per-editor MarkFlow presentation through maintained native editor lifecycle APIs. A MarkFlow-owned replacement `FileEditor` shell is rejected because it adds provider/state/input/focus/lifecycle ownership without an independent product requirement. See `native-editor-shell-selection.md`. #153 subsequently proved and completed production cutover to that native ownership model.
+ADR 0003 records the Leap 2 shell decision from #556: the target is now a **distinct MarkFlow-owned native `FileEditor` over the same authoritative IntelliJ `Document`**, while the bundled IntelliJ Markdown editor remains independently selectable. The #143 platform-augmentation decision remains historical evidence for the first Leap and is superseded only at this lower shell layer; ADR 0001 source authority/projection and ADR 0002 renderer continuity remain accepted. See `0003-leap2-owned-native-file-editor-shell.md`, `native-editor-shell-selection.md`, and `leap2-owned-shell-cutover-inventory.md`.
 
 #145 establishes the next target foundation over that selected shell: **an immutable exact `Document` snapshot and source/config identity are parsed into an immutable `NativeProjectionPlan`, then applied by one source-neutral `NativePresentationController` per native editor**. The initial mechanism and evidence contract are recorded in `native-markdown-projection-foundation.md`. #145 is a projection foundation, not ordinary-Markdown parity and not production cutover.
 
@@ -29,7 +29,7 @@ ADR 0002 establishes **Mermaid/KaTeX renderer continuity across that editor migr
 Current architecture principles:
 
 1. **IntelliJ `Document` is the sole mutable live Markdown authority.** A native IntelliJ `Editor` edits that same `Document` directly.
-2. **Native editing uses the platform text-editor shell.** MarkFlow augments the normal native editor; it does not introduce a target replacement `FileEditorProvider`.
+2. **MarkFlow owns a distinct native FileEditor surface over that same Document.** The bundled IntelliJ Markdown surface remains independently selectable and receives no MarkFlow presentation after cutover.
 3. **Presentation is derived and disposable.** Parsing, styling, folding, inlays, images and rich previews never become source authority.
 4. **Reveal exact source in active edit context.** Presentation may visually reduce syntax only when exact source remains recoverable and interaction is unambiguous.
 5. **Stale derived work is inert.** Parse/render results apply only to the exact current source/config identity they were produced from.
@@ -41,7 +41,7 @@ Current architecture principles:
 11. **Replacement includes already-merged Leap code.** Superseded CodeMirror/JCEF source-editing/bridge/loopback/CSP mechanisms are not compatibility APIs; #154 removes them once their retained responsibilities have been extracted.
 12. **Classification is responsibility-level.** Do not label an entire directory/toolchain `DELETE` when retained renderer consumers still need part of it.
 
-See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `native-edit-semantics.md`, `leap-target-architecture-comparison.md`, and `leap-migration-inventory.md`.
+See `0001-native-authority-projection-architecture.md`, `0002-mermaid-katex-renderer-continuity.md`, `0003-leap2-owned-native-file-editor-shell.md`, `native-editor-shell-selection.md`, `native-markdown-projection-foundation.md`, `native-edit-semantics.md`, `leap-target-architecture-comparison.md`, `leap-migration-inventory.md`, and `leap2-owned-shell-cutover-inventory.md`.
 
 ## Architecture anti-goals
 
@@ -72,7 +72,16 @@ Do not:
 - **#156 completed** — final compatibility/lifecycle/performance/release convergence;
 - **#84 and #52 completed** — the quality Track and parent Leap Epic are closed after convergence.
 
-The #143–#156 Tasks and #52/#84 remain useful provenance for why the current architecture exists. New work should use this architecture index, the accepted ADRs/product contracts, and a focused current issue rather than treating the closed Leap graph as an active migration backlog.
+The #143–#156 Tasks and #52/#84 remain useful provenance for why the first native architecture exists; they are not an active migration backlog.
+
+Leap 2 shell migration authority is now:
+
+- **#545 active Epic** — architecture/product reset after owner-visible pre-1.0 fidelity failure;
+- **#556 completed / PR #558 merged** — Candidate B MarkFlow-owned native `FileEditor` proof accepted;
+- **ADR 0003** — current lower-level shell authority;
+- **#559 / `leap2-owned-shell-cutover-inventory.md`** — bounded ADR formalization, inventory and ordered production-cutover plan.
+
+Production remains on the historical platform-augmentation attachment until the ordered Leap 2 cutover slices replace it with exact-candidate evidence. Fidelity repair resumes only after that shell cutover.
 
 ## When an ADR is required
 
