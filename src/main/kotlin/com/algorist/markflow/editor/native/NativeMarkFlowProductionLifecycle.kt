@@ -208,7 +208,11 @@ internal object NativeMarkFlowProductionLifecycle {
     private val LOG = Logger.getInstance(NativeMarkFlowProductionLifecycle::class.java)
 }
 
-/** Historical #153 platform-augmentation hook retained temporarily for rollback/comparison. */
+/**
+ * Historical #153 platform-augmentation hook retained temporarily for rollback/comparison.
+ * Slice 4 owns deletion after the owned-shell replacement evidence is stable on main.
+ */
+@Suppress("unused")
 class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
         if (skipAutomaticProductionAttachment()) return
