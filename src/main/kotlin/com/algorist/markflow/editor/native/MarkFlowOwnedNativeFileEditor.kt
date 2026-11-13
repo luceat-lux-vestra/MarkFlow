@@ -38,8 +38,6 @@ class MarkFlowOwnedNativeFileEditorProvider : FileEditorProvider, DumbAware {
     companion object {
         const val EDITOR_TYPE_ID = "markflow-owned-native"
 
-        // Retained temporarily for the #556 diagnostic JVM; no longer gates production acceptance.
-        const val PROOF_ENABLED_PROPERTY = "markflow.leap2OwnedNativeFileEditor.enabled"
     }
 }
 
