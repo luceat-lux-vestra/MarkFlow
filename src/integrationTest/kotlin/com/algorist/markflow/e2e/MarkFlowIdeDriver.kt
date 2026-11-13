@@ -48,9 +48,12 @@ class MarkFlowIdeDriver(private val driver: Driver) {
                     .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
                     .list()
                     .filter { editor ->
-                        editor.editor.getVirtualFile()?.getName() == fileName &&
-                            editor.isEditable() &&
-                            driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
+                        editor.isEditable() &&
+                            driver.withContext(OnDispatcher.EDT) {
+                                editor.component.isShowing() &&
+                                    driver.utility(NativeProjectionE2EBridgeRemote::class)
+                                        .ownsFile(editor.editor, file)
+                            }
                     }
             },
             checker = { editors -> editors.size == 1 },
@@ -499,6 +502,7 @@ private interface NativeClipboardE2EBridgeRemote {
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface NativeProjectionE2EBridgeRemote {
     fun isAttached(editor: Editor): Boolean
+    fun ownsFile(editor: Editor, file: VirtualFile): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
     fun listOwnedInlays(editor: Editor): Int
