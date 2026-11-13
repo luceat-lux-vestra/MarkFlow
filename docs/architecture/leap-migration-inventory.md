@@ -1,5 +1,7 @@
 # Leap migration inventory and execution map
 
+> **Leap 2 note (2026-11-14):** this file remains the completed #141 migration inventory for the first native Leap. Its #143 `PLATFORM_TEXT_EDITOR_AUGMENTATION` disposition is historical, not current shell authority. #556/ADR 0003 select a MarkFlow-owned native `FileEditor` while retaining the same `Document` authority, native editing semantics and renderer boundaries. Use `leap2-owned-shell-cutover-inventory.md` for the current production shell migration. The historical rows below are intentionally not rewritten.
+
 Status: completed migration authority/provenance for #141 under accepted ADR 0001 and ADR 0002; #143–#156, #84, and #52 are closed
 
 Original #141 audited base:
