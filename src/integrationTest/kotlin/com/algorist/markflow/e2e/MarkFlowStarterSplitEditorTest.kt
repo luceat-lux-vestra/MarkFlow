@@ -292,7 +292,7 @@ private class SplitEditorDriver(private val driver: Driver) {
             .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
             .list()
             .filter { editor ->
-                editor.editor.getVirtualFile().getName() == fileName &&
+                editor.editor.getVirtualFile()?.getName() == fileName &&
                     editor.isEditable() &&
                     driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
             }
