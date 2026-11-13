@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -41,6 +42,13 @@ class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
             assertNotNull(NativeMarkFlowProductionLifecycle.ownedController(second.editor))
             assertEquals(2, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
             assertEquals(2, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+
+            val firstController = checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(first.editor))
+            val generationBefore = checkNotNull(firstController.currentPlan?.identity?.configGeneration)
+            MarkFlowSettingsService.bumpRuntimeSettingsRevision()
+            NativeMarkFlowProductionLifecycle.refreshOwned()
+            val generationAfter = checkNotNull(firstController.currentPlan?.identity?.configGeneration)
+            assertTrue(generationAfter > generationBefore)
 
             first.setState(
                 MarkFlowOwnedNativeFileEditorState(
