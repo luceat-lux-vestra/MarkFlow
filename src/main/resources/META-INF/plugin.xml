@@ -32,6 +32,14 @@
                 parentId="tools"
                 key="settings.markflow.displayName"
                 instance="com.algorist.markflow.settings.MarkFlowSettingsConfigurable"/>
+        <!-- #556 proof-only provider: packaged so FileEditorManager can exercise real provider/tab
+             coexistence, but accept() is false unless the dedicated Leap 2 proof JVM enables it.
+             This is not the production editor cutover. -->
+        <fileEditorProvider
+                id="markflow-leap2-owned-native-proof"
+                implementation="com.algorist.markflow.editor.native.Leap2OwnedNativeFileEditorProvider"
+                order="first"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.Leap2OwnedShellProbeProjectActivity"/>
         <!-- #153 production cutover: the platform text editor remains the real FileEditor/source owner.
              MarkFlow attaches only source-neutral native presentation to eligible Editors. -->
         <editorFactoryListener

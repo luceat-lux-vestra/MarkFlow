@@ -489,6 +489,7 @@ for job in \
   native_derived_presentation \
   native_editing \
   native_editor_shell \
+  leap2_owned_shell \
   native_host_resources \
   native_image_import \
   native_projection \
@@ -501,6 +502,8 @@ for semantic_probe in \
   'markflow.nativeDerivedPresentationProbe.output' \
   'runIdeForNativeEditingProbe' \
   'runIdeForNativeEditorShellProbe' \
+  'runIdeForLeap2OwnedShellProbe' \
+  'runIdeForLeap2OwnedShellNoJcefProbe' \
   'runIdeForNativeHostResourcesProbe' \
   'markflow.nativeImageImportProbe.output' \
   'runIdeForNativeProjectionProbe' \
@@ -509,7 +512,7 @@ for semantic_probe in \
 done
 
 exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sha }}' "$native_evidence_workflow")"
-[ "$exact_native_checkout_count" -ge 8 ] ||
+[ "$exact_native_checkout_count" -ge 9 ] ||
   die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
 
 

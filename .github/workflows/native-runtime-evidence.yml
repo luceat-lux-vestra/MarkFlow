@@ -802,6 +802,190 @@ jobs:
             ${{ runner.temp }}/markflow-native-shell-xvfb.log
           if-no-files-found: warn
 
+
+  leap2_owned_shell:
+    needs: target
+    if: needs.target.outputs.run_native_editor_shell == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Leap 2 owned native FileEditor proof (${{ matrix.id }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: jcef-enabled
+            task: runIdeForLeap2OwnedShellProbe
+            evidence: build/leap2-owned-shell-probe/evidence-jcef.json
+            expect_jcef: "true"
+          - id: jcef-plugin-absent
+            task: runIdeForLeap2OwnedShellNoJcefProbe
+            evidence: build/leap2-owned-shell-probe/evidence-no-jcef.json
+            expect_jcef: "false"
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.target.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+
+      - name: Install ARM64 Skiko EGL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = "aarch64" ] && [ "$RUNNER_ARCH" = "ARM64" ]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+          ldconfig -p | grep -F libEGL.so.1
+
+      - name: Start virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-leap2-owned-shell-xvfb.log" 2>&1 &
+          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
+
+      - name: Run Leap 2 owned native FileEditor proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 12m ./gradlew "${{ matrix.task }}" -PplatformVersion=2026.2.3 --stacktrace
+
+      - name: Validate Leap 2 owned-shell evidence
+        shell: bash
+        env:
+          EVIDENCE_PATH: ${{ matrix.evidence }}
+          EXPECT_JCEF: ${{ matrix.expect_jcef }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['EVIDENCE_PATH'])
+          if not path.is_file():
+              raise SystemExit(f'#556 proof did not produce {path}')
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          expected_jcef = os.environ['EXPECT_JCEF'] == 'true'
+
+          # Always emit the raw proof ledger before enforcing PASS so an INCOMPLETE/FAIL
+          # remains diagnosable from the Actions log without downloading the artifact.
+          print(
+              f"#556 raw evidence: verdict={evidence.get('verdict')} "
+              f"mode={'JCEF' if expected_jcef else 'NO_JCEF'} "
+              f"ideBuild={evidence.get('ideBuild')}"
+          )
+          for case in evidence.get('cases') or []:
+              print(
+                  f"case {case.get('id')}: outcome={case.get('outcome')} "
+                  f"detail={case.get('detail')}"
+              )
+          for snapshot in evidence.get('resourceSnapshots') or []:
+              print(f"resource: {snapshot}")
+
+          if evidence.get('schemaVersion') != 1:
+              raise SystemExit(f"unexpected #556 schema: {evidence.get('schemaVersion')}")
+          if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PROOF':
+              raise SystemExit(f"unexpected #556 shell: {evidence.get('selectedShell')}")
+          if evidence.get('expectJcef') is not expected_jcef:
+              raise SystemExit(f"#556 JCEF mode mismatch: {evidence.get('expectJcef')} vs {expected_jcef}")
+          if evidence.get('verdict') != 'PASS':
+              raise SystemExit(f"#556 verdict is not PASS: {evidence.get('verdict')}")
+
+          required = {
+              'runtime-boundary',
+              'candidate-a-augmentation-baseline',
+              'provider-coexistence-and-ordering',
+              'same-authoritative-document',
+              'provider-selection-and-default-order',
+              'presentation-ownership-isolation',
+              'bidirectional-native-editing',
+              'native-keymap-clipboard-multicaret',
+              'owned-split-lifecycle-isolation',
+              'file-editor-state',
+              'ime-undo-redo-save',
+              'save-close-reopen',
+              'provider-selection-persistence-finding',
+              'lazy-derived-runtime-boundary',
+              'resource-sweep-1-5-20',
+              'final-lifecycle',
+          }
+          cases = evidence.get('cases') or []
+          by_id = {case.get('id'): case for case in cases}
+          if set(by_id) != required:
+              raise SystemExit(
+                  f"#556 case contract mismatch: missing={sorted(required - set(by_id))}, "
+                  f"unexpected={sorted(set(by_id) - required)}"
+              )
+          failed = [case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS']
+          if failed:
+              raise SystemExit(f"#556 cases failed: {failed}")
+
+          same_doc = str(by_id['same-authoritative-document'].get('detail', ''))
+          if 'sameDocument=true' not in same_doc or 'distinctEditors=true' not in same_doc:
+              raise SystemExit(f'#556 same-Document proof incomplete: {same_doc}')
+          isolation = str(by_id['presentation-ownership-isolation'].get('detail', ''))
+          if 'ownedControllers=1' not in isolation or 'leakedControllers=0' not in isolation:
+              raise SystemExit(f'#556 presentation isolation incomplete: {isolation}')
+          bidirectional = str(by_id['bidirectional-native-editing'].get('detail', ''))
+          if 'customSyncProtocol=false' not in bidirectional:
+              raise SystemExit(f'#556 source-authority proof incomplete: {bidirectional}')
+          derived = str(by_id['lazy-derived-runtime-boundary'].get('detail', ''))
+          if expected_jcef:
+              if 'renderRequests=0' in derived:
+                  raise SystemExit(f'#556 JCEF-enabled derived path never requested renderer: {derived}')
+          else:
+              for marker in ('renderRequests=0', 'rendererFactories=0', 'sourceEditingAlive=true'):
+                  if marker not in derived:
+                      raise SystemExit(f'#556 no-JCEF degradation missing {marker}: {derived}')
+
+          snapshots = evidence.get('resourceSnapshots') or []
+          names = {snapshot.get('name') for snapshot in snapshots}
+          for name in ('baseline', 'intellij-only-one', 'candidate-a-one', 'candidate-b-one'):
+              if name not in names:
+                  raise SystemExit(f'#556 resource snapshot missing {name}: {sorted(names)}')
+          if not expected_jcef:
+              for name in ('candidate-b-1', 'candidate-b-5', 'candidate-b-20', 'after-resource-cleanup'):
+                  if name not in names:
+                      raise SystemExit(f'#556 no-JCEF resource sweep missing {name}: {sorted(names)}')
+              cleanup = next(snapshot for snapshot in snapshots if snapshot.get('name') == 'after-resource-cleanup')
+              if cleanup.get('ownedEditors') != 0 or cleanup.get('ownedPresentationOwners') != 0:
+                  raise SystemExit(f'#556 resource cleanup leaked owned state: {cleanup}')
+
+          final = str(by_id['final-lifecycle'].get('detail', ''))
+          for marker in ('ownedEditors=0', 'ownedPresentationOwners=0', 'leakedProofEditors=0'):
+              if marker not in final:
+                  raise SystemExit(f'#556 final lifecycle missing {marker}: {final}')
+
+          print(f"#556 mode={'JCEF' if expected_jcef else 'NO_JCEF'} PASS")
+          for case_id in sorted(required):
+              print(f"{case_id}: {by_id[case_id].get('detail')}")
+          for snapshot in snapshots:
+              print('resource:', snapshot)
+          PY
+
+      - name: Upload Leap 2 owned-shell evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: leap2-owned-shell-evidence-${{ matrix.id }}
+          path: |
+            ${{ matrix.evidence }}
+            .intellijPlatform/sandbox/**/idea.log
+            ${{ runner.temp }}/markflow-leap2-owned-shell-xvfb.log
+          if-no-files-found: warn
+
   native_host_resources:
     needs: target
     if: needs.target.outputs.run_native_host_resources == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -1570,7 +1754,7 @@ jobs:
   evidenceGate:
     name: Native runtime evidence gate
     if: ${{ always() }}
-    needs: [ target, derived_renderer, native_derived_presentation, native_editing, native_editor_shell, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
+    needs: [ target, derived_renderer, native_derived_presentation, native_editing, native_editor_shell, leap2_owned_shell, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
@@ -1586,6 +1770,7 @@ jobs:
           RESULT_NATIVE_EDITING: ${{ needs.native_editing.result }}
           ROUTE_NATIVE_EDITOR_SHELL: ${{ needs.target.outputs.run_native_editor_shell }}
           RESULT_NATIVE_EDITOR_SHELL: ${{ needs.native_editor_shell.result }}
+          RESULT_LEAP2_OWNED_SHELL: ${{ needs.leap2_owned_shell.result }}
           ROUTE_NATIVE_HOST_RESOURCES: ${{ needs.target.outputs.run_native_host_resources }}
           RESULT_NATIVE_HOST_RESOURCES: ${{ needs.native_host_resources.result }}
           ROUTE_NATIVE_IMAGE_IMPORT: ${{ needs.target.outputs.run_native_image_import }}
@@ -1661,15 +1846,23 @@ jobs:
           esac
           case "$ROUTE_NATIVE_EDITOR_SHELL" in
             true)
-              executed=$((executed + 1))
+              executed=$((executed + 2))
               if [ "$RESULT_NATIVE_EDITOR_SHELL" != "success" ]; then
                 echo "::error::Required native_editor_shell failed: $RESULT_NATIVE_EDITOR_SHELL"
+                failed=1
+              fi
+              if [ "$RESULT_LEAP2_OWNED_SHELL" != "success" ]; then
+                echo "::error::Required leap2_owned_shell failed: $RESULT_LEAP2_OWNED_SHELL"
                 failed=1
               fi
               ;;
             false)
               if [ "$RESULT_NATIVE_EDITOR_SHELL" != "skipped" ]; then
                 echo "::error::Unrouted native_editor_shell result: $RESULT_NATIVE_EDITOR_SHELL"
+                failed=1
+              fi
+              if [ "$RESULT_LEAP2_OWNED_SHELL" != "skipped" ]; then
+                echo "::error::Unrouted leap2_owned_shell result: $RESULT_LEAP2_OWNED_SHELL"
                 failed=1
               fi
               ;;

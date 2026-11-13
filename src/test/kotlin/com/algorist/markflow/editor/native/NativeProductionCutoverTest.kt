@@ -58,9 +58,16 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
 
         assertTrue(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
         assertTrue(pluginXml.contains("NativeMarkFlowPresentationSettingsSink"))
-        assertFalse(pluginXml.contains("MarkFlowEditorProvider"))
+        assertFalse(pluginXml.contains("com.algorist.markflow.editor.MarkFlowEditorProvider"))
+
+        // #556 temporarily packages a fail-closed provider so the real FileEditorManager can
+        // exercise Candidate B. Its accept() remains false outside dedicated proof JVMs; this is
+        // evidence plumbing, not a production cutover or resurrection of browser authority.
+        assertTrue(pluginXml.contains("Leap2OwnedNativeFileEditorProvider"))
+        assertTrue(pluginXml.contains("markflow-leap2-owned-native-proof"))
 
         assertFalse(jcefXml.contains("MarkFlowEditorProvider"))
+        assertFalse(jcefXml.contains("Leap2OwnedNativeFileEditorProvider"))
         assertFalse(jcefXml.contains("MarkFlowStartupActivity"))
         assertTrue(jcefXml.contains("JcefDerivedRendererRuntimeFactory"))
     }
