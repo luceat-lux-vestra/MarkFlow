@@ -6,9 +6,9 @@ MarkFlow-vs-IntelliJ Markdown Preview differential harness.
 `corpus.tsv` is intentionally broader than `examples/`:
 
 - it maps Markdown visual/semantic feature families to existing or missing fixtures;
-- it snapshots the Mermaid 12.3.0 detector surface that MarkFlow currently exposes through
-  the retained production renderer (the upstream `diagram-orchestration.ts` registry is byte-identical between
-  Mermaid 12.2.0 and 12.3.0; render validation is repeated for 12.3.0);
+- it snapshots the detector surface of the Mermaid version pinned in `webview/package.json` that MarkFlow currently exposes through
+  the retained production renderer (the upstream `diagram-orchestration.ts` registry was re-audited against the prior reviewed pin
+  and remained unchanged; render validation is repeated for the current pin);
 - it records product classification (`supported`, `degraded`, `unsupported`);
 - it distinguishes a real fixture (`covered`) from an explicit audited hole (`gap`).
 
@@ -46,7 +46,7 @@ Every reviewed manifest row explicitly records:
 The integrity test validates each field and their classification/domain
 contract; runtime paired-capture and preservation proof belong to #353.
 
-## Mermaid 12.2.0 runtime sizing/configuration audit (#354 → #352)
+## Mermaid runtime sizing/configuration audit (#354 → #352)
 
 `mermaid-runtime-config-matrix.tsv` is the reviewed **37-detector** source-level
 join of the Mermaid detector inventory in `corpus.tsv` (classification and
