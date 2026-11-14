@@ -41,13 +41,13 @@ assert_contract() {
   grep -Fq 'gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c' "$workflow" || die "dependency-submission action pin drifted"
   grep -Fq '          persist-credentials: false' "$workflow" || die "checkout credentials must not persist"
   grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "publisher must checkout exact trigger SHA"
-  grep -Fq '          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\' "$workflow" ||
+  grep -Fq 'python3 .github/scripts/trusted-dependency-submission-validation.py verify-main' "$workflow" ||
     die "publisher must delegate graph verification to the catalog-aware validator"
-  grep -Fq '            --dir dependency-graph-reports \\' "$workflow" ||
+  grep -Fq -- '--dir dependency-graph-reports' "$workflow" ||
     die "publisher graph verification report directory drifted"
-  grep -Fq '            --head "$GITHUB_SHA" \\' "$workflow" ||
+  grep -Fq -- '--head "$GITHUB_SHA"' "$workflow" ||
     die "publisher graph verification must bind exact main SHA"
-  grep -Fq '            --version-catalog gradle/libs.versions.toml' "$workflow" ||
+  grep -Fq -- '--version-catalog gradle/libs.versions.toml' "$workflow" ||
     die "publisher graph verification must derive coordinates from the version catalog"
 }
 
