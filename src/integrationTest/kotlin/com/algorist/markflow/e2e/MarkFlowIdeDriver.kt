@@ -34,19 +34,18 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             "opened Markdown file not found: $fileName"
         }
         val project = driver.singleProject()
+        val manager = driver.service<FileEditorManagerRemote>(project)
         val selectedFileEditor = driver.withContext(OnDispatcher.EDT) {
-            driver.service<FileEditorManagerRemote>(project).getSelectedEditor(file)
+            // Provider coexistence intentionally lets IntelliJ remember an alternative selection.
+            // Product acceptance needs the MarkFlow surface itself, so select it through the
+            // maintained FileEditorManager API instead of assuming whichever provider was restored.
+            manager.setSelectedEditor(file, MARKFLOW_OWNED_EDITOR_TYPE_ID)
+            manager.getSelectedEditor(file)
         }
-        checkNotNull(selectedFileEditor) { "selected Markdown FileEditor unavailable: $fileName" }
+        checkNotNull(selectedFileEditor) { "selected MarkFlow FileEditor unavailable: $fileName" }
 
-        driver.invokeAction(
-            "TextEditorWithPreview.Layout.EditorOnly",
-            component = selectedFileEditor.getComponent(),
-        )
-
-        // The owned FileEditor is the selected FileEditor's native Swing component. Driver's
-        // remote Editor.getVirtualFile() is not reliable for manually-owned native editors, so
-        // identify the visible JEditorUiComponent by the selected FileEditor's component boundary.
+        // The owned FileEditor is already a native TextEditor; there is no TextEditorWithPreview
+        // layout to force. Resolve the visible JEditorUiComponent by its selected component boundary.
         val selectedLocation = driver.withContext(OnDispatcher.EDT) {
             selectedFileEditor.getComponent().getLocationOnScreen()
         }
@@ -474,8 +473,11 @@ class MarkFlowIdeDriver(private val driver: Driver) {
     }
 }
 
+private const val MARKFLOW_OWNED_EDITOR_TYPE_ID = "markflow-owned-native"
+
 @Remote("com.intellij.openapi.fileEditor.FileEditorManager")
 private interface FileEditorManagerRemote {
+    fun setSelectedEditor(file: VirtualFile, providerId: String)
     fun getSelectedEditor(file: VirtualFile): FileEditorRemote?
     fun closeFile(file: VirtualFile)
     fun isFileOpen(file: VirtualFile): Boolean
