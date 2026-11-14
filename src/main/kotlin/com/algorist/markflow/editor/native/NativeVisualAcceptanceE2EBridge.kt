@@ -119,10 +119,14 @@ internal object NativeVisualAcceptanceE2EBridge {
         val selectedFileEditor = requireNotNull(FileEditorManager.getInstance(project).selectedEditor) {
             "visual acceptance requires the selected Markdown FileEditor"
         }
-        check(selectedFileEditor is TextEditorWithPreview) {
-            "visual acceptance requires a TextEditorWithPreview, got ${selectedFileEditor.javaClass.name}"
+        when (selectedFileEditor) {
+            is MarkFlowOwnedNativeFileEditor -> Unit
+            is TextEditorWithPreview -> selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
+            else -> error(
+                "visual acceptance requires the MarkFlow owned native editor or bundled Markdown editor, got " +
+                    selectedFileEditor.javaClass.name
+            )
         }
-        selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
         val settings = MarkFlowSettingsService.getInstance()
