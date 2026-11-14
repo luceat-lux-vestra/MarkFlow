@@ -150,8 +150,8 @@ class MarkFlowStarterVisualAcceptanceTest {
                     )
 
                     driver.withContext(OnDispatcher.EDT) {
-                        visual.normalizeViewportForCapture(editor.editor)
                         visual.normalizeEditorChromeForCapture(editor.editor)
+                        visual.normalizeViewportForCapture(editor.editor)
                     }
                     val robot = Robot()
                     robot.waitForIdle()
