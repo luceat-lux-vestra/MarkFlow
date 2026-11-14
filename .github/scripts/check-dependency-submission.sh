@@ -41,11 +41,35 @@ assert_contract() {
   grep -Fq 'gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c' "$workflow" || die "dependency-submission action pin drifted"
   grep -Fq '          persist-credentials: false' "$workflow" || die "checkout credentials must not persist"
   grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "publisher must checkout exact trigger SHA"
-  grep -Fq 'len(resolved) < 450' "$workflow" || die "minimum graph coverage assertion drifted"
+  grep -Fq '          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\' "$workflow" ||
+    die "publisher must delegate graph verification to the catalog-aware validator"
+  grep -Fq '            --dir dependency-graph-reports \\' "$workflow" ||
+    die "publisher graph verification report directory drifted"
+  grep -Fq '            --head "$GITHUB_SHA" \\' "$workflow" ||
+    die "publisher graph verification must bind exact main SHA"
+  grep -Fq '            --version-catalog gradle/libs.versions.toml' "$workflow" ||
+    die "publisher graph verification must derive coordinates from the version catalog"
+}
+
+assert_validator_contract() {
+  local validator="$1"
+  [ -f "$validator" ] || die "dependency submission validator is missing"
+  grep -Fq 'def expected_coordinate(catalog: Path) -> str:' "$validator" ||
+    die "validator no longer derives the dependency coordinate from the version catalog"
+  grep -Fq 'def verify_main_graph(directory: Path, expected_head: str, coordinate: str) -> dict:' "$validator" ||
+    die "protected-main graph verifier is missing"
+  grep -Fq 'require(len(resolved) >= 450,' "$validator" ||
+    die "minimum graph coverage assertion drifted"
+  grep -Fq 'require(direct >= 40,' "$validator" ||
+    die "minimum direct dependency coverage assertion drifted"
+  grep -Fq 'require(coordinate in resolved,' "$validator" ||
+    die "catalog-derived required coordinate assertion drifted"
 }
 
 workflow=".github/workflows/dependency-submission.yml"
+validator=".github/scripts/trusted-dependency-submission-validation.py"
 assert_contract "$workflow"
+assert_validator_contract "$validator"
 fixtures="$(mktemp -d)"
 trap 'rm -rf "$fixtures"' EXIT
 
@@ -62,4 +86,4 @@ python3 .github/scripts/trusted-dependency-submission-validation.py check-contra
   --pr-workflow .github/workflows/build.yml \
   --version-catalog gradle/libs.versions.toml
 
-echo "custom Gradle dependency submission contract passed (3 shell negative controls + PR adapter self-tests)"
+echo "custom Gradle dependency submission contract passed (3 shell negative controls + catalog-aware validator self-tests)"
