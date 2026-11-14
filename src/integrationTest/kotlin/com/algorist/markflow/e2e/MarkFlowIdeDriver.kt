@@ -455,7 +455,15 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         // Close the exact VirtualFile through FileEditorManager and prove the retained native
         // Editor is disposed instead.
         val remoteEditor = driver.cast(editor.editor, EditorStateRemote::class)
-        val file = editor.editor.getVirtualFile()
+        // A MarkFlow-owned Editor is created from the authoritative Document and does not expose
+        // Editor.getVirtualFile() through Driver. Resolve the exact opened file by the read-only
+        // Document-backed bridge instead; never pass a null file into FileEditorManager.closeFile().
+        val fileName = driver.withContext(OnDispatcher.EDT) {
+            driver.utility(NativeProjectionE2EBridgeRemote::class).fileName(editor.editor)
+        } ?: error("owned native editor has no authoritative file")
+        val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
+            "opened Markdown file not found for close: $fileName"
+        }
         val manager = driver.service<FileEditorManagerRemote>(driver.singleProject())
         driver.withContext(OnDispatcher.EDT) {
             manager.closeFile(file)
