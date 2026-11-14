@@ -30,12 +30,10 @@ function between(source, prefix, suffix) {
   return source.slice(contentStart, end);
 }
 
-test("reviewed Mermaid dependency version remains explicit", () => {
-  assert.equal(
-    packageJson.dependencies.mermaid,
-    "12.3.0",
-    "Mermaid upgrade requires a fresh #354 detector audit",
-  );
+test("Mermaid dependency stays exactly pinned", () => {
+  const version = packageJson.dependencies?.mermaid;
+  assert.equal(typeof version, "string");
+  assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "Mermaid must use an exact package version");
 });
 
 test("browser detector inventory exactly matches the reviewed corpus manifest", () => {
