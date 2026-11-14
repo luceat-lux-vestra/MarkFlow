@@ -223,6 +223,40 @@ internal object NativeVisualAcceptanceE2EBridge {
     }
 
     /**
+     * Restore the authoritative capture viewport after late presentation settles.
+     *
+     * Resource/raw-HTML presentation can introduce a vertical scrollbar after [prepare] returns,
+     * shrinking the editor viewport. Re-pin the viewport without refreshing presentation or
+     * changing source/settings so visual evidence remains comparable within one IDE process.
+     */
+    fun normalizeViewportForCapture(editor: Editor) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val window = requireNotNull(SwingUtilities.getWindowAncestor(editor.component)) {
+            "visual acceptance requires a showing IntelliJ editor window"
+        }
+        val screen = Toolkit.getDefaultToolkit().screenSize
+        repeat(3) {
+            val viewport = editor.scrollingModel.visibleArea
+            if (viewport.width != TARGET_VIEWPORT_WIDTH || viewport.height != TARGET_VIEWPORT_HEIGHT) {
+                val adjustedWidth = window.width + (TARGET_VIEWPORT_WIDTH - viewport.width)
+                val adjustedHeight = window.height + (TARGET_VIEWPORT_HEIGHT - viewport.height)
+                check(adjustedWidth in 1..screen.width && adjustedHeight in 1..screen.height) {
+                    "visual acceptance cannot normalize the IDE window inside the pinned screen: " +
+                        "requested=${adjustedWidth}x${adjustedHeight}, screen=${screen.width}x${screen.height}"
+                }
+                window.setBounds(0, 0, adjustedWidth, adjustedHeight)
+                window.validate()
+            }
+        }
+        val viewport = editor.scrollingModel.visibleArea
+        check(viewport.width == TARGET_VIEWPORT_WIDTH && viewport.height == TARGET_VIEWPORT_HEIGHT) {
+            "visual acceptance post-convergence viewport normalization failed: " +
+                "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
+                "actual=${viewport.width}x${viewport.height}"
+        }
+    }
+
+    /**
      * Removes IntelliJ-owned chrome from the screen-capture surface.
      *
      * Notification balloons and inspection/traffic-light status are IDE state, not part of the
