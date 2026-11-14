@@ -33,7 +33,7 @@ function between(source, prefix, suffix) {
 test("reviewed Mermaid dependency version remains explicit", () => {
   assert.equal(
     packageJson.dependencies.mermaid,
-    "12.2.0",
+    "12.3.0",
     "Mermaid upgrade requires a fresh #354 detector audit",
   );
 });
