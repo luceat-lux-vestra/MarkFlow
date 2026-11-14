@@ -35,7 +35,7 @@ function chromeExecutable() {
   throw new Error("Chromium/Chrome is required for Mermaid acceptance; set CHROME_BIN or install Chrome. Do not skip this test.");
 }
 
-test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental blocks in Chromium", {timeout: 90000}, async () => {
+test("Mermaid 12.3.0 renders thirty-seven detectors and three supplemental blocks in Chromium", {timeout: 90000}, async () => {
   const chrome = chromeExecutable();
   const profile = mkdtempSync(join(tmpdir(), "markflow-mermaid-"));
   const server = await createServer({
