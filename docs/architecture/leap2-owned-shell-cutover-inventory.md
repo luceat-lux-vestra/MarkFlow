@@ -60,7 +60,7 @@ Target invariants:
 | exact source/config identity + stale-result rejection | Unchanged correctness invariant |
 | `DerivedRendererRuntimeFactory` / `DerivedRendererRuntimeProvider` | Optional renderer boundary |
 | `markflow-jcef.xml` optional JCEF packaging boundary | Renderer-only optional plugin boundary |
-| Mermaid 12.2.0 / KaTeX ^0.19.0 engines | One retained engine per capability under ADR 0002 |
+| Mermaid / KaTeX engines pinned in `webview/package.json` | One retained engine per capability under ADR 0002 |
 | native command/write/undo/save semantics | Editing authority |
 | proven native paste/keymap/clipboard/multicaret behavior | Reused where it is editor-instance agnostic |
 | `MarkFlowPresentationSettingsSink` contract | Settings invalidation responsibility remains |

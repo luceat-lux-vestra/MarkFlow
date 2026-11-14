@@ -12,6 +12,9 @@ import {loadMermaidAcceptanceSources} from "./mermaid-acceptance-fixtures.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const webviewRoot = resolve(repoRoot, "webview");
+const packageJson = JSON.parse(readFileSync(resolve(webviewRoot, "package.json"), "utf8"));
+const mermaidVersion = packageJson.dependencies?.mermaid;
+assert.equal(typeof mermaidVersion, "string", "Mermaid dependency is missing");
 const {sources, allCaseIds} = loadMermaidAcceptanceSources(repoRoot);
 const failureIsolationMarkdown = readFileSync(resolve(repoRoot, "examples/derived-mermaid-failure-isolation.md"), "utf8");
 const failureIsolationSources = [...failureIsolationMarkdown.matchAll(/```mermaid[ \t]*\r?\n([\s\S]*?)```/g)]
@@ -35,7 +38,7 @@ function chromeExecutable() {
   throw new Error("Chromium/Chrome is required for Mermaid acceptance; set CHROME_BIN or install Chrome. Do not skip this test.");
 }
 
-test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental blocks in Chromium", {timeout: 90000}, async () => {
+test(`pinned Mermaid ${mermaidVersion} renders thirty-seven detectors and three supplemental blocks in Chromium`, {timeout: 90000}, async () => {
   const chrome = chromeExecutable();
   const profile = mkdtempSync(join(tmpdir(), "markflow-mermaid-"));
   const server = await createServer({
@@ -49,6 +52,10 @@ test("Mermaid 12.2.0 renders thirty-seven detectors and three supplemental block
         vite.middlewares.use("/__markflow_mermaid_cases", (_request, response) => {
           response.writeHead(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"});
           response.end(JSON.stringify(sources));
+        });
+        vite.middlewares.use("/__markflow_mermaid_version", (_request, response) => {
+          response.writeHead(200, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store"});
+          response.end(mermaidVersion);
         });
         vite.middlewares.use("/__markflow_mermaid_failure_isolation", (_request, response) => {
           response.writeHead(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"});

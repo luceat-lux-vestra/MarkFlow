@@ -10,6 +10,10 @@
     const response = await fetch("/__markflow_mermaid_cases", {cache: "no-store"});
     if (!response.ok) throw new Error("Fixture endpoint failed: " + response.status);
     const sources = await response.json();
+    const versionResponse = await fetch("/__markflow_mermaid_version", {cache: "no-store"});
+    if (!versionResponse.ok) throw new Error("Version endpoint failed: " + versionResponse.status);
+    const expectedMermaidVersion = (await versionResponse.text()).trim();
+    if (!expectedMermaidVersion) throw new Error("Mermaid version endpoint returned an empty version");
     mermaid.initialize({startOnLoad: false, securityLevel: "strict"});
     const passed = [];
     for (const [name, source] of Object.entries(sources)) {
@@ -22,13 +26,13 @@
         throw new Error(name + ": invalid SVG");
       }
       if (name === "info") {
-        // Mermaid 12.2.0 infoRenderer sets width=100%, max-width=400px
+        // The pinned Mermaid infoRenderer sets width=100%, max-width=400px
         // and renders a version label, but does not emit a viewBox.
         // Preserve the strict viewBox requirement for every other diagram.
         const version = svg.querySelector("text.version")?.textContent?.trim() ?? "";
         if (svg.getAttribute("width") !== "100%" ||
             !/max-width:\s*400px(?:;|$)/.test(svg.getAttribute("style") ?? "") ||
-            !/^v12\.2\.0(?:-tiny)?$/.test(version)) {
+            ![`v${expectedMermaidVersion}`, `v${expectedMermaidVersion}-tiny`].includes(version)) {
           throw new Error("info: SVG lacks expected version label or upstream sizing attributes");
         }
       } else {

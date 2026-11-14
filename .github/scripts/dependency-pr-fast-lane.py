@@ -175,7 +175,7 @@ def fixture_manifest(**versions: str) -> dict[str, Any]:
         "name": "webview",
         "private": True,
         "scripts": {"build": "tsc && vite build"},
-        "dependencies": {"mermaid": versions.get("mermaid", "12.2.0")},
+        "dependencies": {"mermaid": versions.get("mermaid", "fixture-current")},
         "devDependencies": {"vite": versions.get("vite", "^8.3.4")},
     }
 
@@ -209,7 +209,7 @@ def self_test() -> None:
     current_lock = fixture_lock("2")
     npm_rows = [f"modified\t{NPM_PACKAGE}\t", f"modified\t{NPM_LOCK}\t"]
 
-    old_mermaid = fixture_manifest(mermaid="12.1.0")
+    old_mermaid = fixture_manifest(mermaid="fixture-previous")
     assert classify(
         DEPENDABOT,
         npm_rows,
