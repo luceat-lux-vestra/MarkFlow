@@ -18,18 +18,7 @@ import com.intellij.openapi.util.Key
 import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * #153 production presentation owner, extended by #561 with the dormant ADR 0003 owned-shell
- * lifecycle boundary.
- *
- * Slice 1 deliberately keeps the platform-editor listener as the active production path. Generic
- * [attach]/[release] therefore retain their existing behavior and never populate the owned-editor
- * registry. [attachOwned]/[releaseOwned] are used only by the production-ready MarkFlow-owned
- * FileEditor infrastructure until Slice 2 performs the atomic cutover.
- *
- * Optional derived renderer creation is fail-closed: renderer absence/failure never prevents exact
- * Markdown source editing.
- */
+/** #563 production presentation owner. Only the owned FileEditor is registered for attachment. */
 internal object NativeMarkFlowProductionLifecycle {
     private val controllerKey = Key.create<NativePresentationController>(
         "com.algorist.markflow.native.production.controller"
@@ -150,10 +139,7 @@ internal object NativeMarkFlowProductionLifecycle {
         return true
     }
 
-    /**
-     * Prepared for Slice 2 settings routing. Slice 1 does not call this from the production
-     * settings sink; [refreshAll] remains the active behavior until provider cutover.
-     */
+    /** Refresh only live MarkFlow-owned presentation controllers. */
     fun refreshOwned() {
         val application = ApplicationManager.getApplication()
         if (!application.isDispatchThread) {
@@ -212,7 +198,11 @@ internal object NativeMarkFlowProductionLifecycle {
     private val LOG = Logger.getInstance(NativeMarkFlowProductionLifecycle::class.java)
 }
 
-/** Maintained IntelliJ editor lifecycle hook selected by #143 and activated by #153. */
+/**
+ * Pre-ADR-0003 production lifecycle hook retained only as a source-control rollback boundary.
+ * Slice 4 owns deletion after post-cutover evidence.
+ */
+@Suppress("unused")
 class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
         if (skipAutomaticProductionAttachment()) return
@@ -236,6 +226,6 @@ class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
 /** Base-plugin presentation invalidation sink; optional renderer ownership remains separate. */
 class NativeMarkFlowPresentationSettingsSink : MarkFlowPresentationSettingsSink {
     override fun presentationSettingsChanged() {
-        NativeMarkFlowProductionLifecycle.refreshAll()
+        NativeMarkFlowProductionLifecycle.refreshOwned()
     }
 }

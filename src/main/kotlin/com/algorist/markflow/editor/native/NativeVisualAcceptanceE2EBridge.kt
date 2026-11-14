@@ -119,10 +119,14 @@ internal object NativeVisualAcceptanceE2EBridge {
         val selectedFileEditor = requireNotNull(FileEditorManager.getInstance(project).selectedEditor) {
             "visual acceptance requires the selected Markdown FileEditor"
         }
-        check(selectedFileEditor is TextEditorWithPreview) {
-            "visual acceptance requires a TextEditorWithPreview, got ${selectedFileEditor.javaClass.name}"
+        when (selectedFileEditor) {
+            is MarkFlowOwnedNativeFileEditor -> Unit
+            is TextEditorWithPreview -> selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
+            else -> error(
+                "visual acceptance requires the MarkFlow owned native editor or bundled Markdown editor, got " +
+                    selectedFileEditor.javaClass.name
+            )
         }
-        selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
         val settings = MarkFlowSettingsService.getInstance()
@@ -216,6 +220,40 @@ internal object NativeVisualAcceptanceE2EBridge {
             "E11 setting change unexpectedly mutated the authoritative Markdown"
         }
         return "mode=" + mode + ";document_stamp=" + stamp
+    }
+
+    /**
+     * Restore the authoritative capture viewport after late presentation settles.
+     *
+     * Resource/raw-HTML presentation can introduce a vertical scrollbar after [prepare] returns,
+     * shrinking the editor viewport. Re-pin the viewport without refreshing presentation or
+     * changing source/settings so visual evidence remains comparable within one IDE process.
+     */
+    fun normalizeViewportForCapture(editor: Editor) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val window = requireNotNull(SwingUtilities.getWindowAncestor(editor.component)) {
+            "visual acceptance requires a showing IntelliJ editor window"
+        }
+        val screen = Toolkit.getDefaultToolkit().screenSize
+        repeat(3) {
+            val viewport = editor.scrollingModel.visibleArea
+            if (viewport.width != TARGET_VIEWPORT_WIDTH || viewport.height != TARGET_VIEWPORT_HEIGHT) {
+                val adjustedWidth = window.width + (TARGET_VIEWPORT_WIDTH - viewport.width)
+                val adjustedHeight = window.height + (TARGET_VIEWPORT_HEIGHT - viewport.height)
+                check(adjustedWidth in 1..screen.width && adjustedHeight in 1..screen.height) {
+                    "visual acceptance cannot normalize the IDE window inside the pinned screen: " +
+                        "requested=${adjustedWidth}x${adjustedHeight}, screen=${screen.width}x${screen.height}"
+                }
+                window.setBounds(0, 0, adjustedWidth, adjustedHeight)
+                window.validate()
+            }
+        }
+        val viewport = editor.scrollingModel.visibleArea
+        check(viewport.width == TARGET_VIEWPORT_WIDTH && viewport.height == TARGET_VIEWPORT_HEIGHT) {
+            "visual acceptance post-convergence viewport normalization failed: " +
+                "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
+                "actual=${viewport.width}x${viewport.height}"
+        }
     }
 
     /**

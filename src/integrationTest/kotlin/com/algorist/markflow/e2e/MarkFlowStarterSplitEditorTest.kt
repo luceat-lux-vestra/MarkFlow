@@ -287,18 +287,23 @@ class MarkFlowStarterSplitEditorTest {
 }
 
 private class SplitEditorDriver(private val driver: Driver) {
-    fun visibleEditorsForFile(fileName: String): List<JEditorUiComponent> =
-        driver.ideFrame()
+    fun visibleEditorsForFile(fileName: String): List<JEditorUiComponent> {
+        val bridge = driver.utility(SplitProjectionE2EBridgeRemote::class)
+        return driver.ideFrame()
             .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
             .list()
             .filter { editor ->
-                editor.editor.getVirtualFile().getName() == fileName &&
-                    editor.isEditable() &&
-                    driver.withContext(OnDispatcher.EDT) { editor.component.isShowing() }
+                editor.isEditable() &&
+                    driver.withContext(OnDispatcher.EDT) {
+                        editor.component.isShowing() &&
+                            bridge.fileName(editor.editor) == fileName &&
+                            bridge.isAttached(editor.editor)
+                    }
             }
             .sortedBy { editor ->
                 driver.withContext(OnDispatcher.EDT) { editor.component.getLocationOnScreen().x }
             }
+    }
 
     fun splitVertically(editor: JEditorUiComponent) {
         editor.setFocus()
@@ -320,5 +325,7 @@ private class SplitEditorDriver(private val driver: Driver) {
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface SplitProjectionE2EBridgeRemote {
+    fun fileName(editor: Editor): String?
+    fun isAttached(editor: Editor): Boolean
     fun sameDocument(first: Editor, second: Editor): Boolean
 }

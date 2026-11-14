@@ -151,6 +151,7 @@ class MarkFlowStarterVisualAcceptanceTest {
 
                     driver.withContext(OnDispatcher.EDT) {
                         visual.normalizeEditorChromeForCapture(editor.editor)
+                        visual.normalizeViewportForCapture(editor.editor)
                     }
                     val robot = Robot()
                     robot.waitForIdle()
@@ -480,6 +481,7 @@ private object VisualGoldenComparator {
 private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun prepareEditorChromeBeforeOpen()
     fun prepare(editor: Editor): String
+    fun normalizeViewportForCapture(editor: Editor)
     fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int

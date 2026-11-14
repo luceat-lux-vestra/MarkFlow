@@ -3,6 +3,7 @@ package com.algorist.markflow.editor.native
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.CustomFoldRegion
+import com.intellij.openapi.fileEditor.FileDocumentManager
 
 /**
  * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
@@ -17,6 +18,11 @@ internal object NativeProjectionE2EBridge {
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
         return NativeMarkFlowProductionLifecycle.controller(editor) != null
+    }
+
+    fun fileName(editor: Editor): String? {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return FileDocumentManager.getInstance().getFile(editor.document)?.name
     }
 
     fun planReady(editor: Editor): Boolean {
