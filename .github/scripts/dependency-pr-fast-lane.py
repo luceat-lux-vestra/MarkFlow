@@ -175,7 +175,7 @@ def fixture_manifest(**versions: str) -> dict[str, Any]:
         "name": "webview",
         "private": True,
         "scripts": {"build": "tsc && vite build"},
-        "dependencies": {"mermaid": versions.get("mermaid", "12.2.0")},
+        "dependencies": {"mermaid": versions.get("mermaid", "12.3.0")},
         "devDependencies": {"vite": versions.get("vite", "^8.3.4")},
     }
 
