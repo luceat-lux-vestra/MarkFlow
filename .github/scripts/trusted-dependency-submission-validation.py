@@ -64,20 +64,32 @@ def require_supported_publisher_patch(entry: dict, coordinate: str) -> None:
     )
     if all(allowed_action.fullmatch(line) for _, line in changed):
         return
-    require(len(changed) == 2,
-            "dependency-submission workflow mutation exceeds supported adapters")
+
     removed = [line for sign, line in changed if sign == "-"]
     added = [line for sign, line in changed if sign == "+"]
-    require(len(removed) == 1 and len(added) == 1,
-            "coordinate adapter requires one replacement pair")
-    old_match = COORDINATE_LINE.fullmatch(removed[0])
-    new_match = COORDINATE_LINE.fullmatch(added[0])
-    require(old_match is not None and new_match is not None,
-            "coordinate adapter only accepts the coverage coordinate")
-    require(old_match.group("coordinate").rsplit(":", 1)[0] == COORDINATE_KEY,
-            "coordinate adapter changed an unsupported artifact")
-    require(new_match.group("coordinate") == coordinate,
-            "publisher coverage coordinate does not match current version catalog")
+    dynamic_verifier = [
+        "python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\",
+        "--dir dependency-graph-reports \\",
+        '--head "$GITHUB_SHA" \\',
+        "--version-catalog gradle/libs.versions.toml",
+    ]
+    legacy_coordinate = re.compile(
+        rf'required = \{{"{re.escape(COORDINATE_KEY)}:[^"\s]+"\}}\Z'
+    )
+    if added == dynamic_verifier:
+        require("python3 - <<'PY'" in removed and "PY" in removed,
+                "dynamic verifier migration did not remove the legacy inline Python block")
+        require(any(legacy_coordinate.fullmatch(line) for line in removed),
+                "dynamic verifier migration did not remove the legacy hardcoded coordinate")
+        forbidden_prefixes = (
+            "uses:", "permissions:", "contents:", "dependency-graph:",
+            "cache-read-only:", "dependency-graph-continue-on-failure:",
+        )
+        require(not any(line.startswith(forbidden_prefixes) for line in removed),
+                "dynamic verifier migration touched publisher authority or execution policy")
+        return
+
+    raise ValueError("dependency-submission workflow mutation exceeds supported adapters")
 
 
 def classify(pull: dict, pages: list, expected_head: str, coordinate: str) -> bool:
@@ -137,7 +149,16 @@ def check_contract(production: str, pr_workflow: str, coordinate: str) -> None:
             "production publisher may write Gradle cache")
     require("dependency-graph-continue-on-failure: false" in production,
             "production publisher no longer fails closed")
-    require(coordinate in production, f"production publisher coordinate drifted: {coordinate}")
+    dynamic_verifier = (
+        "python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\" in production
+        and "--dir dependency-graph-reports \\" in production
+        and '--head "$GITHUB_SHA" \\' in production
+        and "--version-catalog gradle/libs.versions.toml" in production
+    )
+    require(dynamic_verifier,
+            "production publisher must verify graph coverage from the version catalog")
+    require("python3 - <<'PY'" not in production,
+            "production publisher must not duplicate dependency graph verification inline")
 
     job = extract_job(pr_workflow, "dependencySubmissionValidation")
     require("    permissions:\n      contents: read\n      pull-requests: read\n" in job,
@@ -168,6 +189,38 @@ def check_contract(production: str, pr_workflow: str, coordinate: str) -> None:
 
 def production_eligible(graph: dict, source_sha: str) -> bool:
     return graph.get("sha") == source_sha and graph.get("ref") == "refs/heads/main"
+
+
+def verify_main_graph(directory: Path, expected_head: str, coordinate: str) -> dict:
+    require(SHA.fullmatch(expected_head or "") is not None, "invalid protected-main HEAD")
+    files = sorted(directory.rglob("*.json"))
+    require(len(files) == 1, f"expected exactly one dependency graph report, got {len(files)}")
+    data = json.loads(files[0].read_text(encoding="utf-8"))
+    require(isinstance(data, dict), "dependency graph report is not an object")
+    require(data.get("sha") == expected_head, "dependency graph source SHA is not exact main HEAD")
+    require(data.get("ref") == "refs/heads/main", "dependency graph ref is not protected main")
+    manifests = data.get("manifests")
+    require(isinstance(manifests, dict) and manifests, "dependency graph has no manifests")
+    resolved: dict[str, dict] = {}
+    for manifest in manifests.values():
+        require(isinstance(manifest, dict), "malformed dependency graph manifest")
+        nodes = manifest.get("resolved")
+        require(isinstance(nodes, dict), "dependency graph manifest lacks resolved dependencies")
+        resolved.update(nodes)
+    require(len(resolved) >= 450,
+            f"dependency graph lost required coverage: {len(resolved)} < 450")
+    require(coordinate in resolved, f"dependency graph lost required coordinate: {coordinate}")
+    direct = sum(isinstance(node, dict) and node.get("relationship") == "direct"
+                 for node in resolved.values())
+    require(direct >= 40, f"dependency graph lost direct coverage: {direct} < 40")
+    return {
+        "source_sha": expected_head,
+        "event_ref": "refs/heads/main",
+        "manifests": len(manifests),
+        "resolved": len(resolved),
+        "direct": direct,
+        "production_evidence": True,
+    }
 
 
 def verify_graph(directory: Path, expected_head: str, event_ref: str, coordinate: str) -> dict:
@@ -211,7 +264,7 @@ def verify_graph(directory: Path, expected_head: str, event_ref: str, coordinate
 def self_test() -> None:
     import tempfile
     sha = "a" * 40
-    coordinate = COORDINATE_KEY + ":2.19.0"
+    coordinate = COORDINATE_KEY + ":fixture-current"
     pull = {"head": {"sha": sha}, "changed_files": 1}
     assert classify(pull, [[{
         "filename": ".github/scripts/trusted-dependency-submission-validation.py",
@@ -230,15 +283,20 @@ def self_test() -> None:
         "patch": pin_patch,
     }]], sha, coordinate)
 
-    coordinate_patch = (
-        "@@ -1 +1 @@\n"
-        '-          required = {"' + COORDINATE_KEY + ':2.18.0"}\n'
-        '+          required = {"' + coordinate + '"}'
+    migration_patch = (
+        "@@ -1,3 +1,4 @@\n"
+        "-          python3 - <<'PY'\n"
+        '-          required = {"' + COORDINATE_KEY + ':fixture-previous"}\n'
+        "-          PY\n"
+        "+          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\\n"
+        "+            --dir dependency-graph-reports \\\n"
+        '+            --head "$GITHUB_SHA" \\\n'
+        "+            --version-catalog gradle/libs.versions.toml"
     )
     assert classify(pull, [[{
         "filename": ".github/workflows/dependency-submission.yml",
         "status": "modified",
-        "patch": coordinate_patch,
+        "patch": migration_patch,
     }]], sha, coordinate)
 
     bad_cases = [
@@ -256,8 +314,8 @@ def self_test() -> None:
             "status": "modified",
             "patch": (
                 "@@ -1 +1 @@\n"
-                '-          required = {"' + COORDINATE_KEY + ':2.18.0"}\n'
-                '+          required = {"' + COORDINATE_KEY + ':2.20.0"}'
+                '-          required = {"' + COORDINATE_KEY + ':fixture-previous"}\n'
+                '+          required = {"' + coordinate + '"}'
             ),
         }]], sha, coordinate),
         (pull, [[{
@@ -284,7 +342,13 @@ def self_test() -> None:
         "        with:\n          cache-read-only: true\n"
         "          dependency-graph: generate-and-submit\n"
         "          dependency-graph-continue-on-failure: false\n"
-        '          required = {"' + coordinate + '"}\n'
+        "      - name: Verify submitted graph coverage and provenance\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\\n"
+        "            --dir dependency-graph-reports \\\n"
+        "            --head \"$GITHUB_SHA\" \\\n"
+        "            --version-catalog gradle/libs.versions.toml\n"
     )
     pr = (
         "jobs:\n  dependencySubmissionValidation:\n"
@@ -320,7 +384,7 @@ def self_test() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         catalog = root / "libs.versions.toml"
-        catalog.write_text('intelliJPlatform = "2.19.0"\n', encoding="utf-8")
+        catalog.write_text('intelliJPlatform = "fixture-current"\n', encoding="utf-8")
         assert expected_coordinate(catalog) == coordinate
         resolved = {f"example:indirect:{i}": {"relationship": "indirect"} for i in range(410)}
         for i in range(39):
@@ -335,6 +399,13 @@ def self_test() -> None:
         result = verify_graph(root, sha, "refs/pull/7/merge", coordinate)
         assert result["resolved"] == 450 and result["direct"] == 40
         assert result["production_evidence"] is False
+        graph["ref"] = "refs/heads/main"
+        (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
+        main_result = verify_main_graph(root, sha, coordinate)
+        assert main_result["resolved"] == 450 and main_result["direct"] == 40
+        assert main_result["production_evidence"] is True
+        graph["ref"] = "refs/pull/7/merge"
+        (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
         try:
             verify_graph(root, sha, "refs/heads/main", coordinate)
         except ValueError:
@@ -370,6 +441,10 @@ def main() -> int:
     verify_p.add_argument("--head", required=True)
     verify_p.add_argument("--event-ref", required=True)
     verify_p.add_argument("--version-catalog", type=Path, required=True)
+    verify_main_p = sub.add_parser("verify-main")
+    verify_main_p.add_argument("--dir", type=Path, required=True)
+    verify_main_p.add_argument("--head", required=True)
+    verify_main_p.add_argument("--version-catalog", type=Path, required=True)
     sub.add_parser("self-test")
     args = parser.parse_args()
     try:
@@ -392,6 +467,12 @@ def main() -> int:
             coordinate = expected_coordinate(args.version_catalog)
             print(json.dumps(
                 verify_graph(args.dir, args.head, args.event_ref, coordinate),
+                sort_keys=True,
+            ))
+        elif args.command == "verify-main":
+            coordinate = expected_coordinate(args.version_catalog)
+            print(json.dumps(
+                verify_main_graph(args.dir, args.head, coordinate),
                 sort_keys=True,
             ))
         else:

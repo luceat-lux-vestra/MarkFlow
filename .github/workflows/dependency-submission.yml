@@ -57,33 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          reports = sorted(Path("dependency-graph-reports").glob("*.json"))
-          if len(reports) != 1:
-              raise SystemExit(f"Expected one dependency snapshot, got {len(reports)}: {reports}")
-          graph = json.loads(reports[0].read_text(encoding="utf-8"))
-          expected_sha = os.environ["GITHUB_SHA"]
-          if graph.get("sha") != expected_sha or graph.get("ref") != "refs/heads/main":
-              raise SystemExit("Dependency graph provenance is not exact main HEAD")
-          manifests = graph.get("manifests")
-          if not isinstance(manifests, dict) or not manifests:
-              raise SystemExit("Dependency graph has no manifests")
-          resolved = {}
-          for manifest in manifests.values():
-              resolved.update(manifest.get("resolved") or {})
-          if len(resolved) < 450:
-              raise SystemExit(f"Dependency graph lost required coverage: {len(resolved)} < 450")
-          required = {"org.jetbrains.intellij.platform:intellij-platform-gradle-plugin:2.19.0"}
-          if missing := required - resolved.keys():
-              raise SystemExit(f"Dependency graph lost required coordinates: {sorted(missing)}")
-          direct = sum(node.get("relationship") == "direct" for node in resolved.values())
-          if direct < 40:
-              raise SystemExit(f"Dependency graph lost direct coverage: {direct} < 40")
-          print(f"GRAPH_SUBMITTED_MAIN_SHA={expected_sha}")
-          print(f"GRAPH_SUBMITTED_MANIFESTS={len(manifests)}")
-          print(f"GRAPH_SUBMITTED_NODES={len(resolved)}")
-          print(f"GRAPH_SUBMITTED_DIRECT={direct}")
-          PY
+          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \
+            --dir dependency-graph-reports \
+            --head "$GITHUB_SHA" \
+            --version-catalog gradle/libs.versions.toml
