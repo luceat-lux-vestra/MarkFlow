@@ -14,7 +14,6 @@ import com.intellij.driver.sdk.openFile
 import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
 import com.intellij.driver.sdk.ui.components.common.ideFrame
-import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
 import java.awt.Point
 import kotlin.time.Duration.Companion.seconds
@@ -44,11 +43,11 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         }
         checkNotNull(selectedFileEditor) { "selected MarkFlow FileEditor unavailable: $fileName" }
 
-        // The owned FileEditor is already a native TextEditor; there is no TextEditorWithPreview
-        // layout to force. Resolve the visible JEditorUiComponent by its selected component boundary.
-        val selectedLocation = driver.withContext(OnDispatcher.EDT) {
-            selectedFileEditor.getComponent().getLocationOnScreen()
-        }
+        // Driver's remote Editor.getVirtualFile() is null for this manually-owned editor and
+        // FileEditor.getComponent() is a root component rather than EditorComponentImpl. Resolve the
+        // exact visible editor through the read-only production bridge: same Document-backed file
+        // plus an attached owned presentation controller.
+        val projection = driver.utility(NativeProjectionE2EBridgeRemote::class)
         return driver.ideFrame()
             .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
             .list()
@@ -56,10 +55,11 @@ class MarkFlowIdeDriver(private val driver: Driver) {
                 editor.isEditable() &&
                     driver.withContext(OnDispatcher.EDT) {
                         editor.component.isShowing() &&
-                            editor.component.getLocationOnScreen() == selectedLocation
+                            projection.fileName(editor.editor) == fileName &&
+                            projection.isAttached(editor.editor)
                     }
             }
-            ?: error("selected FileEditor has no visible editable native component: $fileName")
+            ?: error("selected MarkFlow FileEditor has no visible owned native component: $fileName")
     }
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
@@ -484,9 +484,7 @@ private interface FileEditorManagerRemote {
 }
 
 @Remote("com.intellij.openapi.fileEditor.FileEditor")
-private interface FileEditorRemote {
-    fun getComponent(): Component
-}
+private interface FileEditorRemote
 
 @Remote("com.intellij.openapi.fileEditor.FileDocumentManager")
 private interface FileDocumentManagerRemote {
@@ -506,6 +504,7 @@ private interface NativeClipboardE2EBridgeRemote {
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface NativeProjectionE2EBridgeRemote {
+    fun fileName(editor: Editor): String?
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean
