@@ -52,6 +52,18 @@ BUILD_ROOT_FILES = frozenset(
     }
 )
 JVM_SUFFIXES = (".kt", ".kts", ".java", ".groovy")
+CANDIDATE_STATUSES = frozenset({"modified", "changed"})
+WEBVIEW_CANDIDATE_FAMILY = "webview-renderer-ts-test"
+WEBVIEW_RENDERER_PREFIX = "webview/src/renderer/"
+WEBVIEW_TEST_PREFIX = "webview/tests/"
+# R2A #104 E3 exact-pair evidence. Hardening pins these digests so a future
+# evidence change must be an explicit policy review rather than silent drift.
+WEBVIEW_CANDIDATE_RESULT_MULTISET_SHA256 = (
+    "6ec345939dd269216719b2914a605f6c88ca957caa26978b32edd4e767f0c6be"
+)
+WEBVIEW_CANDIDATE_FULL_SARIF_SHA256 = (
+    "797629df3664819f5a09f9d07bb06db90e257029a7719e625c8e416d39764691"
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +102,31 @@ def qodana_relevant(path: str) -> bool:
     if path.startswith(("src/", "buildSrc/", "gradle/")):
         return True
     return path.endswith(JVM_SUFFIXES)
+
+
+def webview_candidate_evidence_available() -> bool:
+    return bool(
+        WEBVIEW_CANDIDATE_RESULT_MULTISET_SHA256
+        and WEBVIEW_CANDIDATE_FULL_SARIF_SHA256
+    )
+
+
+def webview_renderer_candidate(path: str) -> bool:
+    if (
+        not path.startswith(WEBVIEW_RENDERER_PREFIX)
+        or not path.endswith(".ts")
+        or path.endswith(".d.ts")
+    ):
+        return False
+    relative = path[len(WEBVIEW_RENDERER_PREFIX) :]
+    parts = PurePosixPath(relative).parts
+    if not parts or "generated" in parts:
+        return False
+    return not parts[-1].endswith((".generated.ts", ".gen.ts"))
+
+
+def webview_test_candidate(path: str) -> bool:
+    return path.startswith(WEBVIEW_TEST_PREFIX) and path.endswith(".test.mjs")
 
 
 def explicitly_non_qodana(path: str) -> bool:
@@ -146,6 +183,58 @@ def classify(changes: list[Change], expected_count: int | None) -> tuple[bool, s
     return False, "all-paths-proven-non-qodana", count
 
 
+def classify_candidate(
+    changes: list[Change],
+    expected_count: int | None,
+    *,
+    evidence_available: bool = True,
+) -> tuple[bool, str, str, int]:
+    count = len(changes)
+    if not evidence_available:
+        return False, "none", "unknown:paired-evidence-unavailable", count
+    if expected_count is None or expected_count <= 0:
+        return False, "none", "unknown:changed-file-count-invalid", count
+    if count != expected_count:
+        return False, "none", "unknown:changed-file-count-mismatch", count
+    if not changes:
+        return False, "none", "unknown:empty-change-set", count
+
+    seen: set[str] = set()
+    renderer_sources = 0
+    for change in changes:
+        if change.status not in CANDIDATE_STATUSES:
+            return False, "none", "not-candidate:unsupported-status", count
+        if not valid_path(change.filename):
+            return False, "none", "not-candidate:unsafe-path", count
+        if change.filename in seen:
+            return False, "none", "not-candidate:duplicate-path", count
+        seen.add(change.filename)
+        if change.previous_filename:
+            return False, "none", "not-candidate:unexpected-previous-path", count
+
+        if webview_renderer_candidate(change.filename):
+            renderer_sources += 1
+        elif webview_test_candidate(change.filename):
+            pass
+        else:
+            return (
+                False,
+                "none",
+                f"not-candidate:out-of-family:{change.filename}",
+                count,
+            )
+
+    if renderer_sources == 0:
+        return False, "none", "not-candidate:no-renderer-source", count
+
+    return (
+        True,
+        WEBVIEW_CANDIDATE_FAMILY,
+        "candidate:webview-renderer-ts-test",
+        count,
+    )
+
+
 def self_test() -> None:
     def required(*changes: Change, expected: int | None = None) -> None:
         exp = len(changes) if expected is None else expected
@@ -195,6 +284,89 @@ def self_test() -> None:
     required(Change("modified", "webview/package.json"))
     required(Change("modified", ".github/workflows/codeql.yml"))
 
+    def candidate_accepted(*changes: Change) -> None:
+        result = classify_candidate(
+            list(changes),
+            len(changes),
+            evidence_available=webview_candidate_evidence_available(),
+        )
+        assert result == (
+            True,
+            WEBVIEW_CANDIDATE_FAMILY,
+            "candidate:webview-renderer-ts-test",
+            len(changes),
+        ), (changes, result)
+
+    candidate_negative_count = 0
+
+    def candidate_rejected(
+        *changes: Change,
+        expected: int | None = -1,
+        evidence_available: bool = True,
+    ) -> None:
+        nonlocal candidate_negative_count
+        candidate_negative_count += 1
+        exp = len(changes) if expected == -1 else expected
+        result = classify_candidate(
+            list(changes),
+            exp,
+            evidence_available=evidence_available,
+        )
+        assert not result[0] and result[1] == "none", (changes, result)
+
+    candidate_accepted(
+        Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"),
+        Change("modified", "webview/tests/native-renderer-capture-architecture.test.mjs"),
+    )
+    candidate_accepted(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"))
+    candidate_accepted(
+        Change("changed", "webview/src/renderer/derived-renderer-bootstrap.ts"),
+        Change("modified", "webview/tests/color.test.mjs"),
+        Change("modified", "webview/tests/runtime-settings.test.mjs"),
+    )
+
+    candidate_rejected(Change("modified", "webview/tests/color.test.mjs"))
+    candidate_rejected(Change("modified", "src/main/kotlin/App.kt"))
+    candidate_rejected(Change("modified", "build.gradle.kts"))
+    candidate_rejected(Change("modified", "qodana.yml"))
+    candidate_rejected(Change("modified", ".github/workflows/build.yml"))
+    candidate_rejected(Change("modified", ".github/workflows/qodana-full.yml"))
+    candidate_rejected(Change("modified", "webview/package.json"))
+    candidate_rejected(Change("modified", "webview/package-lock.json"))
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"), Change("modified", "src/main/kotlin/App.kt"))
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"), Change("modified", "build.gradle.kts"))
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"), Change("modified", "webview/package-lock.json"))
+    candidate_rejected(Change("modified", "webview/src/app/color.ts"))
+    candidate_rejected(Change("modified", "webview/tests/mermaid-browser-acceptance.html"))
+    candidate_rejected(Change("modified", "webview/tests/typescript-cli.mjs"))
+    candidate_rejected(Change("modified", "webview/src/vite-env.d.ts"))
+    candidate_rejected(Change("modified", "webview/src/renderer/contracts.d.ts"))
+    candidate_rejected(Change("modified", "webview/src/renderer/generated/output.ts"))
+    candidate_rejected(Change("modified", "webview/src/renderer/output.generated.ts"))
+    candidate_rejected(Change("added", "webview/src/renderer/new.ts"))
+    candidate_rejected(Change("removed", "webview/src/renderer/old.ts"))
+    candidate_rejected(Change("renamed", "webview/src/renderer/new.ts", "webview/src/renderer/old.ts"))
+    candidate_rejected(Change("copied", "webview/src/renderer/new.ts", "webview/src/renderer/old.ts"))
+    candidate_rejected(Change("renamed", "webview/src/renderer/new.ts", "src/main/kotlin/App.kt"))
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts", "webview/src/renderer/old.ts"))
+    candidate_rejected(Change("mystery", "webview/src/renderer/derived-renderer-bootstrap.ts"))
+    candidate_rejected(Change("modified", "/webview/src/renderer/derived-renderer-bootstrap.ts"))
+    candidate_rejected(Change("modified", "webview/src/renderer/../renderer/derived-renderer-bootstrap.ts"))
+    candidate_rejected(Change("modified", r"webview\src\renderer\derived-renderer-bootstrap.ts"))
+    candidate_rejected(
+        Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"),
+        Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"),
+    )
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"), expected=2)
+    candidate_rejected(Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"), expected=None)
+    candidate_rejected(expected=1)
+    candidate_rejected(Change("modified", "README.md"))
+    candidate_rejected(
+        Change("modified", "webview/src/renderer/derived-renderer-bootstrap.ts"),
+        evidence_available=False,
+    )
+    assert candidate_negative_count == 34, candidate_negative_count
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -224,13 +396,24 @@ def main() -> int:
 
     if malformed:
         decision = (True, "unknown:malformed-change-record", len(rows))
+        candidate_decision = (False, "none", "unknown:malformed-change-record", len(rows))
     else:
         decision = classify(changes, expected)
+        candidate_decision = classify_candidate(
+            changes,
+            expected,
+            evidence_available=webview_candidate_evidence_available(),
+        )
 
     required_value, reason, changed_count = decision
+    candidate, candidate_family, candidate_reason, candidate_count = candidate_decision
     print(f"qodana_required={str(required_value).lower()}")
     print(f"reason={reason}")
     print(f"changed_count={changed_count}")
+    print(f"qodana_shadow_candidate={str(candidate).lower()}")
+    print(f"qodana_shadow_candidate_family={candidate_family}")
+    print(f"qodana_shadow_candidate_reason={candidate_reason}")
+    print(f"qodana_shadow_candidate_changed_count={candidate_count}")
     return 0
 
 
