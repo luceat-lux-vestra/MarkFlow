@@ -383,5 +383,4 @@ private interface DifferentialPreviewBridgeRemote {
     fun sourceUnsaved(editor: Editor): Boolean
     fun restoreNative(editor: Editor)
     fun completeNativeRestore(editor: Editor): Boolean
-    fun nativeShowing(editor: Editor): Boolean
 }

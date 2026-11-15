@@ -727,6 +727,10 @@ class MarkFlowStarterDifferentialManifestTest {
                                 anchorViewport, StandardCharsets.UTF_8
                             )
                         }
+                        driver.withContext(OnDispatcher.EDT) {
+                            visual.normalizeViewportForCapture(remoteEditor)
+                        }
+                        robot.waitForIdle()
                         val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(remoteEditor)
                         }
@@ -4988,6 +4992,7 @@ private interface DifferentialManifestVisualRemote {
     fun prepare(editor: Editor): String
     fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
+    fun normalizeViewportForCapture(editor: Editor)
     fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
     fun contentScreenY(editor: Editor): Int
