@@ -1490,8 +1490,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 entry.id,
                                             timeout = 20.seconds,
                                             getter = { driver.withContext(OnDispatcher.EDT) {
-                                                preview.nativeShowing(remoteEditor) &&
-                                                    !preview.referencePanelAttached(remoteEditor)
+                                                preview.completeNativeRestore(remoteEditor)
                                             } },
                                             checker = { it }
                                         )
@@ -2035,7 +2034,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             waitFor(
                                 message = "Native restored: " + entry.id, timeout = 20.seconds,
                                 getter = { driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeShowing(remoteEditor)
+                                    preview.completeNativeRestore(remoteEditor)
                                 } },
                                 checker = { it }
                             )
@@ -2721,7 +2720,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         message = "B native editor restored for safe close",
                                         timeout = 20.seconds,
                                         getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.nativeShowing(bEditor)
+                                            preview.completeNativeRestore(bEditor)
                                         } },
                                         checker = { it }
                                     )
@@ -2862,8 +2861,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                             entry.id,
                                         timeout = 20.seconds,
                                         getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.nativeShowing(remote) &&
-                                                !preview.referencePanelAttached(remote)
+                                            preview.completeNativeRestore(remote)
                                         } },
                                         checker = { it }
                                     )
@@ -5059,6 +5057,7 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceUnsaved(editor: Editor): Boolean
     fun armDetachedReferenceBrowserCloseMarker(markerPath: String)
     fun restoreNative(editor: Editor)
+    fun completeNativeRestore(editor: Editor): Boolean
     fun detachedReferenceBrowserEvidence(): String
     fun nativeShowing(editor: Editor): Boolean
 }

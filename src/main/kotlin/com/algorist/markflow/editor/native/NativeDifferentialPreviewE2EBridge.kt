@@ -2030,10 +2030,19 @@ internal object NativeDifferentialPreviewE2EBridge {
             lastDetachedReferenceBeforeClose = beforeClose
         }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
+        // Do not select the MarkFlow-owned provider yet. MarkdownPreviewFileEditor
+        // owns asynchronous panel disposal after this layout transition; switching
+        // providers first can hide the split editor before that detach completes.
+        // Callers poll completeNativeRestore() to select MarkFlow only after the
+        // bundled panel has actually detached.
+    }
+
+    fun completeNativeRestore(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        if (previewPanel(preview) != null) return false
         selectOwnedEditor(editor)
-        // Swing layout and native CefBrowser close are asynchronous. Callers that
-        // need a hard wall-clock bound should arm a host marker before this call
-        // and wait for that marker after proving panel detach.
+        return nativeShowing(editor)
     }
 
     fun detachedReferenceBrowserEvidence(): String {
