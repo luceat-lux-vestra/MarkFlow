@@ -261,6 +261,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
+        check(nativeHeadingPaintAllocationNegativeControls()) {
+            "Stage E16/E19 controlled-B heading allocation negative controls failed"
+        }
         check(headingInkVerticalNegativeControls()) { "Stage E19 heading raster Y negative controls failed" }
         check(controlledReferenceAnchorViewportNegativeControls()) {
             "#353 bundled Preview source-target full-viewport negative controls failed"
@@ -4332,6 +4335,72 @@ class MarkFlowStarterDifferentialManifestTest {
             runCatching { headingPaintedInkY(image, 78, 0, 20) }.isFailure
     }
 
+    private data class NativeHeadingPaintAllocation(
+        val documentTop: Int,
+        val height: Int,
+        val inlineFallback: Boolean,
+    )
+
+    /**
+     * Controlled-B can install a real H1 CustomFold when no platform-owned
+     * 0..EOF fold conflicts with offset zero. Only fall back to the explicit
+     * owned H1 inline + ordinary-fold topology when the H1 CustomFold is
+     * actually missing. H2-H6 must remain real CustomFolds.
+     */
+    private fun nativeHeadingPaintAllocation(
+        row: Map<String, String>,
+        level: Int,
+    ): NativeHeadingPaintAllocation {
+        require(level in 1..6)
+        if (row.getValue("fold_status") == "INSTALLED") {
+            val top = row.getValue("fold_origin_y_document_px").toInt()
+            val height = row.getValue("fold_height_px").toInt()
+            check(top >= 0 && height > 0) {
+                "Installed H$level CustomFold has invalid paint allocation"
+            }
+            return NativeHeadingPaintAllocation(top, height, inlineFallback = false)
+        }
+        check(
+            level == 1 &&
+                row.getValue("fold_status") == "MISSING" &&
+                row.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
+                row.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE"
+        ) {
+            "Controlled-B H$level has neither an installed CustomFold nor the owned H1 fallback"
+        }
+        val top = row.getValue("inline_pilot_bounds_y_px").toInt()
+        val height = row.getValue("inline_pilot_height_px").toInt()
+        check(top >= 0 && height > 0) { "Controlled-B H1 fallback has invalid paint allocation" }
+        return NativeHeadingPaintAllocation(top, height, inlineFallback = true)
+    }
+
+    private fun nativeHeadingPaintAllocationNegativeControls(): Boolean {
+        val customFold = nativeHeadingPaintAllocation(
+            mapOf(
+                "fold_status" to "INSTALLED",
+                "fold_origin_y_document_px" to "12",
+                "fold_height_px" to "31",
+            ),
+            level = 1,
+        )
+        val inlineFallback = nativeHeadingPaintAllocation(
+            mapOf(
+                "fold_status" to "MISSING",
+                "inline_pilot_status" to "INSTALLED_UNREVIEWED",
+                "inline_pilot_source_fold" to "COLLAPSED_OWN_CANDIDATE",
+                "inline_pilot_bounds_y_px" to "7",
+                "inline_pilot_height_px" to "22",
+            ),
+            level = 1,
+        )
+        val missingH2Rejected = runCatching {
+            nativeHeadingPaintAllocation(mapOf("fold_status" to "MISSING"), level = 2)
+        }.isFailure
+        return customFold == NativeHeadingPaintAllocation(12, 31, inlineFallback = false) &&
+            inlineFallback == NativeHeadingPaintAllocation(7, 22, inlineFallback = true) &&
+            missingH2Rejected
+    }
+
     /**
      * Source-aligned H1-H6 paired B-pilot ink-Y and text baseline evidence.
      * Native baseline is a renderer paint input; reference baseline is an
@@ -4385,25 +4454,17 @@ class MarkFlowStarterDifferentialManifestTest {
                 p.getValue("source_line_zero_based") == sourceLine.toString()) {
                 "E19 source identity mismatch"
             }
-            val documentTop = if (level == 1) {
-                check(n.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED")
-                n.getValue("inline_pilot_bounds_y_px").toInt()
-            } else {
-                check(n.getValue("fold_status") == "INSTALLED")
-                n.getValue("fold_origin_y_document_px").toInt()
-            }
-            val height = if (level == 1) n.getValue("inline_pilot_height_px").toInt()
-                else n.getValue("fold_height_px").toInt()
-            val top = documentTop - nativeScrollY
-            val nominalBottom = top + height
+            val allocation = nativeHeadingPaintAllocation(n, level)
+            val top = allocation.documentTop - nativeScrollY
+            val nominalBottom = top + allocation.height
             val nativeBaseline = n.getValue("native_paint_baseline_document_px").toInt() -
                 nativeScrollY
             val descent = n.getValue("native_paint_font_descent_px").toInt()
-            // H1's live B font can paint BELOW its pre-style inline
-            // allocation. The real #389 screenshot shows 22px allocated,
-            // but glyph ink persists through y=31. Do not silently crop
-            // diagnostic ink to that known-defective original allocation.
-            val bottom = if (level == 1)
+            // The legacy H1 inline fallback can paint BELOW its pre-style
+            // allocation. Preserve the existing diagnostic crop extension only
+            // for that fallback; a real controlled-B H1 CustomFold uses its
+            // measured fold allocation like H2-H6.
+            val bottom = if (allocation.inlineFallback)
                 maxOf(nominalBottom, nativeBaseline + descent + 1, top + 35)
             else nominalBottom
             val refTop = floor(p.getValue("heading_text_range_top_css_px").toDouble()).toInt()
@@ -4496,16 +4557,11 @@ class MarkFlowStarterDifferentialManifestTest {
                 referenceRow.getValue("source_line_zero_based") == sourceLine.toString()) {
                 "Stage E16 source-identified raster heading mismatch"
             }
-            val (top, bottom) = if (level == 1) {
-                check(nativeRow.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
-                    nativeRow.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE")
-                val origin = nativeRow.getValue("inline_pilot_bounds_y_px").toInt()
-                origin to origin + maxOf(35, nativeRow.getValue("inline_pilot_height_px").toInt())
-            } else {
-                check(nativeRow.getValue("fold_status") == "INSTALLED")
-                val origin = nativeRow.getValue("fold_origin_y_document_px").toInt()
-                origin to origin + nativeRow.getValue("fold_height_px").toInt()
-            }
+            val allocation = nativeHeadingPaintAllocation(nativeRow, level)
+            val top = allocation.documentTop
+            val bottom = top + if (allocation.inlineFallback)
+                maxOf(35, allocation.height)
+            else allocation.height
             val textTop = referenceRow.getValue("heading_text_range_top_css_px").toDouble()
             val textHeight = referenceRow.getValue("heading_text_range_height_css_px").toDouble()
             check(textTop.isFinite() && textHeight.isFinite() && textHeight > 0)
