@@ -2388,18 +2388,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }
                                 Files.writeString(cDest.resolve("native-product-heading-geometry.txt"),
                                     cLedger)
-                                check(cLedger.contains("legacy_heading_inlay_count=0")) {
-                                    "Product Heading unexpectedly contains an additive block inlay"
-                                }
-                                check(cLedger.contains("co_start_inline_pilot_count=1")) {
-                                    "H1 co-start foreign section fallback is missing"
-                                }
-                                val customs = cLedger.lineSequence().single {
-                                    it.startsWith("measured_atx_heading_count=")
-                                }.substringAfter('=').toInt()
-                                check(customs == 5) {
-                                    "Product Heading H2-H6 replacement count is $customs, not 5"
-                                }
+                                assertProductDefaultHeadingTopology(cLedger)
                                 val area = driver.withContext(OnDispatcher.EDT) {
                                     Rectangle(
                                         visual.contentScreenX(cEditor), visual.contentScreenY(cEditor),
@@ -2444,10 +2433,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         check(kotlin.math.abs(actualPx - fontPx) <= 1.0f) {
                                             "Editor font changed to unexpected size: $actualPx vs $fontPx"
                                         }
-                                        check(geometry.contains("legacy_heading_inlay_count=0") &&
-                                            geometry.contains("co_start_inline_pilot_count=1")) {
-                                            "Product Heading owner topology changed during font reflow"
-                                        }
+                                        assertProductDefaultHeadingTopology(geometry)
                                         val h2 = geometry.lineSequence().single {
                                             it.startsWith("level=2\t")
                                         }
@@ -4374,6 +4360,70 @@ class MarkFlowStarterDifferentialManifestTest {
             runCatching { headingPaintedInkY(image, 1, -1, 20) }.isFailure &&
             runCatching { headingPaintedInkY(image, 1, 2, 31) }.isFailure &&
             runCatching { headingPaintedInkY(image, 78, 0, 20) }.isFailure
+    }
+
+    /**
+     * Product-default H1 has two legitimate native topologies. A platform-owned
+     * expanded fold overlapping H1 may prevent installing its CustomFold, in
+     * which case the owned inline/ordinary-fold fallback is required. Without
+     * that conflict all six headings must be real CustomFolds. The observed
+     * ledger, rather than a pinned count from a previous IDE run, is authority.
+     */
+    private fun assertProductDefaultHeadingTopology(ledger: String) {
+        check(ledger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n")) {
+            "Product Heading geometry schema is not the reviewed native ledger"
+        }
+        fun summary(key: String): String = ledger.lineSequence()
+            .single { it.startsWith("$key=") }.substringAfter('=')
+        val headingRows = ledger.lineSequence().filter { it.startsWith("level=") }.toList()
+        check(headingRows.size == 6) { "Product Heading must report exactly six ATX rows" }
+        fun heading(level: Int): Map<String, String> =
+            headingRows.single { it.startsWith("level=$level\t") }
+                .split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    check(pair.size == 2) { "Malformed product heading geometry token" }
+                    pair[0] to pair[1]
+                }
+        val h1 = heading(1)
+        check((2..6).all { level ->
+            val row = heading(level)
+            row["fold_status"] == "INSTALLED" &&
+                row["inline_pilot_status"] == "ABSENT" &&
+                row["inline_pilot_source_fold"] == "ABSENT"
+        }) { "Product Heading H2-H6 must remain real CustomFolds" }
+        check(summary("legacy_heading_inlay_count") == "0") {
+            "Product Heading unexpectedly contains an additive block inlay"
+        }
+
+        val h1Start = h1.getValue("source_start_offset").toInt()
+        val h1End = h1.getValue("source_end_offset").toInt()
+        check(h1Start >= 0 && h1End > h1Start)
+        val expandedOverlap = h1.getValue("foreign_fold_overlaps").split(',')
+            .any { record ->
+                val match = Regex("""^[^:,]+:(\d+)-(\d+):expanded=true$""").matchEntire(record)
+                match != null &&
+                    match.groupValues[1].toInt() < h1End &&
+                    match.groupValues[2].toInt() > h1Start
+            }
+        val customCount = summary("measured_atx_heading_count").toInt()
+        val inlineCount = summary("co_start_inline_pilot_count").toInt()
+        val missing = summary("missing_heading_levels")
+        val allCustomFolds =
+            h1["fold_status"] == "INSTALLED" &&
+                h1["inline_pilot_status"] == "ABSENT" &&
+                h1["inline_pilot_source_fold"] == "ABSENT" &&
+                !expandedOverlap &&
+                customCount == 6 && inlineCount == 0 && missing.isEmpty()
+        val ownedH1Fallback =
+            h1["fold_status"] == "MISSING" && expandedOverlap &&
+                h1["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
+                h1["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                customCount == 5 && inlineCount == 1 && missing == "1"
+        check(allCustomFolds || ownedH1Fallback) {
+            "Product H1 topology unsupported: CustomFolds=$customCount, " +
+                "inlineFallbacks=$inlineCount, missing=$missing, " +
+                "H1Fold=" + h1["fold_status"] + ", expandedH1Overlap=$expandedOverlap"
+        }
     }
 
     private data class NativeHeadingPaintAllocation(
