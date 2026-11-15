@@ -594,6 +594,49 @@ class MarkFlowStarterDifferentialManifestTest {
                 }
                 val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
                 val robot = Robot()
+                fun stabilizeNativeCaptureViewport(
+                    editor: Editor,
+                    caseId: String,
+                    boundary: String,
+                ): Rectangle {
+                    var lastObserved: Rectangle? = null
+                    for (attempt in 1..3) {
+                        driver.withContext(OnDispatcher.EDT) {
+                            visual.normalizeViewportForCapture(editor)
+                        }
+                        robot.waitForIdle()
+                        val first = driver.withContext(OnDispatcher.EDT) {
+                            Rectangle(
+                                visual.contentScreenX(editor),
+                                visual.contentScreenY(editor),
+                                visual.contentWidth(editor),
+                                visual.contentHeight(editor),
+                            )
+                        }
+                        lastObserved = first
+                        if (first.width == 1200 && first.height == 760) {
+                            // Require the normalized viewport to survive another idle/layout
+                            // boundary before accepting it as evidence/capture geometry.
+                            robot.waitForIdle()
+                            val confirmed = driver.withContext(OnDispatcher.EDT) {
+                                Rectangle(
+                                    visual.contentScreenX(editor),
+                                    visual.contentScreenY(editor),
+                                    visual.contentWidth(editor),
+                                    visual.contentHeight(editor),
+                                )
+                            }
+                            lastObserved = confirmed
+                            if (confirmed.width == 1200 && confirmed.height == 760) {
+                                return confirmed
+                            }
+                        }
+                    }
+                    error(
+                        "Native capture viewport did not stabilize at 1200x760 for " +
+                            caseId + " boundary=" + boundary + " observed=" + lastObserved
+                    )
+                }
                 check(driver.withContext(OnDispatcher.EDT) {
                     preview.rasterGeometryNegativeControls()
                 }) { "Stage D raster geometry negative controls failed" }
@@ -730,10 +773,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 anchorViewport, StandardCharsets.UTF_8
                             )
                         }
-                        driver.withContext(OnDispatcher.EDT) {
-                            visual.normalizeViewportForCapture(remoteEditor)
-                        }
-                        robot.waitForIdle()
+                        stabilizeNativeCaptureViewport(
+                            remoteEditor,
+                            entry.id,
+                            "before-native-evidence",
+                        )
                         val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(remoteEditor)
                         }
@@ -828,14 +872,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 ).joinToString("\t")
                             }
                         }
-                        val native = driver.withContext(OnDispatcher.EDT) {
-                            Rectangle(
-                                visual.contentScreenX(remoteEditor), visual.contentScreenY(remoteEditor),
-                                visual.contentWidth(remoteEditor), visual.contentHeight(remoteEditor)
-                            )
-                        }
-                        check(native.width == 1200 && native.height == 760)
-                        robot.waitForIdle()
+                        val native = stabilizeNativeCaptureViewport(
+                            remoteEditor,
+                            entry.id,
+                            "before-native-screenshot",
+                        )
                         if (reviewAnchorLine != null) {
                             // Recheck at the actual screenshot boundary; prior inlay
                             // convergence must not be mistaken for a retained viewport.
