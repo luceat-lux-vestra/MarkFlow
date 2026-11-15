@@ -2719,24 +2719,28 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "legacy_a_fixture=sourceLineReplacement_false\n" +
                                          "production_default=sourceLineReplacement_true\n" +
                                         "full_differential_acceptance=false\n")
-                                // The candidate contract is six *owned heading
-                                // replacements*, not six instances of the same
-                                // JetBrains folding subtype. Every owner must be
-                                // individually observed. Preview visual parity is
-                                // still separately blocked by the unreviewed
-                                // source-aligned DOM/typography anchor contract.
-                                if (compositeCount != 6 || bCustomCount != 5 ||
-                                    bMissing != "1" ||
-                                    !nativeB.contains("legacy_heading_inlay_count=0")) {
+                                // Demand six individually evidenced owned H1-H6
+                                // replacements. H1 may use a real CustomFold (6+0)
+                                // without an expanded foreign overlap, or the verified
+                                // owned inline fallback (5+1) with that conflict.
+                                // Reuse the same fail-closed native ledger contract as
+                                // the product-default evidence; never accept counts
+                                // alone. Preview visual parity remains unverified.
+                                val topologyFailure = runCatching {
+                                    assertProductDefaultHeadingTopology(nativeB)
+                                }.exceptionOrNull()
+                                if (compositeCount != 6 || topologyFailure != null) {
                                     structuralFailures += listOf(
                                         entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
                                         "custom=" + bCustomCount + ";inline=" +
                                             (if (h1InlineInstalled) 1 else 0) +
                                             ";missing_custom=" + bMissing,
-                                        "5_CUSTOM_PLUS_1_OWNED_INLINE"
+                                        "6_OWNED_HEADINGS_CONFLICT_AWARE_H1"
                                     ).joinToString("\t")
                                     error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
-                                        compositeCount + "/6; foreign fold evidence retained")
+                                        compositeCount + "/6; topology=" +
+                                        (topologyFailure?.message ?: "VALID") +
+                                        "; foreign fold evidence retained")
                                 }
                             } catch (cause: Throwable) {
                                 bFailure = cause
