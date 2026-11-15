@@ -149,26 +149,35 @@ class MarkFlowStarterVisualAcceptanceTest {
                         checker = { evidence -> spec.ready(parseEvidence(evidence)) },
                     )
 
-                    driver.withContext(OnDispatcher.EDT) {
-                        visual.normalizeEditorChromeForCapture(editor.editor)
-                        visual.normalizeViewportForCapture(editor.editor)
-                    }
                     val robot = Robot()
-                    robot.waitForIdle()
-
-                    val environment = driver.withContext(OnDispatcher.EDT) {
-                        visual.environmentIdentity(editor.editor)
+                    var environment: String? = null
+                    for (attempt in 1..3) {
+                        driver.withContext(OnDispatcher.EDT) {
+                            visual.normalizeEditorChromeForCapture(editor.editor)
+                            visual.normalizeViewportForCapture(editor.editor)
+                        }
+                        robot.waitForIdle()
+                        environment = driver.withContext(OnDispatcher.EDT) {
+                            visual.environmentIdentity(editor.editor)
+                        }
+                        if (observedEnvironment == null || observedEnvironment == environment) {
+                            break
+                        }
                     }
+
+                    val stableEnvironment = checkNotNull(environment)
                     if (observedEnvironment == null) {
-                        observedEnvironment = environment
+                        observedEnvironment = stableEnvironment
                         Files.writeString(
                             actualRoot.resolve("environment.txt"),
-                            environment,
+                            stableEnvironment,
                             StandardCharsets.UTF_8,
                         )
                     } else {
-                        check(observedEnvironment == environment) {
-                            "visual environment changed within one IDEA process"
+                        check(observedEnvironment == stableEnvironment) {
+                            "visual environment changed within one IDEA process after bounded normalization\n" +
+                                "expected:\n$observedEnvironment" +
+                                "actual:\n$stableEnvironment"
                         }
                     }
 
