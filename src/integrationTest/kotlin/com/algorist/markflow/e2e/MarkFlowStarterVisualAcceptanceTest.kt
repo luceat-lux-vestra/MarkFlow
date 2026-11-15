@@ -157,6 +157,17 @@ class MarkFlowStarterVisualAcceptanceTest {
                             visual.normalizeViewportForCapture(editor.editor)
                         }
                         robot.waitForIdle()
+                        waitFor(
+                            message = "visual presentation re-converges after normalization for ${spec.name}",
+                            timeout = if (spec.derived) 45.seconds else 15.seconds,
+                            getter = {
+                                driver.withContext(OnDispatcher.EDT) {
+                                    visual.visualEvidence(editor.editor)
+                                }
+                            },
+                            checker = { evidence -> spec.ready(parseEvidence(evidence)) },
+                        )
+                        robot.waitForIdle()
                         environment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(editor.editor)
                         }
@@ -179,6 +190,13 @@ class MarkFlowStarterVisualAcceptanceTest {
                                 "expected:\n$observedEnvironment" +
                                 "actual:\n$stableEnvironment"
                         }
+                    }
+
+                    val captureEvidence = driver.withContext(OnDispatcher.EDT) {
+                        visual.visualEvidence(editor.editor)
+                    }
+                    check(spec.ready(parseEvidence(captureEvidence))) {
+                        "visual presentation drifted after post-normalization convergence for ${spec.name}"
                     }
 
                     val bounds = driver.withContext(OnDispatcher.EDT) {
