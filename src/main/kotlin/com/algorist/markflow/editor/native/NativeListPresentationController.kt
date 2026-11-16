@@ -609,8 +609,31 @@ internal class NativeListPresentationController(
             .filter(FoldRegion::isValid)
             .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
             .forEach { fold ->
-                if (fold.startOffset > range.startOffset && fold.startOffset < range.endOffset) boundaries += fold.startOffset
-                if (fold.endOffset > range.startOffset && fold.endOffset < range.endOffset) boundaries += fold.endOffset
+                if (fold.startOffset > range.startOffset && fold.startOffset < range.endOffset) {
+                    boundaries += fold.startOffset
+                }
+                if (fold.endOffset > range.startOffset && fold.endOffset < range.endOffset) {
+                    boundaries += fold.endOffset
+                }
+
+                // An expanded platform fold is compatible only when every MarkFlow fold is
+                // strictly nested inside it. Merely adding the foreign start/end boundaries can
+                // manufacture one exact-range segment (notably for nested Markdown-list folds),
+                // which addFoldRegion cannot own independently and causes the whole list
+                // presentation to fail closed. Split that overlap at a Unicode-safe interior
+                // boundary so the generated folds remain strictly nested. Collapsed foreign
+                // folds are deliberately not relaxed here; only the existing marker-fold
+                // coverage exception may reuse those.
+                if (fold.isExpanded) {
+                    val overlapStart = maxOf(range.startOffset, fold.startOffset)
+                    val overlapEnd = minOf(range.endOffset, fold.endOffset)
+                    if (source.codePointCount(overlapStart, overlapEnd) >= 2) {
+                        val overlapTailStart = Character.offsetByCodePoints(source, overlapEnd, -1)
+                        if (overlapTailStart > overlapStart && overlapTailStart < overlapEnd) {
+                            boundaries += overlapTailStart
+                        }
+                    }
+                }
             }
         return boundaries
             .sorted()
