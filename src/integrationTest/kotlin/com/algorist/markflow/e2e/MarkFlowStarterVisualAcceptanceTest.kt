@@ -373,7 +373,8 @@ class MarkFlowStarterVisualAcceptanceTest {
         val nestedStart = models[0].getValue("start").toInt()
         val nestedEnd = models[0].getValue("end").toInt()
         check(nestedStart < nestedEnd) { "invalid nested list source range" }
-        val ownedCollapsedCoverage = lines.filter { it.startsWith("fold=") }
+        val ownedCollapsedCoverage = lines.asSequence()
+            .filter { it.startsWith("fold=") }
             .map(::fields)
             .filter {
                 it["owner"] == "LIST_OWNED" &&
@@ -385,7 +386,7 @@ class MarkFlowStarterVisualAcceptanceTest {
             .sortedWith(compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second })
         var coveredEnd = nestedStart
         ownedCollapsedCoverage.forEach { (start, end) ->
-            if (start <= coveredEnd && end > coveredEnd) coveredEnd = end
+            if (coveredEnd in start until end) coveredEnd = end
         }
         check(coveredEnd >= nestedEnd) {
             "nested unordered list must be fully concealed by collapsed MarkFlow-owned folds"
