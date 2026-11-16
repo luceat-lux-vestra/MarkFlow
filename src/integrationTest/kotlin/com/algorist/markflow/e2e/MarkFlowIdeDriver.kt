@@ -13,9 +13,7 @@ import com.intellij.driver.sdk.invokeActionByShortcut
 import com.intellij.driver.sdk.openFile
 import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.ui.components.common.JEditorUiComponent
-import com.intellij.driver.sdk.ui.components.common.editor
 import com.intellij.driver.sdk.ui.components.common.ideFrame
-import com.intellij.driver.sdk.ui.remote.Component
 import com.intellij.driver.sdk.waitFor
 import java.awt.Point
 import kotlin.time.Duration.Companion.seconds
@@ -35,22 +33,33 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             "opened Markdown file not found: $fileName"
         }
         val project = driver.singleProject()
+        val manager = driver.service<FileEditorManagerRemote>(project)
         val selectedFileEditor = driver.withContext(OnDispatcher.EDT) {
-            driver.service<FileEditorManagerRemote>(project).getSelectedEditor(file)
+            // Provider coexistence intentionally lets IntelliJ remember an alternative selection.
+            // Product acceptance needs the MarkFlow surface itself, so select it through the
+            // maintained FileEditorManager API instead of assuming whichever provider was restored.
+            manager.setSelectedEditor(file, MARKFLOW_OWNED_EDITOR_TYPE_ID)
+            manager.getSelectedEditor(file)
         }
-        checkNotNull(selectedFileEditor) { "selected Markdown FileEditor unavailable: $fileName" }
+        checkNotNull(selectedFileEditor) { "selected MarkFlow FileEditor unavailable: $fileName" }
 
-        driver.invokeAction(
-            "TextEditorWithPreview.Layout.EditorOnly",
-            component = selectedFileEditor.getComponent(),
-        )
-
-        return driver.ideFrame().editor().also { editor ->
-            check(editor.editor.getVirtualFile().getName() == fileName) {
-                "active native editor does not own expected Markdown file: $fileName"
+        // Driver's remote Editor.getVirtualFile() is null for this manually-owned editor and
+        // FileEditor.getComponent() is a root component rather than EditorComponentImpl. Resolve the
+        // exact visible editor through the read-only production bridge: same Document-backed file
+        // plus an attached owned presentation controller.
+        val projection = driver.utility(NativeProjectionE2EBridgeRemote::class)
+        return driver.ideFrame()
+            .xx("//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java)
+            .list()
+            .firstOrNull { editor ->
+                editor.isEditable() &&
+                    driver.withContext(OnDispatcher.EDT) {
+                        editor.component.isShowing() &&
+                            projection.fileName(editor.editor) == fileName &&
+                            projection.isAttached(editor.editor)
+                    }
             }
-            check(editor.isEditable()) { "opened Markdown editor is not editable: $fileName" }
-        }
+            ?: error("selected MarkFlow FileEditor has no visible owned native component: $fileName")
     }
 
     fun openMarkdown(fileName: String): JEditorUiComponent = selectNativeMarkdown(fileName)
@@ -446,7 +455,15 @@ class MarkFlowIdeDriver(private val driver: Driver) {
         // Close the exact VirtualFile through FileEditorManager and prove the retained native
         // Editor is disposed instead.
         val remoteEditor = driver.cast(editor.editor, EditorStateRemote::class)
-        val file = editor.editor.getVirtualFile()
+        // A MarkFlow-owned Editor is created from the authoritative Document and does not expose
+        // Editor.getVirtualFile() through Driver. Resolve the exact opened file by the read-only
+        // Document-backed bridge instead; never pass a null file into FileEditorManager.closeFile().
+        val fileName = driver.withContext(OnDispatcher.EDT) {
+            driver.utility(NativeProjectionE2EBridgeRemote::class).fileName(editor.editor)
+        } ?: error("owned native editor has no authoritative file")
+        val file = checkNotNull(driver.findOpenFile(fileName, isTextEditor = false)) {
+            "opened Markdown file not found for close: $fileName"
+        }
         val manager = driver.service<FileEditorManagerRemote>(driver.singleProject())
         driver.withContext(OnDispatcher.EDT) {
             manager.closeFile(file)
@@ -464,17 +481,18 @@ class MarkFlowIdeDriver(private val driver: Driver) {
     }
 }
 
+private const val MARKFLOW_OWNED_EDITOR_TYPE_ID = "markflow-owned-native"
+
 @Remote("com.intellij.openapi.fileEditor.FileEditorManager")
 private interface FileEditorManagerRemote {
+    fun setSelectedEditor(file: VirtualFile, providerId: String)
     fun getSelectedEditor(file: VirtualFile): FileEditorRemote?
     fun closeFile(file: VirtualFile)
     fun isFileOpen(file: VirtualFile): Boolean
 }
 
 @Remote("com.intellij.openapi.fileEditor.FileEditor")
-private interface FileEditorRemote {
-    fun getComponent(): Component
-}
+private interface FileEditorRemote
 
 @Remote("com.intellij.openapi.fileEditor.FileDocumentManager")
 private interface FileDocumentManagerRemote {
@@ -494,6 +512,7 @@ private interface NativeClipboardE2EBridgeRemote {
 
 @Remote(value = "com.algorist.markflow.editor.native.NativeProjectionE2EBridge", plugin = "com.algorist.markflow")
 private interface NativeProjectionE2EBridgeRemote {
+    fun fileName(editor: Editor): String?
     fun isAttached(editor: Editor): Boolean
     fun planReady(editor: Editor): Boolean
     fun hasProjection(editor: Editor, kind: String, startOffset: Int, endOffset: Int): Boolean

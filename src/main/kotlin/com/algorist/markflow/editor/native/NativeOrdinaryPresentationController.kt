@@ -176,6 +176,8 @@ internal class NativeOrdinaryPresentationController(
         lists.refreshActivity(plan, richPresentationEnabled)
     }
 
+    fun visualStructureListGeometryEvidence(): String = lists.visualStructureGeometryEvidence()
+
     fun headingPilotEvidenceSnapshot(): NativeHeadingPresentationEvidence = headings.evidenceSnapshot()
 
     fun evidenceSnapshot(): NativeOrdinaryPresentationEvidence {

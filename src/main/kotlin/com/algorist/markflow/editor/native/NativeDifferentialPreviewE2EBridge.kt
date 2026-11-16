@@ -5,6 +5,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import java.awt.AWTEvent
 import java.awt.Component
 import java.awt.Container
@@ -406,18 +407,25 @@ internal object NativeDifferentialPreviewE2EBridge {
         return "restored_native_font_px=" + editor.colorsScheme.editorFontSize2D + "\n"
     }
 
+    private fun fileFor(editor: Editor) =
+        requireNotNull(FileDocumentManager.getInstance().getFile(editor.document)) {
+            "Differential editor document has no VirtualFile"
+        }
+
     private fun editors(editor: Editor): Pair<TextEditorWithPreview, FileEditor> {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
-        val file = requireNotNull(FileDocumentManager.getInstance().getFile(editor.document)) {
-            "Differential editor document has no VirtualFile"
-        }
+        val file = fileFor(editor)
         val selected = FileEditorManager.getInstance(project).getEditors(file)
             .filterIsInstance<TextEditorWithPreview>()
             .singleOrNull {
-                it.javaClass.name == MARKDOWN_SPLIT && it.textEditor.editor === editor
+                it.javaClass.name == MARKDOWN_SPLIT &&
+                    it.textEditor.editor.document === editor.document
             }
             ?: error("Exact platform Markdown split editor unavailable for " + file.name)
+        check(selected.textEditor.editor !== editor) {
+            "Bundled Markdown reference unexpectedly reused the MarkFlow-owned Editor"
+        }
         // myPreview is protected in TextEditorWithPreview, with no public preview accessor.
         // Reflection is deliberately confined to this test-only compatibility boundary.
         val field = TextEditorWithPreview::class.java.getDeclaredField("myPreview")
@@ -429,6 +437,42 @@ internal object NativeDifferentialPreviewE2EBridge {
         }
         check(preview.isValid) { "Platform Markdown preview is invalid" }
         return selected to preview
+    }
+
+    private fun selectReferenceEditor(editor: Editor, target: TextEditorWithPreview) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val project = requireNotNull(editor.project) { "Differential editor has no project" }
+        val file = fileFor(editor)
+        val manager = FileEditorManager.getInstance(project)
+        val providerIds = FileEditorProviderManager.getInstance()
+            .getProviderList(project, file)
+            .map { it.editorTypeId }
+            .filter { it != MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID }
+        val selectedProviderId = providerIds.firstOrNull { providerId ->
+            manager.setSelectedEditor(file, providerId)
+            manager.getSelectedEditor(file) === target
+        } ?: error(
+            "Could not select bundled Markdown split provider for " + file.name +
+                "; candidates=" + providerIds.joinToString(",")
+        )
+        check(manager.getSelectedEditor(file) === target) {
+            "Bundled Markdown split provider selection did not stick: $selectedProviderId"
+        }
+    }
+
+    private fun selectOwnedEditor(editor: Editor) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val project = requireNotNull(editor.project) { "Differential editor has no project" }
+        val file = fileFor(editor)
+        val manager = FileEditorManager.getInstance(project)
+        val owned = manager.getEditors(file)
+            .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
+            .singleOrNull { it.editor === editor }
+            ?: error("Exact MarkFlow-owned editor unavailable for " + file.name)
+        manager.setSelectedEditor(file, MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+        check(manager.getSelectedEditor(file) === owned) {
+            "MarkFlow-owned provider selection did not stick for " + file.name
+        }
     }
 
     private fun previewPanel(preview: FileEditor): Any? {
@@ -1352,13 +1396,16 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         require(line in 0 until editor.document.lineCount) { "Invalid source anchor line" }
         val (selected, preview) = editors(editor)
+        selectReferenceEditor(editor, selected)
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_PREVIEW)
         // This is intentionally panel-independent. The bundled Preview attaches its
         // JCEF panel asynchronously, so initial navigation must not require browser
-        // ownership before referencePanelShowing() has proven it is ready.
+        // ownership before referencePanelShowing() has proven it is ready. The
+        // reference provider owns a distinct Editor over the same authoritative
+        // Document, so use that provider's source Editor for its scroll API.
         preview.javaClass.getMethod(
             "scrollToLine", Editor::class.java, Int::class.javaPrimitiveType
-        ).invoke(preview, editor, line)
+        ).invoke(preview, selected.textEditor.editor, line)
         return selected.javaClass.name + ";" + preview.javaClass.name + ";line=" + line
     }
 
@@ -1770,6 +1817,7 @@ internal object NativeDifferentialPreviewE2EBridge {
     fun prepareReferenceSplitAtOpen(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
+        selectReferenceEditor(editor, selected)
         check(!previewDisposed(preview)) { "New bundled Markdown Preview is already disposed" }
         val before = checkNotNull(selected.getLayout()) { "Bundled Preview layout is null at open" }
         check(before == TextEditorWithPreview.Layout.SHOW_EDITOR ||
@@ -1982,9 +2030,19 @@ internal object NativeDifferentialPreviewE2EBridge {
             lastDetachedReferenceBeforeClose = beforeClose
         }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-        // Swing layout and native CefBrowser close are asynchronous. Callers that
-        // need a hard wall-clock bound should arm a host marker before this call
-        // and wait for that marker after proving panel detach.
+        // Do not select the MarkFlow-owned provider yet. MarkdownPreviewFileEditor
+        // owns asynchronous panel disposal after this layout transition; switching
+        // providers first can hide the split editor before that detach completes.
+        // Callers poll completeNativeRestore() to select MarkFlow only after the
+        // bundled panel has actually detached.
+    }
+
+    fun completeNativeRestore(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val (_, preview) = editors(editor)
+        if (previewPanel(preview) != null) return false
+        selectOwnedEditor(editor)
+        return nativeShowing(editor)
     }
 
     fun detachedReferenceBrowserEvidence(): String {
@@ -2008,7 +2066,13 @@ internal object NativeDifferentialPreviewE2EBridge {
 
     fun nativeShowing(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val (selected, _) = editors(editor)
-        return selected.textEditor.editor === editor && editor.contentComponent.isShowing
+        val project = requireNotNull(editor.project) { "Differential editor has no project" }
+        val file = fileFor(editor)
+        val manager = FileEditorManager.getInstance(project)
+        val owned = manager.getEditors(file)
+            .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
+            .singleOrNull { it.editor === editor }
+            ?: return false
+        return manager.getSelectedEditor(file) === owned && editor.contentComponent.isShowing
     }
 }

@@ -241,6 +241,9 @@ internal class NativePresentationController(
         )
     }
 
+    fun visualStructureListGeometryEvidence(): String =
+        ordinaryPresentation.visualStructureListGeometryEvidence()
+
     fun headingPilotEvidenceSnapshot(): NativeHeadingPresentationEvidence =
         ordinaryPresentation.headingPilotEvidenceSnapshot()
 

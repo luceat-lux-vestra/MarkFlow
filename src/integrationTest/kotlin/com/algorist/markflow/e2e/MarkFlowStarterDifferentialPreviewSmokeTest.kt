@@ -224,7 +224,9 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             message = "source editor returns to visible native layout after preview",
             timeout = 20.seconds,
             getter = {
-                driver.withContext(OnDispatcher.EDT) { preview.nativeShowing(sourceEditor) }
+                driver.withContext(OnDispatcher.EDT) {
+                    preview.completeNativeRestore(sourceEditor)
+                }
             },
             checker = { showing -> showing }
         )
@@ -380,5 +382,5 @@ private interface DifferentialPreviewBridgeRemote {
     fun sourceStamp(editor: Editor): Long
     fun sourceUnsaved(editor: Editor): Boolean
     fun restoreNative(editor: Editor)
-    fun nativeShowing(editor: Editor): Boolean
+    fun completeNativeRestore(editor: Editor): Boolean
 }

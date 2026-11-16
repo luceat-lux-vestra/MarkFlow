@@ -261,6 +261,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check(followingTextAnchorNegativeControls()) { "Stage E6 paragraph-anchor negative controls failed" }
         check(candidateRasterScaleNegativeControls()) { "Stage E3 raster scale controls failed" }
         check(headingInkRasterNegativeControls()) { "Stage E16 heading raster-ink negative controls failed" }
+        check(nativeHeadingPaintAllocationNegativeControls()) {
+            "Stage E16/E19 controlled-B heading allocation negative controls failed"
+        }
         check(headingInkVerticalNegativeControls()) { "Stage E19 heading raster Y negative controls failed" }
         check(controlledReferenceAnchorViewportNegativeControls()) {
             "#353 bundled Preview source-target full-viewport negative controls failed"
@@ -591,6 +594,49 @@ class MarkFlowStarterDifferentialManifestTest {
                 }
                 val diagnostics = MarkFlowStarterDifferentialPreviewSmokeTest()
                 val robot = Robot()
+                fun stabilizeNativeCaptureViewport(
+                    editor: Editor,
+                    caseId: String,
+                    boundary: String,
+                ): Rectangle {
+                    var lastObserved: Rectangle? = null
+                    for (attempt in 1..3) {
+                        driver.withContext(OnDispatcher.EDT) {
+                            visual.normalizeViewportForCapture(editor)
+                        }
+                        robot.waitForIdle()
+                        val first = driver.withContext(OnDispatcher.EDT) {
+                            Rectangle(
+                                visual.contentScreenX(editor),
+                                visual.contentScreenY(editor),
+                                visual.contentWidth(editor),
+                                visual.contentHeight(editor),
+                            )
+                        }
+                        lastObserved = first
+                        if (first.width == 1200 && first.height == 760) {
+                            // Require the normalized viewport to survive another idle/layout
+                            // boundary before accepting it as evidence/capture geometry.
+                            robot.waitForIdle()
+                            val confirmed = driver.withContext(OnDispatcher.EDT) {
+                                Rectangle(
+                                    visual.contentScreenX(editor),
+                                    visual.contentScreenY(editor),
+                                    visual.contentWidth(editor),
+                                    visual.contentHeight(editor),
+                                )
+                            }
+                            lastObserved = confirmed
+                            if (confirmed.width == 1200 && confirmed.height == 760) {
+                                return confirmed
+                            }
+                        }
+                    }
+                    error(
+                        "Native capture viewport did not stabilize at 1200x760 for " +
+                            caseId + " boundary=" + boundary + " observed=" + lastObserved
+                    )
+                }
                 check(driver.withContext(OnDispatcher.EDT) {
                     preview.rasterGeometryNegativeControls()
                 }) { "Stage D raster geometry negative controls failed" }
@@ -727,6 +773,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 anchorViewport, StandardCharsets.UTF_8
                             )
                         }
+                        stabilizeNativeCaptureViewport(
+                            remoteEditor,
+                            entry.id,
+                            "before-native-evidence",
+                        )
                         val nativeEnvironment = driver.withContext(OnDispatcher.EDT) {
                             visual.environmentIdentity(remoteEditor)
                         }
@@ -821,14 +872,11 @@ class MarkFlowStarterDifferentialManifestTest {
                                 ).joinToString("\t")
                             }
                         }
-                        val native = driver.withContext(OnDispatcher.EDT) {
-                            Rectangle(
-                                visual.contentScreenX(remoteEditor), visual.contentScreenY(remoteEditor),
-                                visual.contentWidth(remoteEditor), visual.contentHeight(remoteEditor)
-                            )
-                        }
-                        check(native.width == 1200 && native.height == 760)
-                        robot.waitForIdle()
+                        val native = stabilizeNativeCaptureViewport(
+                            remoteEditor,
+                            entry.id,
+                            "before-native-screenshot",
+                        )
                         if (reviewAnchorLine != null) {
                             // Recheck at the actual screenshot boundary; prior inlay
                             // convergence must not be mistaken for a retained viewport.
@@ -1490,8 +1538,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 entry.id,
                                             timeout = 20.seconds,
                                             getter = { driver.withContext(OnDispatcher.EDT) {
-                                                preview.nativeShowing(remoteEditor) &&
-                                                    !preview.referencePanelAttached(remoteEditor)
+                                                preview.completeNativeRestore(remoteEditor)
                                             } },
                                             checker = { it }
                                         )
@@ -2035,7 +2082,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             waitFor(
                                 message = "Native restored: " + entry.id, timeout = 20.seconds,
                                 getter = { driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeShowing(remoteEditor)
+                                    preview.completeNativeRestore(remoteEditor)
                                 } },
                                 checker = { it }
                             )
@@ -2341,18 +2388,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }
                                 Files.writeString(cDest.resolve("native-product-heading-geometry.txt"),
                                     cLedger)
-                                check(cLedger.contains("legacy_heading_inlay_count=0")) {
-                                    "Product Heading unexpectedly contains an additive block inlay"
-                                }
-                                check(cLedger.contains("co_start_inline_pilot_count=1")) {
-                                    "H1 co-start foreign section fallback is missing"
-                                }
-                                val customs = cLedger.lineSequence().single {
-                                    it.startsWith("measured_atx_heading_count=")
-                                }.substringAfter('=').toInt()
-                                check(customs == 5) {
-                                    "Product Heading H2-H6 replacement count is $customs, not 5"
-                                }
+                                assertProductDefaultHeadingTopology(cLedger)
                                 val area = driver.withContext(OnDispatcher.EDT) {
                                     Rectangle(
                                         visual.contentScreenX(cEditor), visual.contentScreenY(cEditor),
@@ -2397,10 +2433,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         check(kotlin.math.abs(actualPx - fontPx) <= 1.0f) {
                                             "Editor font changed to unexpected size: $actualPx vs $fontPx"
                                         }
-                                        check(geometry.contains("legacy_heading_inlay_count=0") &&
-                                            geometry.contains("co_start_inline_pilot_count=1")) {
-                                            "Product Heading owner topology changed during font reflow"
-                                        }
+                                        assertProductDefaultHeadingTopology(geometry)
                                         val h2 = geometry.lineSequence().single {
                                             it.startsWith("level=2\t")
                                         }
@@ -2686,24 +2719,28 @@ class MarkFlowStarterDifferentialManifestTest {
                                         "legacy_a_fixture=sourceLineReplacement_false\n" +
                                          "production_default=sourceLineReplacement_true\n" +
                                         "full_differential_acceptance=false\n")
-                                // The candidate contract is six *owned heading
-                                // replacements*, not six instances of the same
-                                // JetBrains folding subtype. Every owner must be
-                                // individually observed. Preview visual parity is
-                                // still separately blocked by the unreviewed
-                                // source-aligned DOM/typography anchor contract.
-                                if (compositeCount != 6 || bCustomCount != 5 ||
-                                    bMissing != "1" ||
-                                    !nativeB.contains("legacy_heading_inlay_count=0")) {
+                                // Demand six individually evidenced owned H1-H6
+                                // replacements. H1 may use a real CustomFold (6+0)
+                                // without an expanded foreign overlap, or the verified
+                                // owned inline fallback (5+1) with that conflict.
+                                // Reuse the same fail-closed native ledger contract as
+                                // the product-default evidence; never accept counts
+                                // alone. Preview visual parity remains unverified.
+                                val topologyFailure = runCatching {
+                                    assertProductDefaultHeadingTopology(nativeB)
+                                }.exceptionOrNull()
+                                if (compositeCount != 6 || topologyFailure != null) {
                                     structuralFailures += listOf(
                                         entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
                                         "custom=" + bCustomCount + ";inline=" +
                                             (if (h1InlineInstalled) 1 else 0) +
                                             ";missing_custom=" + bMissing,
-                                        "5_CUSTOM_PLUS_1_OWNED_INLINE"
+                                        "6_OWNED_HEADINGS_CONFLICT_AWARE_H1"
                                     ).joinToString("\t")
                                     error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
-                                        compositeCount + "/6; foreign fold evidence retained")
+                                        compositeCount + "/6; topology=" +
+                                        (topologyFailure?.message ?: "VALID") +
+                                        "; foreign fold evidence retained")
                                 }
                             } catch (cause: Throwable) {
                                 bFailure = cause
@@ -2721,7 +2758,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         message = "B native editor restored for safe close",
                                         timeout = 20.seconds,
                                         getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.nativeShowing(bEditor)
+                                            preview.completeNativeRestore(bEditor)
                                         } },
                                         checker = { it }
                                     )
@@ -2862,8 +2899,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                             entry.id,
                                         timeout = 20.seconds,
                                         getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.nativeShowing(remote) &&
-                                                !preview.referencePanelAttached(remote)
+                                            preview.completeNativeRestore(remote)
                                         } },
                                         checker = { it }
                                     )
@@ -4331,6 +4367,136 @@ class MarkFlowStarterDifferentialManifestTest {
     }
 
     /**
+     * Product-default H1 has two legitimate native topologies. A platform-owned
+     * expanded fold overlapping H1 may prevent installing its CustomFold, in
+     * which case the owned inline/ordinary-fold fallback is required. Without
+     * that conflict all six headings must be real CustomFolds. The observed
+     * ledger, rather than a pinned count from a previous IDE run, is authority.
+     */
+    private fun assertProductDefaultHeadingTopology(ledger: String) {
+        check(ledger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n")) {
+            "Product Heading geometry schema is not the reviewed native ledger"
+        }
+        fun summary(key: String): String = ledger.lineSequence()
+            .single { it.startsWith("$key=") }.substringAfter('=')
+        val headingRows = ledger.lineSequence().filter { it.startsWith("level=") }.toList()
+        check(headingRows.size == 6) { "Product Heading must report exactly six ATX rows" }
+        fun heading(level: Int): Map<String, String> =
+            headingRows.single { it.startsWith("level=$level\t") }
+                .split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    check(pair.size == 2) { "Malformed product heading geometry token" }
+                    pair[0] to pair[1]
+                }
+        val h1 = heading(1)
+        check((2..6).all { level ->
+            val row = heading(level)
+            row["fold_status"] == "INSTALLED" &&
+                row["inline_pilot_status"] == "ABSENT" &&
+                row["inline_pilot_source_fold"] == "ABSENT"
+        }) { "Product Heading H2-H6 must remain real CustomFolds" }
+        check(summary("legacy_heading_inlay_count") == "0") {
+            "Product Heading unexpectedly contains an additive block inlay"
+        }
+
+        val h1Start = h1.getValue("source_start_offset").toInt()
+        val h1End = h1.getValue("source_end_offset").toInt()
+        check(h1Start >= 0 && h1End > h1Start)
+        val expandedOverlap = h1.getValue("foreign_fold_overlaps").split(',')
+            .any { record ->
+                val match = Regex("""^[^:,]+:(\d+)-(\d+):expanded=true$""").matchEntire(record)
+                match != null &&
+                    match.groupValues[1].toInt() < h1End &&
+                    match.groupValues[2].toInt() > h1Start
+            }
+        val customCount = summary("measured_atx_heading_count").toInt()
+        val inlineCount = summary("co_start_inline_pilot_count").toInt()
+        val missing = summary("missing_heading_levels")
+        val allCustomFolds =
+            h1["fold_status"] == "INSTALLED" &&
+                h1["inline_pilot_status"] == "ABSENT" &&
+                h1["inline_pilot_source_fold"] == "ABSENT" &&
+                !expandedOverlap &&
+                customCount == 6 && inlineCount == 0 && missing.isEmpty()
+        val ownedH1Fallback =
+            h1["fold_status"] == "MISSING" && expandedOverlap &&
+                h1["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
+                h1["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                customCount == 5 && inlineCount == 1 && missing == "1"
+        check(allCustomFolds || ownedH1Fallback) {
+            "Product H1 topology unsupported: CustomFolds=$customCount, " +
+                "inlineFallbacks=$inlineCount, missing=$missing, " +
+                "H1Fold=" + h1["fold_status"] + ", expandedH1Overlap=$expandedOverlap"
+        }
+    }
+
+    private data class NativeHeadingPaintAllocation(
+        val documentTop: Int,
+        val height: Int,
+        val inlineFallback: Boolean,
+    )
+
+    /**
+     * Controlled-B can install a real H1 CustomFold when no platform-owned
+     * 0..EOF fold conflicts with offset zero. Only fall back to the explicit
+     * owned H1 inline + ordinary-fold topology when the H1 CustomFold is
+     * actually missing. H2-H6 must remain real CustomFolds.
+     */
+    private fun nativeHeadingPaintAllocation(
+        row: Map<String, String>,
+        level: Int,
+    ): NativeHeadingPaintAllocation {
+        require(level in 1..6)
+        if (row.getValue("fold_status") == "INSTALLED") {
+            val top = row.getValue("fold_origin_y_document_px").toInt()
+            val height = row.getValue("fold_height_px").toInt()
+            check(top >= 0 && height > 0) {
+                "Installed H$level CustomFold has invalid paint allocation"
+            }
+            return NativeHeadingPaintAllocation(top, height, inlineFallback = false)
+        }
+        check(
+            level == 1 &&
+                row.getValue("fold_status") == "MISSING" &&
+                row.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
+                row.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE"
+        ) {
+            "Controlled-B H$level has neither an installed CustomFold nor the owned H1 fallback"
+        }
+        val top = row.getValue("inline_pilot_bounds_y_px").toInt()
+        val height = row.getValue("inline_pilot_height_px").toInt()
+        check(top >= 0 && height > 0) { "Controlled-B H1 fallback has invalid paint allocation" }
+        return NativeHeadingPaintAllocation(top, height, inlineFallback = true)
+    }
+
+    private fun nativeHeadingPaintAllocationNegativeControls(): Boolean {
+        val customFold = nativeHeadingPaintAllocation(
+            mapOf(
+                "fold_status" to "INSTALLED",
+                "fold_origin_y_document_px" to "12",
+                "fold_height_px" to "31",
+            ),
+            level = 1,
+        )
+        val inlineFallback = nativeHeadingPaintAllocation(
+            mapOf(
+                "fold_status" to "MISSING",
+                "inline_pilot_status" to "INSTALLED_UNREVIEWED",
+                "inline_pilot_source_fold" to "COLLAPSED_OWN_CANDIDATE",
+                "inline_pilot_bounds_y_px" to "7",
+                "inline_pilot_height_px" to "22",
+            ),
+            level = 1,
+        )
+        val missingH2Rejected = runCatching {
+            nativeHeadingPaintAllocation(mapOf("fold_status" to "MISSING"), level = 2)
+        }.isFailure
+        return customFold == NativeHeadingPaintAllocation(12, 31, inlineFallback = false) &&
+            inlineFallback == NativeHeadingPaintAllocation(7, 22, inlineFallback = true) &&
+            missingH2Rejected
+    }
+
+    /**
      * Source-aligned H1-H6 paired B-pilot ink-Y and text baseline evidence.
      * Native baseline is a renderer paint input; reference baseline is an
      * actual JCEF DOM marker. Both are normalized to their own H1. This
@@ -4383,25 +4549,17 @@ class MarkFlowStarterDifferentialManifestTest {
                 p.getValue("source_line_zero_based") == sourceLine.toString()) {
                 "E19 source identity mismatch"
             }
-            val documentTop = if (level == 1) {
-                check(n.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED")
-                n.getValue("inline_pilot_bounds_y_px").toInt()
-            } else {
-                check(n.getValue("fold_status") == "INSTALLED")
-                n.getValue("fold_origin_y_document_px").toInt()
-            }
-            val height = if (level == 1) n.getValue("inline_pilot_height_px").toInt()
-                else n.getValue("fold_height_px").toInt()
-            val top = documentTop - nativeScrollY
-            val nominalBottom = top + height
+            val allocation = nativeHeadingPaintAllocation(n, level)
+            val top = allocation.documentTop - nativeScrollY
+            val nominalBottom = top + allocation.height
             val nativeBaseline = n.getValue("native_paint_baseline_document_px").toInt() -
                 nativeScrollY
             val descent = n.getValue("native_paint_font_descent_px").toInt()
-            // H1's live B font can paint BELOW its pre-style inline
-            // allocation. The real #389 screenshot shows 22px allocated,
-            // but glyph ink persists through y=31. Do not silently crop
-            // diagnostic ink to that known-defective original allocation.
-            val bottom = if (level == 1)
+            // The legacy H1 inline fallback can paint BELOW its pre-style
+            // allocation. Preserve the existing diagnostic crop extension only
+            // for that fallback; a real controlled-B H1 CustomFold uses its
+            // measured fold allocation like H2-H6.
+            val bottom = if (allocation.inlineFallback)
                 maxOf(nominalBottom, nativeBaseline + descent + 1, top + 35)
             else nominalBottom
             val refTop = floor(p.getValue("heading_text_range_top_css_px").toDouble()).toInt()
@@ -4494,16 +4652,11 @@ class MarkFlowStarterDifferentialManifestTest {
                 referenceRow.getValue("source_line_zero_based") == sourceLine.toString()) {
                 "Stage E16 source-identified raster heading mismatch"
             }
-            val (top, bottom) = if (level == 1) {
-                check(nativeRow.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
-                    nativeRow.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE")
-                val origin = nativeRow.getValue("inline_pilot_bounds_y_px").toInt()
-                origin to origin + maxOf(35, nativeRow.getValue("inline_pilot_height_px").toInt())
-            } else {
-                check(nativeRow.getValue("fold_status") == "INSTALLED")
-                val origin = nativeRow.getValue("fold_origin_y_document_px").toInt()
-                origin to origin + nativeRow.getValue("fold_height_px").toInt()
-            }
+            val allocation = nativeHeadingPaintAllocation(nativeRow, level)
+            val top = allocation.documentTop
+            val bottom = top + if (allocation.inlineFallback)
+                maxOf(35, allocation.height)
+            else allocation.height
             val textTop = referenceRow.getValue("heading_text_range_top_css_px").toDouble()
             val textHeight = referenceRow.getValue("heading_text_range_height_css_px").toDouble()
             check(textTop.isFinite() && textHeight.isFinite() && textHeight > 0)
@@ -4990,6 +5143,7 @@ private interface DifferentialManifestVisualRemote {
     fun prepare(editor: Editor): String
     fun setMermaidSizeModeForDifferential(editor: Editor, mode: String): String
     fun normalizeEditorChromeForCapture(editor: Editor): Int
+    fun normalizeViewportForCapture(editor: Editor)
     fun environmentIdentity(editor: Editor): String
     fun contentScreenX(editor: Editor): Int
     fun contentScreenY(editor: Editor): Int
@@ -5059,6 +5213,7 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceUnsaved(editor: Editor): Boolean
     fun armDetachedReferenceBrowserCloseMarker(markerPath: String)
     fun restoreNative(editor: Editor)
+    fun completeNativeRestore(editor: Editor): Boolean
     fun detachedReferenceBrowserEvidence(): String
     fun nativeShowing(editor: Editor): Boolean
 }

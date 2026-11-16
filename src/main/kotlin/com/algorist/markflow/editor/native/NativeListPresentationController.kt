@@ -323,6 +323,79 @@ internal class NativeListPresentationController(
         )
     }
 
+    /**
+     * Read-only #563 visual evidence. Records the existing list model, live block-inlay
+     * allocation and intersecting IntelliJ folds without changing source or presentation.
+     * Row source text is deliberately excluded from diagnostics.
+     */
+    fun visualStructureGeometryEvidence(): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        requireAlive()
+        val font = editor.contentComponent.font
+        val metrics = editor.contentComponent.getFontMetrics(font)
+        val ownedFolds = owned.values.flatMap(OwnedListPresentation::folds)
+        val coverageFolds = owned.values.flatMap(OwnedListPresentation::coverageFolds)
+        return buildString {
+            appendLine("schema=markflow-visual-structure-list-geometry/v1")
+            appendLine("document_stamp=${editor.document.modificationStamp}")
+            appendLine("document_length=${editor.document.textLength}")
+            appendLine("editor_line_height_px=${editor.lineHeight}")
+            appendLine("editor_font_name=${font.name}")
+            appendLine("editor_font_size_px=${font.size}")
+            appendLine("font_metrics_height_px=${metrics.height}")
+            appendLine("font_metrics_ascent_px=${metrics.ascent}")
+            appendLine("font_metrics_descent_px=${metrics.descent}")
+            appendLine("model_count=${currentModels.size}")
+            appendLine("owned_list_inlay_count=${owned.values.count { it.inlay.isValid }}")
+            currentModels.forEachIndexed { modelIndex, model ->
+                val inlay = owned[ListKey.of(model)]?.inlay
+                val valid = inlay?.isValid == true
+                val bounds = if (valid) inlay.bounds else null
+                val rect = bounds?.let { "${it.x},${it.y},${it.width},${it.height}" }
+                    ?: "ABSENT"
+                appendLine(
+                    "model=$modelIndex\tstart=${model.sourceRange.startOffset}" +
+                        "\tend=${model.sourceRange.endOffset}\trows=${model.rows.size}" +
+                        "\tinlay_valid=$valid\tinlay_bounds_xywh=$rect"
+                )
+                val renderer = if (valid) inlay.renderer as? NativeListInlayRenderer else null
+                if (renderer != null) {
+                    append(renderer.visualRowGeometryEvidence(bounds))
+                } else {
+                    model.rows.forEachIndexed { rowIndex, row ->
+                        appendLine(
+                            "row=$rowIndex\tdepth=${row.depth}\tmarker=${row.marker}" +
+                                "\tmarker_start=${row.markerRange.startOffset}" +
+                                "\tmarker_end=${row.markerRange.endOffset}" +
+                                "\tcontent_start=${row.contentRange.startOffset}" +
+                                "\tcontent_end=${row.contentRange.endOffset}" +
+                                "\ttask=${row.task != null}\tpaint_geometry=ABSENT"
+                        )
+                    }
+                }
+            }
+            val relevantFolds = editor.foldingModel.allFoldRegions.asSequence()
+                .filter(FoldRegion::isValid)
+                .filter { fold ->
+                    currentModels.any { model ->
+                        fold.startOffset < model.sourceRange.endOffset &&
+                            fold.endOffset > model.sourceRange.startOffset
+                    }
+                }
+                .sortedWith(compareBy<FoldRegion> { it.startOffset }.thenBy { it.endOffset })
+                .toList()
+            appendLine("relevant_fold_count=${relevantFolds.size}")
+            relevantFolds.forEachIndexed { index, fold ->
+                val owner = if (ownedFolds.any { it === fold }) "LIST_OWNED" else "FOREIGN_TO_LIST"
+                appendLine(
+                    "fold=$index\tstart=${fold.startOffset}\tend=${fold.endOffset}" +
+                        "\texpanded=${fold.isExpanded}\towner=$owner" +
+                        "\tused_as_list_coverage=${coverageFolds.any { it === fold }}"
+                )
+            }
+        }
+    }
+
     internal fun handleTaskTogglePress(event: EditorMouseEvent): Boolean {
         if (disposed || editor.isDisposed) return false
         if (event.editor !== editor || event.area != EditorMouseEventArea.EDITING_AREA) return false
@@ -632,6 +705,42 @@ internal class NativeListInlayRenderer(
         get() = model.rows.count { it.task != null }
 
     fun row(index: Int): NativeListRow = model.rows[index]
+
+    /**
+     * The same row-size/indent/baseline formulas used by paint, observed without painting.
+     * Bounds are in the native editor component coordinate space, not screen coordinates.
+     */
+    internal fun visualRowGeometryEvidence(bounds: Rectangle?): String {
+        val font = editor.contentComponent.font
+        val metrics = editor.contentComponent.getFontMetrics(font)
+        val height = rowHeight()
+        return buildString {
+            appendLine(
+                "renderer_row_height_px=$height\tvertical_padding_px=$VERTICAL_PADDING" +
+                    "\tcalculated_inlay_height_px=${height * model.rows.size.coerceAtLeast(1) +
+                        VERTICAL_PADDING * 2}"
+            )
+            model.rows.forEachIndexed { index, row ->
+                val rowTop = bounds?.let { it.y + VERTICAL_PADDING + index * height }
+                val baseline = rowTop?.let {
+                    it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
+                }
+                val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+                val markerX = bounds?.let { it.x + indent }
+                appendLine(
+                    "row=$index\tdepth=${row.depth}\tmarker=${row.marker}" +
+                        "\tmarker_start=${row.markerRange.startOffset}" +
+                        "\tmarker_end=${row.markerRange.endOffset}" +
+                        "\tcontent_start=${row.contentRange.startOffset}" +
+                        "\tcontent_end=${row.contentRange.endOffset}" +
+                        "\ttask=${row.task != null}\trow_height_px=$height" +
+                        "\trow_top_px=${rowTop ?: "ABSENT"}" +
+                        "\tbaseline_px=${baseline ?: "ABSENT"}" +
+                        "\tindent_px=$indent\tmarker_x_px=${markerX ?: "ABSENT"}"
+                )
+            }
+        }
+    }
 
     fun contentOffset(index: Int): Int =
         model.rows.getOrNull(index)?.contentRange?.startOffset ?: firstContentOffset

@@ -59,13 +59,11 @@ class NativeProductionCutoverTest : BasePlatformTestCase() {
             Path.of("src", "main", "resources", "META-INF", "markflow-jcef.xml").toAbsolutePath().normalize()
         )
 
-        assertTrue(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
+        assertFalse(pluginXml.contains("NativeMarkFlowEditorFactoryListener"))
         assertTrue(pluginXml.contains("NativeMarkFlowPresentationSettingsSink"))
         assertFalse(pluginXml.contains("com.algorist.markflow.editor.MarkFlowEditorProvider"))
 
-        // #561 packages the production-named provider infrastructure, but normal accept() remains
-        // fail-closed outside dedicated proof JVMs. The existing EditorFactoryListener is still the
-        // active production attachment path until Slice 2.
+        // #563 activates the owned provider and removes the generic production listener.
         assertTrue(pluginXml.contains("MarkFlowOwnedNativeFileEditorProvider"))
         assertTrue(pluginXml.contains("markflow-owned-native"))
 
