@@ -227,6 +227,7 @@ class MarkFlowStarterVisualAcceptanceTest {
                             geometry,
                             StandardCharsets.UTF_8,
                         )
+                        assertStructureNativeListCoverage(geometry)
                     }
                     val candidate = actualRoot.resolve("${spec.name}.candidate.svg")
                     writeGoldenSvg(image, candidate, spec.name)
@@ -301,6 +302,95 @@ class MarkFlowStarterVisualAcceptanceTest {
                 check(separator > 0) { "malformed visual evidence entry: $entry" }
                 entry.substring(0, separator) to entry.substring(separator + 1).toInt()
             }
+
+    /**
+     * Fail closed on the #563 structure contract before trusting its pixel golden.
+     *
+     * The bridge emits the live list models, actual inlay bounds, renderer row geometry,
+     * and list-owned/foreign folds from the same editor. No source text is logged or changed.
+     */
+    private fun assertStructureNativeListCoverage(raw: String) {
+        val lines = raw.lineSequence().filter(String::isNotBlank).toList()
+        check(lines.firstOrNull() == "schema=markflow-visual-structure-list-geometry/v1") {
+            "unexpected structure geometry evidence version"
+        }
+        fun fields(line: String): Map<String, String> =
+            line.split('\t').associate { field ->
+                val separator = field.indexOf('=')
+                check(separator > 0) { "malformed structure geometry entry: $field" }
+                field.substring(0, separator) to field.substring(separator + 1)
+            }
+        fun count(name: String): Int =
+            checkNotNull(lines.singleOrNull { it.startsWith("$name=") }) {
+                "missing or duplicate structure geometry count: $name"
+            }.substringAfter('=').toInt()
+
+        check(count("model_count") == 3 && count("owned_list_inlay_count") == 3) {
+            "structure must render all three native list groups, including the nested unordered list"
+        }
+        val models = lines.filter { it.startsWith("model=") }.map(::fields)
+        check(models.map { it.getValue("model").toInt() } == listOf(0, 1, 2)) {
+            "structure list models must remain in source order"
+        }
+        check(models.map { it.getValue("rows").toInt() } == listOf(4, 2, 2)) {
+            "structure list row counts must match nested, ordered and task fixtures"
+        }
+        check(models.all { model ->
+            model.getValue("inlay_valid") == "true" &&
+                model.getValue("inlay_bounds_xywh") != "ABSENT"
+        }) {
+            "structure list model lacks a valid, allocated native inlay"
+        }
+
+        val rows = List(3) { mutableListOf<Map<String, String>>() }
+        var currentModel = -1
+        lines.forEach { line ->
+            when {
+                line.startsWith("model=") -> currentModel = fields(line).getValue("model").toInt()
+                line.startsWith("row=") -> {
+                    check(currentModel in 0..2) { "structure row without a known owning model" }
+                    rows[currentModel] += fields(line)
+                }
+            }
+        }
+        check(rows.map { group -> group.map { it.getValue("depth").toInt() } } ==
+            listOf(listOf(0, 1, 2, 0), listOf(0, 0), listOf(0, 0))
+        ) {
+            "structure nested hierarchy or ordinary/task list shape differs from fixture"
+        }
+        check(rows.flatten().all { row ->
+            row["row_height_px"]?.toIntOrNull()?.let { it > 0 } == true &&
+                row["baseline_px"]?.toIntOrNull() != null
+        }) {
+            "structure row has no native renderer height/baseline evidence"
+        }
+        check(rows[0].all { it.getValue("task") == "false" } &&
+            rows[2].all { it.getValue("task") == "true" }
+        ) {
+            "structure task markers are not confined to the task list"
+        }
+
+        val nestedStart = models[0].getValue("start").toInt()
+        val nestedEnd = models[0].getValue("end").toInt()
+        check(nestedStart < nestedEnd) { "invalid nested list source range" }
+        val ownedCollapsedCoverage = lines.filter { it.startsWith("fold=") }
+            .map(::fields)
+            .filter {
+                it["owner"] == "LIST_OWNED" &&
+                    it["expanded"] == "false" &&
+                    it["used_as_list_coverage"] == "true"
+            }
+            .map { it.getValue("start").toInt() to it.getValue("end").toInt() }
+            .filter { (start, end) -> start < nestedEnd && end > nestedStart }
+            .sortedWith(compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second })
+        var coveredEnd = nestedStart
+        ownedCollapsedCoverage.forEach { (start, end) ->
+            if (start <= coveredEnd && end > coveredEnd) coveredEnd = end
+        }
+        check(coveredEnd >= nestedEnd) {
+            "nested unordered list must be fully concealed by collapsed MarkFlow-owned folds"
+        }
+    }
 
     private fun writeDeterministicLocalImage(path: Path) {
         val image = BufferedImage(240, 96, BufferedImage.TYPE_INT_RGB)
@@ -377,8 +467,10 @@ class MarkFlowStarterVisualAcceptanceTest {
             },
             VisualCase("structure", "VISUAL-STRUCTURE.md") { evidence ->
                 evidence.getValue("blockquoteInlays") >= 1 &&
-                    evidence.getValue("listModels") >= 2 &&
-                    evidence.getValue("listInlays") >= 2 &&
+                    // This fixture includes a nested unordered list, ordered list and task list.
+                    // Two inlays once allowed the nested list to remain raw source in the golden.
+                    evidence.getValue("listModels") == 3 &&
+                    evidence.getValue("listInlays") == 3 &&
                     evidence.getValue("taskRows") == 2 &&
                     evidence.getValue("tableInlays") >= 1
             },
