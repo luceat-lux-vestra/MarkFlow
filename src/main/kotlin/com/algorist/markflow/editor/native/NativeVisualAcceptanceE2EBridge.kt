@@ -123,9 +123,8 @@ internal object NativeVisualAcceptanceE2EBridge {
             .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
             .singleOrNull { it.editor === editor }
             ?: error("visual acceptance requires the exact MarkFlow-owned native editor for " + file.name)
-        manager.setSelectedEditor(file, MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
         check(manager.getSelectedEditor(file) === ownedFileEditor) {
-            "visual acceptance could not select the MarkFlow-owned provider for " + file.name
+            "visual acceptance requires the MarkFlow-owned provider to already be selected for " + file.name
         }
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
