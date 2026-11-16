@@ -350,7 +350,7 @@ internal class NativeListPresentationController(
             currentModels.forEachIndexed { modelIndex, model ->
                 val inlay = owned[ListKey.of(model)]?.inlay
                 val valid = inlay?.isValid == true
-                val bounds = if (valid) inlay?.bounds else null
+                val bounds = if (valid) inlay.bounds else null
                 val rect = bounds?.let { "${it.x},${it.y},${it.width},${it.height}" }
                     ?: "ABSENT"
                 appendLine(
@@ -358,7 +358,7 @@ internal class NativeListPresentationController(
                         "\tend=${model.sourceRange.endOffset}\trows=${model.rows.size}" +
                         "\tinlay_valid=$valid\tinlay_bounds_xywh=$rect"
                 )
-                val renderer = if (valid) inlay?.renderer as? NativeListInlayRenderer else null
+                val renderer = if (valid) inlay.renderer as? NativeListInlayRenderer else null
                 if (renderer != null) {
                     append(renderer.visualRowGeometryEvidence(bounds))
                 } else {
