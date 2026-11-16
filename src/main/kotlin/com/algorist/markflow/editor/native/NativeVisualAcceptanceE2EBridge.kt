@@ -19,7 +19,6 @@ import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBScrollPane
 import java.awt.Toolkit
@@ -116,16 +115,17 @@ internal object NativeVisualAcceptanceE2EBridge {
         val project = requireNotNull(editor.project) {
             "visual acceptance editor must belong to a project"
         }
-        val selectedFileEditor = requireNotNull(FileEditorManager.getInstance(project).selectedEditor) {
-            "visual acceptance requires the selected Markdown FileEditor"
+        val file = requireNotNull(FileDocumentManager.getInstance().getFile(editor.document)) {
+            "visual acceptance editor must resolve to an authoritative Markdown file"
         }
-        when (selectedFileEditor) {
-            is MarkFlowOwnedNativeFileEditor -> Unit
-            is TextEditorWithPreview -> selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
-            else -> error(
-                "visual acceptance requires the MarkFlow owned native editor or bundled Markdown editor, got " +
-                    selectedFileEditor.javaClass.name
-            )
+        val manager = FileEditorManager.getInstance(project)
+        val ownedFileEditor = manager.getEditors(file)
+            .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
+            .singleOrNull { it.editor === editor }
+            ?: error("visual acceptance requires the exact MarkFlow-owned native editor for " + file.name)
+        manager.setSelectedEditor(file, MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+        check(manager.getSelectedEditor(file) === ownedFileEditor) {
+            "visual acceptance could not select the MarkFlow-owned provider for " + file.name
         }
         EditorSettingsExternalizable.getInstance().isShowInspectionWidget = false
 
@@ -167,18 +167,18 @@ internal object NativeVisualAcceptanceE2EBridge {
                 "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
                 "actual=${viewport.width}x${viewport.height}"
         }
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         val hasDerivedPresentation =
             (controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0
         if (!hasDerivedPresentation) {
-            // SHOW_EDITOR/window normalization changes the available editor width after native
-            // presentation may already have been installed. Ordinary block/code/resource inlays
+            // Window normalization changes the available editor width after native presentation
+            // may already have been installed. Ordinary block/code/resource inlays
             // must be recomputed for the pinned viewport. Derived projections are deliberately
             // excluded: cancelling their just-started JCEF request and immediately reissuing it
             // created the #353 readiness race observed at mermaid-state.
-            NativeMarkFlowProductionLifecycle.refreshAll()
+            NativeMarkFlowProductionLifecycle.refreshOwned()
         }
         return environmentIdentity(editor)
     }
@@ -366,7 +366,7 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun structureGeometryEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         return controller.visualStructureListGeometryEvidence()
@@ -374,7 +374,7 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun visualEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         val ordinary = controller.evidenceSnapshot()
