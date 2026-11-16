@@ -1024,6 +1024,15 @@ fi
 grep -Fq 'Case lifecycle close observed source identity drift:' "$manifest_test" ||
   die "#353 case cleanup lost source/stamp/unsaved fail-closed identity checks"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
+projection_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeProjectionE2EBridge.kt"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+for owned_bridge in "$projection_bridge" "$visual_bridge" "$differential_bridge"; do
+  grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$owned_bridge" ||
+    die "Leap 2 production E2E bridge no longer requires owned-controller lookup: $owned_bridge"
+  if grep -Fq 'NativeMarkFlowProductionLifecycle.controller(editor)' "$owned_bridge"; then
+    die "Leap 2 production E2E bridge still accepts generic controller attachment: $owned_bridge"
+  fi
+done
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"
 grep -Fq 'markdown-anchors.tsv' "$manifest_test" ||
@@ -1308,8 +1317,8 @@ grep -Fq '(controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0' "$v
   die "#353 visual bridge no longer derives refresh suppression from the real native plan"
 grep -Fq 'if (!hasDerivedPresentation) {' "$visual_bridge" ||
   die "#353 visual bridge no longer suppresses layout refresh for derived rendering"
-grep -Fq 'NativeMarkFlowProductionLifecycle.refreshAll()' "$visual_bridge" ||
-  die "#353 visual bridge lost required ordinary layout refresh after viewport normalization"
+grep -Fq 'NativeMarkFlowProductionLifecycle.refreshOwned()' "$visual_bridge" ||
+  die "#353 visual bridge lost required owned ordinary layout refresh after viewport normalization"
 if grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
   grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow"; then
   die "Starter workflow must not duplicate the canonical full differential workflow"

@@ -167,7 +167,7 @@ internal object NativeVisualAcceptanceE2EBridge {
                 "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
                 "actual=${viewport.width}x${viewport.height}"
         }
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         val hasDerivedPresentation =
@@ -178,7 +178,7 @@ internal object NativeVisualAcceptanceE2EBridge {
             // must be recomputed for the pinned viewport. Derived projections are deliberately
             // excluded: cancelling their just-started JCEF request and immediately reissuing it
             // created the #353 readiness race observed at mermaid-state.
-            NativeMarkFlowProductionLifecycle.refreshAll()
+            NativeMarkFlowProductionLifecycle.refreshOwned()
         }
         return environmentIdentity(editor)
     }
@@ -366,7 +366,7 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun structureGeometryEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         return controller.visualStructureListGeometryEvidence()
@@ -374,7 +374,7 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun visualEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
             "production native MarkFlow controller is not attached"
         }
         val ordinary = controller.evidenceSnapshot()

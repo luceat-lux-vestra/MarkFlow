@@ -587,7 +587,7 @@ internal object NativeDifferentialPreviewE2EBridge {
      */
     @Suppress("UnstableApiUsage")
     private fun nativeSourceBoundInlayRow(editor: Editor, line: Int): NativeAnchorRow? {
-        val controller = NativeMarkFlowProductionLifecycle.controller(editor) ?: return null
+        val controller = NativeMarkFlowProductionLifecycle.ownedController(editor) ?: return null
         val plan = controller.currentPlan ?: return null
         if (plan.status != ProjectionPlanStatus.READY ||
             ProjectionSnapshot.capture(editor.document, plan.identity.configGeneration).identity != plan.identity
