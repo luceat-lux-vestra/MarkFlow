@@ -216,6 +216,18 @@ class MarkFlowStarterVisualAcceptanceTest {
                     )
                     val actualPath = actualRoot.resolve("${spec.name}.png")
                     ImageIO.write(image, "png", actualPath.toFile())
+                    if (spec.name == "structure") {
+                        // Keep the screen capture unchanged; sample existing native layout only
+                        // after the captured raster and before closing this exact editor.
+                        val geometry = driver.withContext(OnDispatcher.EDT) {
+                            visual.structureGeometryEvidence(editor.editor)
+                        }
+                        Files.writeString(
+                            actualRoot.resolve("structure-list-geometry.txt"),
+                            geometry,
+                            StandardCharsets.UTF_8,
+                        )
+                    }
                     val candidate = actualRoot.resolve("${spec.name}.candidate.svg")
                     writeGoldenSvg(image, candidate, spec.name)
                     captures[spec.name] = actualPath
@@ -516,6 +528,7 @@ private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun contentWidth(editor: Editor): Int
     fun contentHeight(editor: Editor): Int
     fun visualEvidence(editor: Editor): String
+    fun structureGeometryEvidence(editor: Editor): String
 }
 
 private inline fun <T : java.awt.Graphics> T.use(block: (T) -> Unit) {

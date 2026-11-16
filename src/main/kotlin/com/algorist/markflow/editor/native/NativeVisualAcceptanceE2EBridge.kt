@@ -364,6 +364,14 @@ internal object NativeVisualAcceptanceE2EBridge {
 
     fun contentHeight(editor: Editor): Int = editor.scrollingModel.visibleArea.height
 
+    fun structureGeometryEvidence(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
+            "production native MarkFlow controller is not attached"
+        }
+        return controller.visualStructureListGeometryEvidence()
+    }
+
     fun visualEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
