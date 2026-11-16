@@ -956,8 +956,8 @@ grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
   die "#353 Preview recovery no longer requires a genuine nonblank second paint"
 grep -Fq 'Bundled Preview panel detached for recovery:' "$manifest_test" ||
   die "#353 Preview recovery no longer proves the old JCEF panel was disposed before retry"
-grep -Fq '!preview.referencePanelAttached(remoteEditor)' "$manifest_test" ||
-  die "#353 Preview recovery no longer waits for panel detach before re-showing Preview"
+grep -Fq 'preview.completeNativeRestore(remoteEditor)' "$manifest_test" ||
+  die "#353 Preview recovery no longer waits for authoritative native-restore detach completion"
 grep -Fq 'detached_before_retry=true' "$manifest_test" ||
   die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
 grep -Fq 'preview.armDetachedReferenceBrowserCloseMarker(' "$manifest_test" ||
