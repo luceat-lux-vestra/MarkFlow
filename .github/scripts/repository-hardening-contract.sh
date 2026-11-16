@@ -1455,7 +1455,13 @@ grep -Fq 'bounds.width == CAPTURE_WIDTH && bounds.height == CAPTURE_HEIGHT' "$vi
 grep -Fq 'lafManager.currentUIThemeLookAndFeel = lightTheme' "$visual_bridge" || die "visual acceptance no longer pins the default Light UI theme"
 grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
 grep -Fq '@Suppress("UsePropertyAccessSyntax")' "$visual_bridge" || die "visual acceptance lost the narrow synthetic-property suppression for EditorColorsManager"
-grep -Fq 'selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)' "$visual_bridge" || die "visual acceptance no longer forces editor-only Markdown layout"
+grep -Fq 'manager.setSelectedEditor(file, MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)' "$visual_bridge" || die "visual acceptance no longer selects the owned MarkFlow provider explicitly"
+grep -Fq '.filterIsInstance<MarkFlowOwnedNativeFileEditor>()' "$visual_bridge" || die "visual acceptance no longer resolves the exact owned FileEditor"
+grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$visual_bridge" || die "visual acceptance no longer requires owned-controller presentation"
+grep -Fq 'NativeMarkFlowProductionLifecycle.refreshOwned()' "$visual_bridge" || die "visual acceptance no longer refreshes owned controllers only"
+if grep -Fq 'TextEditorWithPreview' "$visual_bridge"; then
+  die "production visual acceptance must not fall back to bundled Markdown FileEditor"
+fi
 grep -Fq 'fun prepareEditorChromeBeforeOpen()' "$visual_bridge" || die "visual acceptance no longer pins inspection chrome before editor creation"
 grep -Fq 'fun normalizeEditorChromeForCapture(editor: Editor): Int' "$visual_bridge" || die "visual acceptance no longer normalizes IDE chrome before capture"
 grep -Fq 'getNotificationsOfType(Notification::class.java, project)' "$visual_bridge" || die "visual acceptance project notification normalization drifted"
