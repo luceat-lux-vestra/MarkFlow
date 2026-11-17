@@ -956,8 +956,10 @@ grep -Fq 'Bundled JCEF paints after single recovery' "$manifest_test" ||
   die "#353 Preview recovery no longer requires a genuine nonblank second paint"
 grep -Fq 'Bundled Preview panel detached for recovery:' "$manifest_test" ||
   die "#353 Preview recovery no longer proves the old JCEF panel was disposed before retry"
-grep -Fq '!preview.referencePanelAttached(remoteEditor)' "$manifest_test" ||
-  die "#353 Preview recovery no longer waits for panel detach before re-showing Preview"
+grep -Fq 'preview.nativeShowing(remote) &&' "$manifest_test" ||
+  die "#353 Preview recovery no longer requires native editor visibility before retry"
+grep -Fq '!preview.referencePanelAttached(remote)' "$manifest_test" ||
+  die "#353 Preview recovery no longer waits for the current bundled Preview panel to detach before retry"
 grep -Fq 'detached_before_retry=true' "$manifest_test" ||
   die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
 grep -Fq 'preview.armDetachedReferenceBrowserCloseMarker(' "$manifest_test" ||
@@ -1308,8 +1310,11 @@ grep -Fq '(controller.derivedEvidenceSnapshot()?.derivedFragments ?: 0) > 0' "$v
   die "#353 visual bridge no longer derives refresh suppression from the real native plan"
 grep -Fq 'if (!hasDerivedPresentation) {' "$visual_bridge" ||
   die "#353 visual bridge no longer suppresses layout refresh for derived rendering"
-grep -Fq 'NativeMarkFlowProductionLifecycle.refreshAll()' "$visual_bridge" ||
-  die "#353 visual bridge lost required ordinary layout refresh after viewport normalization"
+grep -Fq 'NativeMarkFlowProductionLifecycle.refreshOwned()' "$visual_bridge" ||
+  die "#571 visual bridge lost required owned-only ordinary layout refresh after viewport normalization"
+if grep -Fq 'NativeMarkFlowProductionLifecycle.refreshAll()' "$visual_bridge"; then
+  die "#571 production visual bridge must not refresh non-owned presentation controllers"
+fi
 if grep -Fq 'full_differential_acceptance:' "$starter_workflow" ||
   grep -Fq 'Full Differential Acceptance Evidence' "$starter_workflow"; then
   die "Starter workflow must not duplicate the canonical full differential workflow"
@@ -1455,7 +1460,16 @@ grep -Fq 'bounds.width == CAPTURE_WIDTH && bounds.height == CAPTURE_HEIGHT' "$vi
 grep -Fq 'lafManager.currentUIThemeLookAndFeel = lightTheme' "$visual_bridge" || die "visual acceptance no longer pins the default Light UI theme"
 grep -Fq 'colors.setGlobalScheme(defaultScheme)' "$visual_bridge" || die "visual acceptance no longer pins the default editor color scheme"
 grep -Fq '@Suppress("UsePropertyAccessSyntax")' "$visual_bridge" || die "visual acceptance lost the narrow synthetic-property suppression for EditorColorsManager"
-grep -Fq 'selectedFileEditor.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)' "$visual_bridge" || die "visual acceptance no longer forces editor-only Markdown layout"
+grep -Fq 'check(manager.getSelectedEditor(file) === ownedFileEditor)' "$visual_bridge" || die "visual acceptance no longer verifies the selected owned MarkFlow FileEditor"
+if grep -Fq 'manager.setSelectedEditor(' "$visual_bridge"; then
+  die "visual diagnostic bridge must not mutate FileEditor selection"
+fi
+grep -Fq '.filterIsInstance<MarkFlowOwnedNativeFileEditor>()' "$visual_bridge" || die "visual acceptance no longer resolves the exact owned FileEditor"
+grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$visual_bridge" || die "visual acceptance no longer requires owned-controller presentation"
+grep -Fq 'NativeMarkFlowProductionLifecycle.refreshOwned()' "$visual_bridge" || die "visual acceptance no longer refreshes owned controllers only"
+if grep -Fq 'TextEditorWithPreview' "$visual_bridge"; then
+  die "production visual acceptance must not fall back to bundled Markdown FileEditor"
+fi
 grep -Fq 'fun prepareEditorChromeBeforeOpen()' "$visual_bridge" || die "visual acceptance no longer pins inspection chrome before editor creation"
 grep -Fq 'fun normalizeEditorChromeForCapture(editor: Editor): Int' "$visual_bridge" || die "visual acceptance no longer normalizes IDE chrome before capture"
 grep -Fq 'getNotificationsOfType(Notification::class.java, project)' "$visual_bridge" || die "visual acceptance project notification normalization drifted"
