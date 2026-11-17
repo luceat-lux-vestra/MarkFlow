@@ -58,7 +58,7 @@ Current options include:
 
 Browser-era `previewOnlyByDefault`, `idleEvictAfterMs`, and user-selectable Mermaid security-level settings are removed. Legacy persisted values are ignored and are not written again; Mermaid rendering is fail-closed at `securityLevel: strict`.
 
-MarkFlow targets IntelliJ IDEA 2026.2+ (build 262+). The bundled **Web Browser (JCEF)** plugin (`com.intellij.modules.jcef`) is optional renderer infrastructure and never gates Markdown source editing.
+MarkFlow compiles and runs unit tests against **IntelliJ IDEA 2026.3 / IU-263.7307.200**. The plugin still declares minimum build **262**; its maintained 2026.2.3 backward binary-compatibility claim must be independently verified against the resulting artifact. The current 2026.2.3-pinned real-IDE Starter/Driver and visual-golden proofs are separate historical/runtime evidence and **do not prove IDEA 2026.3 process behavior** until migrated and rerun. The bundled **Web Browser (JCEF)** plugin (`com.intellij.modules.jcef`) is optional renderer infrastructure and never gates Markdown source editing.
 
 <!-- Plugin description -->
 ( markdown, mermaid, latex-katex, raw-html, wysiwyg )
