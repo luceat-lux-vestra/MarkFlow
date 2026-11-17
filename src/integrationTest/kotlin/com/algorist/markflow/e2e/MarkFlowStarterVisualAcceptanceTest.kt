@@ -262,9 +262,16 @@ class MarkFlowStarterVisualAcceptanceTest {
 
             VISUAL_CASES.forEach { spec ->
                 val actualPath = checkNotNull(captures[spec.name])
-                val goldenPath = goldenRoot.resolve("${spec.name}.svg")
+                val versionedGolden = goldenRoot.resolve(platformVersion).resolve("${spec.name}.svg")
+                val goldenPath = if (Files.exists(versionedGolden)) {
+                    versionedGolden
+                } else if (spec.name in STABLE_263_ROOT_REFERENCE_CASES) {
+                    goldenRoot.resolve("${spec.name}.svg")
+                } else {
+                    versionedGolden
+                }
                 if (!Files.exists(goldenPath)) {
-                    failures += "missing versioned golden ${goldenPath.fileName}"
+                    failures += "missing versioned golden ${goldenPath.toAbsolutePath().normalize()}"
                     return@forEach
                 }
 
@@ -459,6 +466,12 @@ class MarkFlowStarterVisualAcceptanceTest {
     companion object {
         private const val CAPTURE_WIDTH = 1200
         private const val CAPTURE_HEIGHT = 760
+
+        // Stable 263 changed typography/structure/code painting enough to require dedicated
+        // reviewed rasters. Derived/resources independently reproduced within the existing
+        // strict comparator tolerance on two 263 runs, so only those cases may use the
+        // retained root (2026.2.3-origin) reference pixels.
+        private val STABLE_263_ROOT_REFERENCE_CASES = setOf("derived", "resources")
 
         private val VISUAL_CASES = listOf(
             VisualCase("typography", "VISUAL-TYPOGRAPHY.md") { evidence ->

@@ -13,7 +13,9 @@ Rules:
 - CI never updates these files.
 - A baseline update requires a reviewed user-visible explanation.
 - The historical 262 identity remains in `environment.txt`; stable 263 acceptance uses the separately reviewed `environment-2026.3.txt` captured from Starter Driver E2E run `44093118250` on actual `IU-263.7307.200`, and must match it exactly before image comparison.
-- That 263 run reproduced the 262 environment identity and structure-list geometry byte-for-byte. Its derived/resources rasters stayed within tolerance, while typography/structure/code showed genuine 263 painting/layout raster drift. Those cases require a separately reviewed 263 raster baseline; do not overwrite or relabel the retained 262 goldens.
+- Two independent stable-263 runs (`44093118250` and `44096108201`) reproduced the environment identity and structure-list geometry byte-for-byte. Comparing their actual 263 captures with the unchanged strict comparator produced 134 differing pixels for typography, 143 for structure, and 143 for code (all <= the 183-pixel allowance); the capture is therefore reproducible enough to become the reviewed 263 authority.
+- Materially changed 263 baselines live under `2026.3/<case>.svg`; typography, structure, and code use those versioned rasters. Derived/resources remain on the retained root reference only because both real-263 runs stayed within the existing strict tolerance. This fallback is explicitly allowlisted by the test and is not a generic compatibility escape hatch.
+- The 2026.3 raster import must come from exact visual artifact `14332904986` / run `44096108201`, source SHA `a70a70ee2e3c1854ab9e7d599d1781fd3929e4f2`, and actual `IU-263.7307.200`; do not overwrite or relabel the retained 262 goldens.
 - Per-channel noise tolerance is narrow and the allowed changed-pixel ratio is bounded.
 - Source/fidelity and semantic/runtime assertions remain separate proof layers.
 - Expected/actual/diff artifacts are retained by the visual workflow for diagnosis.
