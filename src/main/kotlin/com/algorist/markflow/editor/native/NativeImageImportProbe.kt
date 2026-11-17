@@ -16,7 +16,6 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.FileDropEvent
 import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
@@ -24,7 +23,6 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.Producer
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.Image
@@ -646,42 +644,34 @@ internal object NativeImageImportProbe {
 
         suspend fun reopen() {
             check(owner == EditorOwner.PROVIDER) { "fixture reopen requires the provider-owned initial editor" }
+            // This probe is explicitly PLATFORM_TEXT_EDITOR_NATIVE_IMAGE_IMPORT. Opening through
+            // FileEditorManager also instantiates MarkFlow's PLACE_BEFORE_DEFAULT_EDITOR provider
+            // on IDEA 263, contaminating this platform-text-editor fixture and potentially closing
+            // an unrelated preview tab. Recreate through the same platform provider instead.
             provider.disposeEditor(fileEditor)
             owner = EditorOwner.NONE
 
-            val manager = project.getService(FileEditorManager::class.java)
-            check(!manager.isFileOpen(file)) { "fixture file unexpectedly already open through FileEditorManager" }
-            val reopened = manager.openFile(file, false)
-                .filterIsInstance<TextEditor>()
-                .firstOrNull()
-                ?: run {
-                    manager.closeFile(file)
-                    error("FileEditorManager did not reopen the fixture with a TextEditor")
-                }
-            owner = EditorOwner.FILE_EDITOR_MANAGER
-            val loaded = CompletableDeferred<Unit>()
-            manager.runWhenLoaded(reopened.editor) { loaded.complete(Unit) }
-            loaded.await()
-
+            val reopened = provider.createEditor(project, file)
+            check(reopened is TextEditor) {
+                "platform text provider did not recreate the fixture with a TextEditor"
+            }
             fileEditor = reopened
             editor = reopened.editor
             document = editor.document
+            owner = EditorOwner.PROVIDER
         }
 
         fun dispose() {
             if (disposed) return
             disposed = true
-            when (owner) {
-                EditorOwner.PROVIDER -> provider.disposeEditor(fileEditor)
-                EditorOwner.FILE_EDITOR_MANAGER -> project.getService(FileEditorManager::class.java).closeFile(file)
-                EditorOwner.NONE -> Unit
+            if (owner == EditorOwner.PROVIDER) {
+                provider.disposeEditor(fileEditor)
             }
             owner = EditorOwner.NONE
         }
 
         private enum class EditorOwner {
             PROVIDER,
-            FILE_EDITOR_MANAGER,
             NONE,
         }
     }
