@@ -548,10 +548,22 @@ internal object NativeImageImportProbe {
             }
         }
 
-        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider =
-            FileEditorProviderManager.getInstance().getProviderList(project, file).firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID
-            } ?: error("platform text editor provider did not accept #151 Markdown fixture")
+        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
+            val provider = FileEditorProviderManager.getInstance().getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?: error("platform text editor provider is unavailable")
+            check(accepts(provider, file)) {
+                "platform text editor provider did not accept #151 Markdown fixture"
+            }
+            return provider
+        }
+
+        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
+            if (provider.acceptRequiresReadAction()) {
+                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
+            } else {
+                provider.accept(project, file)
+            }
+        }.getOrElse { false }
 
         private fun vFile(path: Path): VirtualFile =
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
@@ -639,7 +651,7 @@ internal object NativeImageImportProbe {
         private var disposed = false
         private var owner = EditorOwner.PROVIDER
 
-        suspend fun reopen() {
+        fun reopen() {
             check(owner == EditorOwner.PROVIDER) { "fixture reopen requires the provider-owned initial editor" }
             // This probe is explicitly PLATFORM_TEXT_EDITOR_NATIVE_IMAGE_IMPORT. Opening through
             // FileEditorManager also instantiates MarkFlow's PLACE_BEFORE_DEFAULT_EDITOR provider

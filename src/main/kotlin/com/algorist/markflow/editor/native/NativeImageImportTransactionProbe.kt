@@ -8,6 +8,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.progress.ProcessCanceledException
@@ -295,9 +296,11 @@ internal object NativeImageImportTransactionProbe {
                 FileDocumentManager.getInstance().getDocument(file)
                     ?: error("transaction fixture Document unavailable")
             }
-            val provider = FileEditorProviderManager.getInstance().getProviderList(project, file)
-                .firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
-                ?: error("platform text editor provider did not accept transaction fixture")
+            val provider = FileEditorProviderManager.getInstance().getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?: error("platform text editor provider is unavailable")
+            check(accepts(provider, file)) {
+                "platform text editor provider did not accept transaction fixture"
+            }
             val created = provider.createEditor(project, file)
             check(created is TextEditor)
             val fixture = Fixture(file, document, created)
@@ -307,6 +310,14 @@ internal object NativeImageImportTransactionProbe {
                 provider.disposeEditor(created)
             }
         }
+
+        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
+            if (provider.acceptRequiresReadAction()) {
+                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
+            } else {
+                provider.accept(project, file)
+            }
+        }.getOrElse { false }
 
         private fun newRoot(prefix: String): Path {
             val base = project.basePath?.let(Paths::get)
