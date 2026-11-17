@@ -71,8 +71,8 @@ class MarkFlowStarterVisualAcceptanceTest {
             ?.trim()
             ?.takeIf(String::isNotEmpty)
             ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
-        check(platformVersion == "2026.2.3") {
-            "visual acceptance is authoritative only on IDEA 2026.2.3, got $platformVersion"
+        check(platformVersion == "2026.3") {
+            "visual acceptance is authoritative only on stable IDEA 2026.3, got $platformVersion"
         }
 
         val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
@@ -240,9 +240,14 @@ class MarkFlowStarterVisualAcceptanceTest {
 
             val failures = mutableListOf<String>()
             val environment = checkNotNull(observedEnvironment)
-            val expectedEnvironment = goldenRoot.resolve("environment.txt")
+            val expectedEnvironment = goldenRoot.resolve("environment-2026.3.txt")
             if (!Files.exists(expectedEnvironment)) {
-                failures += "missing versioned environment baseline"
+                Files.writeString(
+                    diffRoot.resolve("environment-actual.txt"),
+                    environment,
+                    StandardCharsets.UTF_8,
+                )
+                failures += "missing stable 2026.3 visual environment baseline"
             } else {
                 val expected = Files.readString(expectedEnvironment, StandardCharsets.UTF_8)
                 if (expected != environment) {
@@ -257,9 +262,16 @@ class MarkFlowStarterVisualAcceptanceTest {
 
             VISUAL_CASES.forEach { spec ->
                 val actualPath = checkNotNull(captures[spec.name])
-                val goldenPath = goldenRoot.resolve("${spec.name}.svg")
+                val versionedGolden = goldenRoot.resolve(platformVersion).resolve("${spec.name}.svg")
+                val goldenPath = if (Files.exists(versionedGolden)) {
+                    versionedGolden
+                } else if (spec.name in STABLE_263_ROOT_REFERENCE_CASES) {
+                    goldenRoot.resolve("${spec.name}.svg")
+                } else {
+                    versionedGolden
+                }
                 if (!Files.exists(goldenPath)) {
-                    failures += "missing versioned golden ${goldenPath.fileName}"
+                    failures += "missing versioned golden ${goldenPath.toAbsolutePath().normalize()}"
                     return@forEach
                 }
 
@@ -416,7 +428,7 @@ class MarkFlowStarterVisualAcceptanceTest {
         val encoded = Base64.getEncoder().encodeToString(png)
         val svg = """
             <svg xmlns="http://www.w3.org/2000/svg" width="${image.width}" height="${image.height}" viewBox="0 0 ${image.width} ${image.height}">
-              <metadata>MarkFlow #339 deterministic golden: $name; IDEA 2026.2.3</metadata>
+              <metadata>MarkFlow #339 deterministic candidate: $name; IDEA 2026.3</metadata>
               <image x="0" y="0" width="${image.width}" height="${image.height}" href="data:image/png;base64,$encoded"/>
             </svg>
         """.trimIndent() + "\n"
@@ -454,6 +466,12 @@ class MarkFlowStarterVisualAcceptanceTest {
     companion object {
         private const val CAPTURE_WIDTH = 1200
         private const val CAPTURE_HEIGHT = 760
+
+        // Stable 263 changed typography/structure/code painting enough to require dedicated
+        // reviewed rasters. Derived/resources independently reproduced within the existing
+        // strict comparator tolerance on two 263 runs, so only those cases may use the
+        // retained root (2026.2.3-origin) reference pixels.
+        private val STABLE_263_ROOT_REFERENCE_CASES = setOf("derived", "resources")
 
         private val VISUAL_CASES = listOf(
             VisualCase("typography", "VISUAL-TYPOGRAPHY.md") { evidence ->

@@ -188,7 +188,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
         val file = checkNotNull(
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(root.resolve(filename))
         ) { "Controlled JCEF fixture has no VirtualFile" }
-        val fileIsOpen = FileEditorManager.getInstance(project).isFileOpen(file)
+        val fileIsOpen = project.getService(FileEditorManager::class.java).isFileOpen(file)
         val document = ReadAction.compute<Document, RuntimeException> {
             checkNotNull(FileDocumentManager.getInstance().getDocument(file)) {
                 "Controlled JCEF fixture has no Document"
@@ -635,7 +635,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
             "Controlled JCEF overlay or callback state is invalid"
         }
         if (state.sourceEditor == null) {
-            check(!FileEditorManager.getInstance(state.project).isFileOpen(state.file)) {
+            check(!state.project.getService(FileEditorManager::class.java).isFileOpen(state.file)) {
                 "Controlled reference accidentally opened a platform FileEditor"
             }
         } else {
@@ -645,7 +645,7 @@ internal object NativeControlledReferencePreviewE2EBridge {
                     "Corpus source file lost its authoritative Document at finish"
                 }
             }
-            check(FileEditorManager.getInstance(state.project).isFileOpen(state.file) &&
+            check(state.project.getService(FileEditorManager::class.java).isFileOpen(state.file) &&
                 targetDocument === document &&
                 document.modificationStamp == state.sourceStamp &&
                 !FileDocumentManager.getInstance().isDocumentUnsaved(document) &&

@@ -34,7 +34,7 @@ class MarkFlowStarterHeadingRobotTest {
     fun realRobotClickRevealsSourceReplacingHeadingAndPreservesAuthoritativeDocument() {
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
-        check(version == "2026.2.3")
+        check(version == "2026.3")
         // Isolate the OS-click positive pilot from an expanded platform section parent.
         // The same-start platform fold collision is covered by a separate fail-closed test.
         val source = "Tail\n\n# Robot Heading\n"

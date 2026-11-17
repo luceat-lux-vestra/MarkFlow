@@ -118,7 +118,7 @@ internal object NativeVisualAcceptanceE2EBridge {
         val file = requireNotNull(FileDocumentManager.getInstance().getFile(editor.document)) {
             "visual acceptance editor must resolve to an authoritative Markdown file"
         }
-        val manager = FileEditorManager.getInstance(project)
+        val manager = project.getService(FileEditorManager::class.java)
         val ownedFileEditor = manager.getEditors(file)
             .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
             .singleOrNull { it.editor === editor }

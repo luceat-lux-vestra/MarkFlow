@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_PLATFORM_VERSION: '2026.3'
   CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
   PARENT_RUN_ID: ${{ github.event.workflow_run.id }}
   PARENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}

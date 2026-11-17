@@ -227,7 +227,8 @@ intellijPlatform {
     pluginVerification {
         ides {
             create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
-            create(IntelliJPlatformType.IntellijIdeaUltimate, "263.4732.28")
+            // Replace the historical 263 EAP probe with the stable released 263 host.
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.3")
         }
     }
 }

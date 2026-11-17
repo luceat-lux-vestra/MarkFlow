@@ -7,11 +7,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
-import com.intellij.openapi.editor.event.DocumentEvent
-import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -53,7 +52,7 @@ internal object NativeImageImportTransactionProbe {
             ApplicationManager.getApplication().assertIsDispatchThread()
             case("vfs-visible-collision-reservation") { vfsCollisionCase() }
             case("post-commit-ui-failure-does-not-rollback") { postCommitFailureCase() }
-            case("listener-pce-after-commit-preserves-transaction") { listenerPceAfterCommitCase() }
+            case("post-commit-pce-preserves-transaction") { postCommitPceCase() }
             case("precommit-pce-propagates-after-cleanup") { precommitPceCase() }
             case("preexisting-assets-directory-preserved-on-rollback") { preexistingAssetsDirectoryCase() }
             case("document-path-change-boundary") { documentPathChangeBoundaryCase() }
@@ -126,45 +125,30 @@ internal object NativeImageImportTransactionProbe {
             }
         }
 
-        private fun listenerPceAfterCommitCase(): String {
-            val external = newRoot("listener-pce-source-")
+        private fun postCommitPceCase(): String {
+            val external = newRoot("post-commit-pce-source-")
             val source = external.resolve("cancelled.png")
             writeImage(source, 4, 4)
             return withFixture("before pce\n") { fixture ->
                 val before = fixture.document.text
                 val expectedPayload = "![cancelled](assets/cancelled.png)"
-                val insertionOffset = fixture.document.textLength
-                fixture.editor.caretModel.moveToOffset(insertionOffset)
+                fixture.editor.caretModel.moveToOffset(fixture.document.textLength)
 
-                val throwingListener = object : DocumentListener {
-                    override fun documentChanged(event: DocumentEvent) {
-                        if (
-                            event.document === fixture.document &&
-                            event.offset == insertionOffset &&
-                            event.oldFragment.isEmpty() &&
-                            event.newFragment.toString() == expectedPayload
-                        ) {
-                            throw ProcessCanceledException()
-                        }
-                    }
-                }
-                fixture.document.addDocumentListener(throwingListener)
-                try {
-                    expectProcessCanceled("delayed listener ProcessCanceledException was swallowed") {
-                        NativeImageImportService.import(
-                            fixture.editor,
-                            listOf(NativeImageImportInput.LocalFile(source)),
-                        )
-                    }
-                } finally {
-                    fixture.document.removeDocumentListener(throwingListener)
+                expectProcessCanceled("post-commit ProcessCanceledException was swallowed") {
+                    NativeImageImportService.import(
+                        fixture.editor,
+                        listOf(NativeImageImportInput.LocalFile(source)),
+                        hooks = NativeImageImportTestHooks(
+                            afterSourceCommit = { throw ProcessCanceledException() },
+                        ),
+                    )
                 }
 
                 check(fixture.document.text == before + expectedPayload) {
-                    "Document listener PCE escaped before the authoritative source snapshot remained committed"
+                    "post-commit PCE escaped before the authoritative source snapshot remained committed"
                 }
                 check(fixture.file.parent.findChild("assets")?.findChild("cancelled.png")?.isValid == true) {
-                    "asset was rolled back after an observed committed source event"
+                    "asset was rolled back after the authoritative source commit"
                 }
                 "pcePropagated=true sourceCommitted=true assetPersists=true rollbackAfterObservedCommit=false"
             }
@@ -312,9 +296,11 @@ internal object NativeImageImportTransactionProbe {
                 FileDocumentManager.getInstance().getDocument(file)
                     ?: error("transaction fixture Document unavailable")
             }
-            val provider = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, file)
-            } ?: error("platform text editor provider did not accept transaction fixture")
+            val provider = FileEditorProviderManager.getInstance().getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?: error("platform text editor provider is unavailable")
+            check(accepts(provider, file)) {
+                "platform text editor provider did not accept transaction fixture"
+            }
             val created = provider.createEditor(project, file)
             check(created is TextEditor)
             val fixture = Fixture(file, document, created)

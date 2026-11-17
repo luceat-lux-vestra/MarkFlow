@@ -32,7 +32,7 @@ on:
         type: boolean
         default: false
       source_ownership_diagnostic:
-        description: '#497 diagnostic: inspect pinned IDEA 2026.2.3 Preview source ownership on representative Markdown structures'
+        description: '#497 diagnostic: inspect pinned IDEA 2026.3 Preview source ownership on representative Markdown structures'
         required: false
         type: boolean
         default: false
@@ -51,7 +51,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_PLATFORM_VERSION: '2026.3'
   STARTER_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha) }}
 
 jobs:
@@ -385,7 +385,7 @@ jobs:
             echo "::notice::#353 targeted four-case capture; independent paired review still required"
           fi
           if [[ "$SOURCE_OWNERSHIP_DIAGNOSTIC" == "true" && "$STARTER_SHARD" == "derived-content" ]]; then
-            # #497 evidence-only probe for the exact pinned IDEA 2026.2.3 runtime.
+            # #497 evidence-only probe for the exact pinned IDEA 2026.3 runtime.
             # This does not apply #353 source-anchor acceptance assertions and
             # must never substitute for the 89-case acceptance workflow.
             suites=(com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest)
@@ -399,10 +399,10 @@ jobs:
             printf '%s\n' \
               'schema=markflow-497-source-ownership-diagnostic/v1' \
               "source_head=$STARTER_SOURCE_SHA" \
-              'platform_release=2026.2.3' \
-              'platform_build=262.10968.63' \
-              'intellij_source_tag=idea/2026.2.3' \
-              'intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7' \
+              'platform_release=2026.3' \
+              'platform_build=263.7307.200' \
+              'intellij_source_tag=idea/263.7307.200' \
+              'intellij_source_commit=c91871ae2864649d952825cff72569e3db0e7ac6' \
               "case_ids=$ownership_case_ids" \
               'mode=EVIDENCE_ONLY_NOT_ACCEPTANCE' \
               > "$pass_dir/source-ownership-diagnostic.txt"

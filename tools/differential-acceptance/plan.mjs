@@ -128,7 +128,7 @@ export function buildCapturePlan(repositoryRoot, headSha, manifestText = null) {
   return {
     schema: "markflow-differential-capture-plan/v1",
     source_head: headSha,
-    platform_release: "IDEA 2026.2.3",
+    platform_release: "IDEA 2026.3",
     manifest_sha256: sha256(Buffer.from(manifest, "utf8")),
     manifest_cases: manifestIds.size,
     expanded_cases: cases.length,

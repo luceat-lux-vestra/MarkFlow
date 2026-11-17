@@ -41,7 +41,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             ?: error("Starter requires path.to.build.plugin")
         val version = System.getProperty("markflow.test.platformVersion")
             ?: error("Starter requires markflow.test.platformVersion")
-        check(version == "2026.2.3") { "Platform preview is pinned to IDEA 2026.2.3" }
+        check(version == "2026.3") { "Platform preview is pinned to stable IDEA 2026.3" }
         val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
             .toAbsolutePath().normalize()
         val sandbox = Files.createTempDirectory("markflow-differential-preview-")
@@ -120,7 +120,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             actualRuntime,
             StandardCharsets.UTF_8
         )
-        val expectedIdeaExecutable = "/idea-IU-262.10968.63/bin/idea"
+        val expectedIdeaExecutable = "/idea-IU-263.7307.200/bin/idea"
         check(actualRuntime.lineSequence().any {
             it.startsWith("idea_apparmor_current=") && it.contains(expectedIdeaExecutable)
         }) {
@@ -310,7 +310,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             g.color = Color.BLACK
             g.font = Font("Dialog", Font.PLAIN, 14)
             g.drawString("MarkFlow native (source-backed)", 12, 22)
-            g.drawString("IntelliJ 2026.2.3 bundled Markdown Preview", native.width + gap + 12, 22)
+            g.drawString("IntelliJ 2026.3 bundled Markdown Preview", native.width + gap + 12, 22)
             g.drawImage(native, 0, header, null)
             g.drawImage(reference, native.width + gap, header, null)
         } finally {

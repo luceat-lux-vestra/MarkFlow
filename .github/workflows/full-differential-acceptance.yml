@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STARTER_PLATFORM_VERSION: '2026.2.3'
+  STARTER_PLATFORM_VERSION: '2026.3'
 
 jobs:
   policy:
