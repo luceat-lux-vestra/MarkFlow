@@ -157,7 +157,7 @@ internal object Leap2OwnedShellProbe {
 
                 var alternativeProviderId: String? = null
                 case("provider-selection-and-default-order") {
-                    val manager = FileEditorManager.getInstance(project)
+                    val manager = project.getService(FileEditorManager::class.java)
                     val initialSelected = onEdt { manager.getSelectedEditor(plain.file) }
                     val initialMarkFlowSelected = initialSelected === owned
 
@@ -324,7 +324,7 @@ internal object Leap2OwnedShellProbe {
                 case("ime-undo-redo-save") {
                     val editor = owned.editor
                     onEdt {
-                        FileEditorManager.getInstance(project).setSelectedEditor(
+                        project.getService(FileEditorManager::class.java).setSelectedEditor(
                             plain.file,
                             MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID,
                         )
@@ -412,7 +412,7 @@ internal object Leap2OwnedShellProbe {
                     )
                     val firstOpen = openFile(fixture.file)
                     check(firstOpen.any { it is MarkFlowOwnedNativeFileEditor })
-                    val manager = FileEditorManager.getInstance(project)
+                    val manager = project.getService(FileEditorManager::class.java)
                     onEdt { manager.setSelectedEditor(fixture.file, alternative) }
                     check(onEdt { manager.getSelectedEditor(fixture.file) } !is MarkFlowOwnedNativeFileEditor)
                     closeFile(fixture.file)
@@ -533,7 +533,7 @@ internal object Leap2OwnedShellProbe {
         @Suppress("DEPRECATION")
         private fun openFile(file: VirtualFile): List<FileEditor> {
             val editors = onEdt {
-                val manager = FileEditorManager.getInstance(project)
+                val manager = project.getService(FileEditorManager::class.java)
                 manager.openFile(file, false)
                 manager.getEditors(file).toList()
             }
@@ -543,7 +543,7 @@ internal object Leap2OwnedShellProbe {
 
         private fun closeFile(file: VirtualFile) {
             if (openedFiles.remove(file)) {
-                onEdt { FileEditorManager.getInstance(project).closeFile(file) }
+                onEdt { project.getService(FileEditorManager::class.java).closeFile(file) }
             }
         }
 

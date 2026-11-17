@@ -66,6 +66,9 @@ internal class NativeImageImportTestHooks(
     val beforeAssetContentWrite: (String) -> Unit = {},
     val afterAssetsCreated: () -> Unit = {},
     val beforeSourceEdit: () -> Unit = {},
+    // Deterministic post-commit cancellation seam. Invoked only after the authoritative
+    // Document command has returned, so runtime proof never throws from a DocumentListener.
+    val afterSourceCommit: () -> Unit = {},
     val afterSourceEdit: () -> Unit = {},
     val beforeRollbackDelete: (String) -> Unit = {},
 ) {
@@ -337,6 +340,7 @@ internal object NativeImageImportService {
                         check(sourceIdentity.matches(editor)) { "source identity changed before image import command" }
                         document.replaceString(sourceIdentity.startOffset, sourceIdentity.endOffset, payload)
                     }
+                hooks.afterSourceCommit()
             } catch (cancelled: ProcessCanceledException) {
                 if (!sourceChangeObserved) {
                     val rollback = rollbackCreated(created, createdAssetsDirectory, hooks)

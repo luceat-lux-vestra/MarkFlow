@@ -115,7 +115,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         wrapper: Container, child: Component, filename: String
     ): JBCefBrowser? {
         for (project in ProjectManager.getInstance().openProjects) {
-            val manager = FileEditorManager.getInstance(project)
+            val manager = project.getService(FileEditorManager::class.java)
             for (file in manager.openFiles) {
                 if (file.name != filename) continue
                 for (selected in manager.getEditors(file).filterIsInstance<TextEditorWithPreview>()) {
@@ -416,7 +416,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
         val file = fileFor(editor)
-        val selected = FileEditorManager.getInstance(project).getEditors(file)
+        val selected = project.getService(FileEditorManager::class.java).getEditors(file)
             .filterIsInstance<TextEditorWithPreview>()
             .singleOrNull {
                 it.javaClass.name == MARKDOWN_SPLIT &&
@@ -443,7 +443,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
         val file = fileFor(editor)
-        val manager = FileEditorManager.getInstance(project)
+        val manager = project.getService(FileEditorManager::class.java)
         val providerIds = FileEditorProviderManager.getInstance()
             .getProviderList(project, file)
             .map { it.editorTypeId }
@@ -464,7 +464,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
         val file = fileFor(editor)
-        val manager = FileEditorManager.getInstance(project)
+        val manager = project.getService(FileEditorManager::class.java)
         val owned = manager.getEditors(file)
             .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
             .singleOrNull { it.editor === editor }
@@ -2068,7 +2068,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val project = requireNotNull(editor.project) { "Differential editor has no project" }
         val file = fileFor(editor)
-        val manager = FileEditorManager.getInstance(project)
+        val manager = project.getService(FileEditorManager::class.java)
         val owned = manager.getEditors(file)
             .filterIsInstance<MarkFlowOwnedNativeFileEditor>()
             .singleOrNull { it.editor === editor }

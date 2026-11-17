@@ -649,7 +649,7 @@ internal object NativeImageImportProbe {
             provider.disposeEditor(fileEditor)
             owner = EditorOwner.NONE
 
-            val manager = FileEditorManager.getInstance(project)
+            val manager = project.getService(FileEditorManager::class.java)
             check(!manager.isFileOpen(file)) { "fixture file unexpectedly already open through FileEditorManager" }
             val reopened = manager.openFile(file, false)
                 .filterIsInstance<TextEditor>()
@@ -673,7 +673,7 @@ internal object NativeImageImportProbe {
             disposed = true
             when (owner) {
                 EditorOwner.PROVIDER -> provider.disposeEditor(fileEditor)
-                EditorOwner.FILE_EDITOR_MANAGER -> FileEditorManager.getInstance(project).closeFile(file)
+                EditorOwner.FILE_EDITOR_MANAGER -> project.getService(FileEditorManager::class.java).closeFile(file)
                 EditorOwner.NONE -> Unit
             }
             owner = EditorOwner.NONE
