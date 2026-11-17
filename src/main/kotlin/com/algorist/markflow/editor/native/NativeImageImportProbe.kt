@@ -18,6 +18,7 @@ import com.intellij.openapi.editor.actions.PasteAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -548,13 +549,9 @@ internal object NativeImageImportProbe {
         }
 
         private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider =
-            FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, file)
+            FileEditorProviderManager.getInstance().getProviderList(project, file).firstOrNull { candidate ->
+                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID
             } ?: error("platform text editor provider did not accept #151 Markdown fixture")
-
-        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-        }.getOrElse { false }
 
         private fun vFile(path: Path): VirtualFile =
             LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
