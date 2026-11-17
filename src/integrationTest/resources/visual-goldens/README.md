@@ -12,7 +12,8 @@ Rules:
 
 - CI never updates these files.
 - A baseline update requires a reviewed user-visible explanation.
-- The historical 262 identity remains in `environment.txt`; stable 263 acceptance uses the separately reviewed `environment-2026.3.txt` and must match it exactly before image comparison.
+- The historical 262 identity remains in `environment.txt`; stable 263 acceptance uses the separately reviewed `environment-2026.3.txt` captured from Starter Driver E2E run `44093118250` on actual `IU-263.7307.200`, and must match it exactly before image comparison.
+- That 263 run reproduced the 262 environment identity and structure-list geometry byte-for-byte. Its derived/resources rasters stayed within tolerance, while typography/structure/code showed genuine 263 painting/layout raster drift. Those cases require a separately reviewed 263 raster baseline; do not overwrite or relabel the retained 262 goldens.
 - Per-channel noise tolerance is narrow and the allowed changed-pixel ratio is bounded.
 - Source/fidelity and semantic/runtime assertions remain separate proof layers.
 - Expected/actual/diff artifacts are retained by the visual workflow for diagnosis.
