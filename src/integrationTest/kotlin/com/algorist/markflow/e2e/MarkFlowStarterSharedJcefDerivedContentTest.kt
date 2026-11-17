@@ -35,7 +35,7 @@ class MarkFlowStarterSharedJcefDerivedContentTest {
             ?: error("path.to.build.plugin is required")
         val version = System.getProperty("markflow.test.platformVersion")
             ?: error("markflow.test.platformVersion is required")
-        check(version == "2026.2.3") { "Use the same pinned IDEA platform as the baseline" }
+        check(version == "2026.3") { "Use the stable IDEA 2026.3 acceptance platform" }
 
         val sourceProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
             .toAbsolutePath().normalize()
@@ -123,7 +123,7 @@ class MarkFlowStarterSharedJcefDerivedContentTest {
                 // The platform otherwise asks "This Window / New Window" when another project
                 // is open. Force the backend setting directly through the pinned Remote Driver
                 // service surface so the replacement remains non-interactive without relying on
-                // newer convenience helpers that are absent from the 2026.2.3 test classpath.
+                // newer convenience helpers whose availability is not part of this test contract.
                 service<GeneralSettingsRemote>().setConfirmOpenNewProject(OPEN_PROJECT_SAME_WINDOW)
                 val opened = utility(ProjectUtilRemote::class).openOrImport(
                     previewProject.toString(),

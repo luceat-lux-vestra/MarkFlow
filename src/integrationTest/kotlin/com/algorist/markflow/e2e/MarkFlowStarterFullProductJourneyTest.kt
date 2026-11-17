@@ -36,8 +36,8 @@ class MarkFlowStarterFullProductJourneyTest {
             ?.trim()
             ?.takeIf(String::isNotEmpty)
             ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
-        check(platformVersion == "2026.2.3") {
-            "canonical full-product acceptance is authoritative only on IDEA 2026.2.3, got $platformVersion"
+        check(platformVersion == "2026.3") {
+            "canonical full-product acceptance is authoritative only on stable IDEA 2026.3, got $platformVersion"
         }
 
         val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")

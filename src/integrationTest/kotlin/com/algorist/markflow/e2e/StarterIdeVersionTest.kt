@@ -12,6 +12,6 @@ class StarterIdeVersionTest {
 
     @Test
     fun keepsStableReleaseOnReleaseChannel() {
-        assertFalse(isStarterEapBuildNumber("2026.2.3"))
+        assertFalse(isStarterEapBuildNumber("2026.3"))
     }
 }

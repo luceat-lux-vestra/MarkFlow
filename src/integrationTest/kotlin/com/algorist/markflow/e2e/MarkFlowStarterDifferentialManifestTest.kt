@@ -156,7 +156,7 @@ class MarkFlowStarterDifferentialManifestTest {
      * pixels own the OS viewport. Three audited controlled-capture screenshots
      * instead showed the IDE tab strip and an intervening Loading overlay.
      *
-     * This is a pinned IDEA 2026.2.3 *rejection* oracle, not visual parity.
+     * This is a pinned stable IDEA 2026.3 *rejection* oracle, not visual parity.
      * The separate exact-source/browser DOM barrier must also succeed before
      * the final Robot screenshot is retained.
      */
@@ -455,7 +455,7 @@ class MarkFlowStarterDifferentialManifestTest {
         }
         val plugin = Path.of(requireNotNull(System.getProperty("path.to.build.plugin")))
         val version = requireNotNull(System.getProperty("markflow.test.platformVersion"))
-        check(version == "2026.2.3")
+        check(version == "2026.3")
         val output = root.resolve("build/e2e-evidence/derived-content/differential-manifest")
         Files.createDirectories(output)
         val progressFile = System.getenv("MARKFLOW_DIFFERENTIAL_PROGRESS_FILE")
@@ -683,7 +683,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         Files.writeString(dest.resolve("jcef-runtime-evidence.txt"), runtime)
                         check(runtime.lineSequence().any {
                             it.startsWith("idea_apparmor_current=") &&
-                                it.contains("/idea-IU-262.10968.63/bin/idea")
+                                it.contains("/idea-IU-263.7307.200/bin/idea")
                         }) { "Unconfined IDEA runtime" }
                         driver.withContext(OnDispatcher.EDT) { visual.prepare(remoteEditor) }
                         // Caret outside the Mermaid fence avoids hiding its rendered inlay.
@@ -4106,7 +4106,7 @@ class MarkFlowStarterDifferentialManifestTest {
     }
 
     /**
-     * #497 runtime-only DOM inventory for the pinned IDEA 2026.2.3 bundled Preview.
+     * #497 runtime-only DOM inventory for the pinned stable IDEA 2026.3 bundled Preview.
      *
      * This records ownership; it deliberately does not select an owner or define
      * acceptance semantics. Rows are limited to source ranges intersecting the
@@ -4179,9 +4179,9 @@ class MarkFlowStarterDifferentialManifestTest {
               const currentRange = parseRange(current);
               const result = [
                 'schema=markflow-preview-source-ownership/v1',
-                'platform_release=2026.2.3',
-                'platform_build=262.10968.63',
-                'intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7',
+                'platform_release=2026.3',
+                'platform_build=263.7307.200',
+                'intellij_source_commit=c91871ae2864649d952825cff72569e3db0e7ac6',
                 'document_ready_state=' + document.readyState,
                 'line_start_offset=' + lineStart,
                 'line_end_offset=' + lineEnd,

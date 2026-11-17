@@ -123,16 +123,16 @@ def self_test():
             z.writestr("plugin.xml", "test")
         digest = hashlib.sha256((src / "plugin.zip").read_bytes()).hexdigest()
         manifest = (f"source_sha={sha}\nplugin_archive=MarkFlow.zip\n"
-                    f"plugin_sha256={digest}\nplatform_version=2026.2.3\n"
+                    f"plugin_sha256={digest}\nplatform_version=2026.3\n"
                     f"scenario_sets={STARTER_SETS}\n")
         (src / "manifest.txt").write_text(manifest)
-        verify(src, dest, sha, "2026.2.3", "starter", "differential")
+        verify(src, dest, sha, "2026.3", "starter", "differential")
         assert "scenario_set=full-differential-acceptance" in (dest / "manifest.txt").read_text()
         for bad in (manifest.replace(sha, "b" * 40), manifest.replace(digest, "0" * 64),
-                    manifest.replace("2026.2.3", "2026.2.2"), manifest + "source_sha=x\n"):
+                    manifest.replace("2026.3", "2026.2.3"), manifest + "source_sha=x\n"):
             (src / "manifest.txt").write_text(bad)
             try:
-                verify(src, root / "invalid", sha, "2026.2.3", "starter", "differential")
+                verify(src, root / "invalid", sha, "2026.3", "starter", "differential")
             except ValueError:
                 pass
             else:

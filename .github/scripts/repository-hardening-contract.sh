@@ -673,9 +673,9 @@ grep -q -- '--output "$pass_dir/diagnostics.json"' "$starter_workflow" || die "S
 grep -q 'build/e2e-evidence/\*\*' "$starter_workflow" || die "Starter workflow does not upload pass-scoped diagnostics evidence"
 
 
-grep -Fq "STARTER_PLATFORM_VERSION: '2026.2.3'" "$starter_workflow" || die "Starter full-product authority must stay pinned to IDEA 2026.2.3"
-if grep -Eq '263\.|2026\.3|eap2|EAP2' "$starter_workflow"; then
-  die "Starter full-product workflow must not make the 2026.3 EAP probe release-blocking again"
+grep -Fq "STARTER_PLATFORM_VERSION: '2026.3'" "$starter_workflow" || die "Starter full-product authority must stay pinned to stable IDEA 2026.3"
+if grep -Eq '263\.4732\.28|eap2|EAP2' "$starter_workflow"; then
+  die "Starter full-product workflow must not regress to the historical 2026.3 EAP probe"
 fi
 [ "$(grep -Fc './gradlew buildPlugin ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must package the candidate plugin exactly once"
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
@@ -1347,8 +1347,8 @@ grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" |
   die "JCEF profile installer scope allowlist drifted"
 grep -Fq '[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == ARM64 ]] || exit 1' "$jcef_profile_script" ||
   die "JCEF AppArmor installer must remain ARM64-only after Linux runner migration"
-grep -Fq '/out/ide-tests/cache/builds/IU-262.10968.63/idea-IU-262.10968.63/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
-  die "JCEF policy no longer targets actual IDEA executable, run 38009726635 source evidence"
+grep -Fq '/out/ide-tests/cache/builds/IU-263.7307.200/idea-IU-263.7307.200/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
+  die "JCEF policy no longer targets the stable IU-263.7307.200 IDEA executable"
 grep -Fq 'userns,' "$jcef_profile_script" ||
   die "JCEF AppArmor profile lost userns permission"
 grep -Fq '/sys/kernel/security/apparmor/profiles' "$jcef_profile_script" ||
