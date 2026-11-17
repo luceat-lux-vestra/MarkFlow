@@ -34,7 +34,7 @@ import java.nio.file.Path
 /**
  * #353 Starter-only seam to the genuine bundled IntelliJ Markdown Preview.
  * No product registration, source mutation, or synthetic renderer.
- * An upstream 2026.2.3 internal change fails closed at the inspected boundary.
+ * An upstream platform internal change fails closed at the inspected boundary.
  */
 @Suppress("unused")
 internal object NativeDifferentialPreviewE2EBridge {
@@ -233,7 +233,7 @@ internal object NativeDifferentialPreviewE2EBridge {
                             "\tjbcef_disposed_at_registration=" + owner.isDisposed +
                             "\tcef_closing=" + cef.isClosing +
                             "\tcef_closed=" + cef.isClosed)
-                    // IDEA 2026.2.3 detaches using remove(panel.component)
+                    // IDEA 2026.3 detaches using remove(panel.component)
                     // immediately before Disposer.dispose(panel). This AWT
                     // callback is synchronous with the component mutation.
                     // Request immediate creation here without waiting on EDT.
@@ -1444,7 +1444,7 @@ internal object NativeDifferentialPreviewE2EBridge {
      * used to ask the live bundled Preview to re-resolve nearby DOM state;
      * source identity and ambiguity are proven independently against the full
      * range by the harness. This deliberately bypasses scrollToLine(Editor, Int),
-     * whose pinned 2026.2.3 implementation consumes a visual-line index.
+     * whose pinned 2026.3 implementation consumes a visual-line index.
      */
     fun reResolveReferenceSourceOffset(editor: Editor, sourceOffset: Int): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -1470,10 +1470,10 @@ internal object NativeDifferentialPreviewE2EBridge {
     }
 
     /**
-     * #497 evidence-only coordinates for the exact IDEA 2026.2.3 Preview scroll contract.
+     * #497 evidence-only coordinates for the exact stable IDEA 2026.3 Preview scroll contract.
      *
-     * IDEA 2026.2.3 is build 262.10968.63 / intellij-community tag
-     * idea/2026.2.3 (8062c061ff33e22041d9f1844db5b8b8a6b5e4d7).
+     * IDEA 2026.3 is build 263.7307.200 / intellij-community tag
+     * idea/263.7307.200 (c91871ae2864649d952825cff72569e3db0e7ac6).
      * Its MarkdownHtmlPanel.scrollTo(Editor, line) delegates to
      * EditorUtil.getVisualLineEndOffset(Editor, line). Resolve that method from
      * the pinned runtime rather than compiling against a newer convenience API.
@@ -1497,10 +1497,10 @@ internal object NativeDifferentialPreviewE2EBridge {
             "document_line_start_offset=" + documentLineStart,
             "document_line_end_offset=" + documentLineEnd,
             "platform_visual_line_end_offset=" + platformVisualLineEndOffset,
-            "platform_release=2026.2.3",
-            "platform_build=262.10968.63",
-            "intellij_source_tag=idea/2026.2.3",
-            "intellij_source_commit=8062c061ff33e22041d9f1844db5b8b8a6b5e4d7",
+            "platform_release=2026.3",
+            "platform_build=263.7307.200",
+            "intellij_source_tag=idea/263.7307.200",
+            "intellij_source_commit=c91871ae2864649d952825cff72569e3db0e7ac6",
         ).joinToString("\n")
     }
 
@@ -1527,8 +1527,8 @@ internal object NativeDifferentialPreviewE2EBridge {
         return "schema=markflow-bundled-preview-platform-target-reresolve/v1\n" +
             "source_line_zero_based=" + line + "\n" +
             "source_offset=" + sourceOffset + "\n" +
-            "platform_release=2026.2.3\n" +
-            "platform_build=262.10968.63\n" +
+            "platform_release=2026.3\n" +
+            "platform_build=263.7307.200\n" +
             "scroll_api=MarkdownPreviewSourceAnchorNavigator.reResolveCurrentDom\n"
     }
 
@@ -1558,7 +1558,7 @@ internal object NativeDifferentialPreviewE2EBridge {
             panelComponent.height > 100
     }
 
-    // JBCefApp.isRemoteEnabled() is package-private in pinned IDEA 2026.2.3.
+    // JBCefApp.isRemoteEnabled() is non-public in the maintained platform.
     // Fail closed if JetBrains changes this diagnostic-only reflection boundary.
     private fun jcefRemoteEnabled(): Boolean {
         val app = JBCefApp.getInstance()
@@ -1773,7 +1773,7 @@ internal object NativeDifferentialPreviewE2EBridge {
         val panelComponent = panel?.javaClass?.methods
             ?.firstOrNull { it.name == "getComponent" && it.parameterCount == 0 }
             ?.invoke(panel) as? Component
-        // IDEA 2026.2.3 MarkdownPreviewFileEditor adds each newly created
+        // IDEA 2026.3 MarkdownPreviewFileEditor adds each newly created
         // panel component to its BorderLayout wrapper and stores only the last
         // panel reference. A replaced CENTER component is not automatically
         // removed from the container or disposed. Inspect ownership directly

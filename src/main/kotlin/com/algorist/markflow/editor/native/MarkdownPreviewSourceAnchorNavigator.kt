@@ -4,7 +4,7 @@ import com.intellij.openapi.application.ApplicationManager
 import org.cef.browser.CefBrowser
 
 /**
- * Test-only IDEA 2026.2.3 compatibility seam for Markdown Preview source anchors.
+ * Test-only Markdown Preview source-anchor compatibility seam exercised by the stable IDEA 2026.3 acceptance path.
  *
  * The pinned bundled ScrollController caches currentScrollElement and may return
  * early after asynchronous layout shifts even when the cached element is no
