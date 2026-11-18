@@ -8,6 +8,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -79,9 +80,10 @@ internal object NativeImageImportDestinationRaceProbe {
                 FileDocumentManager.getInstance().getDocument(file)
                     ?: error("destination-race fixture Document unavailable")
             }
-            val provider = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, project, file)
-            } ?: error("platform text editor provider did not accept destination-race fixture")
+            val provider = FileEditorProviderManager.getInstance()
+                .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?.takeIf { candidate -> accepts(candidate, project, file) }
+                ?: error("platform text editor provider did not accept destination-race fixture")
             val created = provider.createEditor(project, file)
             check(created is TextEditor)
             try {

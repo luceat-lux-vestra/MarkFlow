@@ -24,6 +24,7 @@ import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -345,9 +346,10 @@ internal object NativeMarkdownEditingParityProbe {
         }
 
         private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider =
-            FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, file)
-            } ?: error("platform text editor provider did not accept #152 editing parity fixture")
+            FileEditorProviderManager.getInstance()
+                .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?.takeIf { candidate -> accepts(candidate, file) }
+                ?: error("platform text editor provider did not accept #152 editing parity fixture")
 
         private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
             if (provider.acceptRequiresReadAction()) {

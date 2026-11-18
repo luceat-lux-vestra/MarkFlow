@@ -17,6 +17,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import java.nio.charset.StandardCharsets
@@ -81,8 +82,10 @@ internal object NoJcefNativeEditingProbe {
                 fileEditor = created
 
                 case("optional-jcef-renderer-registrations-absent") {
-                    val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
-                    check(providers.none { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS }) {
+                    check(
+                        FileEditorProviderManager.getInstance()
+                            .getProvider(TEMPORARY_MARKFLOW_PROVIDER_TYPE_ID) == null
+                    ) {
                         "legacy JCEF-backed MarkFlow provider was registered without JCEF"
                     }
                     val sinks = MarkFlowPresentationSettingsSink.EP_NAME.extensionList
@@ -185,12 +188,12 @@ internal object NoJcefNativeEditingProbe {
         private fun selectPlatformTextProvider(fixture: Fixture): FileEditorProvider {
             var selected: FileEditorProvider? = null
             case("platform-text-provider-owns-source") {
-                val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
-                val accepted = providers.filter { accepts(it, fixture.file) }
-                val text = accepted.firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
+                val providerManager = FileEditorProviderManager.getInstance()
+                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                    ?.takeIf { accepts(it, fixture.file) }
                     ?: error("platform text editor provider did not accept no-JCEF Markdown fixture")
                 check(text.policy == FileEditorPolicy.NONE)
-                check(providers.none { it.javaClass.name == TEMPORARY_MARKFLOW_PROVIDER_CLASS })
+                check(providerManager.getProvider(TEMPORARY_MARKFLOW_PROVIDER_TYPE_ID) == null)
                 selected = text
                 "platformText=${text.javaClass.name} temporaryBrowserProvider=false"
             }
@@ -274,5 +277,5 @@ internal object NoJcefNativeEditingProbe {
     )
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val TEMPORARY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val TEMPORARY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
 }

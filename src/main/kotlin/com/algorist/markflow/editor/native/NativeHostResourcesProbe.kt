@@ -14,6 +14,7 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -501,9 +502,10 @@ Plain body line for inactive caret state.
         private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
             var result: FileEditorProvider? = null
             case("platform-text-editor-selected") {
-                val selected = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                    candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, file)
-                } ?: error("platform text editor provider did not accept #147 Markdown fixture")
+                val selected = FileEditorProviderManager.getInstance()
+                    .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                    ?.takeIf { candidate -> accepts(candidate, file) }
+                    ?: error("platform text editor provider did not accept #147 Markdown fixture")
                 result = selected
                 "editorTypeId=${selected.editorTypeId} implementation=${selected.javaClass.name}"
             }

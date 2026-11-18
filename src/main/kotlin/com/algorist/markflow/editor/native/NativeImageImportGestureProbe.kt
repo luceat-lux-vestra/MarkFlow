@@ -9,6 +9,7 @@ import com.intellij.openapi.editor.FileDropEvent
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -171,9 +172,10 @@ internal object NativeImageImportGestureProbe {
                 FileDocumentManager.getInstance().getDocument(file)
                     ?: error("gesture fixture Document unavailable")
             }
-            val provider = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList.firstOrNull { candidate ->
-                candidate.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID && accepts(candidate, file)
-            } ?: error("platform text editor provider did not accept gesture fixture")
+            val provider = FileEditorProviderManager.getInstance()
+                .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                ?.takeIf { candidate -> accepts(candidate, file) }
+                ?: error("platform text editor provider did not accept gesture fixture")
             val created = provider.createEditor(project, file)
             check(created is TextEditor)
             val fixture = Fixture(file, document, created)
