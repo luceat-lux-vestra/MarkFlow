@@ -24,8 +24,13 @@ import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBScrollPane
+import java.awt.Rectangle
+import java.awt.Robot
 import java.awt.Toolkit
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.Locale
+import javax.imageio.ImageIO
 import javax.swing.SwingUtilities
 import javax.swing.UIManager
 
@@ -365,6 +370,54 @@ internal object NativeVisualAcceptanceE2EBridge {
     fun contentWidth(editor: Editor): Int = editor.scrollingModel.visibleArea.width
 
     fun contentHeight(editor: Editor): Int = editor.scrollingModel.visibleArea.height
+
+    /**
+     * Binds the final readiness proof and the screen raster to one EDT state.
+     *
+     * The old harness sampled readiness on EDT, returned to the Driver process, performed more
+     * remote calls, and only then captured with Robot. That allowed queued presentation/repaint work
+     * to mutate the screen between the evidence and the raster. Keep the real screen oracle, but
+     * force the current editor paint and capture it while the IDE EDT is held by this one call.
+     */
+    fun captureViewportWithEvidence(editor: Editor, outputPath: String): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val beforeEvidence = visualEvidence(editor)
+        val viewport = editor.scrollingModel.visibleArea
+        check(viewport.width == TARGET_VIEWPORT_WIDTH && viewport.height == TARGET_VIEWPORT_HEIGHT) {
+            "visual atomic capture requires the exact pinned viewport: " +
+                "expected=${TARGET_VIEWPORT_WIDTH}x${TARGET_VIEWPORT_HEIGHT}, " +
+                "actual=${viewport.width}x${viewport.height}"
+        }
+
+        val component = editor.contentComponent
+        check(component.isShowing) {
+            "visual atomic capture requires a showing editor content component"
+        }
+        component.paintImmediately(viewport)
+        Toolkit.getDefaultToolkit().sync()
+
+        val location = component.locationOnScreen
+        val image = Robot().createScreenCapture(
+            Rectangle(
+                location.x + viewport.x,
+                location.y + viewport.y,
+                TARGET_VIEWPORT_WIDTH,
+                TARGET_VIEWPORT_HEIGHT,
+            )
+        )
+
+        val afterEvidence = visualEvidence(editor)
+        check(beforeEvidence == afterEvidence) {
+            "visual presentation changed inside the atomic evidence/raster capture boundary"
+        }
+
+        val target = Path.of(outputPath).toAbsolutePath().normalize()
+        target.parent?.let { parent -> Files.createDirectories(parent) }
+        check(ImageIO.write(image, "png", target.toFile())) {
+            "visual atomic capture could not encode PNG: $target"
+        }
+        return beforeEvidence
+    }
 
     fun structureGeometryEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()

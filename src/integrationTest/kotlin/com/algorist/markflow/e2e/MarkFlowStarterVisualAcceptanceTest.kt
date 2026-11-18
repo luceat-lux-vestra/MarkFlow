@@ -14,7 +14,6 @@ import com.intellij.ide.starter.runner.Starter
 import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Color
-import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
@@ -192,35 +191,24 @@ class MarkFlowStarterVisualAcceptanceTest {
                         }
                     }
 
+                    val actualPath = actualRoot.resolve("${spec.name}.png")
                     val captureEvidence = driver.withContext(OnDispatcher.EDT) {
-                        visual.visualEvidence(editor.editor)
+                        visual.captureViewportWithEvidence(
+                            editor.editor,
+                            actualPath.toAbsolutePath().normalize().toString(),
+                        )
                     }
                     check(spec.ready(parseEvidence(captureEvidence))) {
-                        "visual presentation drifted after post-normalization convergence for ${spec.name}"
+                        "visual presentation drifted at the atomic capture boundary for ${spec.name}"
                     }
                     Files.writeString(
                         actualRoot.resolve("${spec.name}.evidence.txt"),
                         captureEvidence + "\n",
                         StandardCharsets.UTF_8,
                     )
-
-                    val bounds = driver.withContext(OnDispatcher.EDT) {
-                        CaptureBounds(
-                            x = visual.contentScreenX(editor.editor),
-                            y = visual.contentScreenY(editor.editor),
-                            width = visual.contentWidth(editor.editor),
-                            height = visual.contentHeight(editor.editor),
-                        )
+                    val image = requireNotNull(ImageIO.read(actualPath.toFile())) {
+                        "atomic visual capture is not a readable PNG: $actualPath"
                     }
-                    check(bounds.width == CAPTURE_WIDTH && bounds.height == CAPTURE_HEIGHT) {
-                        "visual editor viewport drifted from the fixed $CAPTURE_WIDTH x $CAPTURE_HEIGHT capture: $bounds"
-                    }
-
-                    val image = robot.createScreenCapture(
-                        Rectangle(bounds.x, bounds.y, CAPTURE_WIDTH, CAPTURE_HEIGHT)
-                    )
-                    val actualPath = actualRoot.resolve("${spec.name}.png")
-                    ImageIO.write(image, "png", actualPath.toFile())
                     if (spec.name == "structure") {
                         // Keep the screen capture unchanged; sample existing native layout only
                         // after the captured raster and before closing this exact editor.
@@ -454,13 +442,6 @@ class MarkFlowStarterVisualAcceptanceTest {
         }
     }
 
-    private data class CaptureBounds(
-        val x: Int,
-        val y: Int,
-        val width: Int,
-        val height: Int,
-    )
-
     private data class VisualCase(
         val name: String,
         val fileName: String,
@@ -469,9 +450,6 @@ class MarkFlowStarterVisualAcceptanceTest {
     )
 
     companion object {
-        private const val CAPTURE_WIDTH = 1200
-        private const val CAPTURE_HEIGHT = 760
-
         // Stable 263 changed typography/structure/code painting enough to require dedicated
         // reviewed rasters. Derived/resources independently reproduced within the existing
         // strict comparator tolerance on two 263 runs, so only those cases may use the
@@ -646,10 +624,7 @@ private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun normalizeViewportForCapture(editor: Editor)
     fun normalizeEditorChromeForCapture(editor: Editor): Int
     fun environmentIdentity(editor: Editor): String
-    fun contentScreenX(editor: Editor): Int
-    fun contentScreenY(editor: Editor): Int
-    fun contentWidth(editor: Editor): Int
-    fun contentHeight(editor: Editor): Int
+    fun captureViewportWithEvidence(editor: Editor, outputPath: String): String
     fun visualEvidence(editor: Editor): String
     fun structureGeometryEvidence(editor: Editor): String
 }
