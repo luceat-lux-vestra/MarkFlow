@@ -513,7 +513,7 @@ class MarkFlowStarterVisualAcceptanceTest {
                     evidence.getValue("platformFenceBackgroundAdditionalSyntaxLayers") == 1 &&
                     evidence.getValue("platformFenceBackgroundExactRangeTargets") == 1 &&
                     evidence.getValue("platformFenceBackgroundCustomRenderers") == 1 &&
-                    evidence.getValue("platformFenceBackgroundCoveredModels") == 1 &&
+                    evidence.getValue("platformFenceBackgroundIntersectingModels") == 1 &&
                     evidence.getValue("platformFenceBackgroundReady") == 1
             },
             VisualCase("derived", "VISUAL-DERIVED.md", derived = true) { evidence ->
