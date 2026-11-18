@@ -12,7 +12,6 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.CaretStateTransferableData
@@ -23,7 +22,6 @@ import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
-import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
@@ -39,9 +37,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Supplemental real-IDE editing proof for #152, executed before the #146 probe exits the IDE. */
+/** Supplemental real-IDE editing proof for #152, executed on the production owned FileEditor shell. */
 internal object NativeMarkdownEditingParityProbe {
-    private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val OUTPUT_FILE = "parity.json"
     private const val BOLD_ACTION = "org.intellij.plugins.markdown.ui.actions.styling.ToggleBoldAction"
     private const val ITALIC_ACTION = "org.intellij.plugins.markdown.ui.actions.styling.ToggleItalicAction"
@@ -333,10 +330,15 @@ internal object NativeMarkdownEditingParityProbe {
                 ?: error("editing parity VirtualFile unavailable")
             val document = FileDocumentManager.getInstance().getDocument(file)
                 ?: error("editing parity Document unavailable")
-            val provider = selectPlatformTextProvider(file)
+            val provider = selectOwnedFileEditorProvider(file)
             val created = provider.createEditor(project, file)
-            check(created is TextEditor)
+            check(created is MarkFlowOwnedNativeFileEditor) {
+                "production MarkFlow provider returned ${created.javaClass.name}, not MarkFlowOwnedNativeFileEditor"
+            }
             check(created.editor.document === document)
+            check(NativeMarkFlowProductionLifecycle.ownedController(created.editor) != null) {
+                "production owned FileEditor did not attach presentation for #152 editing parity"
+            }
             val fixture = Fixture(file, provider, created, created.editor)
             return try {
                 block(fixture)
@@ -345,19 +347,15 @@ internal object NativeMarkdownEditingParityProbe {
             }
         }
 
-        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider =
-            FileEditorProviderManager.getInstance()
-                .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
-                ?.takeIf { candidate -> accepts(candidate, file) }
-                ?: error("platform text editor provider did not accept #152 editing parity fixture")
-
-        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
+        private fun selectOwnedFileEditorProvider(file: VirtualFile): FileEditorProvider {
+            val manager = FileEditorProviderManager.getInstance()
+            val owned = manager.getProvider(MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+                ?: error("production MarkFlow owned FileEditor provider is not registered")
+            check(manager.getProviderList(project, file).any { it === owned }) {
+                "production MarkFlow owned FileEditor provider did not accept #152 editing parity fixture"
             }
-        }.getOrDefault(false)
+            return owned
+        }
 
         private fun case(id: String, block: () -> String) {
             check(cases.none { it.id == id })
@@ -396,7 +394,7 @@ internal object NativeMarkdownEditingParityProbe {
     private data class Fixture(
         val file: VirtualFile,
         val provider: FileEditorProvider,
-        val fileEditor: TextEditor,
+        val fileEditor: MarkFlowOwnedNativeFileEditor,
         val editor: Editor,
     )
 
