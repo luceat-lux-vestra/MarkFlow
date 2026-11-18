@@ -37,7 +37,7 @@
                 id="markflow-owned-native"
                 implementation="com.algorist.markflow.editor.native.MarkFlowOwnedNativeFileEditorProvider"
                 order="first"/>
-        <postStartupActivity implementation="com.algorist.markflow.editor.native.Leap2OwnedShellProbeProjectActivity"/>
+        <postStartupActivity implementation="com.algorist.markflow.editor.native.OwnedNativeFileEditorRuntimeProbeProjectActivity"/>
         <!-- IntelliJ 2026.2 bypasses customPasteProvider/copyPastePreProcessor for multicaret and
              column-mode paste. Wrap EditorPaste before bundled Markdown's table hook, transform only
              the exact active Transferable when #152's parser/locality gates allow it, then delegate
