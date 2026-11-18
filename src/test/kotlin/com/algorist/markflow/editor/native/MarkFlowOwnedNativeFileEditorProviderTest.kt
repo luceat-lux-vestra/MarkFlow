@@ -6,12 +6,11 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
-    fun testProviderIsActiveWithoutProofFlagAndPreservesCoexistencePolicy() {
-        myFixture.configureByText("proof.md", "# proof\n")
+    fun testProviderIsActiveAndPreservesCoexistencePolicy() {
+        myFixture.configureByText("owned-provider.md", "# owned provider\n")
         val file = checkNotNull(myFixture.file.virtualFile)
         val provider = MarkFlowOwnedNativeFileEditorProvider()
 
-        System.clearProperty("markflow.leap2OwnedNativeFileEditor.enabled")
         assertTrue(provider.accept(project, file))
         assertEquals(FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR, provider.policy)
         assertEquals("markflow-owned-native", provider.editorTypeId)

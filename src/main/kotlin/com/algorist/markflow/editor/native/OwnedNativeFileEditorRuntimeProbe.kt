@@ -36,15 +36,15 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * #556 production-independent real-IDE proof for the MarkFlow-owned native FileEditor hypothesis.
+ * Maintained real-IDE runtime evidence for the production MarkFlow-owned native FileEditor.
  *
- * The proof uses the same authoritative FileDocumentManager Document as the bundled editor.
- * Production automatic presentation attachment is suppressed by this probe's *.output property;
- * the proof-owned editor attaches the existing NativePresentationController explicitly.
+ * The probe exercises the registered production provider over the same authoritative
+ * FileDocumentManager Document as the bundled editor, including JCEF-enabled and plugin-absent
+ * renderer boundaries. It is evidence for the current production shell, not a shell-selection proof.
  */
-internal object Leap2OwnedShellProbe {
-    const val OUTPUT_PROPERTY = "markflow.leap2OwnedShellProbe.output"
-    const val EXPECT_JCEF_PROPERTY = "markflow.leap2OwnedShellProbe.expectJcef"
+internal object OwnedNativeFileEditorRuntimeProbe {
+    const val OUTPUT_PROPERTY = "markflow.ownedNativeFileEditorRuntimeProbe.output"
+    const val EXPECT_JCEF_PROPERTY = "markflow.ownedNativeFileEditorRuntimeProbe.expectJcef"
 
     private val started = AtomicBoolean(false)
 
@@ -75,69 +75,49 @@ internal object Leap2OwnedShellProbe {
 
         fun run() {
             try {
-                check(!project.isDefault) { "#556 proof requires a real opened project" }
-                check(!project.isDisposed) { "#556 proof project is disposed" }
+                check(!project.isDefault) { "owned FileEditor runtime evidence requires a real opened project" }
+                check(!project.isDisposed) { "owned FileEditor runtime evidence project is disposed" }
 
                 case("runtime-boundary") {
                     val state = OptionalJcefProbeSupport.read()
                     val factories = onEdt { DerivedRendererRuntimeFactory.EP_NAME.extensionList.size }
                     if (expectJcef) {
-                        check(state.classPresent) { "JCEF class missing in enabled #556 proof" }
-                        check(state.supported) { "JCEF runtime unsupported in enabled #556 proof" }
+                        check(state.classPresent) { "JCEF class missing in enabled owned FileEditor runtime evidence" }
+                        check(state.supported) { "JCEF runtime unsupported in enabled owned FileEditor runtime evidence" }
                         check(factories >= 1) { "retained derived renderer factory missing" }
                     } else {
-                        check(!state.classPresent) { "JCEF class remained visible in plugin-absent #556 proof" }
+                        check(!state.classPresent) { "JCEF class remained visible in plugin-absent owned FileEditor runtime evidence" }
                         check(!state.supported)
                         check(factories == 0) { "renderer factory registered without optional JCEF plugin" }
                     }
                     "expectJcef=$expectJcef classPresent=${state.classPresent} supported=${state.supported} rendererFactories=$factories"
                 }
 
-                val plain = createFixture("leap2-plain.md", plainSource())
+                val plain = createFixture("owned-runtime-plain.md", plainSource())
                 resourceSnapshots += resourceSnapshot("baseline", openFiles = 0)
-
-                case("candidate-a-augmentation-baseline") {
-                    val provider = requireNotNull(
-                        onEdt { FileEditorProviderManager.getInstance().getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID) }
-                    ) { "platform text editor provider unavailable" }
-                    val fileEditor = onEdt { provider.createEditor(project, plain.file) }
-                    check(fileEditor is TextEditor) { "platform provider did not create TextEditor" }
-                    directEditors += provider to fileEditor
-                    check(fileEditor.editor.document === plain.document)
-                    resourceSnapshots += resourceSnapshot("intellij-only-one", openFiles = 1)
-                    check(onEdt { NativeMarkFlowProductionLifecycle.attach(fileEditor.editor) })
-                    check(NativeMarkFlowProductionLifecycle.controller(fileEditor.editor) != null)
-                    resourceSnapshots += resourceSnapshot("candidate-a-one", openFiles = 1)
-                    onEdt {
-                        NativeMarkFlowProductionLifecycle.release(fileEditor.editor)
-                        provider.disposeEditor(fileEditor)
-                    }
-                    directEditors.remove(provider to fileEditor)
-                    "sameDocument=true presentationOwner=true"
-                }
 
                 val providers = caseValue("provider-coexistence-and-ordering") {
                     val list = onEdt {
                         FileEditorProviderManager.getInstance().getProviderList(project, plain.file)
                     }
-                    val proof = list.singleOrNull {
+                    val ownedProvider = list.singleOrNull {
                         it.editorTypeId == MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID
-                    } ?: error("dormant #556 provider was not activated by the proof JVM")
-                    check(proof.policy.name == "PLACE_BEFORE_DEFAULT_EDITOR")
-                    val nonProof = list.filter { it !== proof }
-                    check(nonProof.isNotEmpty()) { "MarkFlow proof provider displaced all IntelliJ providers" }
+                    } ?: error("production MarkFlow owned FileEditor provider is not applicable")
+                    check(ownedProvider.policy.name == "PLACE_BEFORE_DEFAULT_EDITOR")
+                    val nonProof = list.filter { it !== ownedProvider }
+                    check(nonProof.isNotEmpty()) { "MarkFlow owned provider displaced all IntelliJ providers" }
                     val platformTextPresent = nonProof.any { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
                     val markdownPresent = nonProof.any { it.javaClass.name.contains("markdown", ignoreCase = true) }
                     check(platformTextPresent || markdownPresent) {
-                        "no IntelliJ text/Markdown provider coexists with MarkFlow proof provider"
+                        "no IntelliJ text/Markdown provider coexists with MarkFlow owned provider"
                     }
                     val ids = list.map { it.editorTypeId }
                     ProviderEvidence(
                         ids = ids,
-                        proofIndex = ids.indexOf(proof.editorTypeId),
+                        ownedProviderIndex = ids.indexOf(ownedProvider.editorTypeId),
                         platformTextPresent = platformTextPresent,
                     ) to
-                        "providers=${ids.joinToString(",")} proofPolicy=${proof.policy.name} " +
+                        "providers=${ids.joinToString(",")} ownedPolicy=${ownedProvider.policy.name} " +
                         "platformTextPresent=$platformTextPresent markdownProviderPresent=$markdownPresent"
                 }
 
@@ -187,11 +167,11 @@ internal object Leap2OwnedShellProbe {
                         manager.setSelectedEditor(plain.file, MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
                     }
                     "markFlowSelectable=true intellijSelectable=true alternative=$selectedAlternative " +
-                        "initialMarkFlowSelected=$initialMarkFlowSelected proofIndex=${providers.proofIndex}"
+                        "initialMarkFlowSelected=$initialMarkFlowSelected ownedProviderIndex=${providers.ownedProviderIndex}"
                 }
 
                 case("presentation-ownership-isolation") {
-                    check(NativeMarkFlowProductionLifecycle.controller(owned.editor) != null) {
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null }) {
                         "MarkFlow-owned editor has no presentation owner"
                     }
                     val leaked = plainEditors.filterIsInstance<TextEditor>()
@@ -199,7 +179,9 @@ internal object Leap2OwnedShellProbe {
                         .count { NativeMarkFlowProductionLifecycle.controller(it.editor) != null }
                     check(leaked == 0) { "MarkFlow presentation leaked into $leaked IntelliJ editor(s)" }
                     val derived = requireNotNull(
-                        NativeMarkFlowProductionLifecycle.controller(owned.editor)?.derivedEvidenceSnapshot()
+                        onEdt {
+                            NativeMarkFlowProductionLifecycle.ownedController(owned.editor)?.derivedEvidenceSnapshot()
+                        }
                     )
                     check(derived.derivedFragments == 0)
                     check(derived.renderRequests == 0L)
@@ -247,7 +229,7 @@ internal object Leap2OwnedShellProbe {
                         editor.caretModel.moveToOffset(editor.document.textLength)
                         val beforePasteLength = editor.document.textLength
                         WriteCommandAction.writeCommandAction(project)
-                            .withName("MarkFlow Leap2 Clipboard Paste Proof")
+                            .withName("MarkFlow Owned Runtime Clipboard Paste Proof")
                             .run<RuntimeException> {
                                 EditorActionManager.getInstance()
                                     .getActionHandler(IdeActions.ACTION_EDITOR_PASTE)
@@ -266,16 +248,16 @@ internal object Leap2OwnedShellProbe {
                 }
 
                 case("owned-split-lifecycle-isolation") {
-                    val proofProvider = requireNotNull(
+                    val ownedProvider = requireNotNull(
                         onEdt {
                             FileEditorProviderManager.getInstance().getProvider(
                                 MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID
                             )
                         }
                     )
-                    val split = onEdt { proofProvider.createEditor(project, plain.file) }
+                    val split = onEdt { ownedProvider.createEditor(project, plain.file) }
                     check(split is MarkFlowOwnedNativeFileEditor)
-                    directEditors += proofProvider to split
+                    directEditors += ownedProvider to split
                     check(split.editor.document === plain.document)
                     check(split.editor !== owned.editor)
                     onEdt {
@@ -283,12 +265,12 @@ internal object Leap2OwnedShellProbe {
                         split.editor.caretModel.moveToOffset((plain.document.textLength / 2).coerceAtLeast(2))
                     }
                     check(onEdt { owned.editor.caretModel.offset != split.editor.caretModel.offset })
-                    check(NativeMarkFlowProductionLifecycle.controller(owned.editor) != null)
-                    check(NativeMarkFlowProductionLifecycle.controller(split.editor) != null)
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null })
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(split.editor) != null })
                     check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics >= 2)
-                    onEdt { proofProvider.disposeEditor(split) }
-                    directEditors.remove(proofProvider to split)
-                    check(NativeMarkFlowProductionLifecycle.controller(owned.editor) != null)
+                    onEdt { ownedProvider.disposeEditor(split) }
+                    directEditors.remove(ownedProvider to split)
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null })
                     "sameDocument=true perEditorCaret=true perEditorPresentation=true splitDisposed=true"
                 }
 
@@ -336,7 +318,7 @@ internal object Leap2OwnedShellProbe {
                     val composing = inputMethodEvent(editor, "ㅎ", committedCharacterCount = 0)
                     onEdt {
                         WriteCommandAction.writeCommandAction(project)
-                            .withName("MarkFlow Leap2 IME Composition Proof")
+                            .withName("MarkFlow Owned Runtime IME Composition Proof")
                             .run<RuntimeException> { editor.contentComponent.dispatchEvent(composing) }
                     }
                     check(composing.isConsumed)
@@ -345,7 +327,7 @@ internal object Leap2OwnedShellProbe {
                     val committed = inputMethodEvent(editor, "한", committedCharacterCount = 1)
                     onEdt {
                         WriteCommandAction.writeCommandAction(project)
-                            .withName("MarkFlow Leap2 IME Commit Proof")
+                            .withName("MarkFlow Owned Runtime IME Commit Proof")
                             .run<RuntimeException> { editor.contentComponent.dispatchEvent(committed) }
                     }
                     check(committed.isConsumed)
@@ -355,7 +337,7 @@ internal object Leap2OwnedShellProbe {
                     val beforeUndoProof = plain.document.text
                     onEdt {
                         WriteCommandAction.writeCommandAction(project)
-                            .withName("MarkFlow Leap2 Undo Proof")
+                            .withName("MarkFlow Owned Runtime Undo Proof")
                             .run<RuntimeException> { plain.document.insertString(0, "undo-proof\n") }
                     }
                     val edited = plain.document.text
@@ -376,7 +358,7 @@ internal object Leap2OwnedShellProbe {
 
                 case("save-close-reopen") {
                     val fixture = createFixture(
-                        "leap2-reopen.md",
+                        "owned-runtime-reopen.md",
                         "# reopen\n\nsource survives native FileEditor recreation.\n",
                     )
                     val firstOpen = openFile(fixture.file)
@@ -407,7 +389,7 @@ internal object Leap2OwnedShellProbe {
                         "no IntelliJ alternative provider was selected earlier"
                     }
                     val fixture = createFixture(
-                        "leap2-selection.md",
+                        "owned-runtime-selection.md",
                         "# selection\n\nprovider selection persistence finding.\n",
                     )
                     val firstOpen = openFile(fixture.file)
@@ -426,14 +408,16 @@ internal object Leap2OwnedShellProbe {
                         "publicSelectionApi=true"
                 }
 
-                resourceSnapshots += resourceSnapshot("candidate-b-one", openFiles = 1)
+                resourceSnapshots += resourceSnapshot("production-owned-one", openFiles = 1)
 
-                val derivedFixture = createFixture("leap2-derived.md", derivedSource())
+                val derivedFixture = createFixture("owned-runtime-derived.md", derivedSource())
                 val derivedEditors = openFile(derivedFixture.file)
                 val derivedOwned = derivedEditors.filterIsInstance<MarkFlowOwnedNativeFileEditor>().single()
 
                 case("lazy-derived-runtime-boundary") {
-                    val controller = requireNotNull(NativeMarkFlowProductionLifecycle.controller(derivedOwned.editor))
+                    val controller = requireNotNull(
+                        onEdt { NativeMarkFlowProductionLifecycle.ownedController(derivedOwned.editor) }
+                    )
                     val evidence = awaitEvidence(controller)
                     check(evidence.derivedFragments >= 2) {
                         "expected Mermaid + KaTeX derived fragments, got ${evidence.derivedFragments}"
@@ -464,16 +448,16 @@ internal object Leap2OwnedShellProbe {
                         closeFile(plain.file)
                         val files = (1..20).map { index ->
                             createFixture(
-                                "leap2-resource-$index.md",
+                                "owned-runtime-resource-$index.md",
                                 "# resource $index\n\nplain markdown $index\n",
                             )
                         }
                         files.take(1).forEach { openFile(it.file) }
-                        resourceSnapshots += resourceSnapshot("candidate-b-1", openFiles = 1)
+                        resourceSnapshots += resourceSnapshot("production-owned-1", openFiles = 1)
                         files.drop(1).take(4).forEach { openFile(it.file) }
-                        resourceSnapshots += resourceSnapshot("candidate-b-5", openFiles = 5)
+                        resourceSnapshots += resourceSnapshot("production-owned-5", openFiles = 5)
                         files.drop(5).take(15).forEach { openFile(it.file) }
-                        resourceSnapshots += resourceSnapshot("candidate-b-20", openFiles = 20)
+                        resourceSnapshots += resourceSnapshot("production-owned-20", openFiles = 20)
                         check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics >= 20)
                         check(MarkFlowOwnedNativeFileEditor.livePresentationOwnerCountForDiagnostics >= 20)
                         files.asReversed().forEach { closeFile(it.file) }
@@ -496,11 +480,11 @@ internal object Leap2OwnedShellProbe {
                             it.project === project &&
                                 FileDocumentManager.getInstance().getFile(it.document)
                                     ?.path
-                                    ?.contains(".markflow-leap2-") == true
+                                    ?.contains(".markflow-owned-runtime-") == true
                         }
                     }
-                    check(leaked == 0) { "proof editors leaked after cleanup: $leaked" }
-                    "ownedEditors=0 ownedPresentationOwners=0 leakedProofEditors=0"
+                    check(leaked == 0) { "owned runtime evidence editors leaked after cleanup: $leaked" }
+                    "ownedEditors=0 ownedPresentationOwners=0 leakedEvidenceEditors=0"
                 }
 
                 finish("PASS")
@@ -515,8 +499,8 @@ internal object Leap2OwnedShellProbe {
         private fun createFixture(name: String, source: String): Fixture {
             val root = tempRoot ?: run {
                 val projectBase = project.basePath?.let(Paths::get)
-                    ?: error("#556 proof project has no basePath")
-                Files.createTempDirectory(projectBase, ".markflow-leap2-").also { tempRoot = it }
+                    ?: error("owned FileEditor runtime evidence project has no basePath")
+                Files.createTempDirectory(projectBase, ".markflow-owned-runtime-").also { tempRoot = it }
             }
             val path = root.resolve(name)
             Files.writeString(path, source, StandardCharsets.UTF_8)
@@ -554,10 +538,7 @@ internal object Leap2OwnedShellProbe {
         private fun cleanupDirectEditors() {
             directEditors.toList().asReversed().forEach { (provider, editor) ->
                 runCatching {
-                    onEdt {
-                        NativeMarkFlowProductionLifecycle.release(editor.editor)
-                        provider.disposeEditor(editor)
-                    }
+                    onEdt { provider.disposeEditor(editor) }
                 }
             }
             directEditors.clear()
@@ -630,14 +611,14 @@ internal object Leap2OwnedShellProbe {
         )
 
         private fun plainSource(): String = buildString {
-            append("# Leap 2 plain proof\n\n")
+            append("# Leap 2 plain runtime evidence\n\n")
             repeat(220) { index -> append("plain line ").append(index).append(" remains native.\n") }
         }
 
         private fun derivedSource(): String {
             val dollar = '$'
             return """
-                # Leap 2 derived proof
+                # Leap 2 derived runtime evidence
 
                 ```mermaid
                 flowchart LR
@@ -661,7 +642,7 @@ internal object Leap2OwnedShellProbe {
         }
 
         private fun case(id: String, block: () -> String) {
-            check(cases.none { it.id == id }) { "duplicate #556 proof case id: $id" }
+            check(cases.none { it.id == id }) { "duplicate owned FileEditor runtime evidence case id: $id" }
             val result = try {
                 CaseResult(id, "PASS", block())
             } catch (failure: Throwable) {
@@ -694,7 +675,7 @@ internal object Leap2OwnedShellProbe {
                     gson.toJson(
                         Evidence(
                             schemaVersion = 1,
-                            selectedShell = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PROOF",
+                            selectedShell = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION",
                             ideBuild = ApplicationInfo.getInstance().build.asString(),
                             expectJcef = expectJcef,
                             verdict = verdict,
@@ -725,7 +706,7 @@ internal object Leap2OwnedShellProbe {
 
     private data class ProviderEvidence(
         val ids: List<String>,
-        val proofIndex: Int,
+        val ownedProviderIndex: Int,
         val platformTextPresent: Boolean,
     )
 
@@ -764,9 +745,9 @@ internal object Leap2OwnedShellProbe {
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
 }
 
-/** Starts #556 only when the dedicated proof JVM supplies its output property. */
-class Leap2OwnedShellProbeProjectActivity : ProjectActivity {
+/** Starts maintained owned-FileEditor runtime evidence only in its dedicated evidence JVM. */
+class OwnedNativeFileEditorRuntimeProbeProjectActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-        Leap2OwnedShellProbe.startIfRequested(project)
+        OwnedNativeFileEditorRuntimeProbe.startIfRequested(project)
     }
 }
