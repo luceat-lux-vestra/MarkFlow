@@ -9,6 +9,12 @@ die() {
   exit 1
 }
 
+owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNativeFileEditorRuntimeProbe.kt"
+[ -f "$owned_runtime_probe" ] || die "#584 production owned-FileEditor runtime evidence source is missing"
+[ ! -e "src/main/kotlin/com/algorist/markflow/editor/native/Leap2OwnedShellProbe.kt" ] || die "#584 obsolete #556 shell-proof source returned"
+if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
+  die "#584 proof-era owned-shell symbol/property/task was reintroduced"
+fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
@@ -498,7 +504,7 @@ for job in \
   native_derived_presentation \
   native_editing \
   native_editor_shell \
-  leap2_owned_shell \
+  owned_file_editor_runtime \
   native_host_resources \
   native_image_import \
   native_projection \
@@ -511,8 +517,8 @@ for semantic_probe in \
   'markflow.nativeDerivedPresentationProbe.output' \
   'runIdeForNativeEditingProbe' \
   'runIdeForNativeEditorShellProbe' \
-  'runIdeForLeap2OwnedShellProbe' \
-  'runIdeForLeap2OwnedShellNoJcefProbe' \
+  'runIdeForOwnedNativeFileEditorRuntimeProbe' \
+  'runIdeForOwnedNativeFileEditorRuntimeNoJcefProbe' \
   'runIdeForNativeHostResourcesProbe' \
   'markflow.nativeImageImportProbe.output' \
   'runIdeForNativeProjectionProbe' \
