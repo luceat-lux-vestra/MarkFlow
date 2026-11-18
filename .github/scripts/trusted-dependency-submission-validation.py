@@ -10,8 +10,6 @@ from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 JOB = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
-VERSION = re.compile(r'^intelliJPlatform\s*=\s*"([^"\s]+)"\s*$', re.MULTILINE)
-COORDINATE_KEY = "org.jetbrains.intellij.platform:intellij-platform-gradle-plugin"
 PIN_ACTIONS = ("actions/checkout", "actions/setup-java", "gradle/actions/dependency-submission")
 RELEVANT_PATHS = frozenset({
     ".github/workflows/dependency-submission.yml",
@@ -20,23 +18,17 @@ RELEVANT_PATHS = frozenset({
     ".github/scripts/check-dependency-submission.sh",
     "gradle/libs.versions.toml",
 })
-COORDINATE_LINE = re.compile(
-    r'required = \{"(?P<coordinate>[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[^"\s]+)"\}\Z'
+RUNTIME_CONFIGURATION = "intellijPlatformSandboxRuntimeClasspath"
+RUNTIME_CONFIGURATION_PATTERN = f"^{RUNTIME_CONFIGURATION}$"
+FILTER_LINE = f"dependency-graph-include-configurations: '{RUNTIME_CONFIGURATION_PATTERN}'"
+RUNTIME_SCOPE_ENV_LINE = (
+    f"DEPENDENCY_GRAPH_RUNTIME_INCLUDE_CONFIGURATIONS: '{RUNTIME_CONFIGURATION_PATTERN}'"
 )
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
-
-
-def expected_coordinate(catalog: Path) -> str:
-    matches = VERSION.findall(catalog.read_text(encoding="utf-8"))
-    require(len(matches) == 1, "version catalog must declare exactly one intelliJPlatform version")
-    version = matches[0]
-    require(re.fullmatch(r"[0-9A-Za-z.+-]+", version) is not None,
-            "unsupported intelliJPlatform version syntax")
-    return f"{COORDINATE_KEY}:{version}"
 
 
 def safe_path(value: object) -> str:
@@ -46,7 +38,7 @@ def safe_path(value: object) -> str:
     return value
 
 
-def require_supported_publisher_patch(entry: dict, coordinate: str) -> None:
+def require_supported_publisher_patch(entry: dict) -> None:
     require(entry.get("status") == "modified",
             "unsupported dependency-submission workflow change type")
     patch = entry.get("patch")
@@ -67,32 +59,28 @@ def require_supported_publisher_patch(entry: dict, coordinate: str) -> None:
 
     removed = [line for sign, line in changed if sign == "-"]
     added = [line for sign, line in changed if sign == "+"]
-    dynamic_verifier = [
-        "python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\",
-        "--dir dependency-graph-reports \\",
+    runtime_scope_migration_added = {
+        "env:",
+        RUNTIME_SCOPE_ENV_LINE,
+        FILTER_LINE,
+        '--head "$GITHUB_SHA"',
+    }
+    runtime_scope_migration_removed = {
         '--head "$GITHUB_SHA" \\',
         "--version-catalog gradle/libs.versions.toml",
-    ]
-    legacy_coordinate = re.compile(
-        rf'required = \{{"{re.escape(COORDINATE_KEY)}:[^"\s]+"\}}\Z'
-    )
-    if added == dynamic_verifier:
-        require("python3 - <<'PY'" in removed and "PY" in removed,
-                "dynamic verifier migration did not remove the legacy inline Python block")
-        require(any(legacy_coordinate.fullmatch(line) for line in removed),
-                "dynamic verifier migration did not remove the legacy hardcoded coordinate")
-        forbidden_prefixes = (
-            "uses:", "permissions:", "contents:", "dependency-graph:",
-            "cache-read-only:", "dependency-graph-continue-on-failure:",
-        )
-        require(not any(line.startswith(forbidden_prefixes) for line in removed),
-                "dynamic verifier migration touched publisher authority or execution policy")
+    }
+    if (
+        len(added) == len(runtime_scope_migration_added)
+        and set(added) == runtime_scope_migration_added
+        and len(removed) == len(runtime_scope_migration_removed)
+        and set(removed) == runtime_scope_migration_removed
+    ):
         return
 
     raise ValueError("dependency-submission workflow mutation exceeds supported adapters")
 
 
-def classify(pull: dict, pages: list, expected_head: str, coordinate: str) -> bool:
+def classify(pull: dict, pages: list, expected_head: str) -> bool:
     require(SHA.fullmatch(expected_head or "") is not None, "invalid expected PR HEAD")
     require(isinstance(pull, dict) and isinstance(pull.get("head"), dict), "missing PR metadata")
     require(pull["head"].get("sha") == expected_head, "PR HEAD changed during classification")
@@ -117,7 +105,7 @@ def classify(pull: dict, pages: list, expected_head: str, coordinate: str) -> bo
         if status == "renamed":
             paths.add(safe_path(entry.get("previous_filename")))
         if name == ".github/workflows/dependency-submission.yml":
-            require_supported_publisher_patch(entry, coordinate)
+            require_supported_publisher_patch(entry)
     return bool(paths & RELEVANT_PATHS)
 
 
@@ -138,7 +126,7 @@ def action_pin(text: str, action: str) -> str:
     return pins[0]
 
 
-def check_contract(production: str, pr_workflow: str, coordinate: str) -> None:
+def check_contract(production: str, pr_workflow: str) -> None:
     require("  pull_request:" not in production and "  pull_request_target:" not in production,
             "production dependency publisher must not run on PR events")
     require("      contents: write" in production,
@@ -149,14 +137,17 @@ def check_contract(production: str, pr_workflow: str, coordinate: str) -> None:
             "production publisher may write Gradle cache")
     require("dependency-graph-continue-on-failure: false" in production,
             "production publisher no longer fails closed")
+    require(production.count(FILTER_LINE) == 1,
+            "production publisher must submit only packaged runtime configuration")
+    require(production.count(RUNTIME_SCOPE_ENV_LINE) == 1,
+            "production publisher must classify packaged configuration as runtime scope")
     dynamic_verifier = (
         "python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\" in production
         and "--dir dependency-graph-reports \\" in production
-        and '--head "$GITHUB_SHA" \\' in production
-        and "--version-catalog gradle/libs.versions.toml" in production
+        and '--head "$GITHUB_SHA"' in production
     )
     require(dynamic_verifier,
-            "production publisher must verify graph coverage from the version catalog")
+            "production publisher must verify exact-main packaged runtime graph provenance")
     require("python3 - <<'PY'" not in production,
             "production publisher must not duplicate dependency graph verification inline")
 
@@ -175,6 +166,10 @@ def check_contract(production: str, pr_workflow: str, coordinate: str) -> None:
             "PR dependency adapter no longer fails closed")
     require("dependency-graph-report-dir: dependency-graph-reports-pr" in job,
             "PR dependency adapter report directory drifted")
+    require(job.count(FILTER_LINE) == 1,
+            "PR adapter must mirror packaged runtime configuration filter")
+    require(job.count(RUNTIME_SCOPE_ENV_LINE) == 1,
+            "PR adapter must mirror packaged runtime scope classification")
     require(
         "repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}" in job
         and "ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.target_sha || github.sha }}" in job,
@@ -191,7 +186,33 @@ def production_eligible(graph: dict, source_sha: str) -> bool:
     return graph.get("sha") == source_sha and graph.get("ref") == "refs/heads/main"
 
 
-def verify_main_graph(directory: Path, expected_head: str, coordinate: str) -> dict:
+def validate_packaged_runtime_scope(resolved: dict[str, dict]) -> tuple[int, int]:
+    development: list[tuple[str, dict]] = []
+    runtime = 0
+    for coordinate, node in resolved.items():
+        require(isinstance(node, dict), f"malformed dependency node: {coordinate}")
+        scope = node.get("scope")
+        require(scope in {"runtime", "development"},
+                f"dependency node has invalid scope: {coordinate}={scope}")
+        package_url = node.get("package_url")
+        require(isinstance(package_url, str) and package_url.startswith("pkg:"),
+                f"dependency node lacks package URL: {coordinate}")
+        if scope == "development":
+            development.append((coordinate, node))
+        else:
+            runtime += 1
+
+    require(len(development) == 1,
+            f"packaged runtime graph leaked development dependencies: {len(development)} found")
+    dev_coordinate, dev_node = development[0]
+    require(dev_node.get("relationship") == "direct",
+            "Gradle build-tool node must remain a direct dependency")
+    require(str(dev_node.get("package_url", "")).startswith("pkg:maven/org.gradle/gradle-core@"),
+            f"unexpected development dependency leaked into packaged runtime graph: {dev_coordinate}")
+    return runtime, len(development)
+
+
+def verify_main_graph(directory: Path, expected_head: str) -> dict:
     require(SHA.fullmatch(expected_head or "") is not None, "invalid protected-main HEAD")
     files = sorted(directory.rglob("*.json"))
     require(len(files) == 1, f"expected exactly one dependency graph report, got {len(files)}")
@@ -207,23 +228,25 @@ def verify_main_graph(directory: Path, expected_head: str, coordinate: str) -> d
         nodes = manifest.get("resolved")
         require(isinstance(nodes, dict), "dependency graph manifest lacks resolved dependencies")
         resolved.update(nodes)
-    require(len(resolved) >= 450,
-            f"dependency graph lost required coverage: {len(resolved)} < 450")
-    require(coordinate in resolved, f"dependency graph lost required coordinate: {coordinate}")
+    require(resolved, "packaged runtime dependency graph is empty")
     direct = sum(isinstance(node, dict) and node.get("relationship") == "direct"
                  for node in resolved.values())
-    require(direct >= 40, f"dependency graph lost direct coverage: {direct} < 40")
+    require(direct >= 1, "packaged runtime dependency graph has no direct dependency")
+    runtime, development = validate_packaged_runtime_scope(resolved)
     return {
         "source_sha": expected_head,
         "event_ref": "refs/heads/main",
         "manifests": len(manifests),
         "resolved": len(resolved),
         "direct": direct,
+        "runtime": runtime,
+        "development": development,
+        "configuration": RUNTIME_CONFIGURATION,
         "production_evidence": True,
     }
 
 
-def verify_graph(directory: Path, expected_head: str, event_ref: str, coordinate: str) -> dict:
+def verify_graph(directory: Path, expected_head: str, event_ref: str) -> dict:
     require(SHA.fullmatch(expected_head or "") is not None, "invalid expected PR HEAD")
     require(isinstance(event_ref, str) and event_ref.startswith("refs/pull/"),
             "dependency fixture did not run in pull_request ref context")
@@ -245,18 +268,20 @@ def verify_graph(directory: Path, expected_head: str, event_ref: str, coordinate
         nodes = manifest.get("resolved")
         require(isinstance(nodes, dict), "dependency graph manifest lacks resolved dependencies")
         resolved.update(nodes)
-    require(len(resolved) >= 450,
-            f"dependency graph lost required coverage: {len(resolved)} < 450")
-    require(coordinate in resolved, f"dependency graph lost required coordinate: {coordinate}")
+    require(resolved, "packaged runtime dependency graph is empty")
     direct = sum(isinstance(node, dict) and node.get("relationship") == "direct"
                  for node in resolved.values())
-    require(direct >= 40, f"dependency graph lost direct coverage: {direct} < 40")
+    require(direct >= 1, "packaged runtime dependency graph has no direct dependency")
+    runtime, development = validate_packaged_runtime_scope(resolved)
     return {
         "source_sha": expected_head,
         "event_ref": event_ref,
         "manifests": len(manifests),
         "resolved": len(resolved),
         "direct": direct,
+        "runtime": runtime,
+        "development": development,
+        "configuration": RUNTIME_CONFIGURATION,
         "production_evidence": False,
     }
 
@@ -264,13 +289,13 @@ def verify_graph(directory: Path, expected_head: str, event_ref: str, coordinate
 def self_test() -> None:
     import tempfile
     sha = "a" * 40
-    coordinate = COORDINATE_KEY + ":fixture-current"
+    coordinate = "example:runtime:1.0"
     pull = {"head": {"sha": sha}, "changed_files": 1}
     assert classify(pull, [[{
         "filename": ".github/scripts/trusted-dependency-submission-validation.py",
         "status": "modified",
-    }]], sha, coordinate)
-    assert not classify(pull, [[{"filename": "README.md", "status": "modified"}]], sha, coordinate)
+    }]], sha)
+    assert not classify(pull, [[{"filename": "README.md", "status": "modified"}]], sha)
 
     pin_patch = (
         "@@ -1 +1 @@\n"
@@ -281,53 +306,44 @@ def self_test() -> None:
         "filename": ".github/workflows/dependency-submission.yml",
         "status": "modified",
         "patch": pin_patch,
-    }]], sha, coordinate)
+    }]], sha)
 
-    migration_patch = (
-        "@@ -1,3 +1,4 @@\n"
-        "-          python3 - <<'PY'\n"
-        '-          required = {"' + COORDINATE_KEY + ':fixture-previous"}\n'
-        "-          PY\n"
-        "+          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\\n"
-        "+            --dir dependency-graph-reports \\\n"
-        '+            --head "$GITHUB_SHA" \\\n'
-        "+            --version-catalog gradle/libs.versions.toml"
+    runtime_scope_patch = (
+        "@@ -1,6 +1,7 @@\n"
+        "+        env:\n"
+        "+          " + RUNTIME_SCOPE_ENV_LINE + "\n"
+        "         with:\n"
+        "+          " + FILTER_LINE + "\n"
+        "-            --head \"$GITHUB_SHA\" \\\n"
+        "-            --version-catalog gradle/libs.versions.toml\n"
+        "+            --head \"$GITHUB_SHA\""
     )
     assert classify(pull, [[{
         "filename": ".github/workflows/dependency-submission.yml",
         "status": "modified",
-        "patch": migration_patch,
-    }]], sha, coordinate)
+        "patch": runtime_scope_patch,
+    }]], sha)
 
     bad_cases = [
         ({"head": {"sha": sha}, "changed_files": 2},
-         [[{"filename": "README.md", "status": "modified"}]], sha, coordinate),
-        (pull, [[{"filename": "../bad", "status": "modified"}]], sha, coordinate),
-        (pull, [[{"filename": "new", "status": "renamed"}]], sha, coordinate),
+         [[{"filename": "README.md", "status": "modified"}]], sha),
+        (pull, [[{"filename": "../bad", "status": "modified"}]], sha),
+        (pull, [[{"filename": "new", "status": "renamed"}]], sha),
         (pull, [[{
             "filename": ".github/workflows/dependency-submission.yml",
             "status": "modified",
             "patch": "@@ -1 +1 @@\n-permissions: {}\n+permissions: write-all",
-        }]], sha, coordinate),
-        (pull, [[{
-            "filename": ".github/workflows/dependency-submission.yml",
-            "status": "modified",
-            "patch": (
-                "@@ -1 +1 @@\n"
-                '-          required = {"' + COORDINATE_KEY + ':fixture-previous"}\n'
-                '+          required = {"' + coordinate + '"}'
-            ),
-        }]], sha, coordinate),
+        }]], sha),
         (pull, [[{
             "filename": ".github/workflows/dependency-submission.yml",
             "status": "removed",
             "patch": pin_patch,
-        }]], sha, coordinate),
-        (pull, [[{"filename": "README.md", "status": "modified"}]], "d" * 40, coordinate),
+        }]], sha),
+        (pull, [[{"filename": "README.md", "status": "modified"}]], "d" * 40),
     ]
-    for bad_pull, bad_pages, bad_sha, bad_coordinate in bad_cases:
+    for bad_pull, bad_pages, bad_sha in bad_cases:
         try:
-            classify(bad_pull, bad_pages, bad_sha, bad_coordinate)
+            classify(bad_pull, bad_pages, bad_sha)
         except ValueError:
             pass
         else:
@@ -339,7 +355,9 @@ def self_test() -> None:
         "      - uses: actions/checkout@" + "1" * 40 + "\n"
         "      - uses: actions/setup-java@" + "2" * 40 + "\n"
         "      - uses: gradle/actions/dependency-submission@" + "3" * 40 + "\n"
+        "        env:\n          " + RUNTIME_SCOPE_ENV_LINE + "\n"
         "        with:\n          cache-read-only: true\n"
+        "          " + FILTER_LINE + "\n"
         "          dependency-graph: generate-and-submit\n"
         "          dependency-graph-continue-on-failure: false\n"
         "      - name: Verify submitted graph coverage and provenance\n"
@@ -347,8 +365,7 @@ def self_test() -> None:
         "          set -euo pipefail\n"
         "          python3 .github/scripts/trusted-dependency-submission-validation.py verify-main \\\n"
         "            --dir dependency-graph-reports \\\n"
-        "            --head \"$GITHUB_SHA\" \\\n"
-        "            --version-catalog gradle/libs.versions.toml\n"
+        "            --head \"$GITHUB_SHA\"\n"
     )
     pr = (
         "jobs:\n  dependencySubmissionValidation:\n"
@@ -361,21 +378,25 @@ def self_test() -> None:
         "          persist-credentials: false\n"
         "      - uses: actions/setup-java@" + "2" * 40 + "\n"
         "      - uses: gradle/actions/dependency-submission@" + "3" * 40 + "\n"
+        "        env:\n          " + RUNTIME_SCOPE_ENV_LINE + "\n"
         "        with:\n          cache-read-only: true\n"
+        "          " + FILTER_LINE + "\n"
         "          dependency-graph: generate-and-upload\n"
         "          dependency-graph-report-dir: dependency-graph-reports-pr\n"
         "          dependency-graph-continue-on-failure: false\n"
     )
-    check_contract(prod, pr, coordinate)
+    check_contract(prod, pr)
     for mutated in (
         pr.replace("dependency-graph: generate-and-upload", "dependency-graph: generate-and-submit"),
         pr.replace("contents: read", "contents: write", 1),
         pr.replace("cache-read-only: true", "cache-read-only: false"),
+        pr.replace(FILTER_LINE, "dependency-graph-include-configurations: '.*'"),
+        pr.replace(RUNTIME_SCOPE_ENV_LINE, "DEPENDENCY_GRAPH_RUNTIME_INCLUDE_CONFIGURATIONS: '.*'"),
         pr.replace("gradle/actions/dependency-submission@" + "3" * 40,
                    "gradle/actions/dependency-submission@" + "4" * 40),
     ):
         try:
-            check_contract(prod, mutated, coordinate)
+            check_contract(prod, mutated)
         except ValueError:
             pass
         else:
@@ -383,31 +404,43 @@ def self_test() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        catalog = root / "libs.versions.toml"
-        catalog.write_text('intelliJPlatform = "fixture-current"\n', encoding="utf-8")
-        assert expected_coordinate(catalog) == coordinate
-        resolved = {f"example:indirect:{i}": {"relationship": "indirect"} for i in range(410)}
-        for i in range(39):
-            resolved[f"example:direct:{i}"] = {"relationship": "direct"}
-        resolved[coordinate] = {"relationship": "direct"}
+        resolved = {
+            "org.gradle:gradle-core:9.9.1": {
+                "package_url": "pkg:maven/org.gradle/gradle-core@9.9.1",
+                "relationship": "direct",
+                "scope": "development",
+            },
+            coordinate: {
+                "package_url": "pkg:maven/example/runtime@1.0",
+                "relationship": "direct",
+                "scope": "runtime",
+            },
+            "example:child:1.0": {
+                "package_url": "pkg:maven/example/child@1.0",
+                "relationship": "indirect",
+                "scope": "runtime",
+            },
+        }
         graph = {
             "sha": sha,
             "ref": "refs/pull/7/merge",
             "manifests": {"root": {"resolved": resolved}},
         }
         (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
-        result = verify_graph(root, sha, "refs/pull/7/merge", coordinate)
-        assert result["resolved"] == 450 and result["direct"] == 40
+        result = verify_graph(root, sha, "refs/pull/7/merge")
+        assert result["resolved"] == 3 and result["direct"] == 2 and result["runtime"] == 2
+        assert result["development"] == 1
         assert result["production_evidence"] is False
         graph["ref"] = "refs/heads/main"
         (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
-        main_result = verify_main_graph(root, sha, coordinate)
-        assert main_result["resolved"] == 450 and main_result["direct"] == 40
+        main_result = verify_main_graph(root, sha)
+        assert main_result["resolved"] == 3 and main_result["direct"] == 2 and main_result["runtime"] == 2
+        assert main_result["development"] == 1
         assert main_result["production_evidence"] is True
         graph["ref"] = "refs/pull/7/merge"
         (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
         try:
-            verify_graph(root, sha, "refs/heads/main", coordinate)
+            verify_graph(root, sha, "refs/heads/main")
         except ValueError:
             pass
         else:
@@ -415,11 +448,22 @@ def self_test() -> None:
         graph["sha"] = "b" * 40
         (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
         try:
-            verify_graph(root, sha, "refs/pull/7/merge", coordinate)
+            verify_graph(root, sha, "refs/pull/7/merge")
         except ValueError:
             pass
         else:
             raise AssertionError("wrong source SHA was accepted")
+
+        graph["sha"] = sha
+        graph["ref"] = "refs/pull/7/merge"
+        graph["manifests"]["root"]["resolved"][coordinate]["scope"] = "development"
+        (root / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
+        try:
+            verify_graph(root, sha, "refs/pull/7/merge")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("non-Gradle development dependency leak was accepted")
 
     print("trusted dependency-submission PR adapter self-tests passed")
 
@@ -431,48 +475,39 @@ def main() -> int:
     classify_p.add_argument("--pull", type=Path, required=True)
     classify_p.add_argument("--pages", type=Path, required=True)
     classify_p.add_argument("--head", required=True)
-    classify_p.add_argument("--version-catalog", type=Path, required=True)
     contract_p = sub.add_parser("check-contract")
     contract_p.add_argument("--production", type=Path, required=True)
     contract_p.add_argument("--pr-workflow", type=Path, required=True)
-    contract_p.add_argument("--version-catalog", type=Path, required=True)
     verify_p = sub.add_parser("verify")
     verify_p.add_argument("--dir", type=Path, required=True)
     verify_p.add_argument("--head", required=True)
     verify_p.add_argument("--event-ref", required=True)
-    verify_p.add_argument("--version-catalog", type=Path, required=True)
     verify_main_p = sub.add_parser("verify-main")
     verify_main_p.add_argument("--dir", type=Path, required=True)
     verify_main_p.add_argument("--head", required=True)
-    verify_main_p.add_argument("--version-catalog", type=Path, required=True)
     sub.add_parser("self-test")
     args = parser.parse_args()
     try:
         if args.command == "classify":
-            coordinate = expected_coordinate(args.version_catalog)
             required = classify(
                 json.loads(args.pull.read_text(encoding="utf-8")),
                 json.loads(args.pages.read_text(encoding="utf-8")),
-                args.head, coordinate,
+                args.head,
             )
             print("required=" + str(required).lower())
         elif args.command == "check-contract":
-            coordinate = expected_coordinate(args.version_catalog)
             check_contract(
                 args.production.read_text(encoding="utf-8"),
                 args.pr_workflow.read_text(encoding="utf-8"),
-                coordinate,
             )
         elif args.command == "verify":
-            coordinate = expected_coordinate(args.version_catalog)
             print(json.dumps(
-                verify_graph(args.dir, args.head, args.event_ref, coordinate),
+                verify_graph(args.dir, args.head, args.event_ref),
                 sort_keys=True,
             ))
         elif args.command == "verify-main":
-            coordinate = expected_coordinate(args.version_catalog)
             print(json.dumps(
-                verify_main_graph(args.dir, args.head, coordinate),
+                verify_main_graph(args.dir, args.head),
                 sort_keys=True,
             ))
         else:

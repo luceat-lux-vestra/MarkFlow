@@ -37,33 +37,40 @@ assert_contract() {
   grep -Fxq '      contents: write' "$workflow" || die "submission job lacks contents: write"
   grep -Fxq '          cache-read-only: true' "$workflow" || die "publisher must never write Gradle caches"
   grep -Fxq '          dependency-graph: generate-and-submit' "$workflow" || die "publisher is not in submit mode"
+  grep -Fxq "          dependency-graph-include-configurations: '^intellijPlatformSandboxRuntimeClasspath$'" "$workflow" ||
+    die "publisher must submit only the packaged plugin runtime configuration"
+  grep -Fxq "          DEPENDENCY_GRAPH_RUNTIME_INCLUDE_CONFIGURATIONS: '^intellijPlatformSandboxRuntimeClasspath$'" "$workflow" ||
+    die "publisher must classify the packaged plugin configuration as runtime scope"
   grep -Fxq '          dependency-graph-continue-on-failure: false' "$workflow" || die "publisher must fail closed"
   grep -Fq 'gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c' "$workflow" || die "dependency-submission action pin drifted"
   grep -Fq '          persist-credentials: false' "$workflow" || die "checkout credentials must not persist"
   grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "publisher must checkout exact trigger SHA"
   grep -Fq 'python3 .github/scripts/trusted-dependency-submission-validation.py verify-main' "$workflow" ||
-    die "publisher must delegate graph verification to the catalog-aware validator"
+    die "publisher must delegate packaged runtime graph verification to the trusted validator"
   grep -Fq -- '--dir dependency-graph-reports' "$workflow" ||
     die "publisher graph verification report directory drifted"
   grep -Fq -- '--head "$GITHUB_SHA"' "$workflow" ||
     die "publisher graph verification must bind exact main SHA"
-  grep -Fq -- '--version-catalog gradle/libs.versions.toml' "$workflow" ||
-    die "publisher graph verification must derive coordinates from the version catalog"
 }
 
 assert_validator_contract() {
   local validator="$1"
   [ -f "$validator" ] || die "dependency submission validator is missing"
-  grep -Fq 'def expected_coordinate(catalog: Path) -> str:' "$validator" ||
-    die "validator no longer derives the dependency coordinate from the version catalog"
-  grep -Fq 'def verify_main_graph(directory: Path, expected_head: str, coordinate: str) -> dict:' "$validator" ||
-    die "protected-main graph verifier is missing"
-  grep -Fq 'require(len(resolved) >= 450,' "$validator" ||
-    die "minimum graph coverage assertion drifted"
-  grep -Fq 'require(direct >= 40,' "$validator" ||
-    die "minimum direct dependency coverage assertion drifted"
-  grep -Fq 'require(coordinate in resolved,' "$validator" ||
-    die "catalog-derived required coordinate assertion drifted"
+  grep -Fq 'RUNTIME_CONFIGURATION = "intellijPlatformSandboxRuntimeClasspath"' "$validator" ||
+    die "validator lost the packaged runtime configuration contract"
+  grep -Fq 'FILTER_LINE = f"dependency-graph-include-configurations:' "$validator" ||
+    die "validator lost dependency graph configuration filtering"
+  grep -Fq 'RUNTIME_SCOPE_ENV_LINE = (' "$validator" ||
+    die "validator lost runtime scope classification"
+  grep -Fq 'require(resolved, "packaged runtime dependency graph is empty")' "$validator" ||
+    die "runtime graph must fail closed when empty"
+  grep -Fq 'def validate_packaged_runtime_scope(resolved: dict[str, dict]) -> tuple[int, int]:' "$validator" ||
+    die "validator lost packaged runtime scope validation"
+  grep -Fq 'pkg:maven/org.gradle/gradle-core@' "$validator" ||
+    die "validator lost the single permitted development-scope build-tool identity"
+  if grep -Fq 'require(len(resolved) >= 450,' "$validator" || grep -Fq 'require(direct >= 40,' "$validator"; then
+    die "obsolete broad-graph cardinality contract returned"
+  fi
 }
 
 workflow=".github/workflows/dependency-submission.yml"
@@ -79,11 +86,12 @@ sed 's/generate-and-submit/generate-and-upload/' "$workflow" > "$fixtures/no-sub
 if ( assert_contract "$fixtures/no-submit.yml" ) 2>/dev/null; then die "no-submit fixture accepted"; fi
 sed '/gradle\/\*\*/d' "$workflow" > "$fixtures/missing-gradle-input.yml"
 if ( assert_contract "$fixtures/missing-gradle-input.yml" ) 2>/dev/null; then die "missing-input fixture accepted"; fi
+sed "s/\\^intellijPlatformSandboxRuntimeClasspath\\$/\.\*/" "$workflow" > "$fixtures/broad-runtime-scope.yml"
+if ( assert_contract "$fixtures/broad-runtime-scope.yml" ) 2>/dev/null; then die "broad-runtime-scope fixture accepted"; fi
 
 python3 .github/scripts/trusted-dependency-submission-validation.py self-test
 python3 .github/scripts/trusted-dependency-submission-validation.py check-contract \
   --production "$workflow" \
-  --pr-workflow .github/workflows/build.yml \
-  --version-catalog gradle/libs.versions.toml
+  --pr-workflow .github/workflows/build.yml
 
-echo "custom Gradle dependency submission contract passed (3 shell negative controls + catalog-aware validator self-tests)"
+echo "custom Gradle dependency submission contract passed (4 shell negative controls + packaged-runtime validator self-tests)"
