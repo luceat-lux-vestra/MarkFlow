@@ -15,6 +15,9 @@ owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNa
 if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell|leap2-owned-shell-probe' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
   die "#584 proof-era owned-shell symbol/property/task/path was reintroduced"
 fi
+if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeForNativeEditorShellProbe|native-editor-shell-probe' src build.gradle.kts .github/workflows; then
+  die "#584 superseded platform-augmentation shell proof was reintroduced"
+fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
@@ -23,6 +26,26 @@ fi
 if grep -R -Fq 'skipAutomaticProductionAttachment' src/main/kotlin; then
   die "#584 obsolete generic-attachment probe suppression helper was reintroduced"
 fi
+
+grep -Fq 'private fun attachController(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost its private controller attachment primitive"
+grep -Fq 'private fun releaseController(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost its private controller release primitive"
+grep -Fq 'internal fun hasControllerForDiagnostics(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost bounded controller-leak diagnostics"
+for retired_api in 'fun attach(editor: Editor)' 'fun release(editor: Editor)' 'fun refreshAll()'; do
+  if grep -Fq "$retired_api" "$production_lifecycle"; then
+    die "#584 superseded generic production lifecycle API returned: $retired_api"
+  fi
+done
+if grep -R -Fq 'NativeMarkFlowProductionLifecycle.controller(' src --exclude='NativeMarkFlowProductionLifecycle.kt'; then
+  die "#584 controller object escaped the owned lifecycle through a generic lookup"
+fi
+if grep -R -Eq 'NativeMarkFlowProductionLifecycle\.(attach|release|refreshAll)\(' src; then
+  die "#584 superseded generic lifecycle consumer returned"
+fi
+grep -Fq 'NativeMarkFlowProductionLifecycle.hasControllerForDiagnostics' "$owned_runtime_probe" ||
+  die "#584 production runtime evidence lost bundled-editor controller leak detection"
 
 wrapper="gradle/wrapper/gradle-wrapper.properties"
 wrapper_gradle="$(sed -n 's#^distributionUrl=.*gradle-\([0-9][0-9.]*\)-bin\.zip$#\1#p' "$wrapper")"
@@ -503,7 +526,6 @@ for job in \
   derived_renderer \
   native_derived_presentation \
   native_editing \
-  native_editor_shell \
   owned_file_editor_runtime \
   native_host_resources \
   native_image_import \
@@ -516,7 +538,6 @@ for semantic_probe in \
   'markflow-derived-renderer-probe' \
   'markflow.nativeDerivedPresentationProbe.output' \
   'runIdeForNativeEditingProbe' \
-  'runIdeForNativeEditorShellProbe' \
   'runIdeForOwnedNativeFileEditorRuntimeProbe' \
   'runIdeForOwnedNativeFileEditorRuntimeNoJcefProbe' \
   'runIdeForNativeHostResourcesProbe' \
@@ -527,7 +548,7 @@ for semantic_probe in \
 done
 
 exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sha }}' "$native_evidence_workflow")"
-[ "$exact_native_checkout_count" -ge 9 ] ||
+[ "$exact_native_checkout_count" -ge 8 ] ||
   die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
 
 
@@ -547,7 +568,7 @@ for job in \
   derived_renderer \
   native_derived_presentation \
   native_editing \
-  native_editor_shell \
+  owned_file_editor_runtime \
   native_host_resources \
   native_image_import \
   native_projection \
