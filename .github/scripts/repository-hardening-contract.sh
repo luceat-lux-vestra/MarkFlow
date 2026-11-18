@@ -12,8 +12,8 @@ die() {
 owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNativeFileEditorRuntimeProbe.kt"
 [ -f "$owned_runtime_probe" ] || die "#584 production owned-FileEditor runtime evidence source is missing"
 [ ! -e "src/main/kotlin/com/algorist/markflow/editor/native/Leap2OwnedShellProbe.kt" ] || die "#584 obsolete #556 shell-proof source returned"
-if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
-  die "#584 proof-era owned-shell symbol/property/task was reintroduced"
+if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell|leap2-owned-shell-probe' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
+  die "#584 proof-era owned-shell symbol/property/task/path was reintroduced"
 fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
