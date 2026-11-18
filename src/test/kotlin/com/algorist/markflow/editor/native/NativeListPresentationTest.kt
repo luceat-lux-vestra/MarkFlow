@@ -568,6 +568,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             }
         }
     }
+
     fun testUnorderedLexicalMarkersShareSemanticBulletWithoutNormalizingSource() {
         val source = "- dash\n\n* star\n\n+ plus\n\n1. ordered\n"
         val plan = NativeMarkdownProjectionPlanner.plan(
