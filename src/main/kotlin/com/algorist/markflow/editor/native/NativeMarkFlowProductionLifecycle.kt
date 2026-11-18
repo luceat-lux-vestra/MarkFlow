@@ -9,8 +9,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
-import com.intellij.openapi.editor.event.EditorFactoryEvent
-import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
@@ -196,31 +194,6 @@ internal object NativeMarkFlowProductionLifecycle {
     }
 
     private val LOG = Logger.getInstance(NativeMarkFlowProductionLifecycle::class.java)
-}
-
-/**
- * Pre-ADR-0003 production lifecycle hook retained only as a source-control rollback boundary.
- * Slice 4 owns deletion after post-cutover evidence.
- */
-@Suppress("unused")
-class NativeMarkFlowEditorFactoryListener : EditorFactoryListener {
-    override fun editorCreated(event: EditorFactoryEvent) {
-        if (skipAutomaticProductionAttachment()) return
-        NativeMarkFlowProductionLifecycle.attach(event.editor)
-    }
-
-    override fun editorReleased(event: EditorFactoryEvent) {
-        if (skipAutomaticProductionAttachment()) return
-        NativeMarkFlowProductionLifecycle.release(event.editor)
-    }
-
-    private fun skipAutomaticProductionAttachment(): Boolean {
-        val application = ApplicationManager.getApplication()
-        if (application.isUnitTestMode) return true
-        return System.getProperties().stringPropertyNames().any { property ->
-            property.startsWith("markflow.") && property.endsWith("Probe.output")
-        }
-    }
 }
 
 /** Base-plugin presentation invalidation sink; optional renderer ownership remains separate. */
