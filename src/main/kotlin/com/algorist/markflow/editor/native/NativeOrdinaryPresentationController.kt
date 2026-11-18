@@ -466,12 +466,21 @@ private class NativeSyntaxPresentationOwner(
             else -> listOf(projection.sourceRange)
         }
         val semanticAttributes = attributesFor(projection.kind)
+        val semanticLayer = if (projection.kind == NativeProjectionKind.LINK) {
+            // Bundled Markdown installs EXPLICIT_LINK/LINK_TEXT document markup at
+            // ADDITIONAL_SYNTAX over this exact visible range. Equal layer + equal range has no
+            // deterministic tie-breaker in IntelliJ IterationState, so the maintained MarkFlow
+            // hyperlink overlay must sit one layer above that syntax-owned markup.
+            HighlighterLayer.ADDITIONAL_SYNTAX + 1
+        } else {
+            HighlighterLayer.ADDITIONAL_SYNTAX
+        }
         ranges.forEach { range ->
             highlighters += if (semanticAttributes != null) {
                 editor.markupModel.addRangeHighlighter(
                     range.startOffset,
                     range.endOffset,
-                    HighlighterLayer.ADDITIONAL_SYNTAX,
+                    semanticLayer,
                     semanticAttributes,
                     HighlighterTargetArea.EXACT_RANGE,
                 )
@@ -480,7 +489,7 @@ private class NativeSyntaxPresentationOwner(
                     keyFor(projection.kind),
                     range.startOffset,
                     range.endOffset,
-                    HighlighterLayer.ADDITIONAL_SYNTAX,
+                    semanticLayer,
                     HighlighterTargetArea.EXACT_RANGE,
                 )
             }
