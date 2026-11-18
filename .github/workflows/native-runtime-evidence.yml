@@ -1301,8 +1301,8 @@ jobs:
           evidence = json.loads(path.read_text(encoding='utf-8'))
           if evidence.get('schemaVersion') != 2:
               raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
-          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
-              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION':
+              raise SystemExit(f"unexpected production projection shell: {evidence.get('selectedShell')}")
           if evidence.get('parserStrategy') != 'JETBRAINS_BUNDLED_MARKDOWN':
               raise SystemExit(f"unexpected parser strategy: {evidence.get('parserStrategy')}")
           if evidence.get('jcefSupported') is not False:
@@ -1313,7 +1313,7 @@ jobs:
           required = {
               'jcef-disabled-projection-path',
               'authoritative-document-fixture',
-              'platform-text-and-markdown-coexistence',
+              'owned-file-editor-and-markdown-coexistence',
               'attach-no-edit-source-stability',
               'parser-proven-projection-plan',
               'inline-and-block-native-presentation',
@@ -1343,6 +1343,10 @@ jobs:
           fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
           if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
               raise SystemExit(f'native projection proof did not run inside a real opened project: {fixture_detail}')
+          coexist_detail = str(by_id['owned-file-editor-and-markdown-coexistence'].get('detail', ''))
+          for marker in ('ownedProvider=true', 'policy=PLACE_BEFORE_DEFAULT_EDITOR', 'bundledMarkdown=true', 'legacyBrowserProvider=false'):
+              if marker not in coexist_detail:
+                  raise SystemExit(f'production owned FileEditor coexistence missing {marker}: {coexist_detail}')
           stale_detail = str(by_id['stale-plan-rejected-before-apply'].get('detail', ''))
           if 'staleRejected=true' not in stale_detail:
               raise SystemExit(f'source-stale projection was not proven rejected: {stale_detail}')
@@ -1359,8 +1363,9 @@ jobs:
           if 'multicaretSelectionReveal=true' not in reveal_detail:
               raise SystemExit(f'multicaret source-reveal evidence incomplete: {reveal_detail}')
           lifecycle_detail = str(by_id['final-lifecycle-ownership'].get('detail', ''))
-          if 'controllers=0' not in lifecycle_detail or 'editors=0' not in lifecycle_detail:
-              raise SystemExit(f'projection lifecycle cleanup incomplete: {lifecycle_detail}')
+          for marker in ('controllers=0', 'editors=0', 'ownedControllers=0', 'ownedFileEditors=0', 'isolatedControllers=0', 'isolatedEditors=0'):
+              if marker not in lifecycle_detail:
+                  raise SystemExit(f'projection lifecycle cleanup missing {marker}: {lifecycle_detail}')
 
           parity_path = Path('build/native-projection-probe/parity.json')
           if not parity_path.is_file():

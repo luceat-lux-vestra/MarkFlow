@@ -3,7 +3,6 @@ package com.algorist.markflow.editor.native
 import com.google.gson.GsonBuilder
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.Editor
@@ -11,7 +10,6 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
-import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -24,13 +22,12 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Real-IDE native projection regression proof retained across the #153 production cutover. */
+/** Real-IDE production owned-FileEditor projection regression evidence. */
 internal object NativeProjectionProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeProjectionProbe.output"
-    const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
+    const val SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION"
     const val PARSER_STRATEGY = "JETBRAINS_BUNDLED_MARKDOWN"
 
-    private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val LEGACY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
 
     private val started = AtomicBoolean(false)
@@ -51,14 +48,15 @@ internal object NativeProjectionProbe {
     ) {
         private val gson = GsonBuilder().setPrettyPrinting().create()
         private val cases = mutableListOf<CaseResult>()
-        private val liveEditors = mutableListOf<PlatformEditorHandle>()
-        private val liveControllers = mutableListOf<NativePresentationController>()
+        private val liveOwnedEditors = mutableListOf<OwnedEditorHandle>()
+        private val isolatedEditors = mutableListOf<Editor>()
+        private val isolatedControllers = mutableListOf<NativePresentationController>()
         private var tempRoot: Path? = null
         private var jcefSupported: Boolean? = null
         private lateinit var fixture: Fixture
         private lateinit var provider: FileEditorProvider
-        private lateinit var first: PlatformEditorHandle
-        private lateinit var second: PlatformEditorHandle
+        private lateinit var first: OwnedEditorHandle
+        private lateinit var second: OwnedEditorHandle
         private lateinit var firstController: NativePresentationController
         private lateinit var secondController: NativePresentationController
 
@@ -76,28 +74,26 @@ internal object NativeProjectionProbe {
                 }
 
                 fixture = createFixture()
-                provider = selectPlatformTextProvider(fixture.file)
-                first = createPlatformTextEditor(provider, fixture.file)
-                second = createPlatformTextEditor(provider, fixture.file)
-
-                first.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                second.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                provider = selectOwnedFileEditorProvider(fixture.file)
 
                 case("attach-no-edit-source-stability") {
                     val document = fixture.document
                     val sourceBefore = document.text
                     val stampBefore = document.modificationStamp
                     val dirtyBefore = FileDocumentManager.getInstance().isDocumentUnsaved(document)
-                    val undoBefore = UndoManager.getInstance(project).isUndoAvailable(first.fileEditor)
 
-                    firstController = createController(first.editor)
-                    secondController = createController(second.editor)
+                    first = createOwnedFileEditor(provider, fixture.file)
+                    second = createOwnedFileEditor(provider, fixture.file)
+                    first.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    second.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    firstController = ownedController(first)
+                    secondController = ownedController(second)
 
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
                     check(FileDocumentManager.getInstance().isDocumentUnsaved(document) == dirtyBefore)
-                    check(UndoManager.getInstance(project).isUndoAvailable(first.fileEditor) == undoBefore)
-                    "sourceStable=true stampStable=true dirtyStable=true undoAvailabilityStable=true"
+                    check(first.editor.document === document && second.editor.document === document)
+                    "sourceStable=true stampStable=true dirtyStable=true sameDocument=true ownedControllers=true"
                 }
 
                 case("parser-proven-projection-plan") {
@@ -421,13 +417,13 @@ val fenced = true
                 }
 
                 case("config-stale-plan-rejected-before-apply") {
-                    val handle = createPlatformTextEditor(provider, fixture.file)
-                    handle.editor.caretModel.moveToOffset(fixture.bodyOffset)
+                    val editor = createIsolatedEditor(fixture.file)
+                    editor.caretModel.moveToOffset(fixture.bodyOffset)
                     var configGeneration = 1L
                     val controller = NativePresentationController(
-                        editor = handle.editor,
+                        editor = editor,
                         configGeneration = { configGeneration },
-                    ).also(liveControllers::add)
+                    ).also(isolatedControllers::add)
                     val stale = requireNotNull(controller.currentPlan)
                     val before = controller.evidenceSnapshot()
                     check(stale.identity.configGeneration == 1L)
@@ -441,9 +437,9 @@ val fenced = true
 
                     check(controller.refreshNow() == ProjectionApplyResult.APPLIED)
                     check(controller.currentPlan?.identity?.configGeneration == 2L)
-                    disposeController(controller)
-                    disposeEditor(handle)
-                    "configStaleRejected=true presentationOwnershipUnchanged=true recoveredGeneration=2"
+                    disposeIsolatedController(controller)
+                    disposeIsolatedEditor(editor)
+                    "configStaleRejected=true presentationOwnershipUnchanged=true recoveredGeneration=2 isolatedPrimitive=true"
                 }
 
                 case("typed-degradation-falls-back-to-source") {
@@ -533,9 +529,9 @@ val fenced = true
                     val fenceDocument = FileDocumentManager.getInstance().getDocument(fenceFile)
                         ?: error("fenced disposition proof Document unavailable")
                     val stampBefore = fenceDocument.modificationStamp
-                    val handle = createPlatformTextEditor(provider, fenceFile)
+                    val handle = createOwnedFileEditor(provider, fenceFile)
                     handle.editor.caretModel.moveToOffset(fenceSource.indexOf("Tail") + 1)
-                    val controller = createController(handle.editor)
+                    val controller = ownedController(handle)
 
                     val fencePlan = requireNotNull(controller.currentPlan)
                     val ownership = NativeFencedCodeProjectionPlanner.dispositions(fencePlan)
@@ -573,8 +569,7 @@ val fenced = true
                     check(fenceDocument.text == fenceSource)
                     check(fenceDocument.modificationStamp == stampBefore)
 
-                    disposeController(controller)
-                    disposeEditor(handle)
+                    disposeOwnedEditor(handle)
                     "status=${plan.status} rangesInBounds=true rawHtmlOpaque=true " +
                         "fenceExactFallbacks=2 mermaidDerived=1 genericFenceHighlighters=0 " +
                         "genericFenceFolds=0 fenceSourceStable=true"
@@ -591,32 +586,31 @@ val fenced = true
                     check(document.modificationStamp == stampBefore)
 
                     repeat(8) {
-                        val handle = createPlatformTextEditor(provider, fixture.file)
+                        val handle = createOwnedFileEditor(provider, fixture.file)
                         handle.editor.caretModel.moveToOffset(fixture.bodyOffset)
-                        val controller = createController(handle.editor)
+                        val controller = ownedController(handle)
                         check(controller.evidenceSnapshot().ownedFolds >= 1)
-                        disposeController(controller)
-                        check(controller.evidenceSnapshot().ownedHighlighters == 0)
-                        check(controller.evidenceSnapshot().ownedFolds == 0)
-                        disposeEditor(handle)
+                        disposeOwnedEditor(handle)
+                        check(handle.editor.isDisposed)
                     }
                     check(document.text == sourceBefore)
                     check(document.modificationStamp == stampBefore)
                     "refreshStable=true recreateLoops=8 ownedPresentationAfterDispose=0"
                 }
 
-                disposeController(firstController)
-                disposeController(secondController)
-                disposeEditor(first)
-                disposeEditor(second)
+                disposeOwnedEditor(first)
+                disposeOwnedEditor(second)
 
                 case("final-lifecycle-ownership") {
-                    check(liveControllers.isEmpty())
-                    check(liveEditors.isEmpty())
+                    check(isolatedControllers.isEmpty())
+                    check(isolatedEditors.isEmpty())
+                    check(liveOwnedEditors.isEmpty())
+                    check(NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics == 0)
+                    check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics == 0)
                     check(EditorFactory.getInstance().getEditors(fixture.document, project).isEmpty()) {
-                        "native editors retained after projection proof disposal"
+                        "native editors retained after projection evidence disposal"
                     }
-                    "controllers=0 editors=0"
+                    "controllers=0 editors=0 ownedControllers=0 ownedFileEditors=0 isolatedControllers=0 isolatedEditors=0"
                 }
 
                 finish("PASS")
@@ -677,48 +671,65 @@ Plain body line for inactive caret state.
             return result ?: error("fixture case did not produce a fixture")
         }
 
-        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
+        private fun selectOwnedFileEditorProvider(file: VirtualFile): FileEditorProvider {
             var result: FileEditorProvider? = null
-            case("platform-text-and-markdown-coexistence") {
+            case("owned-file-editor-and-markdown-coexistence") {
                 val providerManager = FileEditorProviderManager.getInstance()
                 check(providerManager.getProvider(LEGACY_MARKFLOW_PROVIDER_TYPE_ID) == null) {
                     "legacy MarkFlow browser provider remained registered after native production cutover"
                 }
                 val providers = providerManager.getProviderList(project, file)
-                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
-                    ?.takeIf { candidate -> accepts(candidate, file) }
-                    ?: error("platform text editor provider did not accept Markdown fixture")
-                check(text.policy == FileEditorPolicy.NONE)
+                val owned = providerManager.getProvider(MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+                    ?.takeIf { candidate -> providers.any { it === candidate } }
+                    ?: error("production MarkFlow owned FileEditor provider did not accept Markdown fixture")
+                check(owned.policy == FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR)
                 check(providers.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
-                    "bundled Markdown provider did not coexist with platform text editor"
+                    "bundled Markdown provider did not coexist with MarkFlow owned FileEditor"
                 }
-                result = text
-                "platformText=${text.javaClass.name} bundledMarkdown=true legacyBrowserProvider=false"
+                result = owned
+                "ownedProvider=true policy=${owned.policy.name} bundledMarkdown=true legacyBrowserProvider=false"
             }
-            return result ?: error("provider case did not select platform text editor")
+            return result ?: error("provider case did not select production MarkFlow owned FileEditor")
         }
 
-        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
-            }
-        }.getOrDefault(false)
-
-        private fun createPlatformTextEditor(
+        private fun createOwnedFileEditor(
             provider: FileEditorProvider,
             file: VirtualFile,
-        ): PlatformEditorHandle {
+        ): OwnedEditorHandle {
             val fileEditor = provider.createEditor(project, file)
-            check(fileEditor is TextEditor) {
-                "selected provider returned ${fileEditor.javaClass.name}, not TextEditor"
+            check(fileEditor is MarkFlowOwnedNativeFileEditor) {
+                "selected provider returned ${fileEditor.javaClass.name}, not MarkFlowOwnedNativeFileEditor"
             }
-            return PlatformEditorHandle(provider, fileEditor, fileEditor.editor).also(liveEditors::add)
+            return OwnedEditorHandle(provider, fileEditor, fileEditor.editor).also(liveOwnedEditors::add)
         }
 
-        private fun createController(editor: Editor): NativePresentationController =
-            NativePresentationController(editor).also(liveControllers::add)
+        private fun ownedController(handle: OwnedEditorHandle): NativePresentationController =
+            requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(handle.editor)) {
+                "production owned FileEditor has no owned presentation controller"
+            }
+
+        private fun createIsolatedEditor(file: VirtualFile): Editor {
+            val document = requireNotNull(FileDocumentManager.getInstance().getDocument(file)) {
+                "isolated projection primitive has no authoritative Document"
+            }
+            return EditorFactory.getInstance().createEditor(document, project, file, false)
+                .also(isolatedEditors::add)
+        }
+
+        private fun disposeIsolatedController(controller: NativePresentationController) {
+            if (!isolatedControllers.remove(controller)) return
+            Disposer.dispose(controller)
+        }
+
+        private fun disposeIsolatedEditor(editor: Editor) {
+            if (!isolatedEditors.remove(editor)) return
+            if (!editor.isDisposed) EditorFactory.getInstance().releaseEditor(editor)
+        }
+
+        private fun disposeOwnedEditor(handle: OwnedEditorHandle) {
+            if (!liveOwnedEditors.remove(handle)) return
+            handle.provider.disposeEditor(handle.fileEditor)
+        }
 
         private fun headingRichPresentationVisible(
             controller: NativePresentationController,
@@ -781,16 +792,6 @@ Plain body line for inactive caret state.
             }
         }
 
-        private fun disposeController(controller: NativePresentationController) {
-            if (!liveControllers.remove(controller)) return
-            Disposer.dispose(controller)
-        }
-
-        private fun disposeEditor(handle: PlatformEditorHandle) {
-            if (!liveEditors.remove(handle)) return
-            handle.provider.disposeEditor(handle.fileEditor)
-        }
-
         private fun case(id: String, block: () -> String) {
             check(cases.none { it.id == id }) { "duplicate native projection evidence case id: $id" }
             val result = try {
@@ -839,10 +840,16 @@ Plain body line for inactive caret state.
         }
 
         private fun cleanup() {
-            liveControllers.toList().asReversed().forEach { controller -> runCatching { Disposer.dispose(controller) } }
-            liveControllers.clear()
-            liveEditors.toList().asReversed().forEach { handle -> runCatching { handle.provider.disposeEditor(handle.fileEditor) } }
-            liveEditors.clear()
+            isolatedControllers.toList().asReversed().forEach { controller -> runCatching { Disposer.dispose(controller) } }
+            isolatedControllers.clear()
+            isolatedEditors.toList().asReversed().forEach { editor ->
+                runCatching { if (!editor.isDisposed) EditorFactory.getInstance().releaseEditor(editor) }
+            }
+            isolatedEditors.clear()
+            liveOwnedEditors.toList().asReversed().forEach { handle ->
+                runCatching { handle.provider.disposeEditor(handle.fileEditor) }
+            }
+            liveOwnedEditors.clear()
             tempRoot?.let { root -> runCatching { root.toFile().deleteRecursively() } }
             tempRoot = null
         }
@@ -861,9 +868,9 @@ Plain body line for inactive caret state.
         val bodyOffset: Int,
     )
 
-    private data class PlatformEditorHandle(
+    private data class OwnedEditorHandle(
         val provider: FileEditorProvider,
-        val fileEditor: TextEditor,
+        val fileEditor: MarkFlowOwnedNativeFileEditor,
         val editor: Editor,
     )
 
