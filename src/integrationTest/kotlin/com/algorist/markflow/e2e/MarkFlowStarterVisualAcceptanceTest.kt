@@ -375,6 +375,11 @@ class MarkFlowStarterVisualAcceptanceTest {
         ) {
             "structure nested hierarchy or ordinary/task list shape differs from fixture"
         }
+        check(rows[0].map { it.getValue("continuations").toInt() } == listOf(1, 0, 0, 0) &&
+            rows[0].map { it.getValue("visual_lines").toInt() } == listOf(2, 1, 1, 1)
+        ) {
+            "structure multiline continuation is not owned by the parent list row"
+        }
         check(rows.flatten().all { row ->
             row["row_height_px"]?.toIntOrNull()?.let { it > 0 } == true &&
                 row["baseline_px"]?.toIntOrNull() != null

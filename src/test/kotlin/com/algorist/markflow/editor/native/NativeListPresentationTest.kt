@@ -204,7 +204,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             "- [ ] task\n- ordinary\n\nTail\n",
             "1. [ ] ordered task\n\nTail\n",
             "- [ ] parent\n  - [ ] nested\n\nTail\n",
-            "- first line\n  continuation\n\nTail\n",
+            "- [ ] first task\n  task continuation\n\nTail\n",
             "- item with *emphasis*\n\nTail\n",
             "- item with ~~strikethrough~~\n\nTail\n",
         )
@@ -567,6 +567,36 @@ class NativeListPresentationTest : BasePlatformTestCase() {
                 requireNotNull(foreign).takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
             }
         }
+    }
+
+
+    fun testPlainTextContinuationBelongsToParentRowAndAlignsAsAdditionalVisualLine() {
+        val source =
+            "- first item\n" +
+                "- item with continuation\n" +
+                "  on the next indented line.\n" +
+                "  - nested child\n" +
+                "    - deeper child\n" +
+                "- sibling\n\nTail\n"
+        myFixture.configureByText("list-continuation.md", source)
+        val editor = myFixture.editor
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+
+        assertEquals(listOf(0, 0, 1, 2, 0), model.rows.map(NativeListRow::depth))
+        assertEquals(listOf(0, 1, 0, 0, 0), model.rows.map { it.continuations.size })
+        val continuation = model.rows[1].continuations.single()
+        assertEquals("on the next indented line.", continuation.text)
+        assertEquals(
+            continuation.text,
+            source.substring(continuation.contentRange.startOffset, continuation.contentRange.endOffset),
+        )
+
+        val geometry = NativeListInlayRenderer(editor, model)
+            .visualRowGeometryEvidence(Rectangle(10, 20, 600, 300))
+        assertTrue(geometry.contains("row=1\tdepth=0\tmarker=-"))
+        assertTrue(geometry.contains("\tcontinuations=1\tvisual_lines=2\t"))
+        assertEquals(source, plan.identity.source)
     }
 
     fun testUnorderedLexicalMarkersShareSemanticBulletWithoutNormalizingSource() {

@@ -27,12 +27,18 @@ internal data class NativeTaskMarker(
     val sourceState: Char,
 )
 
+internal data class NativeListContinuation(
+    val contentRange: ProjectionRange,
+    val text: String,
+)
+
 internal data class NativeListRow(
     val markerRange: ProjectionRange,
     val contentRange: ProjectionRange,
     val depth: Int,
     val marker: String,
     val text: String,
+    val continuations: List<NativeListContinuation> = emptyList(),
     val task: NativeTaskMarker? = null,
 )
 
@@ -60,9 +66,10 @@ internal data class NativeListPresentationEvidence(
 /**
  * Conservative parser-bounded list model for corrective #318.
  *
- * Supported ordinary lists contain single-line plain-text unordered/ordered items plus nested lists.
+ * Supported ordinary lists contain plain-text unordered/ordered items, nested lists, and
+ * indented plain-text continuation lines owned by their parent item.
  * A dedicated conservative task-list slice accepts only flat, all-task, single-line plain-text rows.
- * Mixed ordinary/task rows, nested tasks, multiline continuations and inline/block-rich content fail closed.
+ * Mixed ordinary/task rows, nested tasks, task continuations and inline/block-rich content fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
@@ -170,9 +177,13 @@ internal object NativeListProjectionPlanner {
                 nested.sourceRange.endOffset <= item.sourceRange.endOffset &&
                 nested.sourceRange.startOffset > marker.endOffset
         }
-        if (hasNonWhitespaceOutside(source, lineEnd, item.sourceRange.endOffset, nestedLists.map { it.sourceRange })) {
-            return null
-        }
+        val continuations = continuationLinesFor(
+            source = source,
+            start = lineEnd,
+            end = item.sourceRange.endOffset,
+            nestedRanges = nestedLists.map { it.sourceRange },
+        ) ?: return null
+        if (task != null && continuations.isNotEmpty()) return null
 
         val depth = items.count { ancestor ->
             ancestor !== item &&
@@ -185,8 +196,60 @@ internal object NativeListProjectionPlanner {
             depth = depth,
             marker = source.substring(marker.startOffset, marker.endOffset),
             text = text,
+            continuations = continuations,
             task = task,
         )
+    }
+
+    private fun continuationLinesFor(
+        source: String,
+        start: Int,
+        end: Int,
+        nestedRanges: List<ProjectionRange>,
+    ): List<NativeListContinuation>? {
+        val continuations = mutableListOf<NativeListContinuation>()
+        var cursor = start
+        while (cursor < end) {
+            if (source[cursor] == '\r') {
+                cursor += 1
+                if (cursor < end && source[cursor] == '\n') cursor += 1
+            } else if (source[cursor] == '\n') {
+                cursor += 1
+            }
+            if (cursor >= end) break
+
+            val lineStart = cursor
+            var lineEnd = lineStart
+            while (lineEnd < end && source[lineEnd] != '\n' && source[lineEnd] != '\r') lineEnd += 1
+
+            val intersectsNested = nestedRanges.any { range ->
+                range.startOffset < lineEnd && range.endOffset > lineStart
+            }
+            if (intersectsNested) {
+                if (hasNonWhitespaceOutside(source, lineStart, lineEnd, nestedRanges)) return null
+            } else {
+                var contentStart = lineStart
+                while (contentStart < lineEnd && (source[contentStart] == ' ' || source[contentStart] == '\t')) {
+                    contentStart += 1
+                }
+                var contentEnd = lineEnd
+                while (contentEnd > contentStart && (source[contentEnd - 1] == ' ' || source[contentEnd - 1] == '\t')) {
+                    contentEnd -= 1
+                }
+                if (contentStart < contentEnd) {
+                    // This bounded slice owns explicit indented continuation lines only.
+                    if (contentStart == lineStart) return null
+                    val text = source.substring(contentStart, contentEnd)
+                    if (text.any(::isPresentationSensitiveInlineChar)) return null
+                    continuations += NativeListContinuation(
+                        contentRange = ProjectionRange(contentStart, contentEnd),
+                        text = text,
+                    )
+                }
+            }
+            cursor = lineEnd
+        }
+        return continuations
     }
 
     private fun taskMarkerFor(source: String, start: Int, end: Int): NativeTaskMarker? {
@@ -740,11 +803,11 @@ internal class NativeListInlayRenderer(
         return buildString {
             appendLine(
                 "renderer_row_height_px=$height\tvertical_padding_px=$VERTICAL_PADDING" +
-                    "\tcalculated_inlay_height_px=${height * model.rows.size.coerceAtLeast(1) +
+                    "\tcalculated_inlay_height_px=${height * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) +
                         VERTICAL_PADDING * 2}"
             )
             model.rows.forEachIndexed { index, row ->
-                val rowTop = bounds?.let { it.y + VERTICAL_PADDING + index * height }
+                val rowTop = bounds?.let { it.y + VERTICAL_PADDING + rowTopOffset(index, height) }
                 val baseline = rowTop?.let {
                     it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
                 }
@@ -756,6 +819,8 @@ internal class NativeListInlayRenderer(
                         "\tmarker_end=${row.markerRange.endOffset}" +
                         "\tcontent_start=${row.contentRange.startOffset}" +
                         "\tcontent_end=${row.contentRange.endOffset}" +
+                        "\tcontinuations=${row.continuations.size}" +
+                        "\tvisual_lines=${rowVisualLineCount(row)}" +
                         "\ttask=${row.task != null}\trow_height_px=$height" +
                         "\trow_top_px=${rowTop ?: "ABSENT"}" +
                         "\tbaseline_px=${baseline ?: "ABSENT"}" +
@@ -772,7 +837,14 @@ internal class NativeListInlayRenderer(
         if (!bounds.contains(point)) return null
         val relative = point.y - bounds.y - VERTICAL_PADDING
         if (relative < 0) return null
-        return (relative / rowHeight()).takeIf { it in model.rows.indices }
+        val height = rowHeight()
+        var rowTop = 0
+        model.rows.forEachIndexed { index, row ->
+            val rowBottom = rowTop + rowVisualLineCount(row) * height
+            if (relative < rowBottom) return index
+            rowTop = rowBottom
+        }
+        return null
     }
 
     fun taskRowAt(point: Point, bounds: Rectangle): Int? {
@@ -792,7 +864,7 @@ internal class NativeListInlayRenderer(
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
-        rowHeight() * model.rows.size.coerceAtLeast(1) + VERTICAL_PADDING * 2
+        rowHeight() * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) + VERTICAL_PADDING * 2
 
     override fun paint(
         inlay: Inlay<*>,
@@ -807,12 +879,14 @@ internal class NativeListInlayRenderer(
         val foreground = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
         g2.color = foreground
 
+        val height = rowHeight()
         model.rows.forEachIndexed { index, row ->
-            val y = targetRegion.y + VERTICAL_PADDING + index * rowHeight()
-            val baseline = y + max(metrics.ascent + 2, (rowHeight() + metrics.ascent - metrics.descent) / 2)
+            val y = targetRegion.y + VERTICAL_PADDING + rowTopOffset(index, height)
+            val baseline = y + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
             val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
             val markerX = targetRegion.x + indent
             val task = row.task
+            val contentX: Int
             if (task != null) {
                 val checkbox = checkboxBounds(index, targetRegion)
                 g2.drawRect(checkbox.x, checkbox.y, checkbox.width, checkbox.height)
@@ -825,16 +899,25 @@ internal class NativeListInlayRenderer(
                     g2.drawLine(left, checkbox.y + checkbox.height / 2, middleX, middleY)
                     g2.drawLine(middleX, middleY, right, top)
                 }
+                contentX = checkbox.x + checkbox.width + MARKER_GAP
                 g2.font = font
-                g2.drawString(row.text, checkbox.x + checkbox.width + MARKER_GAP, baseline)
+                g2.drawString(row.text, contentX, baseline)
             } else {
                 val displayMarker = nativeListDisplayMarker(row.marker)
                 g2.font = bold
                 g2.drawString(displayMarker, markerX, baseline)
                 // Keep the existing content column stable: only the marker glyph is semantic.
                 val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
+                contentX = markerX + markerWidth + MARKER_GAP
                 g2.font = font
-                g2.drawString(row.text, markerX + markerWidth + MARKER_GAP, baseline)
+                g2.drawString(row.text, contentX, baseline)
+            }
+            row.continuations.forEachIndexed { continuationIndex, continuation ->
+                g2.drawString(
+                    continuation.text,
+                    contentX,
+                    baseline + (continuationIndex + 1) * height,
+                )
             }
         }
     }
@@ -843,10 +926,16 @@ internal class NativeListInlayRenderer(
         val row = model.rows[index]
         val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
         val size = CHECKBOX_SIZE
-        val rowTop = bounds.y + VERTICAL_PADDING + index * rowHeight()
-        val y = rowTop + max(0, (rowHeight() - size) / 2)
+        val height = rowHeight()
+        val rowTop = bounds.y + VERTICAL_PADDING + rowTopOffset(index, height)
+        val y = rowTop + max(0, (height - size) / 2)
         return Rectangle(bounds.x + indent, y, size, size)
     }
+
+    private fun rowVisualLineCount(row: NativeListRow): Int = 1 + row.continuations.size
+
+    private fun rowTopOffset(index: Int, height: Int): Int =
+        model.rows.take(index).sumOf(::rowVisualLineCount) * height
 
     private fun rowHeight(): Int {
         val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
