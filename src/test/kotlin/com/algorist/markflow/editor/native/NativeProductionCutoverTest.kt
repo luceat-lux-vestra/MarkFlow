@@ -6,49 +6,58 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class NativeProductionCutoverTest : BasePlatformTestCase() {
-    fun testProductionLifecycleAttachesOnceAndPreservesAuthoritativeSource() {
+    fun testOwnedProductionLifecycleAttachesOnceAndPreservesAuthoritativeSource() {
         val source = "# Native production\n\nExact source stays authoritative.\n"
         myFixture.configureByText("cutover.md", source)
-        val editor = myFixture.editor
-        val stampBefore = editor.document.modificationStamp
+        val file = checkNotNull(myFixture.file.virtualFile)
+        val authoritative = myFixture.editor.document
+        val stampBefore = authoritative.modificationStamp
 
-        // Automatic listener attachment is intentionally disabled in unit-test mode so component
-        // tests do not acquire a second owner. Exercise the exact production owner directly here.
-        assertNull(NativeMarkFlowProductionLifecycle.controller(editor))
         assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
-        assertTrue(NativeMarkFlowProductionLifecycle.attach(editor))
-        assertNull(NativeMarkFlowProductionLifecycle.ownedController(editor))
+        assertEquals(0, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+
+        val owned = MarkFlowOwnedNativeFileEditor(project, file)
+        try {
+            assertSame(authoritative, owned.editor.document)
+            val controller = checkNotNull(
+                NativeMarkFlowProductionLifecycle.ownedController(owned.editor)
+            )
+            assertEquals(ProjectionPlanStatus.READY, controller.currentPlan?.status)
+            assertEquals(1, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
+            assertEquals(1, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+            assertEquals(source, authoritative.text)
+            assertEquals(stampBefore, authoritative.modificationStamp)
+
+            assertFalse(NativeMarkFlowProductionLifecycle.attachOwned(owned.editor))
+            assertSame(
+                controller,
+                NativeMarkFlowProductionLifecycle.ownedController(owned.editor),
+            )
+
+            val generationBefore = checkNotNull(controller.currentPlan?.identity?.configGeneration)
+            MarkFlowSettingsService.bumpRuntimeSettingsRevision()
+            NativeMarkFlowProductionLifecycle.refreshOwned()
+            val generationAfter = checkNotNull(controller.currentPlan?.identity?.configGeneration)
+            assertTrue(generationAfter > generationBefore)
+            assertEquals(source, authoritative.text)
+            assertEquals(stampBefore, authoritative.modificationStamp)
+        } finally {
+            owned.dispose()
+        }
+
         assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
-        val controller = checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor))
-        assertEquals(ProjectionPlanStatus.READY, controller.currentPlan?.status)
-        assertEquals(source, editor.document.text)
-        assertEquals(stampBefore, editor.document.modificationStamp)
-
-        assertFalse(NativeMarkFlowProductionLifecycle.attach(editor))
-        assertSame(controller, NativeMarkFlowProductionLifecycle.controller(editor))
-        assertEquals(source, editor.document.text)
-        assertEquals(stampBefore, editor.document.modificationStamp)
-
-        val generationBefore = checkNotNull(controller.currentPlan?.identity?.configGeneration)
-        MarkFlowSettingsService.bumpRuntimeSettingsRevision()
-        NativeMarkFlowProductionLifecycle.refreshAll()
-        val generationAfter = checkNotNull(controller.currentPlan?.identity?.configGeneration)
-        assertTrue(generationAfter > generationBefore)
-        assertEquals(source, editor.document.text)
-        assertEquals(stampBefore, editor.document.modificationStamp)
-
-        assertTrue(NativeMarkFlowProductionLifecycle.release(editor))
-        assertNull(NativeMarkFlowProductionLifecycle.controller(editor))
-        assertFalse(NativeMarkFlowProductionLifecycle.release(editor))
-        assertEquals(source, editor.document.text)
-        assertEquals(stampBefore, editor.document.modificationStamp)
+        assertEquals(0, MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics)
+        assertEquals(source, authoritative.text)
+        assertEquals(stampBefore, authoritative.modificationStamp)
     }
 
-    fun testProductionLifecycleRejectsNonMarkdownEditor() {
+    fun testOwnedProductionLifecycleRejectsNonMarkdownEditor() {
         myFixture.configureByText("plain.txt", "plain\n")
         val editor = myFixture.editor
-        assertFalse(NativeMarkFlowProductionLifecycle.attach(editor))
-        assertNull(NativeMarkFlowProductionLifecycle.controller(editor))
+
+        assertFalse(NativeMarkFlowProductionLifecycle.attachOwned(editor))
+        assertNull(NativeMarkFlowProductionLifecycle.ownedController(editor))
+        assertEquals(0, NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics)
     }
 
     fun testPackagedRegistrationSelectsNativeLifecycleNotBrowserEditorAuthority() {
