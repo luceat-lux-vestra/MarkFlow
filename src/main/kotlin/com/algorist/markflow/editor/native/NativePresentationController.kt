@@ -306,7 +306,7 @@ internal class NativePresentationController(
         tablePresentation.dispose()
         hostResources?.dispose()
         derivedPresentation?.dispose()
-        rawHtmlPresentation?.dispose()
+        rawHtmlPresentation?.let(Disposer::dispose)
         currentPlan = null
         disposed = true
     }
