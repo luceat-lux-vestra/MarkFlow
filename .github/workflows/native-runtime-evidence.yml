@@ -557,7 +557,7 @@ jobs:
               'rich-edit-locality-undo-redo',
               'multicaret-rich-edit-is-local-and-isolated',
               'unsafe-rich-edit-fails-without-source-change',
-              'platform-state-roundtrip-source-stable',
+              'owned-file-editor-state-roundtrip-source-stable',
               'final-native-editing-lifecycle',
           }
           cases = evidence.get('cases') or []
@@ -595,7 +595,7 @@ jobs:
           for flag in ('multicaret=2', 'secondEditorStateIsolated=true', 'trackedSourceDelta=true'):
               if flag not in multi_detail:
                   raise SystemExit(f'multicaret edit/isolation contract incomplete: {multi_detail}')
-          state_detail = str(by_id['platform-state-roundtrip-source-stable'].get('detail', ''))
+          state_detail = str(by_id['owned-file-editor-state-roundtrip-source-stable'].get('detail', ''))
           for flag in ('legacyStateAuthority=false', 'splitIsolation=true', 'sourceStable=true'):
               if flag not in state_detail:
                   raise SystemExit(f'platform state contract incomplete: {state_detail}')
