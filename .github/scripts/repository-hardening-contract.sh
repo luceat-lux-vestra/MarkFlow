@@ -1026,6 +1026,28 @@ fi
 grep -Fq 'Case lifecycle close observed source identity drift:' "$manifest_test" ||
   die "#353 case cleanup lost source/stamp/unsaved fail-closed identity checks"
 visual_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeVisualAcceptanceE2EBridge.kt"
+projection_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeProjectionE2EBridge.kt"
+projection_bridge_test="src/test/kotlin/com/algorist/markflow/editor/native/MarkFlowOwnedNativeFileEditorProviderTest.kt"
+[ -f "$projection_bridge" ] || die "#571 production projection bridge is missing"
+[ -f "$projection_bridge_test" ] || die "#571 owned projection bridge regression test is missing"
+grep -Fq 'return NativeMarkFlowProductionLifecycle.ownedController(editor) != null' "$projection_bridge" ||
+  die "#571 production projection attachment proof no longer requires the owned lifecycle registry"
+grep -Fq 'checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor))' "$projection_bridge" ||
+  die "#571 production projection queries no longer require owned-controller presentation"
+if grep -Fq 'FileEditorManager.getInstance(project)' "$projection_bridge" ||
+  grep -Fq '.filterIsInstance<MarkFlowOwnedNativeFileEditor>()' "$projection_bridge"; then
+  die "#571 production projection bridge must not infer split-editor ownership from FileEditorManager enumeration"
+fi
+if grep -Fq 'NativeMarkFlowProductionLifecycle.controller(editor)' "$projection_bridge"; then
+  die "#571 production projection bridge must not accept generic transitional/test controllers"
+fi
+if grep -Fq 'TextEditorWithPreview' "$projection_bridge"; then
+  die "#571 production projection bridge must not observe bundled Markdown FileEditor state"
+fi
+grep -Fq 'testProjectionBridgeRequiresOwnedLifecycleRegistration' "$projection_bridge_test" ||
+  die "#571 owned projection bridge lost generic-controller rejection / owned-lifecycle regression coverage"
+grep -Fq 'val owned = MarkFlowOwnedNativeFileEditor(project, file)' "$projection_bridge_test" ||
+  die "#571 projection regression no longer proves the real owned FileEditor lifecycle boundary"
 markdown_anchor_ledger="fixtures/differential-acceptance/markdown-anchors.tsv"
 [ -f "$markdown_anchor_ledger" ] || die "reviewed Markdown source-anchor ledger missing"
 grep -Fq 'markdown-anchors.tsv' "$manifest_test" ||
