@@ -17,6 +17,18 @@ if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.le
 fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
+if grep -R -Eq 'NativeMarkFlowProductionLifecycle\.(attach|release|controller|refreshAll)\(' src; then
+  die "#584 retired generic production lifecycle API is still referenced"
+fi
+for retired_surface in \
+  'fun controller(editor: Editor)' \
+  'fun attach(editor: Editor)' \
+  'fun release(editor: Editor)' \
+  'fun refreshAll()'; do
+  if grep -Fq "$retired_surface" "$production_lifecycle"; then
+    die "#584 retired generic production lifecycle surface was reintroduced: $retired_surface"
+  fi
+done
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
   die "#584 superseded generic EditorFactoryListener attachment path was reintroduced"
 fi
