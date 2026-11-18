@@ -9,6 +9,8 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.markup.EffectType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorProvider
@@ -273,15 +275,27 @@ internal object NativeMarkdownParityProbe {
                         val link = currentPlan.projections
                             .single { it.kind == NativeProjectionKind.LINK }
 
-                        fun semanticAttributes(projection: NativeProjection) = requireNotNull(
-                            fixture.editor.markupModel.allHighlighters
-                                .singleOrNull { highlighter ->
+                        fun semanticRange(projection: NativeProjection): ProjectionRange =
+                            if (projection.kind == NativeProjectionKind.LINK) {
+                                projection.contentRanges.single()
+                            } else {
+                                projection.sourceRange
+                            }
+
+                        fun semanticHighlighter(projection: NativeProjection) = semanticRange(projection).let { range ->
+                            requireNotNull(
+                                fixture.editor.markupModel.allHighlighters.singleOrNull { highlighter ->
                                     highlighter.isValid &&
-                                        highlighter.startOffset == projection.sourceRange.startOffset &&
-                                        highlighter.endOffset == projection.sourceRange.endOffset
+                                        highlighter.startOffset == range.startOffset &&
+                                        highlighter.endOffset == range.endOffset
                                 }
-                                ?.getTextAttributes(fixture.editor.colorsScheme)
-                        ) { "missing semantic highlighter for ${projection.kind}" }
+                            ) { "missing semantic highlighter for ${projection.kind}" }
+                        }
+
+                        fun semanticAttributes(projection: NativeProjection) =
+                            requireNotNull(semanticHighlighter(projection).getTextAttributes(fixture.editor.colorsScheme)) {
+                                "semantic highlighter for ${projection.kind} has no text attributes"
+                            }
 
                         check(semanticAttributes(emphasis).fontType and Font.ITALIC != 0) {
                             "emphasis projection did not install native italic semantics"
@@ -309,6 +323,21 @@ internal object NativeMarkdownParityProbe {
                         val expectedLink = requireNotNull(
                             fixture.editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
                         ) { "IDE color scheme has no maintained hyperlink attributes" }
+                        val linkRange = link.contentRanges.single()
+                        val linkHighlighter = semanticHighlighter(link)
+                        check(linkHighlighter.startOffset == linkRange.startOffset &&
+                            linkHighlighter.endOffset == linkRange.endOffset) {
+                            "link semantic highlighter did not target the visible label range"
+                        }
+                        check(linkHighlighter.textAttributesKey == EditorColors.REFERENCE_HYPERLINK_COLOR) {
+                            "link semantic highlighter did not retain the maintained hyperlink key"
+                        }
+                        check(linkHighlighter.layer == HighlighterLayer.ADDITIONAL_SYNTAX) {
+                            "link semantic highlighter drifted from the owned additional-syntax layer"
+                        }
+                        check(linkHighlighter.targetArea == HighlighterTargetArea.EXACT_RANGE) {
+                            "link semantic highlighter no longer targets the exact visible label"
+                        }
                         val actualLink = semanticAttributes(link)
                         check(actualLink.foregroundColor == expectedLink.foregroundColor)
                         check(actualLink.effectColor == expectedLink.effectColor)

@@ -457,24 +457,34 @@ private class NativeSyntaxPresentationOwner(
 
     fun installHighlighterIfSupported(projection: NativeProjection) {
         if (projection.kind !in highlightKinds || isActive(projection)) return
-        val range = projection.sourceRange
+        val ranges = when (projection.kind) {
+            NativeProjectionKind.LINK -> {
+                check(projection.contentRanges.size == 1) {
+                    "maintained link projection must expose exactly one visible content range"
+                }
+                projection.contentRanges
+            }
+            else -> listOf(projection.sourceRange)
+        }
         val semanticAttributes = attributesFor(projection.kind)
-        highlighters += if (semanticAttributes != null) {
-            editor.markupModel.addRangeHighlighter(
-                range.startOffset,
-                range.endOffset,
-                HighlighterLayer.ADDITIONAL_SYNTAX,
-                semanticAttributes,
-                HighlighterTargetArea.EXACT_RANGE,
-            )
-        } else {
-            editor.markupModel.addRangeHighlighter(
-                keyFor(projection.kind),
-                range.startOffset,
-                range.endOffset,
-                HighlighterLayer.ADDITIONAL_SYNTAX,
-                HighlighterTargetArea.EXACT_RANGE,
-            )
+        ranges.forEach { range ->
+            highlighters += if (semanticAttributes != null) {
+                editor.markupModel.addRangeHighlighter(
+                    range.startOffset,
+                    range.endOffset,
+                    HighlighterLayer.ADDITIONAL_SYNTAX,
+                    semanticAttributes,
+                    HighlighterTargetArea.EXACT_RANGE,
+                )
+            } else {
+                editor.markupModel.addRangeHighlighter(
+                    keyFor(projection.kind),
+                    range.startOffset,
+                    range.endOffset,
+                    HighlighterLayer.ADDITIONAL_SYNTAX,
+                    HighlighterTargetArea.EXACT_RANGE,
+                )
+            }
         }
     }
 
@@ -579,13 +589,7 @@ private fun inlineSemanticAttributes(editor: Editor, kind: NativeProjectionKind)
         fontType = Font.BOLD
     }
     NativeProjectionKind.INLINE_CODE -> inlineCodeSemanticAttributes(editor)
-    NativeProjectionKind.LINK ->
-        editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)?.clone()
-            ?: TextAttributes().apply {
-                foregroundColor = editor.colorsScheme.defaultForeground
-                effectColor = editor.colorsScheme.defaultForeground
-                effectType = EffectType.LINE_UNDERSCORE
-            }
+    NativeProjectionKind.LINK -> null
     else -> null
 }
 
@@ -601,7 +605,7 @@ private fun inlineKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (
     NativeProjectionKind.STRONG -> STRONG_KEY
     NativeProjectionKind.STRIKETHROUGH -> STRIKETHROUGH_KEY
     NativeProjectionKind.INLINE_CODE -> INLINE_CODE_KEY
-    NativeProjectionKind.LINK -> LINK_KEY
+    NativeProjectionKind.LINK -> EditorColors.REFERENCE_HYPERLINK_COLOR
     else -> error("no inline presentation key for $kind")
 }
 
@@ -632,10 +636,6 @@ private val STRIKETHROUGH_KEY = TextAttributesKey.createTextAttributesKey(
 )
 private val INLINE_CODE_KEY = TextAttributesKey.createTextAttributesKey(
     "MARKFLOW.PROJECTION.INLINE_CODE",
-    DefaultLanguageHighlighterColors.STRING,
-)
-private val LINK_KEY = TextAttributesKey.createTextAttributesKey(
-    "MARKFLOW.PROJECTION.LINK",
     DefaultLanguageHighlighterColors.STRING,
 )
 private val BLOCK_QUOTE_KEY = TextAttributesKey.createTextAttributesKey(

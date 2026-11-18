@@ -1518,6 +1518,10 @@ grep -Fq '"inspection_widget=${EditorSettingsExternalizable.getInstance().isShow
 grep -Fq 'visual.prepareEditorChromeBeforeOpen()' "$visual_test" || die "visual acceptance no longer disables inspection chrome before opening each editor"
 grep -Fq 'visual.normalizeEditorChromeForCapture(editor.editor)' "$visual_test" || die "visual capture no longer normalizes IDE chrome"
 grep -Fq 'visual.environmentIdentity(editor.editor)' "$visual_test" || die "visual capture no longer records post-normalization environment identity"
+grep -Fq '"linkSemanticHighlighters=${linkSemantic.highlighters}"' "$visual_bridge" || die "visual evidence no longer records exact maintained link highlighter ownership"
+grep -Fq '"linkSemanticReady=${linkSemantic.ready}"' "$visual_bridge" || die "visual evidence no longer records maintained link readiness"
+grep -Fq 'evidence.getValue("linkSemanticReady") == 1' "$visual_test" || die "typography visual readiness no longer fails closed on maintained link semantics"
+grep -Fq 'actualRoot.resolve("${spec.name}.evidence.txt")' "$visual_test" || die "visual acceptance no longer retains final per-case readiness evidence"
 grep -Fq 'robot.waitForIdle()' "$visual_test" || die "visual capture no longer waits for notification removal to repaint"
 if grep -Eq 'cp .*candidate.*src/integrationTest/resources/visual-goldens|mv .*candidate.*src/integrationTest/resources/visual-goldens' "$starter_workflow"; then
   die "visual workflow must never auto-accept generated baselines"

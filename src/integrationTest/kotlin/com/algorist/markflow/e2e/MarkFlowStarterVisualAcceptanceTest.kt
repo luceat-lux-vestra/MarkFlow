@@ -198,6 +198,11 @@ class MarkFlowStarterVisualAcceptanceTest {
                     check(spec.ready(parseEvidence(captureEvidence))) {
                         "visual presentation drifted after post-normalization convergence for ${spec.name}"
                     }
+                    Files.writeString(
+                        actualRoot.resolve("${spec.name}.evidence.txt"),
+                        captureEvidence + "\n",
+                        StandardCharsets.UTF_8,
+                    )
 
                     val bounds = driver.withContext(OnDispatcher.EDT) {
                         CaptureBounds(
@@ -482,7 +487,14 @@ class MarkFlowStarterVisualAcceptanceTest {
                 evidence.getValue("headingModels") == 8 &&
                     evidence.getValue("headingFolds") == 8 &&
                     evidence.getValue("headingInlays") == 0 &&
-                    evidence.getValue("inlineHighlighters") >= 5
+                    evidence.getValue("inlineHighlighters") >= 5 &&
+                    evidence.getValue("linkModels") == 1 &&
+                    evidence.getValue("linkContentRanges") == 1 &&
+                    evidence.getValue("linkSemanticHighlighters") == 1 &&
+                    evidence.getValue("linkAdditionalSyntaxLayers") == 1 &&
+                    evidence.getValue("linkExactRangeTargets") == 1 &&
+                    evidence.getValue("linkMaintainedAttributes") == 1 &&
+                    evidence.getValue("linkSemanticReady") == 1
             },
             VisualCase("structure", "VISUAL-STRUCTURE.md") { evidence ->
                 evidence.getValue("blockquoteInlays") >= 1 &&

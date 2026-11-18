@@ -9,6 +9,8 @@ import java.awt.geom.Rectangle2D
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.markup.EffectType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.Font
 import java.awt.event.MouseEvent
@@ -1660,21 +1662,48 @@ After
                         .startsWith("[link]")
             }
 
-            fun attributes(projection: NativeProjection) = requireNotNull(
-                editor.markupModel.allHighlighters
-                    .singleOrNull { highlighter ->
+            fun semanticRange(projection: NativeProjection): ProjectionRange =
+                if (projection.kind == NativeProjectionKind.LINK) {
+                    projection.contentRanges.single()
+                } else {
+                    projection.sourceRange
+                }
+
+            fun semanticHighlighter(projection: NativeProjection) = semanticRange(projection).let { range ->
+                requireNotNull(
+                    editor.markupModel.allHighlighters.singleOrNull { highlighter ->
                         highlighter.isValid &&
-                            highlighter.startOffset == projection.sourceRange.startOffset &&
-                            highlighter.endOffset == projection.sourceRange.endOffset
+                            highlighter.startOffset == range.startOffset &&
+                            highlighter.endOffset == range.endOffset
                     }
-                    ?.getTextAttributes(editor.colorsScheme)
-            ) { "missing inactive semantic highlighter for ${projection.kind}" }
+                ) { "missing inactive semantic highlighter for ${projection.kind}" }
+            }
+
+            fun attributes(projection: NativeProjection) =
+                requireNotNull(semanticHighlighter(projection).getTextAttributes(editor.colorsScheme)) {
+                    "inactive semantic highlighter for ${projection.kind} has no text attributes"
+                }
 
             assertTrue(attributes(emphasis).fontType and Font.ITALIC != 0)
             assertTrue(attributes(strong).fontType and Font.BOLD != 0)
 
             val expectedLink = requireNotNull(
                 editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+            )
+            val linkRange = link.contentRanges.single()
+            val linkHighlighter = semanticHighlighter(link)
+            assertEquals(linkRange.startOffset, linkHighlighter.startOffset)
+            assertEquals(linkRange.endOffset, linkHighlighter.endOffset)
+            assertEquals(EditorColors.REFERENCE_HYPERLINK_COLOR, linkHighlighter.textAttributesKey)
+            assertEquals(HighlighterLayer.ADDITIONAL_SYNTAX, linkHighlighter.layer)
+            assertEquals(HighlighterTargetArea.EXACT_RANGE, linkHighlighter.targetArea)
+            assertFalse(
+                editor.markupModel.allHighlighters.any { highlighter ->
+                    highlighter.isValid &&
+                        highlighter.textAttributesKey == EditorColors.REFERENCE_HYPERLINK_COLOR &&
+                        highlighter.startOffset == link.sourceRange.startOffset &&
+                        highlighter.endOffset == link.sourceRange.endOffset
+                }
             )
             val actualLink = attributes(link)
             assertEquals(expectedLink.foregroundColor, actualLink.foregroundColor)
