@@ -17,7 +17,10 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBScrollPane
@@ -381,12 +384,20 @@ internal object NativeVisualAcceptanceE2EBridge {
         val host = controller.hostResourceEvidenceSnapshot()
         val derived = controller.derivedEvidenceSnapshot()
         val rawHtml = controller.rawHtmlEvidenceSnapshot()
+        val linkSemantic = linkSemanticEvidence(editor, controller)
 
         return listOf(
             "headingModels=${ordinary.headingModels}",
             "headingInlays=${ordinary.headingInlays}",
             "headingFolds=${ordinary.headingFolds}",
             "inlineHighlighters=${ordinary.inlineOwnedHighlighters}",
+            "linkModels=${linkSemantic.models}",
+            "linkContentRanges=${linkSemantic.contentRanges}",
+            "linkSemanticHighlighters=${linkSemantic.highlighters}",
+            "linkAdditionalSyntaxLayers=${linkSemantic.additionalSyntaxLayers}",
+            "linkExactRangeTargets=${linkSemantic.exactRangeTargets}",
+            "linkMaintainedAttributes=${linkSemantic.maintainedAttributes}",
+            "linkSemanticReady=${linkSemantic.ready}",
             "blockquoteInlays=${ordinary.blockQuoteInlays}",
             "fencedInlays=${ordinary.fencedCodeInlays}",
             "indentedInlays=${ordinary.indentedCodeInlays}",
@@ -408,6 +419,73 @@ internal object NativeVisualAcceptanceE2EBridge {
             "rawInlays=${rawHtml?.ownedInlays ?: 0}",
             "rawBlocked=${rawHtml?.blockedPreviews ?: 0}",
         ).joinToString(separator = ";")
+    }
+
+    private data class VisualLinkSemanticEvidence(
+        val models: Int,
+        val contentRanges: Int,
+        val highlighters: Int,
+        val additionalSyntaxLayers: Int,
+        val exactRangeTargets: Int,
+        val maintainedAttributes: Int,
+        val ready: Int,
+    )
+
+    private fun linkSemanticEvidence(
+        editor: Editor,
+        controller: NativePresentationController,
+    ): VisualLinkSemanticEvidence {
+        val links = controller.currentPlan
+            ?.projections
+            ?.filter { it.kind == NativeProjectionKind.LINK }
+            .orEmpty()
+        val contentRanges = links.mapNotNull { it.contentRanges.singleOrNull() }
+        val expectedAttributes =
+            editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+        val candidates = contentRanges.flatMap { range ->
+            editor.markupModel.allHighlighters.filter { highlighter ->
+                highlighter.isValid &&
+                    highlighter.startOffset == range.startOffset &&
+                    highlighter.endOffset == range.endOffset &&
+                    highlighter.textAttributesKey == EditorColors.REFERENCE_HYPERLINK_COLOR
+            }
+        }
+        val uniqueCoverage = contentRanges.all { range ->
+            candidates.count { highlighter ->
+                highlighter.startOffset == range.startOffset &&
+                    highlighter.endOffset == range.endOffset
+            } == 1
+        }
+        val layerMatches = candidates.count { it.layer == HighlighterLayer.ADDITIONAL_SYNTAX }
+        val targetMatches = candidates.count { it.targetArea == HighlighterTargetArea.EXACT_RANGE }
+        val attributeMatches = if (expectedAttributes == null) {
+            0
+        } else {
+            candidates.count { highlighter ->
+                highlighter.getTextAttributes(editor.colorsScheme)?.let { actual ->
+                    actual.foregroundColor == expectedAttributes.foregroundColor &&
+                        actual.effectColor == expectedAttributes.effectColor &&
+                        actual.effectType == expectedAttributes.effectType
+                } == true
+            }
+        }
+        val ready = links.isNotEmpty() &&
+            links.size == contentRanges.size &&
+            candidates.size == contentRanges.size &&
+            uniqueCoverage &&
+            layerMatches == contentRanges.size &&
+            targetMatches == contentRanges.size &&
+            attributeMatches == contentRanges.size
+
+        return VisualLinkSemanticEvidence(
+            models = links.size,
+            contentRanges = contentRanges.size,
+            highlighters = candidates.size,
+            additionalSyntaxLayers = layerMatches,
+            exactRangeTargets = targetMatches,
+            maintainedAttributes = attributeMatches,
+            ready = if (ready) 1 else 0,
+        )
     }
 
     private fun format(value: Double): String = String.format(Locale.ROOT, "%.3f", value)

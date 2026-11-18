@@ -322,7 +322,15 @@ user@example.com
             listOf("<https://example.com/path>", "<http://example.com/plain>"),
             links.map { link -> source.substring(link.sourceRange.startOffset, link.sourceRange.endOffset) },
         )
+        assertEquals(
+            listOf("https://example.com/path", "http://example.com/plain"),
+            links.map { link ->
+                val visible = link.contentRanges.single()
+                source.substring(visible.startOffset, visible.endOffset)
+            },
+        )
         links.forEach { link ->
+            assertEquals(1, link.contentRanges.size)
             assertEquals(2, link.syntaxRanges.size)
             assertEquals("<", source.substring(link.syntaxRanges.first().startOffset, link.syntaxRanges.first().endOffset))
             assertEquals(">", source.substring(link.syntaxRanges.last().startOffset, link.syntaxRanges.last().endOffset))
@@ -349,6 +357,28 @@ user@example.com
                 links.none { link -> link.sourceRange.intersects(start, start + literal.length) },
             )
         }
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testLinkWithoutNonEmptyVisibleContentFailsClosed() {
+        val source = "Before [](https://example.com/empty) after\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(5L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val emptyLinkStart = source.indexOf("[](")
+        assertTrue(emptyLinkStart >= 0)
+        assertTrue(
+            "link without non-empty visible content acquired maintained LINK presentation",
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.LINK &&
+                    projection.sourceRange.intersects(
+                        emptyLinkStart,
+                        emptyLinkStart + "[](https://example.com/empty)".length,
+                    )
+            },
+        )
         assertEquals(source, plan.identity.source)
     }
 
