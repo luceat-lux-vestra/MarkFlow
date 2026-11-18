@@ -33,6 +33,15 @@ grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController' "$native_editing_pr
 if grep -Fq 'PLATFORM_TEXT_EDITOR_AUGMENTATION' "$native_editing_probe"; then
   die "#584 native editing evidence regressed to the superseded platform-augmentation shell"
 fi
+native_editing_parity_probe="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkdownEditingParityProbe.kt"
+[ -f "$native_editing_parity_probe" ] || die "#584 native editing parity evidence source is missing"
+grep -Fq 'MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID' "$native_editing_parity_probe" ||
+  die "#584 native editing parity no longer selects the production owned FileEditor provider"
+grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController' "$native_editing_parity_probe" ||
+  die "#584 native editing parity no longer proves production owned presentation lifecycle"
+if grep -Eq 'PLATFORM_TEXT_EDITOR_TYPE_ID|selectPlatformTextProvider' "$native_editing_parity_probe"; then
+  die "#584 native editing parity regressed to the superseded platform text-editor shell"
+fi
 [ ! -e "src/main/kotlin/com/algorist/markflow/editor/native/Leap2OwnedShellProbe.kt" ] || die "#584 obsolete #556 shell-proof source returned"
 if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell|leap2-owned-shell-probe' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
   die "#584 proof-era owned-shell symbol/property/task/path was reintroduced"
