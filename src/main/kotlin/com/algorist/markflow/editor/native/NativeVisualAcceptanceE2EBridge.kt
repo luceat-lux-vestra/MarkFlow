@@ -408,7 +408,11 @@ internal object NativeVisualAcceptanceE2EBridge {
             "platformFenceBackgroundAdditionalSyntaxLayers=${platformFenceBackground.additionalSyntaxLayers}",
             "platformFenceBackgroundExactRangeTargets=${platformFenceBackground.exactRangeTargets}",
             "platformFenceBackgroundCustomRenderers=${platformFenceBackground.customRenderers}",
-            "platformFenceBackgroundCoveredModels=${platformFenceBackground.coveredModels}",
+            "platformFenceBackgroundIntersectingModels=${platformFenceBackground.intersectingModels}",
+            "platformFenceModelStartOffset=${platformFenceBackground.modelStartOffset}",
+            "platformFenceModelEndOffset=${platformFenceBackground.modelEndOffset}",
+            "platformFenceHighlighterStartOffset=${platformFenceBackground.highlighterStartOffset}",
+            "platformFenceHighlighterEndOffset=${platformFenceBackground.highlighterEndOffset}",
             "platformFenceBackgroundReady=${platformFenceBackground.ready}",
             "listModels=${ordinary.listModels}",
             "listInlays=${ordinary.listInlays}",
@@ -503,7 +507,11 @@ internal object NativeVisualAcceptanceE2EBridge {
         val additionalSyntaxLayers: Int,
         val exactRangeTargets: Int,
         val customRenderers: Int,
-        val coveredModels: Int,
+        val intersectingModels: Int,
+        val modelStartOffset: Int,
+        val modelEndOffset: Int,
+        val highlighterStartOffset: Int,
+        val highlighterEndOffset: Int,
         val ready: Int,
     )
 
@@ -522,18 +530,21 @@ internal object NativeVisualAcceptanceE2EBridge {
         val layerMatches = candidates.count { it.layer == HighlighterLayer.ADDITIONAL_SYNTAX }
         val targetMatches = candidates.count { it.targetArea == HighlighterTargetArea.EXACT_RANGE }
         val rendererMatches = candidates.count { it.customRenderer != null }
-        val coveredModels = fences.count { fence ->
-            candidates.any { highlighter ->
-                highlighter.startOffset == fence.sourceRange.startOffset &&
-                    highlighter.endOffset == fence.sourceRange.endOffset &&
-                    highlighter.layer == HighlighterLayer.ADDITIONAL_SYNTAX &&
-                    highlighter.targetArea == HighlighterTargetArea.EXACT_RANGE &&
-                    highlighter.customRenderer != null
+        val semanticCandidates = candidates.filter { highlighter ->
+            highlighter.layer == HighlighterLayer.ADDITIONAL_SYNTAX &&
+                highlighter.targetArea == HighlighterTargetArea.EXACT_RANGE &&
+                highlighter.customRenderer != null
+        }
+        val intersectingModels = fences.count { fence ->
+            semanticCandidates.any { highlighter ->
+                fence.sourceRange.intersects(highlighter.startOffset, highlighter.endOffset)
             }
         }
+        val firstFence = fences.firstOrNull()?.sourceRange
+        val firstHighlighter = semanticCandidates.firstOrNull()
         val ready = fences.isNotEmpty() &&
-            coveredModels == fences.size &&
-            rendererMatches >= fences.size
+            intersectingModels == fences.size &&
+            semanticCandidates.size >= fences.size
 
         return VisualPlatformFenceBackgroundEvidence(
             models = fences.size,
@@ -541,7 +552,11 @@ internal object NativeVisualAcceptanceE2EBridge {
             additionalSyntaxLayers = layerMatches,
             exactRangeTargets = targetMatches,
             customRenderers = rendererMatches,
-            coveredModels = coveredModels,
+            intersectingModels = intersectingModels,
+            modelStartOffset = firstFence?.startOffset ?: -1,
+            modelEndOffset = firstFence?.endOffset ?: -1,
+            highlighterStartOffset = firstHighlighter?.startOffset ?: -1,
+            highlighterEndOffset = firstHighlighter?.endOffset ?: -1,
             ready = if (ready) 1 else 0,
         )
     }
