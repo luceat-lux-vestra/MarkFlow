@@ -8,7 +8,6 @@ import com.algorist.markflow.settings.MarkFlowSettingsService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
@@ -24,7 +23,9 @@ internal object NativeMarkFlowProductionLifecycle {
     private val ownedControllers = IdentityHashMap<Editor, NativePresentationController>()
     private val liveOwnedControllers = AtomicInteger(0)
 
-    fun controller(editor: Editor): NativePresentationController? = editor.getUserData(controllerKey)
+    private fun controller(editor: Editor): NativePresentationController? = editor.getUserData(controllerKey)
+
+    internal fun hasControllerForDiagnostics(editor: Editor): Boolean = controller(editor) != null
 
     fun ownedController(editor: Editor): NativePresentationController? {
         ApplicationManager.getApplication().assertIsDispatchThread()
@@ -34,11 +35,8 @@ internal object NativeMarkFlowProductionLifecycle {
     internal val liveOwnedControllerCountForDiagnostics: Int
         get() = liveOwnedControllers.get()
 
-    fun attach(editor: Editor): Boolean {
-        if (!ApplicationManager.getApplication().isDispatchThread) {
-            ApplicationManager.getApplication().invokeLater { attach(editor) }
-            return false
-        }
+    private fun attachController(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
         if (editor.isDisposed || editor.isViewer || controller(editor) != null) return false
         val project = editor.project ?: return false
         if (project.isDisposed) return false
@@ -93,11 +91,8 @@ internal object NativeMarkFlowProductionLifecycle {
         }
     }
 
-    fun release(editor: Editor): Boolean {
-        if (!ApplicationManager.getApplication().isDispatchThread) {
-            ApplicationManager.getApplication().invokeLater { release(editor) }
-            return false
-        }
+    private fun releaseController(editor: Editor): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
         val controller = controller(editor) ?: return false
         editor.putUserData(controllerKey, null)
         runCatching { Disposer.dispose(controller) }
@@ -108,8 +103,8 @@ internal object NativeMarkFlowProductionLifecycle {
     /**
      * Attach presentation under the MarkFlow-owned FileEditor lifecycle.
      *
-     * This registry is intentionally separate from generic production attachment so a bundled
-     * IntelliJ editor can never become an owned MarkFlow editor merely by being eligible Markdown.
+     * The owned registry is the only production attachment surface, so a bundled IntelliJ editor
+     * can never acquire MarkFlow presentation merely by being eligible Markdown.
      */
     fun attachOwned(editor: Editor): Boolean {
         if (!ApplicationManager.getApplication().isDispatchThread) {
@@ -117,7 +112,7 @@ internal object NativeMarkFlowProductionLifecycle {
             return false
         }
         if (ownedControllers.containsKey(editor)) return false
-        if (!attach(editor)) return false
+        if (!attachController(editor)) return false
         val controller = controller(editor) ?: return false
         ownedControllers[editor] = controller
         liveOwnedControllers.incrementAndGet()
@@ -131,7 +126,7 @@ internal object NativeMarkFlowProductionLifecycle {
         }
         val owned = ownedControllers[editor] ?: return false
         if (controller(editor) !== owned) return false
-        if (!release(editor)) return false
+        if (!releaseController(editor)) return false
         ownedControllers.remove(editor)
         liveOwnedControllers.decrementAndGet()
         return true
@@ -145,19 +140,6 @@ internal object NativeMarkFlowProductionLifecycle {
             return
         }
         ownedControllers.values.toList().forEach(::refreshController)
-    }
-
-    fun refreshAll() {
-        val application = ApplicationManager.getApplication()
-        if (!application.isDispatchThread) {
-            application.invokeLater(::refreshAll)
-            return
-        }
-        EditorFactory.getInstance().allEditors.forEach { editor ->
-            val controller = controller(editor) ?: return@forEach
-            if (editor.isDisposed) return@forEach
-            refreshController(controller)
-        }
     }
 
     private fun refreshController(controller: NativePresentationController) {

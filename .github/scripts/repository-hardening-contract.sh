@@ -24,6 +24,26 @@ if grep -R -Fq 'skipAutomaticProductionAttachment' src/main/kotlin; then
   die "#584 obsolete generic-attachment probe suppression helper was reintroduced"
 fi
 
+grep -Fq 'private fun attachController(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost its private controller attachment primitive"
+grep -Fq 'private fun releaseController(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost its private controller release primitive"
+grep -Fq 'internal fun hasControllerForDiagnostics(editor: Editor)' "$production_lifecycle" ||
+  die "#584 owned lifecycle lost bounded controller-leak diagnostics"
+for retired_api in 'fun attach(editor: Editor)' 'fun release(editor: Editor)' 'fun refreshAll()'; do
+  if grep -Fq "$retired_api" "$production_lifecycle"; then
+    die "#584 superseded generic production lifecycle API returned: $retired_api"
+  fi
+done
+if grep -R -Fq 'NativeMarkFlowProductionLifecycle.controller(' src --exclude='NativeMarkFlowProductionLifecycle.kt'; then
+  die "#584 controller object escaped the owned lifecycle through a generic lookup"
+fi
+if grep -R -Eq 'NativeMarkFlowProductionLifecycle\.(attach|release|refreshAll)\(' src; then
+  die "#584 superseded generic lifecycle consumer returned"
+fi
+grep -Fq 'NativeMarkFlowProductionLifecycle.hasControllerForDiagnostics' "$owned_runtime_probe" ||
+  die "#584 production runtime evidence lost bundled-editor controller leak detection"
+
 wrapper="gradle/wrapper/gradle-wrapper.properties"
 wrapper_gradle="$(sed -n 's#^distributionUrl=.*gradle-\([0-9][0-9.]*\)-bin\.zip$#\1#p' "$wrapper")"
 wrapper_sha="$(sed -n 's/^distributionSha256Sum=//p' "$wrapper")"
