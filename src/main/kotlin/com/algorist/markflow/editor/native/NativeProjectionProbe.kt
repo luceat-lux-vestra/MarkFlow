@@ -4,7 +4,6 @@ import com.google.gson.GsonBuilder
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -168,11 +167,11 @@ val fenced = true
                     check(evidence.ownedFolds == evidence.inlineOwnedFolds + evidence.blockOwnedFolds)
                     check(
                         evidence.headingModels == 1 &&
-                            evidence.headingInlays == 1 &&
+                            evidence.headingInlays == 0 &&
                             evidence.headingFolds > 0 &&
                             evidence.headingFullyConcealed == 1
                     ) {
-                        "inactive heading did not install one fully concealed native heading presentation: " +
+                        "inactive heading did not install production source-line replacement presentation: " +
                             "models=${evidence.headingModels} inlays=${evidence.headingInlays} " +
                             "ownedFolds=${evidence.headingFolds} concealed=${evidence.headingFullyConcealed}"
                     }
@@ -245,7 +244,7 @@ val fenced = true
                         "blockSyntaxFolds=${evidence.blockSyntaxOwnedFolds} " +
                         "highlighters=${evidence.ownedHighlighters} folds=${evidence.ownedFolds} " +
                         "headingInlays=${evidence.headingInlays} headingFolds=${evidence.headingFolds} " +
-                        "headingConcealed=${evidence.headingFullyConcealed} " +
+                        "headingConcealed=${evidence.headingFullyConcealed} headingSourceLineReplacement=true " +
                         "quoteInlays=${evidence.blockQuoteInlays} quoteFolds=${evidence.blockQuoteFolds} " +
                         "quoteConcealed=${evidence.blockQuoteFullyConcealed} " +
                         "fenceInlays=${evidence.fencedCodeInlays} fenceFolds=${evidence.fencedCodeFolds} " +
@@ -736,7 +735,7 @@ Plain body line for inactive caret state.
         ): Boolean {
             val evidence = controller.evidenceSnapshot()
             return evidence.headingModels == 1 &&
-                evidence.headingInlays == 1 &&
+                evidence.headingInlays == 0 &&
                 evidence.headingFolds > 0 &&
                 evidence.headingFullyConcealed == 1
         }

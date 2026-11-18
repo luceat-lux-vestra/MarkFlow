@@ -21,6 +21,8 @@ grep -Fq 'MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID' "$projection_pro
   die "#584 projection evidence no longer opens the production owned FileEditor provider"
 grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController' "$projection_probe" ||
   die "#584 projection evidence no longer consumes production owned presentation"
+grep -Fq 'headingSourceLineReplacement=true' "$projection_probe" ||
+  die "#584 projection evidence no longer records production heading source-line replacement"
 if grep -Fq 'PLATFORM_TEXT_EDITOR_AUGMENTATION' "$projection_probe"; then
   die "#584 projection evidence regressed to the superseded platform-augmentation shell"
 fi
@@ -49,6 +51,15 @@ if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeFo
 fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
+presentation_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationController.kt"
+raw_html_test="src/test/kotlin/com/algorist/markflow/editor/native/NativeRawHtmlPresentationControllerTest.kt"
+grep -Fq 'rawHtmlPresentation?.let(Disposer::dispose)' "$presentation_controller" ||
+  die "#584 raw-HTML child no longer leaves the IntelliJ Disposer tree clean"
+if grep -Fq 'rawHtmlPresentation?.dispose()' "$presentation_controller"; then
+  die "#584 raw-HTML child regressed to direct dispose without Disposer-tree cleanup"
+fi
+grep -Fq 'testParentPresentationControllerDisposesRawHtmlThroughDisposerTree' "$raw_html_test" ||
+  die "#584 raw-HTML parent lifecycle regression test is missing"
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
   die "#584 superseded generic EditorFactoryListener attachment path was reintroduced"
 fi

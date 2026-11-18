@@ -153,6 +153,19 @@ class NativeRawHtmlPresentationControllerTest : BasePlatformTestCase() {
         assertEquals(0, controller.evidenceSnapshot().ownedFolds)
     }
 
+    fun testParentPresentationControllerDisposesRawHtmlThroughDisposerTree() {
+        myFixture.configureByText("parent-dispose.md", "# heading\n")
+        val rawHtml = NativeRawHtmlPresentationController(myFixture.editor, SuccessRenderer)
+        val parent = NativePresentationController(
+            editor = myFixture.editor,
+            rawHtmlPresentation = rawHtml,
+        )
+
+        assertFalse(Disposer.isDisposed(rawHtml))
+        Disposer.dispose(parent)
+        assertTrue(Disposer.isDisposed(rawHtml))
+    }
+
     private fun plan(): NativeProjectionPlan = NativeMarkdownProjectionPlanner.plan(
         ProjectionSnapshot.capture(myFixture.editor.document, configGeneration = 1L)
     ).also { assertEquals(ProjectionPlanStatus.READY, it.status) }
