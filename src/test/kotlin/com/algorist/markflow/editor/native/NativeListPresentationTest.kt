@@ -568,4 +568,21 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             }
         }
     }
+
+    fun testUnorderedLexicalMarkersShareSemanticBulletWithoutNormalizingSource() {
+        val source = "- dash\n\n* star\n\n+ plus\n\n1. ordered\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val rows = NativeListProjectionPlanner.plan(plan).flatMap(NativeListModel::rows)
+        assertEquals(listOf("-", "*", "+", "1."), rows.map(NativeListRow::marker))
+        assertEquals(
+            listOf("•", "•", "•", "1."),
+            rows.map { row -> nativeListDisplayMarker(row.marker) },
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
 }
