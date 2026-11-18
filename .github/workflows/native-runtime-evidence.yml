@@ -537,7 +537,7 @@ jobs:
           evidence = json.loads(path.read_text(encoding='utf-8'))
           if evidence.get('schemaVersion') != 1:
               raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
-          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
+          if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION':
               raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
           if evidence.get('jcefSupported') is not False:
               raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
@@ -547,7 +547,7 @@ jobs:
           required = {
               'jcef-disabled-native-editing',
               'authoritative-editing-fixture',
-              'platform-text-provider-boundary',
+              'owned-file-editor-provider-boundary',
               'native-paste-preprocessor-registered',
               'markdown-mime-preferred-payload-only',
               'markdown-like-plain-payload-only',
@@ -599,9 +599,14 @@ jobs:
           for flag in ('legacyStateAuthority=false', 'splitIsolation=true', 'sourceStable=true'):
               if flag not in state_detail:
                   raise SystemExit(f'platform state contract incomplete: {state_detail}')
+          provider_detail = str(by_id['owned-file-editor-provider-boundary'].get('detail', ''))
+          for flag in ('ownedProvider=', 'policy=PLACE_BEFORE_DEFAULT_EDITOR', 'legacyBrowserProvider=false'):
+              if flag not in provider_detail:
+                  raise SystemExit(f'owned FileEditor provider boundary incomplete: {provider_detail}')
           lifecycle_detail = str(by_id['final-native-editing-lifecycle'].get('detail', ''))
-          if 'editors=0' not in lifecycle_detail:
-              raise SystemExit(f'native editing lifecycle cleanup incomplete: {lifecycle_detail}')
+          for flag in ('editors=0', 'ownedControllers=0', 'ownedFileEditors=0'):
+              if flag not in lifecycle_detail:
+                  raise SystemExit(f'native editing lifecycle cleanup incomplete: {lifecycle_detail}')
 
           parity_path = Path('build/native-editing-probe/parity.json')
           if not parity_path.is_file():
