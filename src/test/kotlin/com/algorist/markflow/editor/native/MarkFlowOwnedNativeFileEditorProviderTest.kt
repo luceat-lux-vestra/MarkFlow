@@ -20,6 +20,32 @@ class MarkFlowOwnedNativeFileEditorProviderTest : BasePlatformTestCase() {
         assertFalse(provider.accept(project, checkNotNull(myFixture.file.virtualFile)))
     }
 
+    fun testProjectionBridgeRequiresOwnedLifecycleRegistration() {
+        val source = "# owned projection\n\nExact source stays authoritative.\n"
+        myFixture.configureByText("owned-projection.md", source)
+        val file = checkNotNull(myFixture.file.virtualFile)
+        val generic = myFixture.editor
+
+        assertTrue(NativeMarkFlowProductionLifecycle.attach(generic))
+        try {
+            assertNotNull(NativeMarkFlowProductionLifecycle.controller(generic))
+            assertNull(NativeMarkFlowProductionLifecycle.ownedController(generic))
+            assertFalse(NativeProjectionE2EBridge.isAttached(generic))
+        } finally {
+            assertTrue(NativeMarkFlowProductionLifecycle.release(generic))
+        }
+
+        val owned = MarkFlowOwnedNativeFileEditor(project, file)
+        try {
+            assertNotNull(NativeMarkFlowProductionLifecycle.ownedController(owned.editor))
+            assertTrue(NativeProjectionE2EBridge.isAttached(owned.editor))
+            assertTrue(NativeProjectionE2EBridge.planReady(owned.editor))
+            assertEquals(source, owned.editor.document.text)
+        } finally {
+            owned.dispose()
+        }
+    }
+
     fun testOwnedEditorsShareAuthoritativeDocumentAndRegistryCleansUp() {
         myFixture.configureByText("owned.md", "# owned\n\nshared source\n")
         val file = checkNotNull(myFixture.file.virtualFile)

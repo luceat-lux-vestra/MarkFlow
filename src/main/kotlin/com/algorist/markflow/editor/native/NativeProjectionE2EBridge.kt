@@ -8,16 +8,17 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 /**
  * Narrow diagnostic seam for Starter/Driver acceptance after #153 production cutover.
  *
- * The bridge never creates, attaches, detaches, or owns presentation controllers. Every query
- * resolves the controller installed by [NativeMarkFlowProductionLifecycle] through the normal
- * platform-editor opening path. Starter/Driver tests therefore observe production ownership rather
- * than constructing a parallel test-only editor lifecycle.
+ * The bridge never creates, attaches, detaches, or owns presentation controllers. Production
+ * queries require the controller registered by [NativeMarkFlowProductionLifecycle.attachOwned],
+ * which is invoked only by [MarkFlowOwnedNativeFileEditor] lifecycle ownership. Starter/Driver
+ * tests therefore observe production-owned native editor surfaces, including split editors,
+ * without accepting generic transitional/test-only attachment.
  */
 @Suppress("unused", "UnstableApiUsage")
 internal object NativeProjectionE2EBridge {
     fun isAttached(editor: Editor): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        return NativeMarkFlowProductionLifecycle.controller(editor) != null
+        return NativeMarkFlowProductionLifecycle.ownedController(editor) != null
     }
 
     fun fileName(editor: Editor): String? {
@@ -424,7 +425,7 @@ internal object NativeProjectionE2EBridge {
     }
 
     private fun requireController(editor: Editor): NativePresentationController =
-        checkNotNull(NativeMarkFlowProductionLifecycle.controller(editor)) {
-            "production native MarkFlow controller is not attached"
+        checkNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
+            "production MarkFlow-owned native controller is not attached"
         }
 }
