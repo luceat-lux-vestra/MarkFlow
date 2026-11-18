@@ -332,8 +332,8 @@ internal object NativeMarkdownParityProbe {
                         check(linkHighlighter.textAttributesKey == EditorColors.REFERENCE_HYPERLINK_COLOR) {
                             "link semantic highlighter did not retain the maintained hyperlink key"
                         }
-                        check(linkHighlighter.layer == HighlighterLayer.ADDITIONAL_SYNTAX) {
-                            "link semantic highlighter drifted from the owned additional-syntax layer"
+                        check(linkHighlighter.layer == HighlighterLayer.ADDITIONAL_SYNTAX + 1) {
+                            "link semantic highlighter lost deterministic precedence over bundled Markdown markup"
                         }
                         check(linkHighlighter.targetArea == HighlighterTargetArea.EXACT_RANGE) {
                             "link semantic highlighter no longer targets the exact visible label"

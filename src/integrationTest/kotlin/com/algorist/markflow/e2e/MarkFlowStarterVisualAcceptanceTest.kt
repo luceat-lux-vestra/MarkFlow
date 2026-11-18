@@ -491,7 +491,7 @@ class MarkFlowStarterVisualAcceptanceTest {
                     evidence.getValue("linkModels") == 1 &&
                     evidence.getValue("linkContentRanges") == 1 &&
                     evidence.getValue("linkSemanticHighlighters") == 1 &&
-                    evidence.getValue("linkAdditionalSyntaxLayers") == 1 &&
+                    evidence.getValue("linkDeterministicLayers") == 1 &&
                     evidence.getValue("linkExactRangeTargets") == 1 &&
                     evidence.getValue("linkMaintainedAttributes") == 1 &&
                     evidence.getValue("linkSemanticReady") == 1
@@ -507,7 +507,14 @@ class MarkFlowStarterVisualAcceptanceTest {
             },
             VisualCase("code", "VISUAL-CODE.md") { evidence ->
                 evidence.getValue("fencedInlays") >= 1 &&
-                    evidence.getValue("indentedInlays") >= 1
+                    evidence.getValue("indentedInlays") >= 1 &&
+                    evidence.getValue("platformFenceBackgroundModels") == 1 &&
+                    evidence.getValue("platformFenceBackgroundHighlighters") == 1 &&
+                    evidence.getValue("platformFenceBackgroundAdditionalSyntaxLayers") == 1 &&
+                    evidence.getValue("platformFenceBackgroundExactRangeTargets") == 1 &&
+                    evidence.getValue("platformFenceBackgroundCustomRenderers") == 1 &&
+                    evidence.getValue("platformFenceBackgroundIntersectingModels") == 1 &&
+                    evidence.getValue("platformFenceBackgroundReady") == 1
             },
             VisualCase("derived", "VISUAL-DERIVED.md", derived = true) { evidence ->
                 evidence.getValue("derivedFragments") >= 3 &&

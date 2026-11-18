@@ -1671,7 +1671,7 @@ After
                         highlighter.textAttributesKey == EditorColors.REFERENCE_HYPERLINK_COLOR
                 }
             ) { "wrapped autolink did not install exact maintained hyperlink semantics" }
-            assertEquals(HighlighterLayer.ADDITIONAL_SYNTAX, semantic.layer)
+            assertEquals(HighlighterLayer.ADDITIONAL_SYNTAX + 1, semantic.layer)
             assertEquals(HighlighterTargetArea.EXACT_RANGE, semantic.targetArea)
             assertFalse(
                 editor.markupModel.allHighlighters.any { highlighter ->
@@ -1755,7 +1755,7 @@ After
             assertEquals(linkRange.startOffset, linkHighlighter.startOffset)
             assertEquals(linkRange.endOffset, linkHighlighter.endOffset)
             assertEquals(EditorColors.REFERENCE_HYPERLINK_COLOR, linkHighlighter.textAttributesKey)
-            assertEquals(HighlighterLayer.ADDITIONAL_SYNTAX, linkHighlighter.layer)
+            assertEquals(HighlighterLayer.ADDITIONAL_SYNTAX + 1, linkHighlighter.layer)
             assertEquals(HighlighterTargetArea.EXACT_RANGE, linkHighlighter.targetArea)
             assertFalse(
                 editor.markupModel.allHighlighters.any { highlighter ->
