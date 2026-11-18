@@ -203,6 +203,14 @@ class MarkFlowStarterVisualAcceptanceTest {
                         captureEvidence + "\n",
                         StandardCharsets.UTF_8,
                     )
+                    val paintInputEvidence = driver.withContext(OnDispatcher.EDT) {
+                        visual.visualPaintInputEvidence(editor.editor)
+                    }
+                    Files.writeString(
+                        actualRoot.resolve("${spec.name}.paint.txt"),
+                        paintInputEvidence,
+                        StandardCharsets.UTF_8,
+                    )
 
                     val bounds = driver.withContext(OnDispatcher.EDT) {
                         CaptureBounds(
@@ -651,6 +659,7 @@ private interface NativeVisualAcceptanceE2EBridgeRemote {
     fun contentWidth(editor: Editor): Int
     fun contentHeight(editor: Editor): Int
     fun visualEvidence(editor: Editor): String
+    fun visualPaintInputEvidence(editor: Editor): String
     fun structureGeometryEvidence(editor: Editor): String
 }
 

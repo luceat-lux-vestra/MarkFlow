@@ -19,11 +19,16 @@ import com.intellij.openapi.editor.ex.EditorMarkupModel
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.Key
 import com.intellij.ui.components.JBScrollPane
+import java.awt.Color
 import java.awt.Toolkit
 import java.util.Locale
 import javax.swing.SwingUtilities
@@ -365,6 +370,203 @@ internal object NativeVisualAcceptanceE2EBridge {
     fun contentWidth(editor: Editor): Int = editor.scrollingModel.visibleArea.width
 
     fun contentHeight(editor: Editor): Int = editor.scrollingModel.visibleArea.height
+
+    /**
+     * Diagnostic-only snapshot of the exact inputs consumed by IntelliJ editor painting.
+     *
+     * This does not mutate markup, folding, inlays, source, settings, or color schemes. It records
+     * both syntax-highlighter attributes and editor/document markup because IterationState merges
+     * those independent streams when deciding the final foreground/background.
+     */
+    fun visualPaintInputEvidence(editor: Editor): String {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(editor)) {
+            "production native MarkFlow controller is not attached"
+        }
+        val editorEx = editor as? EditorEx
+            ?: error("visual paint diagnostics require EditorEx")
+        val project = requireNotNull(editor.project) {
+            "visual paint diagnostics require a project editor"
+        }
+        val scheme = editor.colorsScheme
+        val lines = mutableListOf(
+            "schema=markflow-visual-paint-inputs/v1",
+            "editor_scheme=${scheme.name}",
+            "global_scheme=${EditorColorsManager.getInstance().globalScheme.name}",
+            "default_foreground=${colorValue(scheme.defaultForeground)}",
+            "default_background=${colorValue(scheme.defaultBackground)}",
+            "caret_row_color=${colorValue(scheme.getColor(EditorColors.CARET_ROW_COLOR))}",
+        )
+
+        val caret = editor.caretModel.primaryCaret
+        val caretLogical = editor.offsetToLogicalPosition(caret.offset)
+        val caretVisual = editor.offsetToVisualPosition(caret.offset)
+        lines += "caret=offset=${caret.offset};logical_line=${caretLogical.line};logical_column=${caretLogical.column};" +
+            "visual_line=${caretVisual.line};visual_column=${caretVisual.column};selection=${caret.hasSelection()}"
+
+        listOf(
+            EditorColors.REFERENCE_HYPERLINK_COLOR.externalName,
+            "MARKDOWN_LINK_TEXT",
+            "MARKDOWN_EXPLICIT_LINK",
+            "MARKDOWN_CODE_BLOCK",
+            "MARKDOWN_CODE_FENCE",
+            "MARKDOWN_CODE_FENCE_BACKGROUND",
+            "MARKDOWN_CODE_SPAN",
+        ).forEach { externalName ->
+            val key = TextAttributesKey.find(externalName)
+            lines += "scheme_key=name=$externalName;${attributesValue(scheme.getAttributes(key))}"
+        }
+
+        val plan = controller.currentPlan
+        val linkRanges = plan?.projections
+            ?.filter { it.kind == NativeProjectionKind.LINK }
+            ?.mapNotNull { it.contentRanges.singleOrNull() }
+            .orEmpty()
+        lines += "link_range_count=${linkRanges.size}"
+
+        val documentMarkup = DocumentMarkupModel.forDocument(editor.document, project, false)
+        linkRanges.forEachIndexed { index, range ->
+            val startVisual = editor.offsetToVisualPosition(range.startOffset)
+            val endVisual = editor.offsetToVisualPosition(range.endOffset)
+            lines += "link_range=index=$index;start=${range.startOffset};end=${range.endOffset};" +
+                "start_visual=${startVisual.line}:${startVisual.column};end_visual=${endVisual.line}:${endVisual.column}"
+            lines += syntaxPaintEvidence(editorEx, range, "link_syntax", index)
+            lines += markupPaintEvidence(editor.markupModel.allHighlighters, scheme, range, "editor_markup", index)
+            if (documentMarkup == null) {
+                lines += "document_markup=index=$index;state=absent"
+            } else {
+                lines += markupPaintEvidence(documentMarkup.allHighlighters, scheme, range, "document_markup", index)
+            }
+        }
+
+        val codeRanges = plan?.projections
+            ?.filter { it.kind == NativeProjectionKind.CODE_FENCE || it.kind == NativeProjectionKind.CODE_BLOCK }
+            ?.map { it.sourceRange }
+            .orEmpty()
+        lines += "code_range_count=${codeRanges.size}"
+        codeRanges.forEachIndexed { index, range ->
+            val startVisual = editor.offsetToVisualPosition(range.startOffset)
+            val endVisual = editor.offsetToVisualPosition(range.endOffset)
+            lines += "code_range=index=$index;start=${range.startOffset};end=${range.endOffset};" +
+                "start_visual=${startVisual.line}:${startVisual.column};end_visual=${endVisual.line}:${endVisual.column}"
+            lines += syntaxPaintEvidence(editorEx, range, "code_syntax", index)
+            lines += markupPaintEvidence(editor.markupModel.allHighlighters, scheme, range, "code_editor_markup", index)
+            if (documentMarkup == null) {
+                lines += "code_document_markup=index=$index;state=absent"
+            } else {
+                lines += markupPaintEvidence(
+                    documentMarkup.allHighlighters,
+                    scheme,
+                    range,
+                    "code_document_markup",
+                    index,
+                )
+            }
+        }
+
+        val documentLength = editor.document.textLength
+        editor.inlayModel.getBlockElementsInRange(0, documentLength)
+            .filter { it.isValid }
+            .sortedBy { it.offset }
+            .forEachIndexed { index, inlay ->
+                val bounds = inlay.bounds
+                val renderer = inlay.renderer
+                val owner = when (renderer) {
+                    is NativeFencedCodeInlayRenderer ->
+                        "markflow_fenced:${renderer.sourceRange.startOffset}..${renderer.sourceRange.endOffset}"
+                    is NativeIndentedCodeInlayRenderer ->
+                        "markflow_indented:${renderer.sourceRange.startOffset}..${renderer.sourceRange.endOffset}"
+                    else -> "foreign"
+                }
+                val logical = editor.offsetToLogicalPosition(inlay.offset)
+                val visual = editor.offsetToVisualPosition(inlay.offset)
+                lines += "block_inlay=index=$index;offset=${inlay.offset};logical_line=${logical.line};" +
+                    "visual_line=${visual.line};valid=${inlay.isValid};width=${inlay.widthInPixels};" +
+                    "height=${inlay.heightInPixels};bounds=${rectangleValue(bounds)};" +
+                    "renderer=${renderer.javaClass.name};owner=$owner"
+            }
+
+        editor.foldingModel.allFoldRegions
+            .filter { it.isValid }
+            .sortedBy { it.startOffset }
+            .forEachIndexed { index, fold ->
+                val startVisual = editor.offsetToVisualPosition(fold.startOffset)
+                val endVisual = editor.offsetToVisualPosition(fold.endOffset)
+                lines += "fold=index=$index;start=${fold.startOffset};end=${fold.endOffset};" +
+                    "expanded=${fold.isExpanded};start_visual=${startVisual.line}:${startVisual.column};" +
+                    "end_visual=${endVisual.line}:${endVisual.column}"
+            }
+
+        return lines.joinToString(separator = "\n", postfix = "\n")
+    }
+
+    private fun syntaxPaintEvidence(
+        editor: EditorEx,
+        range: ProjectionRange,
+        prefix: String,
+        rangeIndex: Int,
+    ): List<String> {
+        val result = mutableListOf<String>()
+        val iterator = editor.highlighter.createIterator(range.startOffset)
+        var fragment = 0
+        while (!iterator.atEnd() && iterator.start < range.endOffset) {
+            val start = iterator.start
+            val end = iterator.end
+            if (end > range.startOffset && start < range.endOffset) {
+                result += "$prefix=range_index=$rangeIndex;fragment=$fragment;start=$start;end=$end;" +
+                    attributesValue(iterator.textAttributes)
+                fragment += 1
+            }
+            iterator.advance()
+        }
+        if (result.isEmpty()) {
+            result += "$prefix=range_index=$rangeIndex;state=none"
+        }
+        return result
+    }
+
+    private fun markupPaintEvidence(
+        highlighters: Array<RangeHighlighter>,
+        scheme: com.intellij.openapi.editor.colors.EditorColorsScheme,
+        range: ProjectionRange,
+        prefix: String,
+        rangeIndex: Int,
+    ): List<String> {
+        val overlapping = highlighters
+            .asSequence()
+            .filter { it.isValid && it.startOffset < range.endOffset && it.endOffset > range.startOffset }
+            .sortedWith(
+                compareByDescending<RangeHighlighter> { it.layer }
+                    .thenBy { it.endOffset - it.startOffset }
+                    .thenBy { it.startOffset }
+            )
+            .toList()
+        if (overlapping.isEmpty()) {
+            return listOf("$prefix=range_index=$rangeIndex;state=none")
+        }
+        return overlapping.mapIndexed { index, highlighter ->
+            val key = highlighter.textAttributesKey?.externalName ?: "<raw>"
+            "$prefix=range_index=$rangeIndex;index=$index;start=${highlighter.startOffset};" +
+                "end=${highlighter.endOffset};layer=${highlighter.layer};target=${highlighter.targetArea};" +
+                "key=$key;${attributesValue(highlighter.getTextAttributes(scheme))}"
+        }
+    }
+
+    private fun attributesValue(attributes: TextAttributes?): String =
+        if (attributes == null) {
+            "attributes=none"
+        } else {
+            "foreground=${colorValue(attributes.foregroundColor)};" +
+                "background=${colorValue(attributes.backgroundColor)};" +
+                "effect=${colorValue(attributes.effectColor)};" +
+                "effect_type=${attributes.effectType ?: "none"};font_type=${attributes.fontType}"
+        }
+
+    private fun colorValue(color: Color?): String =
+        color?.let { "${it.red},${it.green},${it.blue},${it.alpha}" } ?: "none"
+
+    private fun rectangleValue(rectangle: java.awt.Rectangle?): String =
+        rectangle?.let { "${it.x},${it.y},${it.width},${it.height}" } ?: "none"
 
     fun structureGeometryEvidence(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
