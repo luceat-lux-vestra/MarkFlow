@@ -1,0 +1,59 @@
+name: Dependency Insight #576
+
+on:
+  push:
+    branches:
+      - deps/576-jackson-graph
+
+permissions:
+  contents: read
+
+jobs:
+  jacksonInsight:
+    name: Jackson dependency ownership
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact diagnostic head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Java 25
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Resolve Jackson ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          inspect() {
+            local configuration="$1"
+            local dependency="$2"
+            echo "::group::INSIGHT configuration=$configuration dependency=$dependency"
+            ./gradlew dependencyInsight \
+              --configuration "$configuration" \
+              --dependency "$dependency" \
+              --no-daemon \
+              --console=plain
+            echo "::endgroup::"
+          }
+
+          inspect classpath com.fasterxml.jackson.core:jackson-core
+          inspect classpath com.fasterxml.jackson.core:jackson-databind
+
+          inspect integrationTestCompileClasspath com.fasterxml.jackson.core:jackson-core
+          inspect integrationTestCompileClasspath com.fasterxml.jackson.core:jackson-databind
+          inspect integrationTestCompileClasspath tools.jackson.core:jackson-core
+          inspect integrationTestCompileClasspath tools.jackson.core:jackson-databind
+
+          inspect intellijPlatformTestClasspath tools.jackson.core:jackson-core
+          inspect intellijPlatformTestClasspath tools.jackson.core:jackson-databind
+
+          inspect testUiCompileClasspath com.fasterxml.jackson.core:jackson-core
+          inspect testUiCompileClasspath com.fasterxml.jackson.core:jackson-databind
+          inspect testUiCompileClasspath tools.jackson.core:jackson-core
+          inspect testUiCompileClasspath tools.jackson.core:jackson-databind
