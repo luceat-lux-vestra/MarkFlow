@@ -12,6 +12,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -30,7 +31,7 @@ internal object NativeProjectionProbe {
     const val PARSER_STRATEGY = "JETBRAINS_BUNDLED_MARKDOWN"
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
 
     private val started = AtomicBoolean(false)
 
@@ -679,15 +680,16 @@ Plain body line for inactive caret state.
         private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
             var result: FileEditorProvider? = null
             case("platform-text-and-markdown-coexistence") {
-                val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
-                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                val providerManager = FileEditorProviderManager.getInstance()
+                check(providerManager.getProvider(LEGACY_MARKFLOW_PROVIDER_TYPE_ID) == null) {
                     "legacy MarkFlow browser provider remained registered after native production cutover"
                 }
-                val accepted = providers.filter { candidate -> accepts(candidate, file) }
-                val text = accepted.firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
+                val providers = providerManager.getProviderList(project, file)
+                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                    ?.takeIf { candidate -> accepts(candidate, file) }
                     ?: error("platform text editor provider did not accept Markdown fixture")
                 check(text.policy == FileEditorPolicy.NONE)
-                check(accepted.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
+                check(providers.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
                     "bundled Markdown provider did not coexist with platform text editor"
                 }
                 result = text

@@ -17,6 +17,7 @@ import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -389,12 +390,12 @@ internal object NativeEditingProbe {
         private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
             var result: FileEditorProvider? = null
             case("platform-text-provider-boundary") {
-                val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
-                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                val providerManager = FileEditorProviderManager.getInstance()
+                check(providerManager.getProvider(LEGACY_MARKFLOW_PROVIDER_TYPE_ID) == null) {
                     "legacy MarkFlow browser provider remained registered after native production cutover"
                 }
-                val accepted = providers.filter { candidate -> accepts(candidate, file) }
-                val text = accepted.firstOrNull { it.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID }
+                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                    ?.takeIf { candidate -> accepts(candidate, file) }
                     ?: error("platform text editor provider did not accept native editing Markdown fixture")
                 check(text.policy == FileEditorPolicy.NONE)
                 result = text
@@ -572,7 +573,7 @@ internal object NativeEditingProbe {
     }
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
     private const val LEGACY_MARKFLOW_STATE_CLASS = "com.algorist.markflow.editor.state.MarkFlowEditorState"
     private val MARKDOWN_FLAVOR = DataFlavor("text/markdown;class=java.lang.String", "Markdown")
 }

@@ -20,6 +20,7 @@ import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.keymap.KeymapManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -41,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The probe exercises public FileEditor/TextEditor semantics in a real opened project while JCEF is
  * disabled. Production authority must remain the platform text editor and the legacy MarkFlow browser
- * FileEditorProvider must be absent from the extension inventory.
+ * FileEditorProvider must be absent from the applicable provider inventory.
  */
 internal object NativeEditorShellProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeEditorShellProbe.output"
@@ -399,47 +400,60 @@ internal object NativeEditorShellProbe {
         private fun proveProviderCoexistence(project: Project, file: VirtualFile): FileEditorProvider {
             var selected: FileEditorProvider? = null
             case("provider-and-bundled-markdown-coexistence") {
-                val providers = FileEditorProvider.EP_FILE_EDITOR_PROVIDER.extensionList
-                check(providers.isNotEmpty())
-                check(providers.none { it.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS }) {
+                val providerManager = FileEditorProviderManager.getInstance()
+                check(providerManager.getProvider(LEGACY_MARKFLOW_PROVIDER_TYPE_ID) == null) {
                     "legacy MarkFlow browser provider remained registered after native production cutover"
                 }
-                check(providers.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
+
+                val applicableProviders = providerManager.getProviderList(project, file)
+                check(applicableProviders.isNotEmpty())
+                check(applicableProviders.any { it.javaClass.name.contains("markdown", ignoreCase = true) }) {
                     "bundled Markdown FileEditor provider not visible"
                 }
 
-                for (provider in providers) {
-                    val accepted = runCatching {
-                        if (provider.acceptRequiresReadAction()) {
-                            ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-                        } else {
-                            provider.accept(project, file)
-                        }
-                    }.getOrElse { false }
-                    val isText = provider.editorTypeId == PLATFORM_TEXT_EDITOR_TYPE_ID
-                    val isLegacyMarkFlow = provider.javaClass.name == LEGACY_MARKFLOW_PROVIDER_CLASS
+                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
+                    ?.takeIf { candidate -> accepts(candidate, file) }
+                    ?: error("platform text editor provider did not accept Markdown fixture")
+                check(text.policy == FileEditorPolicy.NONE) {
+                    "platform text editor policy unexpectedly displaces other editors: ${text.policy}"
+                }
+                selected = text
+
+                for (provider in applicableProviders) {
                     providerInventory += ProviderResult(
                         className = provider.javaClass.name,
                         editorTypeId = provider.editorTypeId,
                         policy = provider.policy.name,
-                        accepted = accepted,
-                        selectedPlatformTextProvider = isText && accepted,
-                        legacyMarkFlowProvider = isLegacyMarkFlow,
+                        accepted = true,
+                        selectedPlatformTextProvider = provider === text,
+                        legacyMarkFlowProvider = provider.editorTypeId == LEGACY_MARKFLOW_PROVIDER_TYPE_ID,
                     )
-                    if (isText && accepted && selected == null) {
-                        selected = provider
-                    }
+                }
+                if (applicableProviders.none { it === text }) {
+                    providerInventory += ProviderResult(
+                        className = text.javaClass.name,
+                        editorTypeId = text.editorTypeId,
+                        policy = text.policy.name,
+                        accepted = true,
+                        selectedPlatformTextProvider = true,
+                        legacyMarkFlowProvider = false,
+                    )
                 }
 
-                val text = selected ?: error("platform text editor provider did not accept Markdown fixture")
-                check(text.policy == FileEditorPolicy.NONE) {
-                    "platform text editor policy unexpectedly displaces other editors: ${text.policy}"
-                }
                 check(providerInventory.none { it.legacyMarkFlowProvider })
-                "registered=${providers.size} accepted=${providerInventory.count { it.accepted }} platformText=${text.javaClass.name} legacyBrowserProvider=false"
+                "applicable=${applicableProviders.size} accepted=${providerInventory.count { it.accepted }} " +
+                    "platformText=${text.javaClass.name} legacyBrowserProvider=false"
             }
             return selected ?: error("provider coexistence case did not select a text provider")
         }
+
+        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
+            if (provider.acceptRequiresReadAction()) {
+                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
+            } else {
+                provider.accept(project, file)
+            }
+        }.getOrDefault(false)
 
         private fun installLifecycleProbe(authoritative: Document) {
             EditorFactory.getInstance().addEditorFactoryListener(object : EditorFactoryListener {
@@ -639,5 +653,5 @@ internal object NativeEditorShellProbe {
     }
 
     private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
-    private const val LEGACY_MARKFLOW_PROVIDER_CLASS = "com.algorist.markflow.editor.MarkFlowEditorProvider"
+    private const val LEGACY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
 }
