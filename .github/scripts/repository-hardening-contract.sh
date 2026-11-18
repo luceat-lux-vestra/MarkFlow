@@ -1073,6 +1073,11 @@ grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
 grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
   die "Markdown source-anchor ledger lost its reviewed snapshot pin"
 differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
+grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$differential_bridge" ||
+  die "#584 differential native path no longer requires owned-controller lookup"
+if grep -Fq 'NativeMarkFlowProductionLifecycle.controller(editor)' "$differential_bridge"; then
+  die "#584 differential native path still accepts generic transitional/test controllers"
+fi
 grep -Fq 'val reviewAnchorLine = reviewedSourceAnchorLines[entry.id]' "$manifest_test" ||
   die "#353 reviewed native capture no longer derives the manifest-owned review anchor"
 grep -Fq 'nativeSourceAnchorViewport(remoteEditor, reviewAnchorLine)' "$manifest_test" ||
