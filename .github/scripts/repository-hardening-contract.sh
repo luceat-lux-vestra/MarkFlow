@@ -9,6 +9,15 @@ die() {
   exit 1
 }
 
+production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
+[ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
+if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
+  die "#584 superseded generic EditorFactoryListener attachment path was reintroduced"
+fi
+if grep -R -Fq 'skipAutomaticProductionAttachment' src/main/kotlin; then
+  die "#584 obsolete generic-attachment probe suppression helper was reintroduced"
+fi
+
 wrapper="gradle/wrapper/gradle-wrapper.properties"
 wrapper_gradle="$(sed -n 's#^distributionUrl=.*gradle-\([0-9][0-9.]*\)-bin\.zip$#\1#p' "$wrapper")"
 wrapper_sha="$(sed -n 's/^distributionSha256Sum=//p' "$wrapper")"
