@@ -378,19 +378,23 @@ internal object NativeMarkdownProjectionPlanner {
 
     /**
      * Parser recognition is intentionally broader than MarkFlow's maintained link contract.
-     * Keep ordinary inline/reference links and CommonMark angle autolinks, but fail closed when the
-     * parser recognizes unsupported bare GFM autolink literals or footnote-like reference labels.
+     * Keep ordinary inline/reference links and CommonMark angle autolinks only when the parser
+     * proves one non-empty visible semantic range. Fail closed for unsupported bare GFM autolink
+     * literals, footnote-like reference labels, or recognized links without visible content.
      */
     private fun isSupportedLinkProjection(
         node: ASTNode,
         source: String,
         sourceRange: ProjectionRange,
-    ): Boolean = when (node.type) {
-        MarkdownElementTypes.AUTOLINK -> isWrappedAutolink(node, source, sourceRange)
-        MarkdownElementTypes.FULL_REFERENCE_LINK,
-        MarkdownElementTypes.SHORT_REFERENCE_LINK,
-        -> !hasFootnoteLikeReferenceLabel(node, source, sourceRange)
-        else -> true
+    ): Boolean {
+        val supportedShape = when (node.type) {
+            MarkdownElementTypes.AUTOLINK -> isWrappedAutolink(node, source, sourceRange)
+            MarkdownElementTypes.FULL_REFERENCE_LINK,
+            MarkdownElementTypes.SHORT_REFERENCE_LINK,
+            -> !hasFootnoteLikeReferenceLabel(node, source, sourceRange)
+            else -> true
+        }
+        return supportedShape && linkVisibleRange(node, source, sourceRange) != null
     }
 
     private fun isWrappedAutolink(
@@ -419,23 +423,11 @@ internal object NativeMarkdownProjectionPlanner {
         source: String,
         sourceRange: ProjectionRange,
     ): List<ProjectionRange> {
-        val visible = linkVisibleRange(node, source, sourceRange)
-        if (visible != null) {
-            return buildList {
-                projectionRangeOrNull(sourceRange.startOffset, visible.startOffset, source)?.let(::add)
-                projectionRangeOrNull(visible.endOffset, sourceRange.endOffset, source)?.let(::add)
-            }
+        val visible = linkVisibleRange(node, source, sourceRange) ?: return emptyList()
+        return buildList {
+            projectionRangeOrNull(sourceRange.startOffset, visible.startOffset, source)?.let(::add)
+            projectionRangeOrNull(visible.endOffset, sourceRange.endOffset, source)?.let(::add)
         }
-
-        // Wrapped autolinks are a parser-proven LINK range whose exact source starts/ends in angle
-        // brackets. Bare GFM autolinks intentionally keep no conceal ranges.
-        if (isWrappedAutolink(node, source, sourceRange)) {
-            return listOf(
-                ProjectionRange(sourceRange.startOffset, sourceRange.startOffset + 1),
-                ProjectionRange(sourceRange.endOffset - 1, sourceRange.endOffset),
-            )
-        }
-        return emptyList()
     }
 
     private fun linkVisibleRange(
@@ -443,6 +435,14 @@ internal object NativeMarkdownProjectionPlanner {
         source: String,
         sourceRange: ProjectionRange,
     ): ProjectionRange? {
+        if (isWrappedAutolink(node, source, sourceRange)) {
+            return projectionRangeOrNull(
+                sourceRange.startOffset + 1,
+                sourceRange.endOffset - 1,
+                source,
+            )
+        }
+
         val textContainer = node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
             ?: if (node.type == MarkdownElementTypes.SHORT_REFERENCE_LINK) {
                 node.children.firstOrNull { it.type == MarkdownElementTypes.LINK_LABEL }
