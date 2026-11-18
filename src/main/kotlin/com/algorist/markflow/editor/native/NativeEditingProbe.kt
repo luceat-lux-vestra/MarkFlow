@@ -6,7 +6,6 @@ import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.Editor
@@ -31,10 +30,10 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Real-IDE native editing regression proof retained across the #153 production cutover. */
+/** Real-IDE native editing regression proof executed on the production MarkFlow-owned FileEditor shell. */
 internal object NativeEditingProbe {
     const val OUTPUT_PROPERTY = "markflow.nativeEditingProbe.output"
-    const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
+    const val SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION"
 
     private val started = AtomicBoolean(false)
 
@@ -54,13 +53,13 @@ internal object NativeEditingProbe {
     ) {
         private val gson = GsonBuilder().setPrettyPrinting().create()
         private val cases = mutableListOf<CaseResult>()
-        private val liveEditors = mutableListOf<PlatformEditorHandle>()
+        private val liveEditors = mutableListOf<OwnedEditorHandle>()
         private var tempRoot: Path? = null
         private var jcefSupported: Boolean? = null
         private lateinit var fixture: Fixture
         private lateinit var provider: FileEditorProvider
-        private lateinit var first: PlatformEditorHandle
-        private lateinit var second: PlatformEditorHandle
+        private lateinit var first: OwnedEditorHandle
+        private lateinit var second: OwnedEditorHandle
 
         fun run() {
             ApplicationManager.getApplication().assertIsDispatchThread()
@@ -76,9 +75,9 @@ internal object NativeEditingProbe {
                 }
 
                 fixture = createFixture()
-                provider = selectPlatformTextProvider(fixture.file)
-                first = createPlatformTextEditor(provider, fixture.file)
-                second = createPlatformTextEditor(provider, fixture.file)
+                provider = selectOwnedFileEditorProvider(fixture.file)
+                first = createOwnedFileEditor(provider, fixture.file)
+                second = createOwnedFileEditor(provider, fixture.file)
 
                 case("native-paste-preprocessor-registered") {
                     val processors = CopyPastePreProcessor.EP_NAME.extensionList
@@ -283,7 +282,7 @@ internal object NativeEditingProbe {
                     "unsupportedRejected=true sourceStable=true"
                 }
 
-                case("platform-state-roundtrip-source-stable") {
+                case("owned-file-editor-state-roundtrip-source-stable") {
                     val sourceBefore = fixture.document.text
                     val firstEditor = first.editor
                     val secondEditor = second.editor
@@ -316,7 +315,7 @@ internal object NativeEditingProbe {
                         check(firstEditor.selectionModel.selectionEnd == fixture.stateCaretOffset)
                         check(secondEditor.caretModel.offset == secondCaretBefore)
                         check(fixture.document.text == sourceBefore)
-                        "platformState=${state.javaClass.name} legacyStateAuthority=false splitIsolation=true sourceStable=true scrollCaptured=true"
+                        "ownedState=${state.javaClass.name} legacyStateAuthority=false splitIsolation=true sourceStable=true scrollCaptured=true"
                     } finally {
                         scrolling.enableAnimation()
                     }
@@ -329,7 +328,9 @@ internal object NativeEditingProbe {
                     check(EditorFactory.getInstance().getEditors(fixture.document, project).isEmpty()) {
                         "native text editors retained after editing proof disposal"
                     }
-                    "editors=0 sourceStable=true"
+                    check(NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics == 0)
+                    check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics == 0)
+                    "editors=0 ownedControllers=0 ownedFileEditors=0 sourceStable=true"
                 }
 
                 finish("PASS")
@@ -387,40 +388,38 @@ internal object NativeEditingProbe {
             return result ?: error("fixture case did not produce a fixture")
         }
 
-        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider {
+        private fun selectOwnedFileEditorProvider(file: VirtualFile): FileEditorProvider {
             var result: FileEditorProvider? = null
-            case("platform-text-provider-boundary") {
+            case("owned-file-editor-provider-boundary") {
                 val providerManager = FileEditorProviderManager.getInstance()
                 check(providerManager.getProvider(LEGACY_MARKFLOW_PROVIDER_TYPE_ID) == null) {
                     "legacy MarkFlow browser provider remained registered after native production cutover"
                 }
-                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
-                    ?.takeIf { candidate -> accepts(candidate, file) }
-                    ?: error("platform text editor provider did not accept native editing Markdown fixture")
-                check(text.policy == FileEditorPolicy.NONE)
-                result = text
-                "platformText=${text.javaClass.name} legacyBrowserProvider=false"
+                val owned = providerManager.getProvider(MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+                    ?: error("production MarkFlow owned FileEditor provider is not registered")
+                check(providerManager.getProviderList(project, file).any { it === owned }) {
+                    "production MarkFlow owned FileEditor provider did not accept native editing Markdown fixture"
+                }
+                check(owned.policy == FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR)
+                result = owned
+                "ownedProvider=${owned.javaClass.name} policy=${owned.policy.name} legacyBrowserProvider=false"
             }
-            return result ?: error("provider case did not select platform text editor")
+            return result ?: error("provider case did not select production MarkFlow owned FileEditor")
         }
 
-        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
-            }
-        }.getOrDefault(false)
-
-        private fun createPlatformTextEditor(provider: FileEditorProvider, file: VirtualFile): PlatformEditorHandle {
+        private fun createOwnedFileEditor(provider: FileEditorProvider, file: VirtualFile): OwnedEditorHandle {
             val fileEditor = provider.createEditor(project, file)
-            check(fileEditor is TextEditor) {
-                "selected provider returned ${fileEditor.javaClass.name}, not TextEditor"
+            check(fileEditor is MarkFlowOwnedNativeFileEditor) {
+                "production MarkFlow provider returned ${fileEditor.javaClass.name}, not MarkFlowOwnedNativeFileEditor"
             }
-            return PlatformEditorHandle(provider, fileEditor, fileEditor.editor).also(liveEditors::add)
+            val controller = NativeMarkFlowProductionLifecycle.ownedController(fileEditor.editor)
+            check(controller != null) {
+                "production owned FileEditor did not attach its owned presentation controller"
+            }
+            return OwnedEditorHandle(provider, fileEditor, fileEditor.editor).also(liveEditors::add)
         }
 
-        private fun disposeEditor(handle: PlatformEditorHandle) {
+        private fun disposeEditor(handle: OwnedEditorHandle) {
             if (!liveEditors.remove(handle)) return
             handle.provider.disposeEditor(handle.fileEditor)
         }
@@ -528,9 +527,9 @@ internal object NativeEditingProbe {
         val secondEditorOffset: Int,
     )
 
-    private data class PlatformEditorHandle(
+    private data class OwnedEditorHandle(
         val provider: FileEditorProvider,
-        val fileEditor: TextEditor,
+        val fileEditor: MarkFlowOwnedNativeFileEditor,
         val editor: Editor,
     )
 
@@ -572,7 +571,6 @@ internal object NativeEditingProbe {
         }
     }
 
-    private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val LEGACY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
     private const val LEGACY_MARKFLOW_STATE_CLASS = "com.algorist.markflow.editor.state.MarkFlowEditorState"
     private val MARKDOWN_FLAVOR = DataFlavor("text/markdown;class=java.lang.String", "Markdown")
