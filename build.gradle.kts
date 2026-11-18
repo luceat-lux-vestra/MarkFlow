@@ -300,8 +300,6 @@ val rendererNodePath = rendererNodeExecutable.map { executable ->
         .joinToString(File.pathSeparator)
 }
 val diagnosticsJvmProperty = "markflow.diagnostics"
-val nativeEditorShellProbeOutput = layout.buildDirectory.file("native-editor-shell-probe/evidence.json")
-val nativeEditorShellProbeProjectDir = layout.buildDirectory.dir("native-editor-shell-probe/project")
 val ownedNativeFileEditorRuntimeProbeOutput = layout.buildDirectory.file("owned-native-file-editor-runtime/evidence-jcef.json")
 val ownedNativeFileEditorRuntimeNoJcefProbeOutput = layout.buildDirectory.file("owned-native-file-editor-runtime/evidence-no-jcef.json")
 val ownedNativeFileEditorRuntimeProbeProjectDir = layout.buildDirectory.dir("owned-native-file-editor-runtime/project-jcef")
@@ -543,28 +541,6 @@ intellijPlatformTesting {
     }
 
     runIde {
-        register("runIdeForNativeEditorShellProbe") {
-            task {
-                doFirst {
-                    nativeEditorShellProbeProjectDir.get().asFile.mkdirs()
-                }
-                jvmArgumentProviders += CommandLineArgumentProvider {
-                    listOf(
-                        "-Dmarkflow.nativeEditorShellProbe.output=${nativeEditorShellProbeOutput.get().asFile.absolutePath}",
-                        "-Dide.browser.jcef.enabled=false",
-                        "-Dide.browser.jcef.testMode.enabled=true",
-                        "-Didea.trust.all.projects=true",
-                        "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
-                        "-Djb.consents.confirmation.enabled=false",
-                    )
-                }
-                argumentProviders += CommandLineArgumentProvider {
-                    listOf(nativeEditorShellProbeProjectDir.get().asFile.absolutePath)
-                }
-            }
-        }
-
         register("runIdeForOwnedNativeFileEditorRuntimeProbe") {
             task {
                 doFirst {
