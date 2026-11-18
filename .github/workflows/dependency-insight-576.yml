@@ -25,7 +25,15 @@ jobs:
           distribution: zulu
           java-version: 25
 
-      - name: Resolve Jackson ownership
+      - name: Resolve buildscript Jackson ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::BUILD_ENVIRONMENT"
+          ./gradlew buildEnvironment --no-daemon --console=plain
+          echo "::endgroup::"
+
+      - name: Resolve project/test Jackson ownership
         shell: bash
         run: |
           set -euo pipefail
@@ -41,9 +49,6 @@ jobs:
               --console=plain
             echo "::endgroup::"
           }
-
-          inspect classpath com.fasterxml.jackson.core:jackson-core
-          inspect classpath com.fasterxml.jackson.core:jackson-databind
 
           inspect integrationTestCompileClasspath com.fasterxml.jackson.core:jackson-core
           inspect integrationTestCompileClasspath com.fasterxml.jackson.core:jackson-databind
