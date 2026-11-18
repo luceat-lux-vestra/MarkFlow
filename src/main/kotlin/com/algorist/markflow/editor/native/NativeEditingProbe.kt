@@ -282,7 +282,7 @@ internal object NativeEditingProbe {
                     "unsupportedRejected=true sourceStable=true"
                 }
 
-                case("platform-state-roundtrip-source-stable") {
+                case("owned-file-editor-state-roundtrip-source-stable") {
                     val sourceBefore = fixture.document.text
                     val firstEditor = first.editor
                     val secondEditor = second.editor
@@ -315,7 +315,7 @@ internal object NativeEditingProbe {
                         check(firstEditor.selectionModel.selectionEnd == fixture.stateCaretOffset)
                         check(secondEditor.caretModel.offset == secondCaretBefore)
                         check(fixture.document.text == sourceBefore)
-                        "platformState=${state.javaClass.name} legacyStateAuthority=false splitIsolation=true sourceStable=true scrollCaptured=true"
+                        "ownedState=${state.javaClass.name} legacyStateAuthority=false splitIsolation=true sourceStable=true scrollCaptured=true"
                     } finally {
                         scrolling.enableAnimation()
                     }
