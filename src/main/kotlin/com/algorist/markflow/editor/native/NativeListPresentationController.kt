@@ -828,9 +828,10 @@ internal class NativeListInlayRenderer(
                 g2.font = font
                 g2.drawString(row.text, checkbox.x + checkbox.width + MARKER_GAP, baseline)
             } else {
+                val displayMarker = nativeListDisplayMarker(row.marker)
                 g2.font = bold
-                g2.drawString(row.marker, markerX, baseline)
-                val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
+                g2.drawString(displayMarker, markerX, baseline)
+                val markerWidth = g2.getFontMetrics(bold).stringWidth(displayMarker)
                 g2.font = font
                 g2.drawString(row.text, markerX + markerWidth + MARKER_GAP, baseline)
             }
@@ -861,6 +862,12 @@ internal class NativeListInlayRenderer(
         private const val CHECKBOX_SIZE = 13
     }
 }
+
+internal fun nativeListDisplayMarker(marker: String): String =
+    when (marker) {
+        "-", "*", "+" -> "•"
+        else -> marker
+    }
 
 internal fun nativeListIndentPixels(depth: Int): Int {
     require(depth >= 0)
