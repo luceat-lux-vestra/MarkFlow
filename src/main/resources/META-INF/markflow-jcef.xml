@@ -6,7 +6,6 @@
                 id="markflow-derived-renderer-probe"
                 implementation="com.algorist.markflow.renderer.jcef.DerivedRendererProbeStarter"
                 internal="true"/>
-        <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditorShellProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeProjectionProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.editor.native.NativeEditingProbeProjectActivity"/>
         <postStartupActivity implementation="com.algorist.markflow.renderer.jcef.NativeDerivedPresentationProbeProjectActivity"/>

@@ -15,6 +15,9 @@ owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNa
 if grep -R -Eq 'Leap2OwnedShellProbe|markflow\.leap2OwnedShellProbe|markflow\.leap2OwnedNativeFileEditor\.enabled|runIdeForLeap2OwnedShell|leap2-owned-shell-probe' src build.gradle.kts .github/workflows .github/scripts --exclude='repository-hardening-contract.sh'; then
   die "#584 proof-era owned-shell symbol/property/task/path was reintroduced"
 fi
+if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeForNativeEditorShellProbe|native-editor-shell-probe' src build.gradle.kts .github/workflows; then
+  die "#584 superseded platform-augmentation shell proof was reintroduced"
+fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
@@ -523,7 +526,6 @@ for job in \
   derived_renderer \
   native_derived_presentation \
   native_editing \
-  native_editor_shell \
   owned_file_editor_runtime \
   native_host_resources \
   native_image_import \
@@ -536,7 +538,6 @@ for semantic_probe in \
   'markflow-derived-renderer-probe' \
   'markflow.nativeDerivedPresentationProbe.output' \
   'runIdeForNativeEditingProbe' \
-  'runIdeForNativeEditorShellProbe' \
   'runIdeForOwnedNativeFileEditorRuntimeProbe' \
   'runIdeForOwnedNativeFileEditorRuntimeNoJcefProbe' \
   'runIdeForNativeHostResourcesProbe' \
@@ -547,7 +548,7 @@ for semantic_probe in \
 done
 
 exact_native_checkout_count="$(grep -Fc 'ref: ${{ needs.target.outputs.source_sha }}' "$native_evidence_workflow")"
-[ "$exact_native_checkout_count" -ge 9 ] ||
+[ "$exact_native_checkout_count" -ge 8 ] ||
   die "Native runtime evidence does not pin every probe checkout to the resolved exact source SHA"
 
 
@@ -567,7 +568,7 @@ for job in \
   derived_renderer \
   native_derived_presentation \
   native_editing \
-  native_editor_shell \
+  owned_file_editor_runtime \
   native_host_resources \
   native_image_import \
   native_projection \

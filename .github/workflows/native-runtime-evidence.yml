@@ -1,6 +1,6 @@
 # Canonical native runtime evidence authority for MarkFlow.
-# Consolidates eight historical one-probe workflows while preserving each
-# real IntelliJ/JCEF/no-JCEF semantic probe and artifact contract.
+# Maintains production and deep-regression IntelliJ/JCEF/no-JCEF evidence
+# while routing every retained contract against one exact source SHA.
 name: Native Runtime Evidence
 
 on:
@@ -34,7 +34,7 @@ jobs:
       run_derived_renderer: ${{ steps.route.outputs.run_derived_renderer }}
       run_native_derived_presentation: ${{ steps.route.outputs.run_native_derived_presentation }}
       run_native_editing: ${{ steps.route.outputs.run_native_editing }}
-      run_native_editor_shell: ${{ steps.route.outputs.run_native_editor_shell }}
+      run_owned_file_editor_runtime: ${{ steps.route.outputs.run_owned_file_editor_runtime }}
       run_native_host_resources: ${{ steps.route.outputs.run_native_host_resources }}
       run_native_image_import: ${{ steps.route.outputs.run_native_image_import }}
       run_native_projection: ${{ steps.route.outputs.run_native_projection }}
@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != "pull_request" ]; then
-            for key in derived_renderer native_derived_presentation native_editing native_editor_shell native_host_resources native_image_import native_projection no_jcef_native_editing; do
+            for key in derived_renderer native_derived_presentation native_editing owned_file_editor_runtime native_host_resources native_image_import native_projection no_jcef_native_editing; do
               printf 'run_%s=true\n' "$key" >> "$GITHUB_OUTPUT"
             done
             exit 0
@@ -99,7 +99,7 @@ jobs:
           import re
           from pathlib import Path
 
-          patterns = json.loads(r'''{"derived_renderer":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_derived_presentation":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-edit-semantics.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/README.md"],"native_editor_shell":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md"],"native_host_resources":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/architecture/native-host-resources.md"],"native_image_import":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/product/image-file-import-contract.md"],"native_projection":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","fixtures/markdown-fidelity/**","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md","docs/architecture/README.md"],"no_jcef_native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/settings/**","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/0002-mermaid-katex-renderer-continuity.md"]}''')
+          patterns = json.loads(r'''{"derived_renderer":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_derived_presentation":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/renderer/**","src/main/kotlin/com/algorist/markflow/browser/MarkFlowWebviewResourceManager.kt","webview/package.json","webview/package-lock.json","webview/derived-renderer.html","webview/vite.derived-renderer.config.ts","webview/src/renderer/**","webview/src/app/derived-renderer-service.ts","webview/src/app/browser-derived-renderer-backends.ts"],"native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-edit-semantics.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/README.md"],"owned_file_editor_runtime":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md"],"native_host_resources":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/architecture/native-host-resources.md"],"native_image_import":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/main/kotlin/com/algorist/markflow/trust/**","src/test/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/trust/**","docs/product/image-file-import-contract.md"],"native_projection":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","fixtures/markdown-fidelity/**","src/main/resources/META-INF/plugin.xml","src/main/kotlin/com/algorist/markflow/editor/native/**","src/test/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/native-markdown-projection-foundation.md","docs/architecture/native-editor-shell-selection.md","docs/architecture/0001-native-authority-projection-architecture.md","docs/architecture/README.md"],"no_jcef_native_editing":[".github/workflows/native-runtime-evidence.yml","build.gradle.kts","gradle.properties","gradle/**","webview/package.json","webview/package-lock.json","src/main/resources/META-INF/plugin.xml","src/main/resources/META-INF/markflow-jcef.xml","src/main/kotlin/com/algorist/markflow/settings/**","src/main/kotlin/com/algorist/markflow/editor/native/**","docs/architecture/0002-mermaid-katex-renderer-continuity.md"]}''')
           # A change to canonical routing or replacement-evidence trust
           # topology affects every native probe.
           for globs in patterns.values():
@@ -674,138 +674,9 @@ jobs:
             ${{ runner.temp }}/markflow-native-editing-xvfb.log
           if-no-files-found: warn
 
-  native_editor_shell:
-    needs: target
-    if: needs.target.outputs.run_native_editor_shell == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    name: Real IntelliJ native editor shell probe
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
-    steps:
-      - name: Fetch Sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.target.outputs.source_sha }}
-          persist-credentials: false
-
-      - name: Setup Java
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
-        with:
-          distribution: zulu
-          java-version: 25
-
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        with:
-          cache-read-only: true
-
-      - name: Start virtual display
-        shell: bash
-        run: |
-          set -euo pipefail
-          Xvfb :99 -screen 0 1920x1080x24 >"$RUNNER_TEMP/markflow-native-shell-xvfb.log" 2>&1 &
-          printf 'DISPLAY=:99\n' >> "$GITHUB_ENV"
-
-      - name: Run real IntelliJ native editor shell probe with JCEF disabled
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 8m ./gradlew runIdeForNativeEditorShellProbe --stacktrace
-
-      - name: Validate native shell evidence completeness
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          path = Path('build/native-editor-shell-probe/evidence.json')
-          if not path.is_file():
-              raise SystemExit('native editor shell probe did not produce evidence.json')
-
-          evidence = json.loads(path.read_text(encoding='utf-8'))
-          if evidence.get('schemaVersion') != 5:
-              raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
-          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
-              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
-          if evidence.get('jcefSupported') is not False:
-              raise SystemExit(f"JCEF-disabled proof was not actually disabled: {evidence.get('jcefSupported')}")
-          if evidence.get('verdict') != 'PASS':
-              raise SystemExit(f"native editor shell proof verdict is not PASS: {evidence.get('verdict')}")
-
-          required = {
-              'jcef-disabled-runtime',
-              'authoritative-document-fixture',
-              'provider-and-bundled-markdown-coexistence',
-              'editor-factory-presentation-lifecycle',
-              'shared-document-splits',
-              'platform-keyboard-and-keymap',
-              'platform-clipboard',
-              'platform-ime-composition',
-              'caret-selection-scroll-file-editor-state',
-              'dirty-save-undo-redo',
-              'exact-source-fallback',
-              'create-recreate-dispose',
-              'owned-file-editor-rejection-boundary',
-          }
-          cases = evidence.get('cases') or []
-          by_id = {case.get('id'): case for case in cases}
-          if len(by_id) != len(cases):
-              raise SystemExit('duplicate native shell evidence case ids')
-          if set(by_id) != required:
-              raise SystemExit(
-                  f"native shell case contract mismatch: missing={sorted(required - set(by_id))}, "
-                  f"unexpected={sorted(set(by_id) - required)}"
-              )
-          failed = sorted(case_id for case_id in required if by_id[case_id].get('outcome') != 'PASS')
-          if failed:
-              raise SystemExit(f'native shell required cases failed: {failed}')
-
-          fixture_detail = str(by_id['authoritative-document-fixture'].get('detail', ''))
-          if 'projectDefault=false' not in fixture_detail or 'insideProject=true' not in fixture_detail:
-              raise SystemExit(f'native shell proof did not run inside a real opened project: {fixture_detail}')
-          undo_detail = str(by_id['dirty-save-undo-redo'].get('detail', ''))
-          if 'undoScope=project-text-editor' not in undo_detail:
-              raise SystemExit(f'undo proof did not use project TextEditor context: {undo_detail}')
-          boundary_detail = str(by_id['owned-file-editor-rejection-boundary'].get('detail', ''))
-          for flag in ('platformTextAuthority=true', 'legacyBrowserProvider=false', 'presentationOnly=true'):
-              if flag not in boundary_detail:
-                  raise SystemExit(f'production FileEditor ownership boundary incomplete: {boundary_detail}')
-
-          providers = evidence.get('providerInventory') or []
-          selected = [p for p in providers if p.get('selectedPlatformTextProvider') is True]
-          if len(selected) != 1 or selected[0].get('accepted') is not True or selected[0].get('policy') != 'NONE':
-              raise SystemExit(f'invalid selected platform text provider evidence: {selected}')
-          legacy = [p for p in providers if p.get('legacyMarkFlowProvider') is True]
-          if legacy:
-              raise SystemExit(f'legacy MarkFlow browser provider remained registered after native production cutover: {legacy}')
-          markdown = [p for p in providers if 'markdown' in str(p.get('className', '')).lower()]
-          if not markdown or not any(p.get('accepted') is True for p in markdown):
-              raise SystemExit(f'bundled Markdown provider did not coexist as an accepting provider: {markdown}')
-
-          print(f"Native shell verdict: {evidence['verdict']}")
-          print(f"Selected shell: {evidence['selectedShell']}")
-          print(f"IDE build: {evidence.get('ideBuild')}")
-          for case_id in sorted(required):
-              print(f"{case_id}: {by_id[case_id].get('outcome')}")
-          PY
-
-      - name: Upload native shell evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: native-editor-shell-evidence
-          path: |
-            build/native-editor-shell-probe/evidence.json
-            .intellijPlatform/sandbox/**/idea.log
-            ${{ runner.temp }}/markflow-native-shell-xvfb.log
-          if-no-files-found: warn
-
-
   owned_file_editor_runtime:
     needs: target
-    if: needs.target.outputs.run_native_editor_shell == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: needs.target.outputs.run_owned_file_editor_runtime == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Owned native FileEditor runtime evidence (${{ matrix.id }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
@@ -1753,7 +1624,7 @@ jobs:
   evidenceGate:
     name: Native runtime evidence gate
     if: ${{ always() }}
-    needs: [ target, derived_renderer, native_derived_presentation, native_editing, native_editor_shell, owned_file_editor_runtime, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
+    needs: [ target, derived_renderer, native_derived_presentation, native_editing, owned_file_editor_runtime, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
@@ -1767,9 +1638,8 @@ jobs:
           RESULT_NATIVE_DERIVED_PRESENTATION: ${{ needs.native_derived_presentation.result }}
           ROUTE_NATIVE_EDITING: ${{ needs.target.outputs.run_native_editing }}
           RESULT_NATIVE_EDITING: ${{ needs.native_editing.result }}
-          ROUTE_NATIVE_EDITOR_SHELL: ${{ needs.target.outputs.run_native_editor_shell }}
-          RESULT_NATIVE_EDITOR_SHELL: ${{ needs.native_editor_shell.result }}
-          RESULT_LEAP2_OWNED_SHELL: ${{ needs.owned_file_editor_runtime.result }}
+          ROUTE_OWNED_FILE_EDITOR_RUNTIME: ${{ needs.target.outputs.run_owned_file_editor_runtime }}
+          RESULT_OWNED_FILE_EDITOR_RUNTIME: ${{ needs.owned_file_editor_runtime.result }}
           ROUTE_NATIVE_HOST_RESOURCES: ${{ needs.target.outputs.run_native_host_resources }}
           RESULT_NATIVE_HOST_RESOURCES: ${{ needs.native_host_resources.result }}
           ROUTE_NATIVE_IMAGE_IMPORT: ${{ needs.target.outputs.run_native_image_import }}
@@ -1843,30 +1713,22 @@ jobs:
               failed=1
               ;;
           esac
-          case "$ROUTE_NATIVE_EDITOR_SHELL" in
+          case "$ROUTE_OWNED_FILE_EDITOR_RUNTIME" in
             true)
-              executed=$((executed + 2))
-              if [ "$RESULT_NATIVE_EDITOR_SHELL" != "success" ]; then
-                echo "::error::Required native_editor_shell failed: $RESULT_NATIVE_EDITOR_SHELL"
-                failed=1
-              fi
-              if [ "$RESULT_LEAP2_OWNED_SHELL" != "success" ]; then
-                echo "::error::Required owned_file_editor_runtime failed: $RESULT_LEAP2_OWNED_SHELL"
+              executed=$((executed + 1))
+              if [ "$RESULT_OWNED_FILE_EDITOR_RUNTIME" != "success" ]; then
+                echo "::error::Required owned_file_editor_runtime failed: $RESULT_OWNED_FILE_EDITOR_RUNTIME"
                 failed=1
               fi
               ;;
             false)
-              if [ "$RESULT_NATIVE_EDITOR_SHELL" != "skipped" ]; then
-                echo "::error::Unrouted native_editor_shell result: $RESULT_NATIVE_EDITOR_SHELL"
-                failed=1
-              fi
-              if [ "$RESULT_LEAP2_OWNED_SHELL" != "skipped" ]; then
-                echo "::error::Unrouted owned_file_editor_runtime result: $RESULT_LEAP2_OWNED_SHELL"
+              if [ "$RESULT_OWNED_FILE_EDITOR_RUNTIME" != "skipped" ]; then
+                echo "::error::Unrouted owned_file_editor_runtime result: $RESULT_OWNED_FILE_EDITOR_RUNTIME"
                 failed=1
               fi
               ;;
             *)
-              echo "::error::Unknown native_editor_shell route: $ROUTE_NATIVE_EDITOR_SHELL"
+              echo "::error::Unknown owned_file_editor_runtime route: $ROUTE_OWNED_FILE_EDITOR_RUNTIME"
               failed=1
               ;;
           esac
