@@ -643,7 +643,7 @@ jobs:
 
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
@@ -943,7 +943,7 @@ jobs:
 
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.action != 'ready_for_review' || steps.fast-evidence.outputs.reuse != 'true') }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
@@ -1108,7 +1108,7 @@ jobs:
 
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && needs.headEvidence.outputs.dependency_fast_lane != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
@@ -1170,7 +1170,7 @@ jobs:
 
       - name: Setup Java
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && needs.headEvidence.outputs.dependency_fast_lane != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
@@ -1336,7 +1336,7 @@ jobs:
 
       - name: Setup supported Java
         if: ${{ steps.dependency-scope.outputs.required == 'true' }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
