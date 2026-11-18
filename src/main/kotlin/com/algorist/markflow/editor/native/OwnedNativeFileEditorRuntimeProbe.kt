@@ -171,7 +171,7 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                 }
 
                 case("presentation-ownership-isolation") {
-                    check(NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null) {
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null }) {
                         "MarkFlow-owned editor has no presentation owner"
                     }
                     val leaked = plainEditors.filterIsInstance<TextEditor>()
@@ -179,7 +179,9 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                         .count { NativeMarkFlowProductionLifecycle.controller(it.editor) != null }
                     check(leaked == 0) { "MarkFlow presentation leaked into $leaked IntelliJ editor(s)" }
                     val derived = requireNotNull(
-                        NativeMarkFlowProductionLifecycle.ownedController(owned.editor)?.derivedEvidenceSnapshot()
+                        onEdt {
+                            NativeMarkFlowProductionLifecycle.ownedController(owned.editor)?.derivedEvidenceSnapshot()
+                        }
                     )
                     check(derived.derivedFragments == 0)
                     check(derived.renderRequests == 0L)
@@ -263,12 +265,12 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                         split.editor.caretModel.moveToOffset((plain.document.textLength / 2).coerceAtLeast(2))
                     }
                     check(onEdt { owned.editor.caretModel.offset != split.editor.caretModel.offset })
-                    check(NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null)
-                    check(NativeMarkFlowProductionLifecycle.ownedController(split.editor) != null)
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null })
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(split.editor) != null })
                     check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics >= 2)
                     onEdt { ownedProvider.disposeEditor(split) }
                     directEditors.remove(ownedProvider to split)
-                    check(NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null)
+                    check(onEdt { NativeMarkFlowProductionLifecycle.ownedController(owned.editor) != null })
                     "sameDocument=true perEditorCaret=true perEditorPresentation=true splitDisposed=true"
                 }
 
@@ -413,7 +415,9 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                 val derivedOwned = derivedEditors.filterIsInstance<MarkFlowOwnedNativeFileEditor>().single()
 
                 case("lazy-derived-runtime-boundary") {
-                    val controller = requireNotNull(NativeMarkFlowProductionLifecycle.ownedController(derivedOwned.editor))
+                    val controller = requireNotNull(
+                        onEdt { NativeMarkFlowProductionLifecycle.ownedController(derivedOwned.editor) }
+                    )
                     val evidence = awaitEvidence(controller)
                     check(evidence.derivedFragments >= 2) {
                         "expected Mermaid + KaTeX derived fragments, got ${evidence.derivedFragments}"
