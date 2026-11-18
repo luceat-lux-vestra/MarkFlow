@@ -11,6 +11,26 @@ die() {
 
 owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNativeFileEditorRuntimeProbe.kt"
 [ -f "$owned_runtime_probe" ] || die "#584 production owned-FileEditor runtime evidence source is missing"
+projection_probe="src/main/kotlin/com/algorist/markflow/editor/native/NativeProjectionProbe.kt"
+projection_parity_probe="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkdownParityProbe.kt"
+[ -f "$projection_probe" ] || die "#584 production projection evidence source is missing"
+[ -f "$projection_parity_probe" ] || die "#584 projection parity evidence source is missing"
+grep -Fq 'SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION"' "$projection_probe" ||
+  die "#584 projection evidence no longer targets the production owned FileEditor shell"
+grep -Fq 'MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID' "$projection_probe" ||
+  die "#584 projection evidence no longer opens the production owned FileEditor provider"
+grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController' "$projection_probe" ||
+  die "#584 projection evidence no longer consumes production owned presentation"
+grep -Fq 'headingSourceLineReplacement=true' "$projection_probe" ||
+  die "#584 projection evidence no longer records production heading source-line replacement"
+if grep -Fq 'PLATFORM_TEXT_EDITOR_AUGMENTATION' "$projection_probe"; then
+  die "#584 projection evidence regressed to the superseded platform-augmentation shell"
+fi
+if grep -Eq 'PLATFORM_TEXT_EDITOR_TYPE_ID|FileEditorProviderManager|created is TextEditor' "$projection_parity_probe"; then
+  die "#584 projection parity evidence regained FileEditor-shell authority"
+fi
+grep -Fq 'EditorFactory.getInstance().createEditor' "$projection_parity_probe" ||
+  die "#584 projection parity evidence no longer uses shell-neutral raw native Editor fixtures"
 no_jcef_probe="src/main/kotlin/com/algorist/markflow/editor/native/NoJcefNativeEditingProbe.kt"
 [ -f "$no_jcef_probe" ] || die "#584 no-JCEF production owned-FileEditor evidence source is missing"
 grep -Fq 'SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION"' "$no_jcef_probe" ||
@@ -51,6 +71,15 @@ if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeFo
 fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
+presentation_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationController.kt"
+raw_html_test="src/test/kotlin/com/algorist/markflow/editor/native/NativeRawHtmlPresentationControllerTest.kt"
+grep -Fq 'rawHtmlPresentation?.let(Disposer::dispose)' "$presentation_controller" ||
+  die "#584 raw-HTML child no longer leaves the IntelliJ Disposer tree clean"
+if grep -Fq 'rawHtmlPresentation?.dispose()' "$presentation_controller"; then
+  die "#584 raw-HTML child regressed to direct dispose without Disposer-tree cleanup"
+fi
+grep -Fq 'testParentPresentationControllerDisposesRawHtmlThroughDisposerTree' "$raw_html_test" ||
+  die "#584 raw-HTML parent lifecycle regression test is missing"
 if grep -R -Fq 'NativeMarkFlowEditorFactoryListener' src/main/kotlin src/main/resources/META-INF; then
   die "#584 superseded generic EditorFactoryListener attachment path was reintroduced"
 fi

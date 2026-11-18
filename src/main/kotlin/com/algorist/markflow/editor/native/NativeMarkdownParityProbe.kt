@@ -3,9 +3,9 @@ package com.algorist.markflow.editor.native
 import com.google.gson.GsonBuilder
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.markup.EffectType
@@ -13,9 +13,6 @@ import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.fileEditor.FileEditorProvider
-import com.intellij.openapi.fileEditor.TextEditor
-import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -28,9 +25,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Supplemental real-IDE proof for #152 ordinary Markdown/table parity. */
+/** Shell-neutral raw-native-Editor evidence for #152 ordinary Markdown/table projection parity. */
 internal object NativeMarkdownParityProbe {
-    private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val OUTPUT_FILE = "parity.json"
     private val started = AtomicBoolean(false)
 
@@ -52,8 +48,7 @@ internal object NativeMarkdownParityProbe {
         private val gson = GsonBuilder().setPrettyPrinting().create()
         private val cases = mutableListOf<CaseResult>()
         private var tempRoot: Path? = null
-        private var provider: FileEditorProvider? = null
-        private var fileEditor: TextEditor? = null
+        private var editor: Editor? = null
 
         fun run() {
             ApplicationManager.getApplication().assertIsDispatchThread()
@@ -620,35 +615,17 @@ After table
             val document = FileDocumentManager.getInstance().getDocument(file)
                 ?: error("#152 parity Document unavailable")
             check(document.text == source)
-            val selectedProvider = selectPlatformTextProvider(file)
-            provider = selectedProvider
-            val created = selectedProvider.createEditor(project, file)
-            check(created is TextEditor) { "platform provider returned ${created.javaClass.name}" }
-            fileEditor = created
-            val editor = created.editor
-            check(editor.document === document)
-            editor.contentComponent.setSize(1200, 900)
-            editor.contentComponent.doLayout()
+            val rawEditor = EditorFactory.getInstance().createEditor(document, project, file, false)
+            editor = rawEditor
+            check(rawEditor.document === document)
+            rawEditor.contentComponent.setSize(1200, 900)
+            rawEditor.contentComponent.doLayout()
             return Fixture(
                 file = file,
-                editor = editor,
+                editor = rawEditor,
                 afterTableOffset = source.indexOf("After table") + 2,
             )
         }
-
-        private fun selectPlatformTextProvider(file: VirtualFile): FileEditorProvider =
-            FileEditorProviderManager.getInstance()
-                .getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
-                ?.takeIf { candidate -> accepts(candidate, file) }
-                ?: error("platform text editor provider did not accept #152 parity fixture")
-
-        private fun accepts(provider: FileEditorProvider, file: VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
-            }
-        }.getOrDefault(false)
 
         private fun case(id: String, block: () -> String) {
             check(cases.none { it.id == id }) { "duplicate #152 parity case id: $id" }
@@ -678,11 +655,11 @@ After table
         }
 
         private fun cleanup() {
-            val editor = fileEditor
-            val owner = provider
-            if (editor != null && owner != null) runCatching { owner.disposeEditor(editor) }
-            fileEditor = null
-            provider = null
+            val current = editor
+            if (current != null && !current.isDisposed) {
+                runCatching { EditorFactory.getInstance().releaseEditor(current) }
+            }
+            editor = null
             tempRoot?.let { root -> runCatching { root.toFile().deleteRecursively() } }
             tempRoot = null
         }
