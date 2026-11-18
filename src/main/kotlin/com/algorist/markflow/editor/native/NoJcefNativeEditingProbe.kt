@@ -9,14 +9,12 @@ import com.google.gson.GsonBuilder
 import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorPolicy
 import com.intellij.openapi.fileEditor.FileEditorProvider
-import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -29,13 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Real-IDE package proof with com.intellij.modules.jcef disabled in the sandbox.
  *
- * This class deliberately has no JCEF/browser imports. After #153 it proves the base native
- * presentation-settings sink remains available while optional JCEF renderer registrations stay absent,
- * and authoritative platform source editing/undo/redo/save remains operational.
+ * This class deliberately has no JCEF/browser imports. It proves the production MarkFlow-owned native
+ * FileEditor remains fully usable while optional JCEF renderer registrations stay absent, including
+ * settings, authoritative source editing, undo/redo/save, and owned lifecycle cleanup.
  */
 internal object NoJcefNativeEditingProbe {
     const val OUTPUT_PROPERTY = "markflow.noJcefNativeEditingProbe.output"
-    const val SELECTED_SHELL = "PLATFORM_TEXT_EDITOR_AUGMENTATION"
+    const val SELECTED_SHELL = "MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION"
 
     private val started = AtomicBoolean(false)
 
@@ -56,7 +54,7 @@ internal object NoJcefNativeEditingProbe {
         private val gson = GsonBuilder().setPrettyPrinting().create()
         private val cases = mutableListOf<CaseResult>()
         private var tempRoot: Path? = null
-        private var fileEditor: TextEditor? = null
+        private var fileEditor: MarkFlowOwnedNativeFileEditor? = null
         private var provider: FileEditorProvider? = null
 
         fun run() {
@@ -75,10 +73,15 @@ internal object NoJcefNativeEditingProbe {
                 }
 
                 val fixture = createFixture()
-                val textProvider = selectPlatformTextProvider(fixture)
-                provider = textProvider
-                val created = textProvider.createEditor(project, fixture.file)
-                check(created is TextEditor) { "platform text provider did not create TextEditor" }
+                val ownedProvider = selectOwnedFileEditorProvider(fixture)
+                provider = ownedProvider
+                val created = ownedProvider.createEditor(project, fixture.file)
+                check(created is MarkFlowOwnedNativeFileEditor) {
+                    "production MarkFlow provider did not create MarkFlowOwnedNativeFileEditor"
+                }
+                check(NativeMarkFlowProductionLifecycle.ownedController(created.editor) != null) {
+                    "production owned FileEditor did not attach its owned presentation controller"
+                }
                 fileEditor = created
 
                 case("optional-jcef-renderer-registrations-absent") {
@@ -95,7 +98,7 @@ internal object NoJcefNativeEditingProbe {
                     check(DerivedRendererRuntimeFactory.EP_NAME.extensionList.isEmpty()) {
                         "isolated JCEF renderer runtime factory was registered without JCEF"
                     }
-                    "temporaryProvider=false nativePresentationSettingsSinks=1 rendererRuntimeFactories=0"
+                    "legacyBrowserProvider=false nativePresentationSettingsSinks=1 rendererRuntimeFactories=0"
                 }
 
                 case("base-native-paste-extension-present") {
@@ -143,7 +146,8 @@ internal object NoJcefNativeEditingProbe {
                     FileDocumentManager.getInstance().saveDocument(document)
                     check(!FileDocumentManager.getInstance().isDocumentUnsaved(document))
                     check(Files.readString(fixture.path, StandardCharsets.UTF_8) == sourceAfter)
-                    "sameDocument=true dirty=true undo=true redo=true save=true"
+                    check(NativeMarkFlowProductionLifecycle.ownedController(editor.editor) != null)
+                    "sameDocument=true ownedController=true dirty=true undo=true redo=true save=true"
                 }
 
                 cleanupEditor()
@@ -152,7 +156,9 @@ internal object NoJcefNativeEditingProbe {
                     check(EditorFactory.getInstance().getEditors(fixture.document, project).isEmpty()) {
                         "native editor retained after no-JCEF proof cleanup"
                     }
-                    "editors=0"
+                    check(NativeMarkFlowProductionLifecycle.liveOwnedControllerCountForDiagnostics == 0)
+                    check(MarkFlowOwnedNativeFileEditor.liveEditorCountForDiagnostics == 0)
+                    "editors=0 ownedControllers=0 ownedFileEditors=0"
                 }
 
                 finish("PASS")
@@ -185,28 +191,22 @@ internal object NoJcefNativeEditingProbe {
             return result ?: error("no-JCEF fixture was not created")
         }
 
-        private fun selectPlatformTextProvider(fixture: Fixture): FileEditorProvider {
+        private fun selectOwnedFileEditorProvider(fixture: Fixture): FileEditorProvider {
             var selected: FileEditorProvider? = null
-            case("platform-text-provider-owns-source") {
+            case("owned-file-editor-provider-owns-source") {
                 val providerManager = FileEditorProviderManager.getInstance()
-                val text = providerManager.getProvider(PLATFORM_TEXT_EDITOR_TYPE_ID)
-                    ?.takeIf { accepts(it, fixture.file) }
-                    ?: error("platform text editor provider did not accept no-JCEF Markdown fixture")
-                check(text.policy == FileEditorPolicy.NONE)
+                val owned = providerManager.getProvider(MarkFlowOwnedNativeFileEditorProvider.EDITOR_TYPE_ID)
+                    ?: error("production MarkFlow owned FileEditor provider is not registered")
+                check(providerManager.getProviderList(project, fixture.file).any { it === owned }) {
+                    "production MarkFlow owned FileEditor provider did not accept no-JCEF Markdown fixture"
+                }
+                check(owned.policy == FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR)
                 check(providerManager.getProvider(TEMPORARY_MARKFLOW_PROVIDER_TYPE_ID) == null)
-                selected = text
-                "platformText=${text.javaClass.name} temporaryBrowserProvider=false"
+                selected = owned
+                "ownedProvider=${owned.javaClass.name} policy=${owned.policy.name} legacyBrowserProvider=false"
             }
-            return selected ?: error("platform text provider was not selected")
+            return selected ?: error("production MarkFlow owned FileEditor provider was not selected")
         }
-
-        private fun accepts(provider: FileEditorProvider, file: com.intellij.openapi.vfs.VirtualFile): Boolean = runCatching {
-            if (provider.acceptRequiresReadAction()) {
-                ReadAction.computeBlocking<Boolean, RuntimeException> { provider.accept(project, file) }
-            } else {
-                provider.accept(project, file)
-            }
-        }.getOrDefault(false)
 
         private fun cleanupEditor() {
             val editor = fileEditor ?: return
@@ -276,6 +276,5 @@ internal object NoJcefNativeEditingProbe {
         val cases: List<CaseResult>,
     )
 
-    private const val PLATFORM_TEXT_EDITOR_TYPE_ID = "text-editor"
     private const val TEMPORARY_MARKFLOW_PROVIDER_TYPE_ID = "MarkFlowEditor"
 }

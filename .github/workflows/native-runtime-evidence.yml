@@ -1469,7 +1469,7 @@ jobs:
   no_jcef_native_editing:
     needs: target
     if: needs.target.outputs.run_no_jcef_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    name: No-JCEF native editing (${{ matrix.id }})
+    name: No-JCEF owned FileEditor (${{ matrix.id }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     strategy:
@@ -1526,15 +1526,15 @@ jobs:
           evidence = json.loads(path.read_text(encoding='utf-8'))
           if evidence.get('schemaVersion') != 1:
               raise SystemExit(f"unexpected evidence schema: {evidence.get('schemaVersion')}")
-          if evidence.get('selectedShell') != 'PLATFORM_TEXT_EDITOR_AUGMENTATION':
-              raise SystemExit(f"unexpected selected shell: {evidence.get('selectedShell')}")
+          if evidence.get('selectedShell') != 'MARKFLOW_OWNED_NATIVE_FILE_EDITOR_PRODUCTION':
+              raise SystemExit(f"unexpected no-JCEF production shell: {evidence.get('selectedShell')}")
           if evidence.get('verdict') != 'PASS':
               raise SystemExit(f"no-JCEF proof verdict is not PASS: {evidence.get('verdict')}")
 
           required = {
               'jcef-plugin-class-absent',
               'real-project-authoritative-document',
-              'platform-text-provider-owns-source',
+              'owned-file-editor-provider-owns-source',
               'optional-jcef-renderer-registrations-absent',
               'base-native-paste-extension-present',
               'settings-degrade-without-renderer',
@@ -1559,7 +1559,7 @@ jobs:
               raise SystemExit(f'JCEF plugin was not actually absent from the MarkFlow classloader: {jcef_detail}')
           registration_detail = str(by_id['optional-jcef-renderer-registrations-absent'].get('detail', ''))
           registration_flags = (
-              'temporaryProvider=false',
+              'legacyBrowserProvider=false',
               'nativePresentationSettingsSinks=1',
               'rendererRuntimeFactories=0',
           )
@@ -1581,12 +1581,13 @@ jobs:
                   f'no-JCEF settings degradation contract missing {missing_settings_flags}: {settings_detail}'
               )
           editing_detail = str(by_id['authoritative-native-edit-undo-redo-save'].get('detail', ''))
-          for flag in ('sameDocument=true', 'dirty=true', 'undo=true', 'redo=true', 'save=true'):
+          for flag in ('sameDocument=true', 'ownedController=true', 'dirty=true', 'undo=true', 'redo=true', 'save=true'):
               if flag not in editing_detail:
                   raise SystemExit(f'native source-editing proof incomplete: {editing_detail}')
           lifecycle_detail = str(by_id['final-native-lifecycle'].get('detail', ''))
-          if 'editors=0' not in lifecycle_detail:
-              raise SystemExit(f'no-JCEF lifecycle cleanup incomplete: {lifecycle_detail}')
+          for flag in ('editors=0', 'ownedControllers=0', 'ownedFileEditors=0'):
+              if flag not in lifecycle_detail:
+                  raise SystemExit(f'no-JCEF lifecycle cleanup missing {flag}: {lifecycle_detail}')
 
           print(f"No-JCEF native editing verdict: {evidence['verdict']}")
           print(f"IDE build: {evidence.get('ideBuild')}")
