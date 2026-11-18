@@ -831,7 +831,8 @@ internal class NativeListInlayRenderer(
                 val displayMarker = nativeListDisplayMarker(row.marker)
                 g2.font = bold
                 g2.drawString(displayMarker, markerX, baseline)
-                val markerWidth = g2.getFontMetrics(bold).stringWidth(displayMarker)
+                // Keep the existing content column stable: only the marker glyph is semantic.
+                val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
                 g2.font = font
                 g2.drawString(row.text, markerX + markerWidth + MARKER_GAP, baseline)
             }
