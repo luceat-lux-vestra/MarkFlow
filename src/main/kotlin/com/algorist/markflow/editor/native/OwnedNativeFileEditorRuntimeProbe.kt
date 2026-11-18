@@ -176,7 +176,7 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                     }
                     val leaked = plainEditors.filterIsInstance<TextEditor>()
                         .filter { it !is MarkFlowOwnedNativeFileEditor }
-                        .count { NativeMarkFlowProductionLifecycle.controller(it.editor) != null }
+                        .count { NativeMarkFlowProductionLifecycle.hasControllerForDiagnostics(it.editor) }
                     check(leaked == 0) { "MarkFlow presentation leaked into $leaked IntelliJ editor(s)" }
                     val derived = requireNotNull(
                         onEdt {
@@ -557,7 +557,7 @@ internal object OwnedNativeFileEditorRuntimeProbe {
         private fun resourceSnapshot(name: String, openFiles: Int): ResourceSnapshot {
             val editorCounts = onEdt {
                 val editors = EditorFactory.getInstance().allEditors.filter { it.project === project }
-                val controllers = editors.count { NativeMarkFlowProductionLifecycle.controller(it) != null }
+                val controllers = editors.count { NativeMarkFlowProductionLifecycle.hasControllerForDiagnostics(it) }
                 Triple(
                     editors.size,
                     controllers,
