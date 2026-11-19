@@ -37,7 +37,7 @@ After
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
     }
 
-    fun testParserOwnedEmphasisAndStrongBecomeStyledCellRunsWithoutNormalizingOtherInlineSource() {
+    fun testParserOwnedEmphasisStrongAndInlineCodeBecomeSemanticCellRunsWithoutNormalizingOtherInlineSource() {
         val source = """| kind | emphasis | strong | link | code |
 | --- | --- | --- | --- | --- |
 | plain | *emphasis* | **strong** | [link](https://example.com) | `code` |
@@ -53,7 +53,7 @@ After
             body.cells.map(NativeTableCellModel::sourceText),
         )
         assertEquals(
-            listOf("plain", "emphasis", "strong", "[link](https://example.com)", "`code`"),
+            listOf("plain", "emphasis", "strong", "[link](https://example.com)", "code"),
             body.cells.map(NativeTableCellModel::displayText),
         )
         assertEquals(
@@ -69,8 +69,28 @@ After
             body.cells[3].displayRuns.map(NativeTableTextRun::style).distinct(),
         )
         assertEquals(
-            listOf(NativeTableInlineStyle.PLAIN),
+            listOf(NativeTableInlineStyle.INLINE_CODE),
             body.cells[4].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testInlineCodeWithEscapedPipeKeepsExactCellSourceWhileConcealingBackticksOnly() {
+        val source = """| kind | value |
+| --- | --- |
+| code | `code \| literal` |
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+        val model = NativeTableProjectionPlanner.plan(plan).single()
+        val cell = model.rows[1].cells[1]
+
+        assertEquals("`code \\| literal`", cell.sourceText)
+        assertEquals("code \\| literal", cell.displayText)
+        assertEquals(
+            listOf(NativeTableInlineStyle.INLINE_CODE),
+            cell.displayRuns.map(NativeTableTextRun::style).distinct(),
         )
         assertEquals(source, plan.identity.source)
     }
