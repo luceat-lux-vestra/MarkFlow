@@ -84,9 +84,9 @@ internal data class NativeListPresentationEvidence(
  *
  * Supported ordinary lists contain unordered/ordered items, nested lists, parser-proven emphasis/strong
  * on each item's first line, and indented plain-text continuation lines owned by their parent item.
- * A dedicated conservative task-list slice accepts only flat, all-task, single-line plain-text rows.
- * Mixed ordinary/task rows, nested tasks, task continuations, rich continuations, and all other
- * inline/block-rich content fail closed.
+ * A dedicated conservative task-list slice accepts flat, all-task, single-line rows, including
+ * parser-proven emphasis/strong on each task's first line. Mixed ordinary/task rows, nested tasks,
+ * task continuations, rich continuations, and all other inline/block-rich content fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
@@ -197,7 +197,6 @@ internal object NativeListProjectionPlanner {
                 projection.sourceRange.endOffset > contentRange.startOffset
         }
         if (intersectingInline.any { !it.sourceRange.isInside(contentRange) }) return null
-        if (task != null && intersectingInline.isNotEmpty()) return null
         val displayRuns = inlineRunsFor(source, contentRange, intersectingInline) ?: return null
 
         val nestedLists = lists.filter { nested ->
