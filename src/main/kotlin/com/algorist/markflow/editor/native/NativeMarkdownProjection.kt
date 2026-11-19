@@ -269,7 +269,11 @@ internal object NativeMarkdownProjectionPlanner {
             else -> emptySet()
         }
         if (syntaxTypes.isEmpty()) return emptyList()
-        val parserRanges = directChildRanges(node, syntaxTypes, source, sourceRange)
+        val parserRanges = if (kind == NativeProjectionKind.BLOCK_QUOTE) {
+            descendantRanges(node, syntaxTypes, source, sourceRange)
+        } else {
+            directChildRanges(node, syntaxTypes, source, sourceRange)
+        }
         return when (kind) {
             NativeProjectionKind.STRIKETHROUGH -> coalesceAdjacentRanges(parserRanges)
             NativeProjectionKind.LIST_ITEM,
@@ -491,6 +495,39 @@ internal object NativeMarkdownProjectionPlanner {
             .distinct()
             .sortedBy(ProjectionRange::startOffset)
             .toList()
+
+    /**
+     * Blockquote marker tokens for later physical lines may be nested below paragraph/container
+     * nodes rather than exposed as direct children of the BLOCK_QUOTE node. Keep parser ownership:
+     * walk only the parser AST and collect exact accepted token ranges, never rescan Markdown text.
+     */
+    private fun descendantRanges(
+        node: ASTNode,
+        acceptedTypes: Set<IElementType>,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): List<ProjectionRange> {
+        val ranges = mutableListOf<ProjectionRange>()
+
+        fun collect(parent: ASTNode) {
+            parent.children.forEach { child ->
+                if (child.type in acceptedTypes && child.endOffset > child.startOffset) {
+                    val range = ProjectionRange(child.startOffset, child.endOffset)
+                    if (
+                        range.isInside(source) &&
+                        range.startOffset >= sourceRange.startOffset &&
+                        range.endOffset <= sourceRange.endOffset
+                    ) {
+                        ranges += range
+                    }
+                }
+                collect(child)
+            }
+        }
+
+        collect(node)
+        return ranges.distinct().sortedBy(ProjectionRange::startOffset)
+    }
 
     private fun validateTree(root: ASTNode, sourceLength: Int) {
         fun validate(node: ASTNode, parent: ASTNode?) {

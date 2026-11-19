@@ -168,6 +168,28 @@ val fenced = 1
         )
     }
 
+    fun testMultilineBlockQuoteExposesEveryParserProvenMarkerRange() {
+        val source = "> first line\n> second line\n\nTail\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(17L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val quote = plan.projections.single { it.kind == NativeProjectionKind.BLOCK_QUOTE }
+        assertEquals(
+            listOf(">", ">"),
+            quote.syntaxRanges.map { range ->
+                source.substring(range.startOffset, range.endOffset)
+            },
+        )
+        assertEquals(
+            listOf(0, source.indexOf("> second line")),
+            quote.syntaxRanges.map(ProjectionRange::startOffset),
+        )
+        assertTrue(quote.syntaxRanges.all { range -> range.isInside(source) })
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testHeadingLevelsAndVisibleRangesRemainParserBounded() {
         val source = """# H1
 ## H2 ##

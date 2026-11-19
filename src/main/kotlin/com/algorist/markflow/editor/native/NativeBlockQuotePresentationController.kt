@@ -18,12 +18,23 @@ import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
 import kotlin.math.max
 
-internal data class NativeBlockQuoteModel(
-    val sourceRange: ProjectionRange,
+internal data class NativeBlockQuoteLine(
+    val markerRange: ProjectionRange,
     val contentRange: ProjectionRange,
-    val syntaxRanges: List<ProjectionRange>,
     val text: String,
 )
+
+internal data class NativeBlockQuoteModel(
+    val sourceRange: ProjectionRange,
+    val lines: List<NativeBlockQuoteLine>,
+    val syntaxRanges: List<ProjectionRange>,
+) {
+    val contentRange: ProjectionRange
+        get() = lines.first().contentRange
+
+    val text: String
+        get() = lines.joinToString(separator = "\n") { it.text }
+}
 
 internal data class NativeBlockQuotePresentationEvidence(
     val models: Int,
@@ -37,8 +48,9 @@ internal data class NativeBlockQuotePresentationEvidence(
 /**
  * Conservative parser-bounded blockquote model for corrective #316.
  *
- * This slice intentionally accepts only one-level, single-line plain-text quotes. Multiline,
- * nested, and inline-rich quotes remain exact source until a richer retained renderer exists.
+ * This slice accepts one-level plain-text quotes, including contiguous same-depth physical lines.
+ * Nested, blank-line, structured and inline-rich quotes remain exact source until their bounded
+ * retained-renderer slices exist.
  */
 internal object NativeBlockQuoteProjectionPlanner {
     private val unsupportedNestedKinds = setOf(
@@ -64,61 +76,130 @@ internal object NativeBlockQuoteProjectionPlanner {
         if (plan.status != ProjectionPlanStatus.READY) return emptyList()
         val source = plan.identity.source
         val projections = plan.projections
-        return projections
-            .asSequence()
+        val quotes = projections
             .filter { it.kind == NativeProjectionKind.BLOCK_QUOTE }
-            .mapNotNull { quote ->
-                val marker = quote.syntaxRanges.singleOrNull() ?: return@mapNotNull null
-                if (marker.startOffset != quote.sourceRange.startOffset) return@mapNotNull null
-                if (!marker.isInside(source) || !quote.sourceRange.isInside(source)) return@mapNotNull null
-
-                val hasUnsupportedNestedProjection = projections.any { candidate ->
-                    candidate !== quote &&
-                        candidate.kind in unsupportedNestedKinds &&
-                        candidate.sourceRange.startOffset >= quote.sourceRange.startOffset &&
-                        candidate.sourceRange.endOffset <= quote.sourceRange.endOffset
-                }
-                if (hasUnsupportedNestedProjection) return@mapNotNull null
-
-                val hasContiguousQuoteSibling = projections.any { candidate ->
-                    candidate !== quote &&
-                        candidate.kind == NativeProjectionKind.BLOCK_QUOTE &&
-                        quote.sourceRange.isContiguousWith(candidate.sourceRange, source)
-                }
-                if (hasContiguousQuoteSibling) return@mapNotNull null
-
-                var start = marker.endOffset
-                val endBound = quote.sourceRange.endOffset
-                while (start < endBound && (source[start] == ' ' || source[start] == '\t')) start += 1
-
-                var end = endBound
-                while (
-                    end > start &&
-                    (source[end - 1] == ' ' || source[end - 1] == '\t' || source[end - 1] == '\n' || source[end - 1] == '\r')
-                ) {
-                    end -= 1
-                }
-                if (end <= start) return@mapNotNull null
-
-                val contentRange = ProjectionRange(start, end)
-                val text = source.substring(start, end)
-                if (
-                    text.isBlank() ||
-                    text.contains('\n') ||
-                    text.contains('\r') ||
-                    text.any(::isPresentationSensitiveInlineChar)
-                ) {
-                    return@mapNotNull null
-                }
-
-                NativeBlockQuoteModel(
-                    sourceRange = quote.sourceRange,
-                    contentRange = contentRange,
-                    syntaxRanges = quote.syntaxRanges,
-                    text = text,
-                )
+            .sortedBy { it.sourceRange.startOffset }
+        val topLevelQuotes = quotes.filter { candidate ->
+            quotes.none { other ->
+                other !== candidate &&
+                    other.sourceRange.startOffset <= candidate.sourceRange.startOffset &&
+                    other.sourceRange.endOffset >= candidate.sourceRange.endOffset &&
+                    (other.sourceRange.startOffset < candidate.sourceRange.startOffset ||
+                        other.sourceRange.endOffset > candidate.sourceRange.endOffset)
             }
-            .toList()
+        }
+
+        return contiguousGroups(topLevelQuotes, source).mapNotNull { group ->
+            val sourceRange = ProjectionRange(
+                group.first().sourceRange.startOffset,
+                group.last().sourceRange.endOffset,
+            )
+            if (!sourceRange.isInside(source)) return@mapNotNull null
+
+            val groupQuotes = group.toSet()
+            val hasUnsupportedNestedProjection = projections.any { candidate ->
+                candidate.kind in unsupportedNestedKinds &&
+                    candidate !in groupQuotes &&
+                    candidate.sourceRange.startOffset >= sourceRange.startOffset &&
+                    candidate.sourceRange.endOffset <= sourceRange.endOffset
+            }
+            if (hasUnsupportedNestedProjection) return@mapNotNull null
+
+            val syntaxRanges = group
+                .flatMap(NativeProjection::syntaxRanges)
+                .distinct()
+                .sortedBy(ProjectionRange::startOffset)
+            val lines = linesFor(source, sourceRange, syntaxRanges) ?: return@mapNotNull null
+
+            NativeBlockQuoteModel(
+                sourceRange = sourceRange,
+                lines = lines,
+                syntaxRanges = syntaxRanges,
+            )
+        }
+    }
+
+    private fun contiguousGroups(
+        quotes: List<NativeProjection>,
+        source: String,
+    ): List<List<NativeProjection>> {
+        if (quotes.isEmpty()) return emptyList()
+        val result = mutableListOf<MutableList<NativeProjection>>()
+        quotes.forEach { quote ->
+            val current = result.lastOrNull()
+            if (current != null && current.last().sourceRange.isContiguousWith(quote.sourceRange, source)) {
+                current += quote
+            } else {
+                result += mutableListOf(quote)
+            }
+        }
+        return result
+    }
+
+    private fun linesFor(
+        source: String,
+        sourceRange: ProjectionRange,
+        syntaxRanges: List<ProjectionRange>,
+    ): List<NativeBlockQuoteLine>? {
+        if (
+            syntaxRanges.isEmpty() ||
+            syntaxRanges.any { range ->
+                !range.isInside(source) ||
+                    range.startOffset < sourceRange.startOffset ||
+                    range.endOffset > sourceRange.endOffset
+            }
+        ) {
+            return null
+        }
+
+        val lines = mutableListOf<NativeBlockQuoteLine>()
+        var cursor = sourceRange.startOffset
+        while (cursor < sourceRange.endOffset) {
+            val lineStart = cursor
+            var lineEnd = lineStart
+            while (
+                lineEnd < sourceRange.endOffset &&
+                source[lineEnd] != '\n' &&
+                source[lineEnd] != '\r'
+            ) {
+                lineEnd += 1
+            }
+
+            val markers = syntaxRanges.filter { marker ->
+                marker.startOffset >= lineStart && marker.endOffset <= lineEnd
+            }
+            val marker = markers.singleOrNull() ?: return null
+            if (source.substring(marker.startOffset, marker.endOffset) != ">") return null
+            if (source.substring(lineStart, marker.startOffset).any { it != ' ' && it != '\t' }) return null
+
+            var contentStart = marker.endOffset
+            while (contentStart < lineEnd && (source[contentStart] == ' ' || source[contentStart] == '\t')) {
+                contentStart += 1
+            }
+            var contentEnd = lineEnd
+            while (contentEnd > contentStart && (source[contentEnd - 1] == ' ' || source[contentEnd - 1] == '\t')) {
+                contentEnd -= 1
+            }
+            if (contentEnd <= contentStart) return null
+
+            val contentRange = ProjectionRange(contentStart, contentEnd)
+            val text = source.substring(contentStart, contentEnd)
+            if (text.any(::isPresentationSensitiveInlineChar)) return null
+            lines += NativeBlockQuoteLine(marker, contentRange, text)
+
+            cursor = lineEnd
+            if (cursor < sourceRange.endOffset && source[cursor] == '\r') {
+                cursor += 1
+                if (cursor < sourceRange.endOffset && source[cursor] == '\n') cursor += 1
+            } else if (cursor < sourceRange.endOffset && source[cursor] == '\n') {
+                cursor += 1
+            }
+        }
+
+        if (lines.isEmpty()) return null
+        val usedMarkers = lines.map(NativeBlockQuoteLine::markerRange).toSet()
+        if (usedMarkers.size != syntaxRanges.size || !usedMarkers.containsAll(syntaxRanges)) return null
+        return lines
     }
 
     fun sourceRanges(plan: NativeProjectionPlan): List<ProjectionRange> =
@@ -454,13 +535,17 @@ internal class NativeBlockQuoteInlayRenderer(
     val displayText: String
         get() = model.text
 
+    val displayLines: List<String>
+        get() = model.lines.map(NativeBlockQuoteLine::text)
+
+    internal val visualLineCount: Int
+        get() = model.lines.size
+
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_HORIZONTAL_MARGIN * 2)
 
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        return max(editor.lineHeight + VERTICAL_PADDING * 2, metrics.height + VERTICAL_PADDING * 2)
-    }
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int =
+        rowHeight() * model.lines.size + VERTICAL_PADDING * 2
 
     override fun paint(
         inlay: Inlay<*>,
@@ -476,7 +561,7 @@ internal class NativeBlockQuoteInlayRenderer(
         val metrics = g2.getFontMetrics(font)
         val textX = targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING
         val availableTextWidth = max(1, targetRegion.x + targetRegion.width - OUTER_HORIZONTAL_MARGIN - textX)
-        val rendered = clip(model.text, metrics, availableTextWidth)
+        val rowHeight = rowHeight()
 
         g2.color = background
         g2.fillRoundRect(
@@ -496,9 +581,18 @@ internal class NativeBlockQuoteInlayRenderer(
         )
         g2.font = font
         g2.color = foreground
-        val baseline = targetRegion.y +
-            max(metrics.ascent + VERTICAL_PADDING, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
-        g2.drawString(rendered, textX, baseline)
+        model.lines.forEachIndexed { index, line ->
+            val rendered = clip(line.text, metrics, availableTextWidth)
+            val rowTop = targetRegion.y + VERTICAL_PADDING + index * rowHeight
+            val baseline = rowTop +
+                max(metrics.ascent, (rowHeight + metrics.ascent - metrics.descent) / 2)
+            g2.drawString(rendered, textX, baseline)
+        }
+    }
+
+    private fun rowHeight(): Int {
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        return max(editor.lineHeight, metrics.height)
     }
 
     private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
