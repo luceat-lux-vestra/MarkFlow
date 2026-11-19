@@ -1,5 +1,6 @@
 # MarkFlow - Seamless WYSIWYG Markdown Editor
 
+[![GitHub Stars](https://img.shields.io/github/stars/luceat-lux-vestra/MarkFlow?style=flat&label=Stars)](https://www.star-history.com/?repos=luceat-lux-vestra%2FMarkFlow&type=date)
 [![Build](https://github.com/luceat-lux-vestra/MarkFlow/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/luceat-lux-vestra/MarkFlow/actions/workflows/build.yml)
 [![Marketplace Version](https://img.shields.io/jetbrains/plugin/v/com.algorist.markflow)](https://plugins.jetbrains.com/plugin/index?xmlId=com.algorist.markflow)
 [![Downloads](https://img.shields.io/jetbrains/plugin/d/com.algorist.markflow)](https://plugins.jetbrains.com/plugin/index?xmlId=com.algorist.markflow)
