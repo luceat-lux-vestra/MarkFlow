@@ -2376,7 +2376,7 @@ Tail
         model.lines.forEach { line ->
             assertEquals(
                 line.text,
-                source.substring(line.contentRange.startOffset, line.contentRange.endOffset),
+                requireNotNull(line.contentRange).let { range -> source.substring(range.startOffset, range.endOffset) },
             )
         }
 
@@ -2401,7 +2401,7 @@ Tail
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
 
-            editor.caretModel.moveToOffset(model.lines[1].contentRange.startOffset + 1)
+            editor.caretModel.moveToOffset(requireNotNull(model.lines[1].contentRange).startOffset + 1)
             assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
             assertEquals(0, controller.evidenceSnapshot().blockQuoteFolds)
             assertEquals(source, editor.document.text)
@@ -2437,7 +2437,7 @@ Tail
         model.lines.forEach { line ->
             assertEquals(
                 line.text,
-                source.substring(line.contentRange.startOffset, line.contentRange.endOffset),
+                requireNotNull(line.contentRange).let { range -> source.substring(range.startOffset, range.endOffset) },
             )
         }
 
@@ -2465,7 +2465,7 @@ Tail
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
 
-            editor.caretModel.moveToOffset(model.lines[1].contentRange.startOffset + 1)
+            editor.caretModel.moveToOffset(requireNotNull(model.lines[1].contentRange).startOffset + 1)
             assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
             assertEquals(0, controller.evidenceSnapshot().blockQuoteFolds)
             assertEquals(source, editor.document.text)
@@ -2560,6 +2560,108 @@ Tail
         assertTrue(NativeListProjectionPlanner.plan(plan).single().rows.single().task != null)
         assertTrue(NativeBlockQuoteProjectionPlanner.plan(plan).isEmpty())
         assertEquals(source, plan.identity.source)
+    }
+
+    fun testManualBlockQuoteFixtureUsesOneCoherentContainerIncludingBlankRows() {
+        val source =
+            "> First-level quote.\n" +
+                ">\n" +
+                "> > Nested quote.\n" +
+                "> >\n" +
+                "> > - Nested quoted list item\n" +
+                "> > - Another quoted item\n" +
+                ">\n" +
+                "> Back to first level.\n\n" +
+                "Tail\n"
+        myFixture.configureByText("markdown-core-blockquote-acceptance.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+
+        val quote = NativeBlockQuoteProjectionPlanner.plan(plan).single()
+        assertEquals(8, quote.lines.size)
+        assertEquals(
+            listOf(
+                "First-level quote.",
+                "",
+                "Nested quote.",
+                "",
+                "Nested quoted list item",
+                "Another quoted item",
+                "",
+                "Back to first level.",
+            ),
+            quote.lines.map(NativeBlockQuoteLine::displayText),
+        )
+        assertEquals(listOf(0, 0, 1, 1, 1, 1, 0, 0), quote.lines.map(NativeBlockQuoteLine::depth))
+        assertEquals(listOf(false, true, false, true, false, false, true, false), quote.lines.map(NativeBlockQuoteLine::isBlank))
+        assertEquals(listOf(null, null, null, null, "-", "-", null, null), quote.lines.map { line -> line.listRow?.marker })
+        quote.lines.filterNot(NativeBlockQuoteLine::isBlank).forEach { line ->
+            val range = requireNotNull(line.contentRange)
+            assertEquals(line.text, source.substring(range.startOffset, range.endOffset))
+        }
+        quote.lines.filter(NativeBlockQuoteLine::isBlank).forEach { line ->
+            assertEquals("", line.text)
+            assertEquals(null, line.contentRange)
+            assertTrue(line.markerRanges.isNotEmpty())
+        }
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
+            assertEquals(0, evidence.listModels)
+            assertEquals(0, evidence.listInlays)
+
+            val renderer = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { it.renderer as? NativeBlockQuoteInlayRenderer }
+                .single()
+            assertEquals(8, renderer.visualLineCount)
+            assertEquals(
+                listOf(
+                    "First-level quote.",
+                    "",
+                    "Nested quote.",
+                    "",
+                    "Nested quoted list item",
+                    "Another quoted item",
+                    "",
+                    "Back to first level.",
+                ),
+                renderer.displayLines,
+            )
+            assertEquals(listOf(0, 0, 1, 1, 1, 1, 0, 0), renderer.displayDepths)
+            assertEquals(listOf(null, null, null, null, "•", "•", null, null), renderer.displayListMarkers)
+            assertEquals(0, renderer.contentIndentPx(1))
+            assertTrue(renderer.contentIndentPx(3) > 0)
+            assertEquals(0, renderer.contentIndentPx(6))
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            val nestedContent = requireNotNull(quote.lines[4].contentRange).startOffset + 1
+            editor.caretModel.moveToOffset(nestedContent)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
     }
 
     fun testInlineRichAndStructuredBlockQuotesFailClosedToExactSource() {

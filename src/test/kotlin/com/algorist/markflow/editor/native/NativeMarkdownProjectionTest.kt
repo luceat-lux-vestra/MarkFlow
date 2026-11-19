@@ -267,6 +267,45 @@ val fenced = 1
         assertEquals(source, plan.identity.source)
     }
 
+    fun testManualBlockQuoteFixtureExposesMarkerOnlyRowsWithoutSynthesizedContent() {
+        val source =
+            "> First-level quote.\n" +
+                ">\n" +
+                "> > Nested quote.\n" +
+                "> >\n" +
+                "> > - Nested quoted list item\n" +
+                "> > - Another quoted item\n" +
+                ">\n" +
+                "> Back to first level.\n"
+
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(29L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val quotes = plan.projections.filter { it.kind == NativeProjectionKind.BLOCK_QUOTE }
+        val outer = quotes.maxBy { quote -> quote.sourceRange.endOffset - quote.sourceRange.startOffset }
+        val markerCountsByLine = outer.syntaxRanges
+            .groupingBy { range -> source.substring(0, range.startOffset).count { it == '\n' } }
+            .eachCount()
+        assertEquals(
+            mapOf(0 to 1, 1 to 1, 2 to 2, 3 to 2, 4 to 2, 5 to 2, 6 to 1, 7 to 1),
+            markerCountsByLine,
+        )
+
+        val markerOnlyLines = setOf(1, 3, 6)
+        markerOnlyLines.forEach { lineIndex ->
+            val lineStart = source.lineSequence().take(lineIndex).sumOf { it.length + 1 }
+            val lineEnd = source.indexOf('\n', lineStart).let { if (it < 0) source.length else it }
+            val markers = outer.syntaxRanges.filter { it.startOffset >= lineStart && it.endOffset <= lineEnd }
+            assertTrue(markers.isNotEmpty())
+            assertTrue(markers.all { range -> source.substring(range.startOffset, range.endOffset) == ">" })
+            val afterLastMarker = markers.maxOf(ProjectionRange::endOffset)
+            assertTrue(source.substring(afterLastMarker, lineEnd).all { it == ' ' || it == '\t' })
+        }
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testHeadingLevelsAndVisibleRangesRemainParserBounded() {
         val source = """# H1
 ## H2 ##
