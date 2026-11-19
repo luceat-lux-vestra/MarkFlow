@@ -293,8 +293,8 @@ internal object NativeBlockQuoteProjectionPlanner {
         return lines
     }
 
-    fun presentationSourceRanges(plan: NativeProjectionPlan): List<ProjectionRange> =
-        plan(plan).map(NativeBlockQuoteModel::sourceRange)
+    fun presentationSourceRanges(projectionPlan: NativeProjectionPlan): List<ProjectionRange> =
+        plan(projectionPlan).map(NativeBlockQuoteModel::sourceRange)
 
     fun sourceRanges(plan: NativeProjectionPlan): List<ProjectionRange> =
         plan.projections
