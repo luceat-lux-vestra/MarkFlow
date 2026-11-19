@@ -2400,6 +2400,18 @@ Tail
             assertEquals(2, renderer.visualLineCount)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(model.lines[1].contentRange.startOffset + 1)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
             controller.dispose()
         }
