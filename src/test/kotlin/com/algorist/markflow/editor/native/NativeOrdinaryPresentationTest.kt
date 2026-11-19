@@ -2417,11 +2417,74 @@ Tail
         }
     }
 
-    fun testInlineRichNestedAndStructuredBlockQuotesFailClosedToExactSource() {
+    fun testNestedPlainTextBlockQuoteUsesDepthAwareContainerAndAncestorReturn() {
+        val source = "> outer\n> > nested\n> outer again\n\nTail\n"
+        myFixture.configureByText("blockquote-nested-depth.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+
+        val model = NativeBlockQuoteProjectionPlanner.plan(plan).single()
+        assertEquals(listOf("outer", "nested", "outer again"), model.lines.map(NativeBlockQuoteLine::text))
+        assertEquals(listOf(0, 1, 0), model.lines.map(NativeBlockQuoteLine::depth))
+        assertEquals(listOf(1, 2, 1), model.lines.map { line -> line.markerRanges.size })
+        assertTrue(
+            model.lines.flatMap(NativeBlockQuoteLine::markerRanges).all { range ->
+                source.substring(range.startOffset, range.endOffset) == ">"
+            }
+        )
+        model.lines.forEach { line ->
+            assertEquals(
+                line.text,
+                source.substring(line.contentRange.startOffset, line.contentRange.endOffset),
+            )
+        }
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertTrue(evidence.blockQuoteFolds > 0)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
+
+            val renderer = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { it.renderer as? NativeBlockQuoteInlayRenderer }
+                .single()
+            assertEquals(listOf("outer", "nested", "outer again"), renderer.displayLines)
+            assertEquals(listOf(0, 1, 0), renderer.displayDepths)
+            assertEquals(0, renderer.contentIndentPx(0))
+            assertTrue(renderer.contentIndentPx(1) > 0)
+            assertEquals(0, renderer.contentIndentPx(2))
+            assertEquals(3, renderer.visualLineCount)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(model.lines[1].contentRange.startOffset + 1)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testInlineRichAndStructuredBlockQuotesFailClosedToExactSource() {
         val sources = listOf(
             "> quote with *emphasis*\n\nTail\n",
             "> quote with ~~strikethrough~~\n\nTail\n",
-            "> outer\n>> nested\n\nTail\n",
             "> # nested heading\n\nTail\n",
         )
 

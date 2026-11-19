@@ -190,6 +190,38 @@ val fenced = 1
         assertEquals(source, plan.identity.source)
     }
 
+    fun testNestedBlockQuoteExposesParserOwnedMarkerDepthAndContainedQuote() {
+        val source = "> outer\n> > nested\n> outer again\n\nTail\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(19L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val quotes = plan.projections.filter { it.kind == NativeProjectionKind.BLOCK_QUOTE }
+        assertTrue("nested quote projection missing", quotes.size >= 2)
+
+        val outer = quotes.maxBy { quote -> quote.sourceRange.endOffset - quote.sourceRange.startOffset }
+        val contained = quotes.filter { quote ->
+            quote !== outer &&
+                quote.sourceRange.startOffset >= outer.sourceRange.startOffset &&
+                quote.sourceRange.endOffset <= outer.sourceRange.endOffset
+        }
+        assertTrue("nested BLOCK_QUOTE must remain parser-contained by outer quote", contained.isNotEmpty())
+
+        val markerDepthsByLine = outer.syntaxRanges
+            .groupingBy { range ->
+                source.substring(0, range.startOffset).count { it == '\n' }
+            }
+            .eachCount()
+        assertEquals(mapOf(0 to 1, 1 to 2, 2 to 1), markerDepthsByLine)
+        assertTrue(
+            outer.syntaxRanges.all { range ->
+                range.isInside(source) && source.substring(range.startOffset, range.endOffset) == ">"
+            }
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testHeadingLevelsAndVisibleRangesRemainParserBounded() {
         val source = """# H1
 ## H2 ##
