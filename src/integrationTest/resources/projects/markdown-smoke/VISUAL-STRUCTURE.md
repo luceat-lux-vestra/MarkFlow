@@ -3,6 +3,7 @@ Visual acceptance anchor. Structural presentation stays inactive while the caret
 > A short blockquote demonstrates quote geometry, padding, and readable body text.
 
 - parent item
+  continuation aligns with parent content
   - nested child
     - deeper child
 - sibling item
