@@ -4624,25 +4624,27 @@ class MarkFlowStarterDifferentialManifestTest {
         val rows = referenceLedger.lineSequence()
             .filter { it.startsWith("level=") }
             .map { line ->
-                line.split('\t').associate { token ->
+                line.split('\t').mapNotNull { token ->
                     val pair = token.split('=', limit = 2)
-                    if (pair.size != 2) return false
-                    pair[0] to pair[1]
-                }
+                    pair.takeIf { it.size == 2 }?.let { it[0] to it[1] }
+                }.toMap()
             }
             .toList()
         if (rows.size != 6) return false
-        return rows.mapIndexed { index, row ->
+        rows.forEachIndexed { index, row ->
             if (row["level"] != (index + 1).toString()) return false
             val top = row["heading_text_range_top_css_px"]?.toDoubleOrNull() ?: return false
             val height = row["heading_text_range_height_css_px"]?.toDoubleOrNull() ?: return false
             if (!top.isFinite() || !height.isFinite() || height <= 0.0) return false
-            firstHeadingInkPixelX(
-                image,
-                floor(top).toInt(),
-                ceil(top + height).toInt(),
-            ) != null
-        }.all { it }
+            if (
+                firstHeadingInkPixelX(
+                    image,
+                    floor(top).toInt(),
+                    ceil(top + height).toInt(),
+                ) == null
+            ) return false
+        }
+        return true
     }
 
     private fun headingInkXDiagnostic(
