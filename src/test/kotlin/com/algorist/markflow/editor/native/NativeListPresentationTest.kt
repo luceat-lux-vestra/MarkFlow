@@ -198,13 +198,12 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
-    fun testUnsupportedMixedTaskAndUnownedInlineRichListsFailClosedToExactSource() {
+    fun testUnsupportedMixedTaskAndUnsupportedRichListsFailClosedToExactSource() {
         val sources = listOf(
             "- [ ] task\n- ordinary\n\nTail\n",
             "1. [ ] ordered task\n\nTail\n",
             "- [ ] parent\n  - [ ] nested\n\nTail\n",
             "- [ ] first task\n  task continuation\n\nTail\n",
-            "- [ ] *rich task*\n\nTail\n",
             "- item\n  continuation with *emphasis*\n\nTail\n",
             "- item with ~~strikethrough~~\n\nTail\n",
             "- item with `code`\n\nTail\n",
@@ -306,6 +305,46 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         val bounds = Rectangle(10, 20, 400, 100)
         val center = requireNotNull(renderer.firstTaskCheckboxCenter(bounds))
         assertEquals(0, renderer.taskRowAt(center, bounds))
+    }
+
+    fun testTaskListSupportsParserOwnedStrongInlineRunsAndToggleLocality() {
+        val source =
+            "- [x] Completed task\n" +
+                "- [ ] Pending task\n" +
+                "- [ ] Another pending task with **formatting**\n\n" +
+                "Tail\n"
+        myFixture.configureByText("task-inline-strong.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+
+        assertEquals(3, model.rows.size)
+        assertTrue(model.rows.all { it.task != null })
+        assertEquals(
+            listOf("Completed task", "Pending task", "Another pending task with formatting"),
+            model.rows.map(NativeListRow::displayText),
+        )
+        assertTrue(
+            model.rows[2].displayRuns.any {
+                it.text == "formatting" && it.style == NativeListInlineStyle.STRONG
+            }
+        )
+        assertEquals(source, editor.document.text)
+
+        val controller = NativeListPresentationController(editor)
+        try {
+            controller.applyPlan(plan, true)
+            val stateRange = requireNotNull(model.rows[2].task).stateRange
+            val expected = source.replaceRange(stateRange.startOffset, stateRange.endOffset, "x")
+
+            assertTrue(controller.toggleTask(model.sourceRange, 2))
+            assertEquals(expected, editor.document.text)
+            assertEquals(source.length, editor.document.textLength)
+            assertEquals(1L, controller.evidenceSnapshot().taskToggles)
+        } finally {
+            controller.dispose()
+        }
     }
 
     fun testInactiveTaskListUsesNativeCheckboxPresentationWithoutChangingSource() {
