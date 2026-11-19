@@ -11,6 +11,7 @@ import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.accessibility.ScreenReader
+import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
@@ -34,6 +35,7 @@ internal enum class NativeTableInlineStyle(val fontMask: Int) {
     EMPHASIS(Font.ITALIC),
     STRONG(Font.BOLD),
     STRONG_EMPHASIS(Font.BOLD or Font.ITALIC),
+    INLINE_CODE(Font.PLAIN),
 }
 
 internal data class NativeTableTextRun(
@@ -73,11 +75,11 @@ internal object NativeTableProjectionPlanner {
     private val supportedInlineKinds = setOf(
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
+        NativeProjectionKind.INLINE_CODE,
     )
     private val tableInlineKinds = supportedInlineKinds + setOf(
         NativeProjectionKind.STRIKETHROUGH,
         NativeProjectionKind.LINK,
-        NativeProjectionKind.INLINE_CODE,
     )
 
     fun plan(plan: NativeProjectionPlan): List<NativeTableModel> {
@@ -199,6 +201,9 @@ internal object NativeTableProjectionPlanner {
 
         for (offset in contentRange.startOffset until contentRange.endOffset) {
             if (syntaxRanges.any { offset >= it.startOffset && offset < it.endOffset }) continue
+            val inlineCode = projections.any {
+                it.kind == NativeProjectionKind.INLINE_CODE && it.sourceRange.contains(offset)
+            }
             val bold = projections.any {
                 it.kind == NativeProjectionKind.STRONG && it.sourceRange.contains(offset)
             }
@@ -206,6 +211,7 @@ internal object NativeTableProjectionPlanner {
                 it.kind == NativeProjectionKind.EMPHASIS && it.sourceRange.contains(offset)
             }
             val style = when {
+                inlineCode -> NativeTableInlineStyle.INLINE_CODE
                 bold && italic -> NativeTableInlineStyle.STRONG_EMPHASIS
                 bold -> NativeTableInlineStyle.STRONG
                 italic -> NativeTableInlineStyle.EMPHASIS
@@ -616,9 +622,26 @@ internal class NativeTableInlayRenderer(
                 offset += Character.charCount(codePoint)
             }
             if (buffer.isNotEmpty()) {
+                val rendered = buffer.toString()
+                val drawn = metrics.stringWidth(rendered)
+                if (run.style == NativeTableInlineStyle.INLINE_CODE) {
+                    val foreground = g2.color
+                    g2.color = Color(
+                        foreground.red,
+                        foreground.green,
+                        foreground.blue,
+                        INLINE_CODE_BACKGROUND_ALPHA,
+                    )
+                    g2.fillRect(
+                        x,
+                        baseline - metrics.ascent,
+                        drawn,
+                        metrics.height,
+                    )
+                    g2.color = foreground
+                }
                 g2.font = font
-                g2.drawString(buffer.toString(), x, baseline)
-                val drawn = metrics.stringWidth(buffer.toString())
+                g2.drawString(rendered, x, baseline)
                 x += drawn
                 remaining -= drawn
             }
@@ -641,5 +664,6 @@ internal class NativeTableInlayRenderer(
         private const val MIN_COLUMN_WIDTH = 72
         private const val MAX_COLUMN_WIDTH = 320
         private const val CELL_HORIZONTAL_PADDING = 8
+        private const val INLINE_CODE_BACKGROUND_ALPHA = 24
     }
 }
