@@ -201,7 +201,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
     fun testUnsupportedMixedTaskAndUnsupportedRichListsFailClosedToExactSource() {
         val sources = listOf(
             "1. [ ] ordered task\n\nTail\n",
-            "- [ ] first task\n  task continuation\n\nTail\n",
+            "- [ ] first task\n  continuation with *emphasis*\n\nTail\n",
             "- item\n  continuation with *emphasis*\n\nTail\n",
             "- item with ~~strikethrough~~\n\nTail\n",
             "- item with `code`\n\nTail\n",
@@ -317,6 +317,69 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             assertEquals(1L, controller.evidenceSnapshot().taskToggles)
         } finally {
             controller.dispose()
+        }
+    }
+
+    fun testPlainTextTaskContinuationUsesCheckboxContentColumnAndPreservesExactSource() {
+        val source =
+            "- [ ] task with continuation\n" +
+                "  continuation text\n\n" +
+                "Tail\n"
+        myFixture.configureByText("task-continuation.md", source)
+        val editor = myFixture.editor
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+
+        assertEquals(1, model.rows.size)
+        val row = model.rows.single()
+        assertNotNull(row.task)
+        assertEquals(1, row.continuations.size)
+        val continuation = row.continuations.single()
+        assertEquals("continuation text", continuation.text)
+        assertEquals(
+            continuation.text,
+            source.substring(continuation.contentRange.startOffset, continuation.contentRange.endOffset),
+        )
+
+        val renderer = NativeListInlayRenderer(editor, model)
+        val geometry = renderer.visualRowGeometryEvidence(Rectangle(10, 20, 600, 160))
+        assertTrue(geometry.contains("row=0\tdepth=0\tmarker=-"))
+        assertTrue(geometry.contains("\tcontinuations=1\tvisual_lines=2\ttask=true\t"))
+        assertEquals(source, editor.document.text)
+        assertEquals(stampBefore, editor.document.modificationStamp)
+
+        val presentation = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+        try {
+            assertEquals(1, presentation.evidenceSnapshot().listInlays)
+            editor.caretModel.moveToOffset(continuation.contentRange.startOffset + 1)
+            assertEquals(0, presentation.evidenceSnapshot().listInlays)
+            assertEquals(0, presentation.evidenceSnapshot().listFolds)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertEquals(1, presentation.evidenceSnapshot().listInlays)
+            assertEquals(1, presentation.evidenceSnapshot().listFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            presentation.dispose()
+        }
+
+        val taskController = NativeListPresentationController(editor)
+        try {
+            taskController.applyPlan(plan, true)
+            val stateRange = requireNotNull(row.task).stateRange
+            val expected = source.replaceRange(stateRange.startOffset, stateRange.endOffset, "x")
+            assertTrue(taskController.toggleTask(model.sourceRange, 0))
+            assertEquals(expected, editor.document.text)
+            assertEquals(source.length, editor.document.textLength)
+            assertEquals(1L, taskController.evidenceSnapshot().taskToggles)
+        } finally {
+            taskController.dispose()
         }
     }
 

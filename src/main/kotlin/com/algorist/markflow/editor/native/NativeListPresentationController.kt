@@ -84,10 +84,10 @@ internal data class NativeListPresentationEvidence(
  *
  * Supported ordinary lists contain unordered/ordered items, nested lists, parser-proven emphasis/strong
  * on each item's first line, and indented plain-text continuation lines owned by their parent item.
- * The task-list slice accepts single-line unordered task rows, including mixed ordinary/task
- * lists, nested unordered tasks, and parser-proven emphasis/strong on each task's first line.
- * Ordered tasks, task continuations, rich continuations, and all other inline/block-rich content
- * fail closed.
+ * The task-list slice accepts unordered task rows, including mixed ordinary/task lists,
+ * nested unordered tasks, parser-proven emphasis/strong on each task's first line, and indented
+ * plain-text continuation lines. Ordered tasks, rich continuations, and all other inline/block-rich
+ * content fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
@@ -214,7 +214,6 @@ internal object NativeListProjectionPlanner {
             end = item.sourceRange.endOffset,
             nestedRanges = nestedLists.map { it.sourceRange },
         ) ?: return null
-        if (task != null && continuations.isNotEmpty()) return null
 
         val depth = items.count { ancestor ->
             ancestor !== item &&
