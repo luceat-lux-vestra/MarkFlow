@@ -2605,19 +2605,20 @@ class MarkFlowStarterDifferentialManifestTest {
                                     check(p.size == 4)
                                     Rectangle(p[0], p[1], p[2], p[3])
                                 }
+                                val domB = driver.ui.jcef()
                                 waitFor(
-                                    message = "B bundled JCEF rendered nonblank",
+                                    message = "B bundled JCEF paints all six source-aligned headings",
                                     timeout = 60.seconds,
                                     getter = {
                                         robot.waitForIdle()
                                         val img = robot.createScreenCapture(refBounds)
                                         check(ImageIO.write(img, "png",
                                             abDest.resolve("preview-b.png").toFile()))
-                                        diagnostics.referenceHasVisibleContent(img)
+                                        val headingLedger = domB.callJs(headingReferenceDomProbe)
+                                        referenceHeadingRasterHasAllInk(img, headingLedger)
                                     },
                                     checker = { it }
                                 )
-                                val domB = driver.ui.jcef()
                                 val headingB = domB.callJs(headingReferenceDomProbe)
                                 val paragraphB = domB.callJs(followingParagraphDomProbe)
                                 check(headingB.startsWith(
@@ -4611,6 +4612,37 @@ class MarkFlowStarterDifferentialManifestTest {
             priorPreviewInk = previewInk.first
         }
         return result.joinToString("\n", postfix = "\n")
+    }
+
+    private fun referenceHeadingRasterHasAllInk(
+        image: BufferedImage,
+        referenceLedger: String,
+    ): Boolean {
+        if (!referenceLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n")) {
+            return false
+        }
+        val rows = referenceLedger.lineSequence()
+            .filter { it.startsWith("level=") }
+            .map { line ->
+                line.split('\t').associate { token ->
+                    val pair = token.split('=', limit = 2)
+                    if (pair.size != 2) return false
+                    pair[0] to pair[1]
+                }
+            }
+            .toList()
+        if (rows.size != 6) return false
+        return rows.mapIndexed { index, row ->
+            if (row["level"] != (index + 1).toString()) return false
+            val top = row["heading_text_range_top_css_px"]?.toDoubleOrNull() ?: return false
+            val height = row["heading_text_range_height_css_px"]?.toDoubleOrNull() ?: return false
+            if (!top.isFinite() || !height.isFinite() || height <= 0.0) return false
+            firstHeadingInkPixelX(
+                image,
+                floor(top).toInt(),
+                ceil(top + height).toInt(),
+            ) != null
+        }.all { it }
     }
 
     private fun headingInkXDiagnostic(
