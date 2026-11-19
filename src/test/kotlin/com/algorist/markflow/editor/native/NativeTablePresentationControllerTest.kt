@@ -37,7 +37,7 @@ After
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
     }
 
-    fun testParserOwnedEmphasisStrongAndInlineCodeBecomeSemanticCellRunsWithoutNormalizingOtherInlineSource() {
+    fun testParserOwnedEmphasisStrongInlineCodeAndSimpleLinkBecomeSemanticCellRuns() {
         val source = """| kind | emphasis | strong | link | code |
 | --- | --- | --- | --- | --- |
 | plain | *emphasis* | **strong** | [link](https://example.com) | `code` |
@@ -53,7 +53,7 @@ After
             body.cells.map(NativeTableCellModel::sourceText),
         )
         assertEquals(
-            listOf("plain", "emphasis", "strong", "[link](https://example.com)", "code"),
+            listOf("plain", "emphasis", "strong", "link", "code"),
             body.cells.map(NativeTableCellModel::displayText),
         )
         assertEquals(
@@ -65,12 +65,52 @@ After
             body.cells[2].displayRuns.map(NativeTableTextRun::style).distinct(),
         )
         assertEquals(
-            listOf(NativeTableInlineStyle.PLAIN),
+            listOf(NativeTableInlineStyle.LINK),
             body.cells[3].displayRuns.map(NativeTableTextRun::style).distinct(),
         )
         assertEquals(
             listOf(NativeTableInlineStyle.INLINE_CODE),
             body.cells[4].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testReleaseFixtureSimpleTableLinkUsesVisibleParserLabelAndKeepsExactSource() {
+        val source = """| left | center | right |
+| --- | --- | --- |
+| [link](https://example.com/table) | value | final |
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+        val model = NativeTableProjectionPlanner.plan(plan).single()
+        val cell = model.rows[1].cells[0]
+
+        assertEquals("[link](https://example.com/table)", cell.sourceText)
+        assertEquals("link", cell.displayText)
+        assertEquals(
+            listOf(NativeTableInlineStyle.LINK),
+            cell.displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testCompositeLinkLabelFailsClosedToExactCellSource() {
+        val source = """| kind | value |
+| --- | --- |
+| link | [**strong label**](https://example.com/table) |
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+        val model = NativeTableProjectionPlanner.plan(plan).single()
+        val cell = model.rows[1].cells[1]
+
+        assertEquals("[**strong label**](https://example.com/table)", cell.sourceText)
+        assertEquals(cell.sourceText, cell.displayText)
+        assertEquals(
+            listOf(NativeTableInlineStyle.PLAIN),
+            cell.displayRuns.map(NativeTableTextRun::style).distinct(),
         )
         assertEquals(source, plan.identity.source)
     }
