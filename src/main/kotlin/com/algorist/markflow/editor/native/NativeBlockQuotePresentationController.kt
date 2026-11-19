@@ -21,7 +21,7 @@ import kotlin.math.max
 
 internal data class NativeBlockQuoteLine(
     val markerRanges: List<ProjectionRange>,
-    val contentRange: ProjectionRange,
+    val contentRange: ProjectionRange?,
     val text: String,
     val listRow: NativeListRow? = null,
 ) {
@@ -33,6 +33,9 @@ internal data class NativeBlockQuoteLine(
 
     val displayText: String
         get() = listRow?.displayText ?: text
+
+    val isBlank: Boolean
+        get() = contentRange == null
 }
 
 internal data class NativeBlockQuoteModel(
@@ -41,7 +44,9 @@ internal data class NativeBlockQuoteModel(
     val syntaxRanges: List<ProjectionRange>,
 ) {
     val contentRange: ProjectionRange
-        get() = lines.first().contentRange
+        get() = requireNotNull(lines.firstNotNullOfOrNull(NativeBlockQuoteLine::contentRange)) {
+            "supported blockquote model must contain at least one non-blank content row"
+        }
 
     val text: String
         get() = lines.joinToString(separator = "\n") { it.displayText }
@@ -59,9 +64,9 @@ internal data class NativeBlockQuotePresentationEvidence(
 /**
  * Conservative parser-bounded blockquote model for corrective #316.
  *
- * This slice accepts plain-text quote lines at parser-proven nested depths, including ancestor
- * return, plus quote-contained ordinary list rows using the shared #551 list model. Blank-line,
- * task-list, structured and inline-rich quote content remains exact source until its bounded slice.
+ * This slice accepts plain-text quote lines at parser-proven nested depths, marker-only blank quote
+ * rows, and quote-contained ordinary list rows using the shared #551 list model. Task-list,
+ * structured and inline-rich quote content remains exact source until its bounded slice.
  */
 internal object NativeBlockQuoteProjectionPlanner {
     private val unsupportedNestedKinds = setOf(
@@ -267,12 +272,19 @@ internal object NativeBlockQuoteProjectionPlanner {
                 ) {
                     contentEnd -= 1
                 }
-                if (contentEnd <= quoteContentStart) return null
 
-                val contentRange = ProjectionRange(quoteContentStart, contentEnd)
-                val text = source.substring(quoteContentStart, contentEnd)
-                if (text.any(::isPresentationSensitiveInlineChar)) return null
-                lines += NativeBlockQuoteLine(markers, contentRange, text)
+                if (contentEnd <= quoteContentStart) {
+                    lines += NativeBlockQuoteLine(
+                        markerRanges = markers,
+                        contentRange = null,
+                        text = "",
+                    )
+                } else {
+                    val contentRange = ProjectionRange(quoteContentStart, contentEnd)
+                    val text = source.substring(quoteContentStart, contentEnd)
+                    if (text.any(::isPresentationSensitiveInlineChar)) return null
+                    lines += NativeBlockQuoteLine(markers, contentRange, text)
+                }
             }
 
             cursor = lineEnd
@@ -284,7 +296,7 @@ internal object NativeBlockQuoteProjectionPlanner {
             }
         }
 
-        if (lines.isEmpty()) return null
+        if (lines.isEmpty() || lines.none { line -> line.contentRange != null }) return null
         val usedMarkers = lines.flatMap(NativeBlockQuoteLine::markerRanges).toSet()
         if (usedMarkers.size != syntaxRanges.size || !usedMarkers.containsAll(syntaxRanges)) return null
         val usedListMarkers = lines.mapNotNull { line -> line.listRow?.markerRange }.toSet()
