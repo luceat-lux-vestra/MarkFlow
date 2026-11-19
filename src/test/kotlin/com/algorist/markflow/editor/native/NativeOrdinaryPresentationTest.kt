@@ -2481,6 +2481,87 @@ Tail
         }
     }
 
+    fun testQuoteContainedOrdinaryListComposesInsideQuoteWithoutDuplicateListInlay() {
+        val source = "> outer\n> > - nested item\n> > - another item\n> outer again\n\nTail\n"
+        myFixture.configureByText("blockquote-contained-list.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+
+        val sharedListModel = NativeListProjectionPlanner.plan(plan).single()
+        assertEquals(listOf("-", "-"), sharedListModel.rows.map(NativeListRow::marker))
+        assertEquals(listOf(0, 0), sharedListModel.rows.map(NativeListRow::depth))
+        assertEquals(listOf("nested item", "another item"), sharedListModel.rows.map(NativeListRow::text))
+
+        val quote = NativeBlockQuoteProjectionPlanner.plan(plan).single()
+        assertEquals(
+            listOf("outer", "nested item", "another item", "outer again"),
+            quote.lines.map(NativeBlockQuoteLine::displayText),
+        )
+        assertEquals(listOf(0, 1, 1, 0), quote.lines.map(NativeBlockQuoteLine::depth))
+        assertEquals(listOf(null, "-", "-", null), quote.lines.map { line -> line.listRow?.marker })
+        assertEquals(listOf(null, 0, 0, null), quote.lines.map { line -> line.listRow?.depth })
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.blockQuoteModels)
+            assertEquals(1, evidence.blockQuoteInlays)
+            assertEquals(1, evidence.blockQuoteFullyConcealed)
+            assertEquals(0, evidence.listModels)
+            assertEquals(0, evidence.listInlays)
+            assertEquals(0, evidence.listFolds)
+
+            val renderer = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { it.renderer as? NativeBlockQuoteInlayRenderer }
+                .single()
+            assertEquals(
+                listOf("outer", "nested item", "another item", "outer again"),
+                renderer.displayLines,
+            )
+            assertEquals(listOf(0, 1, 1, 0), renderer.displayDepths)
+            assertEquals(listOf(null, "•", "•", null), renderer.displayListMarkers)
+            assertEquals(listOf(null, 0, 0, null), renderer.displayListDepths)
+            assertEquals(0, renderer.contentIndentPx(0))
+            assertTrue(renderer.listMarkerIndentPx(1) > renderer.contentIndentPx(0))
+            assertEquals(renderer.listMarkerIndentPx(1), renderer.listMarkerIndentPx(2))
+            assertEquals(0, renderer.contentIndentPx(3))
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            val nestedListContent = requireNotNull(quote.lines[1].listRow).contentRange.startOffset + 1
+            editor.caretModel.moveToOffset(nestedListContent)
+            assertEquals(0, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteInlays)
+            assertEquals(0, controller.evidenceSnapshot().listInlays)
+            assertEquals(1, controller.evidenceSnapshot().blockQuoteFullyConcealed)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testQuoteContainedTaskListRemainsUnsupportedByQuotePlanner() {
+        val source = "> - [ ] task\n\nTail\n"
+        myFixture.configureByText("blockquote-task-fallback.md", source)
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(myFixture.editor.document, 0L))
+
+        assertTrue(NativeListProjectionPlanner.plan(plan).single().rows.single().task != null)
+        assertTrue(NativeBlockQuoteProjectionPlanner.plan(plan).isEmpty())
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testInlineRichAndStructuredBlockQuotesFailClosedToExactSource() {
         val sources = listOf(
             "> quote with *emphasis*\n\nTail\n",

@@ -222,6 +222,51 @@ val fenced = 1
         assertEquals(source, plan.identity.source)
     }
 
+    fun testQuoteContainedOrdinaryListKeepsQuoteAndListParserOwnershipSeparate() {
+        val source = "> outer\n> > - nested item\n> > - another item\n> outer again\n\nTail\n"
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(23L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val quotes = plan.projections.filter { it.kind == NativeProjectionKind.BLOCK_QUOTE }
+        val outer = quotes.maxBy { quote -> quote.sourceRange.endOffset - quote.sourceRange.startOffset }
+        val nested = quotes
+            .filter { quote ->
+                quote !== outer &&
+                    quote.sourceRange.startOffset >= outer.sourceRange.startOffset &&
+                    quote.sourceRange.endOffset <= outer.sourceRange.endOffset
+            }
+            .maxBy { quote -> quote.sourceRange.endOffset - quote.sourceRange.startOffset }
+
+        val lists = plan.projections.filter { it.kind == NativeProjectionKind.UNORDERED_LIST }
+        val quotedList = lists.single { list ->
+            list.sourceRange.startOffset >= nested.sourceRange.startOffset &&
+                list.sourceRange.endOffset <= nested.sourceRange.endOffset
+        }
+        val items = plan.projections
+            .filter { projection ->
+                projection.kind == NativeProjectionKind.LIST_ITEM &&
+                    projection.sourceRange.startOffset >= quotedList.sourceRange.startOffset &&
+                    projection.sourceRange.endOffset <= quotedList.sourceRange.endOffset
+            }
+            .sortedBy { it.sourceRange.startOffset }
+
+        assertEquals(2, items.size)
+        assertEquals(
+            listOf("-", "-"),
+            items.map { item ->
+                val marker = item.syntaxRanges.single()
+                source.substring(marker.startOffset, marker.endOffset)
+            },
+        )
+        assertEquals(
+            listOf("nested item", "another item"),
+            NativeListProjectionPlanner.plan(plan).single().rows.map(NativeListRow::text),
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testHeadingLevelsAndVisibleRangesRemainParserBounded() {
         val source = """# H1
 ## H2 ##

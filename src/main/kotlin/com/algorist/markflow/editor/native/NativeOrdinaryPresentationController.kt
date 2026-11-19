@@ -112,9 +112,11 @@ internal class NativeOrdinaryPresentationController(
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
-        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
-        val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
+        val blockQuotePlan = plan
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
+        val blockQuotePresentationRanges = NativeBlockQuoteProjectionPlanner.presentationSourceRanges(blockQuotePlan)
+        val listPlan = plan.withoutProjectionsInside(blockQuotePresentationRanges)
+        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(listPlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
         val indentedCodePlan = plan.withoutProjectionsInside(
@@ -137,7 +139,7 @@ internal class NativeOrdinaryPresentationController(
         blockQuotes.applyPlan(blockQuotePlan, richPresentationEnabled)
         fencedCodes.applyPlan(fencedCodePlan, richPresentationEnabled)
         indentedCodes.applyPlan(indentedCodePlan, richPresentationEnabled)
-        lists.applyPlan(plan, richPresentationEnabled)
+        lists.applyPlan(listPlan, richPresentationEnabled)
     }
 
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
@@ -145,9 +147,11 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         inline.clearHighlighters()
         block.clearHighlighters()
-        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(plan)
-        val blockQuotePlan = plan.withoutProjectionsInside(listSourceRanges)
+        val blockQuotePlan = plan
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
+        val blockQuotePresentationRanges = NativeBlockQuoteProjectionPlanner.presentationSourceRanges(blockQuotePlan)
+        val listPlan = plan.withoutProjectionsInside(blockQuotePresentationRanges)
+        val listSourceRanges = NativeListProjectionPlanner.sourceRanges(listPlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
         val indentedCodePlan = plan.withoutProjectionsInside(
@@ -172,7 +176,7 @@ internal class NativeOrdinaryPresentationController(
         blockQuotes.refreshActivity(blockQuotePlan, richPresentationEnabled)
         fencedCodes.refreshActivity(fencedCodePlan, richPresentationEnabled)
         indentedCodes.refreshActivity(indentedCodePlan, richPresentationEnabled)
-        lists.refreshActivity(plan, richPresentationEnabled)
+        lists.refreshActivity(listPlan, richPresentationEnabled)
     }
 
     fun visualStructureListGeometryEvidence(): String = lists.visualStructureGeometryEvidence()
