@@ -30,11 +30,49 @@ After
         assertEquals(model.sourceRange.startOffset + 1, model.firstContentOffset)
         assertEquals(3, model.rows.size)
         assertTrue(model.rows.first().header)
-        assertEquals(listOf("Name", "Value"), model.rows.first().cells)
-        assertEquals(listOf("alpha", "1"), model.rows[1].cells)
+        assertEquals(listOf("Name", "Value"), model.rows.first().cells.map(NativeTableCellModel::sourceText))
+        assertEquals(listOf("alpha", "1"), model.rows[1].cells.map(NativeTableCellModel::sourceText))
         assertFalse(model.rows[2].header)
-        assertEquals(listOf("beta", "`2\\|3`"), model.rows[2].cells)
+        assertEquals(listOf("beta", "`2\\|3`"), model.rows[2].cells.map(NativeTableCellModel::sourceText))
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
+    }
+
+    fun testParserOwnedEmphasisAndStrongBecomeStyledCellRunsWithoutNormalizingOtherInlineSource() {
+        val source = """| kind | emphasis | strong | link | code |
+| --- | --- | --- | --- | --- |
+| plain | *emphasis* | **strong** | [link](https://example.com) | `code` |
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+        val model = NativeTableProjectionPlanner.plan(plan).single()
+        val body = model.rows[1]
+
+        assertEquals(
+            listOf("plain", "*emphasis*", "**strong**", "[link](https://example.com)", "`code`"),
+            body.cells.map(NativeTableCellModel::sourceText),
+        )
+        assertEquals(
+            listOf("plain", "emphasis", "strong", "[link](https://example.com)", "`code`"),
+            body.cells.map(NativeTableCellModel::displayText),
+        )
+        assertEquals(
+            listOf(NativeTableInlineStyle.EMPHASIS),
+            body.cells[1].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(
+            listOf(NativeTableInlineStyle.STRONG),
+            body.cells[2].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(
+            listOf(NativeTableInlineStyle.PLAIN),
+            body.cells[3].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(
+            listOf(NativeTableInlineStyle.PLAIN),
+            body.cells[4].displayRuns.map(NativeTableTextRun::style).distinct(),
+        )
+        assertEquals(source, plan.identity.source)
     }
 
     fun testInactiveTableUsesNativeFoldsAndInlayAndCaretRevealsExactSource() {

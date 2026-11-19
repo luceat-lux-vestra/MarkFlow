@@ -29,9 +29,30 @@ internal data class NativeTablePresentationEvidence(
     val mouseReveals: Long,
 )
 
+internal enum class NativeTableInlineStyle(val fontMask: Int) {
+    PLAIN(Font.PLAIN),
+    EMPHASIS(Font.ITALIC),
+    STRONG(Font.BOLD),
+    STRONG_EMPHASIS(Font.BOLD or Font.ITALIC),
+}
+
+internal data class NativeTableTextRun(
+    val text: String,
+    val style: NativeTableInlineStyle,
+)
+
+internal data class NativeTableCellModel(
+    val sourceRange: ProjectionRange,
+    val sourceText: String,
+    val displayRuns: List<NativeTableTextRun>,
+) {
+    val displayText: String
+        get() = displayRuns.joinToString(separator = "") { it.text }
+}
+
 internal data class NativeTableRowModel(
     val header: Boolean,
-    val cells: List<String>,
+    val cells: List<NativeTableCellModel>,
     val sourceRange: ProjectionRange,
     val firstContentOffset: Int,
 )
@@ -49,12 +70,23 @@ internal data class NativeTableModel(
  * No pipe splitting, serializer, or reconstructed Markdown participates in the model.
  */
 internal object NativeTableProjectionPlanner {
+    private val supportedInlineKinds = setOf(
+        NativeProjectionKind.EMPHASIS,
+        NativeProjectionKind.STRONG,
+    )
+    private val tableInlineKinds = supportedInlineKinds + setOf(
+        NativeProjectionKind.STRIKETHROUGH,
+        NativeProjectionKind.LINK,
+        NativeProjectionKind.INLINE_CODE,
+    )
+
     fun plan(plan: NativeProjectionPlan): List<NativeTableModel> {
         if (plan.status != ProjectionPlanStatus.READY) return emptyList()
         val source = plan.identity.source
         val rows = plan.projections.filter {
             it.kind == NativeProjectionKind.TABLE_HEADER || it.kind == NativeProjectionKind.TABLE_ROW
         }
+        val inlineProjections = plan.projections.filter { it.kind in tableInlineKinds }
         return plan.projections
             .asSequence()
             .filter { it.kind == NativeProjectionKind.TABLE }
@@ -66,18 +98,20 @@ internal object NativeTableProjectionPlanner {
                             row.sourceRange.endOffset <= table.sourceRange.endOffset
                     }
                     .sortedBy { it.sourceRange.startOffset }
-                    .mapNotNull { row -> row.toTableRow(source) }
+                    .mapNotNull { row -> row.toTableRow(source, inlineProjections) }
                     .toList()
                 if (tableRows.isEmpty()) null else NativeTableModel(table.sourceRange, tableRows)
             }
             .toList()
     }
 
-    private fun NativeProjection.toTableRow(source: String): NativeTableRowModel? {
+    private fun NativeProjection.toTableRow(
+        source: String,
+        inlineProjections: List<NativeProjection>,
+    ): NativeTableRowModel? {
         if (contentRanges.isEmpty()) return null
         val cells = contentRanges.map { range ->
-            check(range.isInside(source))
-            source.substring(range.startOffset, range.endOffset).trim()
+            tableCellFor(source, range, inlineProjections) ?: return null
         }
         return NativeTableRowModel(
             header = kind == NativeProjectionKind.TABLE_HEADER,
@@ -86,6 +120,109 @@ internal object NativeTableProjectionPlanner {
             firstContentOffset = contentRanges.first().startOffset,
         )
     }
+
+    private fun tableCellFor(
+        source: String,
+        sourceRange: ProjectionRange,
+        inlineProjections: List<NativeProjection>,
+    ): NativeTableCellModel? {
+        if (!sourceRange.isInside(source)) return null
+        var start = sourceRange.startOffset
+        var end = sourceRange.endOffset
+        while (start < end && source[start].isWhitespace()) start += 1
+        while (end > start && source[end - 1].isWhitespace()) end -= 1
+        val sourceText = source.substring(start, end)
+        if (start == end) {
+            return NativeTableCellModel(sourceRange, sourceText, emptyList())
+        }
+
+        val visibleRange = ProjectionRange(start, end)
+        val intersecting = inlineProjections.filter { projection ->
+            projection.sourceRange.intersects(visibleRange.startOffset, visibleRange.endOffset)
+        }
+        if (
+            intersecting.any { projection ->
+                !projection.sourceRange.isInside(source) ||
+                    projection.sourceRange.startOffset < visibleRange.startOffset ||
+                    projection.sourceRange.endOffset > visibleRange.endOffset
+            }
+        ) {
+            return null
+        }
+
+        val supported = intersecting.filter { it.kind in supportedInlineKinds }
+        val displayRuns = if (intersecting.any { it.kind !in supportedInlineKinds }) {
+            listOf(NativeTableTextRun(sourceText, NativeTableInlineStyle.PLAIN))
+        } else {
+            inlineRunsFor(source, visibleRange, supported) ?: return null
+        }
+        return NativeTableCellModel(sourceRange, sourceText, displayRuns)
+    }
+
+    private fun inlineRunsFor(
+        source: String,
+        contentRange: ProjectionRange,
+        projections: List<NativeProjection>,
+    ): List<NativeTableTextRun>? {
+        if (!contentRange.isInside(source)) return null
+        if (projections.any { projection ->
+                projection.kind !in supportedInlineKinds ||
+                    !projection.sourceRange.isInside(contentRange) ||
+                    projection.syntaxRanges.isEmpty() ||
+                    projection.syntaxRanges.any { syntax ->
+                        !syntax.isInside(source) || !syntax.isInside(projection.sourceRange)
+                    }
+            }) {
+            return null
+        }
+        if (projections.isEmpty()) {
+            return listOf(
+                NativeTableTextRun(
+                    source.substring(contentRange.startOffset, contentRange.endOffset),
+                    NativeTableInlineStyle.PLAIN,
+                )
+            )
+        }
+
+        val syntaxRanges = projections.flatMap(NativeProjection::syntaxRanges)
+        val runs = mutableListOf<NativeTableTextRun>()
+        val buffer = StringBuilder()
+        var currentStyle: NativeTableInlineStyle? = null
+
+        fun flush() {
+            val style = currentStyle ?: return
+            if (buffer.isNotEmpty()) {
+                runs += NativeTableTextRun(buffer.toString(), style)
+                buffer.setLength(0)
+            }
+        }
+
+        for (offset in contentRange.startOffset until contentRange.endOffset) {
+            if (syntaxRanges.any { offset >= it.startOffset && offset < it.endOffset }) continue
+            val bold = projections.any {
+                it.kind == NativeProjectionKind.STRONG && it.sourceRange.contains(offset)
+            }
+            val italic = projections.any {
+                it.kind == NativeProjectionKind.EMPHASIS && it.sourceRange.contains(offset)
+            }
+            val style = when {
+                bold && italic -> NativeTableInlineStyle.STRONG_EMPHASIS
+                bold -> NativeTableInlineStyle.STRONG
+                italic -> NativeTableInlineStyle.EMPHASIS
+                else -> NativeTableInlineStyle.PLAIN
+            }
+            if (currentStyle != style) {
+                flush()
+                currentStyle = style
+            }
+            buffer.append(source[offset])
+        }
+        flush()
+        return runs.takeIf { it.isNotEmpty() }
+    }
+
+    private fun ProjectionRange.isInside(other: ProjectionRange): Boolean =
+        startOffset >= other.startOffset && endOffset <= other.endOffset
 }
 
 /**
@@ -387,11 +524,17 @@ internal class NativeTableInlayRenderer(
             row.cells.forEachIndexed { index, cell ->
                 val width = columnWidths.getOrElse(index) { MIN_COLUMN_WIDTH }
                 g2.drawRect(x, y, width, rowHeight)
-                g2.font = if (row.header) boldFont else normalFont
+                val baseFont = if (row.header) boldFont else normalFont
                 val cellMetrics = if (row.header) boldMetrics else metrics
-                val rendered = clip(cell, cellMetrics, max(1, width - CELL_HORIZONTAL_PADDING * 2))
                 val baseline = y + max(cellMetrics.ascent + 2, (rowHeight + cellMetrics.ascent - cellMetrics.descent) / 2)
-                g2.drawString(rendered, x + CELL_HORIZONTAL_PADDING, baseline)
+                drawRunsClipped(
+                    g2 = g2,
+                    runs = cell.displayRuns,
+                    startX = x + CELL_HORIZONTAL_PADDING,
+                    baseline = baseline,
+                    maxWidth = max(1, width - CELL_HORIZONTAL_PADDING * 2),
+                    baseFont = baseFont,
+                )
                 x += width
             }
             y += rowHeight
@@ -415,8 +558,8 @@ internal class NativeTableInlayRenderer(
         val raw = MutableList(columns) { MIN_COLUMN_WIDTH }
         model.rows.forEach { row ->
             row.cells.forEachIndexed { index, cell ->
-                val metrics = if (row.header) bold else normal
-                val desired = metrics.stringWidth(cell) + CELL_HORIZONTAL_PADDING * 2
+                val baseFont = if (row.header) bold.font else normal.font
+                val desired = runsWidth(cell.displayRuns, baseFont) + CELL_HORIZONTAL_PADDING * 2
                 raw[index] = max(raw[index], min(MAX_COLUMN_WIDTH, desired))
             }
         }
@@ -429,13 +572,68 @@ internal class NativeTableInlayRenderer(
 
     private fun rowHeight(metrics: java.awt.FontMetrics): Int = max(editor.lineHeight + 4, metrics.height + 8)
 
-    private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
-        if (metrics.stringWidth(text) <= maxWidth) return text
+    private fun runsWidth(runs: List<NativeTableTextRun>, baseFont: Font): Int =
+        runs.sumOf { run ->
+            val font = styledFont(baseFont, run.style)
+            editor.contentComponent.getFontMetrics(font).stringWidth(run.text)
+        }
+
+    private fun drawRunsClipped(
+        g2: Graphics2D,
+        runs: List<NativeTableTextRun>,
+        startX: Int,
+        baseline: Int,
+        maxWidth: Int,
+        baseFont: Font,
+    ) {
+        if (runs.isEmpty() || maxWidth <= 0) return
+        var x = startX
+        var remaining = maxWidth
+        val fullWidth = runsWidth(runs, baseFont)
         val ellipsis = "…"
-        val target = max(0, maxWidth - metrics.stringWidth(ellipsis))
-        var end = text.length
-        while (end > 0 && metrics.stringWidth(text.substring(0, end)) > target) end -= 1
-        return text.substring(0, end) + ellipsis
+        val ellipsisMetrics = editor.contentComponent.getFontMetrics(baseFont)
+        val ellipsisWidth = ellipsisMetrics.stringWidth(ellipsis)
+        val clip = fullWidth > maxWidth
+        val textBudget = if (clip) max(0, maxWidth - ellipsisWidth) else maxWidth
+
+        var consumed = 0
+        for (run in runs) {
+            val font = styledFont(baseFont, run.style)
+            val metrics = editor.contentComponent.getFontMetrics(font)
+            val buffer = StringBuilder()
+            var offset = 0
+            var clippedRun = false
+            while (offset < run.text.length) {
+                val codePoint = run.text.codePointAt(offset)
+                val glyph = String(Character.toChars(codePoint))
+                val glyphWidth = metrics.stringWidth(glyph)
+                if (consumed + glyphWidth > textBudget) {
+                    clippedRun = true
+                    break
+                }
+                buffer.append(glyph)
+                consumed += glyphWidth
+                offset += Character.charCount(codePoint)
+            }
+            if (buffer.isNotEmpty()) {
+                g2.font = font
+                g2.drawString(buffer.toString(), x, baseline)
+                val drawn = metrics.stringWidth(buffer.toString())
+                x += drawn
+                remaining -= drawn
+            }
+            if (clippedRun) break
+        }
+        if (clip && remaining >= ellipsisWidth) {
+            g2.font = baseFont
+            g2.drawString(ellipsis, x, baseline)
+        }
+        g2.font = baseFont
+    }
+
+    private fun styledFont(baseFont: Font, style: NativeTableInlineStyle): Font {
+        val targetStyle = baseFont.style or style.fontMask
+        return if (targetStyle == baseFont.style) baseFont else baseFont.deriveFont(targetStyle)
     }
 
     companion object {
