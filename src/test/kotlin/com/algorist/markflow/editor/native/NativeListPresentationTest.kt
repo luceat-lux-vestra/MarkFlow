@@ -200,9 +200,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
 
     fun testUnsupportedMixedTaskAndUnsupportedRichListsFailClosedToExactSource() {
         val sources = listOf(
-            "- [ ] task\n- ordinary\n\nTail\n",
             "1. [ ] ordered task\n\nTail\n",
-            "- [ ] parent\n  - [ ] nested\n\nTail\n",
             "- [ ] first task\n  task continuation\n\nTail\n",
             "- item\n  continuation with *emphasis*\n\nTail\n",
             "- item with ~~strikethrough~~\n\nTail\n",
@@ -276,6 +274,47 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             assertEquals(first.displayRuns.map { it.style.fontMask }, renderer.displayFontMasks(0))
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testMixedAndNestedUnorderedTaskRowsShareOneListModelAndToggleLocally() {
+        val source =
+            "- ordinary parent\n" +
+                "  - [ ] nested task\n" +
+                "- [x] top-level task\n" +
+                "- ordinary sibling\n\n" +
+                "Tail\n"
+        myFixture.configureByText("task-mixed-nested.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+
+        assertEquals(4, model.rows.size)
+        assertEquals(listOf(0, 1, 0, 0), model.rows.map(NativeListRow::depth))
+        assertEquals(listOf(false, true, true, false), model.rows.map { it.task != null })
+        assertEquals(listOf(null, false, true, null), model.rows.map { it.task?.checked })
+
+        val renderer = NativeListInlayRenderer(editor, model)
+        val bounds = Rectangle(10, 20, 500, 140)
+        val firstTaskCenter = requireNotNull(renderer.firstTaskCheckboxCenter(bounds))
+        assertEquals(1, renderer.taskRowAt(firstTaskCenter, bounds))
+        assertEquals(source, editor.document.text)
+        assertEquals(stampBefore, editor.document.modificationStamp)
+
+        val controller = NativeListPresentationController(editor)
+        try {
+            controller.applyPlan(plan, true)
+            val nestedState = requireNotNull(model.rows[1].task).stateRange
+            val expected = source.replaceRange(nestedState.startOffset, nestedState.endOffset, "x")
+
+            assertTrue(controller.toggleTask(model.sourceRange, 1))
+            assertEquals(expected, editor.document.text)
+            assertEquals(source.length, editor.document.textLength)
+            assertEquals(1L, controller.evidenceSnapshot().taskToggles)
         } finally {
             controller.dispose()
         }

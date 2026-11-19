@@ -84,9 +84,10 @@ internal data class NativeListPresentationEvidence(
  *
  * Supported ordinary lists contain unordered/ordered items, nested lists, parser-proven emphasis/strong
  * on each item's first line, and indented plain-text continuation lines owned by their parent item.
- * A dedicated conservative task-list slice accepts flat, all-task, single-line rows, including
- * parser-proven emphasis/strong on each task's first line. Mixed ordinary/task rows, nested tasks,
- * task continuations, rich continuations, and all other inline/block-rich content fail closed.
+ * The task-list slice accepts single-line unordered task rows, including mixed ordinary/task
+ * lists, nested unordered tasks, and parser-proven emphasis/strong on each task's first line.
+ * Ordered tasks, task continuations, rich continuations, and all other inline/block-rich content
+ * fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
@@ -141,10 +142,13 @@ internal object NativeListProjectionPlanner {
             if (concrete.zipWithNext().any { (left, right) -> right.depth > left.depth + 1 }) {
                 return@mapNotNull null
             }
-            val taskRows = concrete.count { it.task != null }
-            if (taskRows > 0 && taskRows != concrete.size) return@mapNotNull null
-            if (taskRows > 0 && list.kind != NativeProjectionKind.UNORDERED_LIST) return@mapNotNull null
-            if (taskRows > 0 && concrete.any { it.depth != 0 }) return@mapNotNull null
+            if (
+                concrete.any { row ->
+                    row.task != null && row.marker !in setOf("-", "*", "+")
+                }
+            ) {
+                return@mapNotNull null
+            }
 
             NativeListModel(list.sourceRange, concrete)
         }
