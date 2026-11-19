@@ -32,15 +32,31 @@ internal data class NativeListContinuation(
     val text: String,
 )
 
+internal enum class NativeListInlineStyle(val fontMask: Int) {
+    PLAIN(Font.PLAIN),
+    EMPHASIS(Font.ITALIC),
+    STRONG(Font.BOLD),
+    STRONG_EMPHASIS(Font.BOLD or Font.ITALIC),
+}
+
+internal data class NativeListTextRun(
+    val text: String,
+    val style: NativeListInlineStyle,
+)
+
 internal data class NativeListRow(
     val markerRange: ProjectionRange,
     val contentRange: ProjectionRange,
     val depth: Int,
     val marker: String,
     val text: String,
+    val displayRuns: List<NativeListTextRun>,
     val continuations: List<NativeListContinuation> = emptyList(),
     val task: NativeTaskMarker? = null,
-)
+) {
+    val displayText: String
+        get() = displayRuns.joinToString(separator = "") { it.text }
+}
 
 internal data class NativeListModel(
     val sourceRange: ProjectionRange,
@@ -66,20 +82,23 @@ internal data class NativeListPresentationEvidence(
 /**
  * Conservative parser-bounded list model for corrective #318.
  *
- * Supported ordinary lists contain plain-text unordered/ordered items, nested lists, and
- * indented plain-text continuation lines owned by their parent item.
+ * Supported ordinary lists contain unordered/ordered items, nested lists, parser-proven emphasis/strong
+ * on each item's first line, and indented plain-text continuation lines owned by their parent item.
  * A dedicated conservative task-list slice accepts only flat, all-task, single-line plain-text rows.
- * Mixed ordinary/task rows, nested tasks, task continuations and inline/block-rich content fail closed.
+ * Mixed ordinary/task rows, nested tasks, task continuations, rich continuations, and all other
+ * inline/block-rich content fail closed.
  */
 internal object NativeListProjectionPlanner {
     private val listKinds = setOf(
         NativeProjectionKind.UNORDERED_LIST,
         NativeProjectionKind.ORDERED_LIST,
     )
-    private val unsupportedNestedKinds = setOf(
-        NativeProjectionKind.HEADING,
+    private val supportedInlineKinds = setOf(
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
+    )
+    private val unsupportedNestedKinds = setOf(
+        NativeProjectionKind.HEADING,
         NativeProjectionKind.STRIKETHROUGH,
         NativeProjectionKind.LINK,
         NativeProjectionKind.BLOCK_QUOTE,
@@ -114,7 +133,8 @@ internal object NativeListProjectionPlanner {
                 .sortedBy { it.sourceRange.startOffset }
             if (items.isEmpty()) return@mapNotNull null
 
-            val rows = items.map { item -> rowFor(item, items, lists, source) }
+            val inlineProjections = contained.filter { it.kind in supportedInlineKinds }
+            val rows = items.map { item -> rowFor(item, items, lists, inlineProjections, source) }
             if (rows.any { it == null }) return@mapNotNull null
             val concrete = rows.filterNotNull()
             if (concrete.firstOrNull()?.depth != 0) return@mapNotNull null
@@ -148,6 +168,7 @@ internal object NativeListProjectionPlanner {
         item: NativeProjection,
         items: List<NativeProjection>,
         lists: List<NativeProjection>,
+        inlineProjections: List<NativeProjection>,
         source: String,
     ): NativeListRow? {
         val marker = item.syntaxRanges.singleOrNull() ?: return null
@@ -169,8 +190,15 @@ internal object NativeListProjectionPlanner {
             while (start < end && (source[start] == ' ' || source[start] == '\t')) start += 1
             if (start >= end) return null
         }
+        val contentRange = ProjectionRange(start, end)
         val text = source.substring(start, end)
-        if (text.any(::isPresentationSensitiveInlineChar)) return null
+        val intersectingInline = inlineProjections.filter { projection ->
+            projection.sourceRange.startOffset < contentRange.endOffset &&
+                projection.sourceRange.endOffset > contentRange.startOffset
+        }
+        if (intersectingInline.any { !it.sourceRange.isInside(contentRange) }) return null
+        if (task != null && intersectingInline.isNotEmpty()) return null
+        val displayRuns = inlineRunsFor(source, contentRange, intersectingInline) ?: return null
 
         val nestedLists = lists.filter { nested ->
             nested.sourceRange.startOffset >= item.sourceRange.startOffset &&
@@ -192,13 +220,75 @@ internal object NativeListProjectionPlanner {
         }
         return NativeListRow(
             markerRange = marker,
-            contentRange = ProjectionRange(start, end),
+            contentRange = contentRange,
             depth = depth,
             marker = source.substring(marker.startOffset, marker.endOffset),
             text = text,
+            displayRuns = displayRuns,
             continuations = continuations,
             task = task,
         )
+    }
+
+    private fun inlineRunsFor(
+        source: String,
+        contentRange: ProjectionRange,
+        projections: List<NativeProjection>,
+    ): List<NativeListTextRun>? {
+        if (!contentRange.isInside(source)) return null
+        if (projections.any { projection ->
+                projection.kind !in supportedInlineKinds ||
+                    !projection.sourceRange.isInside(contentRange) ||
+                    projection.syntaxRanges.isEmpty() ||
+                    projection.syntaxRanges.any { syntax ->
+                        !syntax.isInside(source) || !syntax.isInside(projection.sourceRange)
+                    }
+            }) {
+            return null
+        }
+
+        val syntaxRanges = projections.flatMap(NativeProjection::syntaxRanges)
+        val runs = mutableListOf<NativeListTextRun>()
+        val buffer = StringBuilder()
+        var currentStyle: NativeListInlineStyle? = null
+
+        fun flush() {
+            val style = currentStyle ?: return
+            if (buffer.isNotEmpty()) {
+                runs += NativeListTextRun(buffer.toString(), style)
+                buffer.setLength(0)
+            }
+        }
+
+        for (offset in contentRange.startOffset until contentRange.endOffset) {
+            if (syntaxRanges.any { offset >= it.startOffset && offset < it.endOffset }) continue
+            val char = source[offset]
+            if (isPresentationSensitiveInlineChar(char)) return null
+
+            val bold = projections.any {
+                it.kind == NativeProjectionKind.STRONG &&
+                    offset >= it.sourceRange.startOffset &&
+                    offset < it.sourceRange.endOffset
+            }
+            val italic = projections.any {
+                it.kind == NativeProjectionKind.EMPHASIS &&
+                    offset >= it.sourceRange.startOffset &&
+                    offset < it.sourceRange.endOffset
+            }
+            val style = when {
+                bold && italic -> NativeListInlineStyle.STRONG_EMPHASIS
+                bold -> NativeListInlineStyle.STRONG
+                italic -> NativeListInlineStyle.EMPHASIS
+                else -> NativeListInlineStyle.PLAIN
+            }
+            if (currentStyle != style) {
+                flush()
+                currentStyle = style
+            }
+            buffer.append(char)
+        }
+        flush()
+        return runs.takeIf { it.isNotEmpty() }
     }
 
     private fun continuationLinesFor(
@@ -792,6 +882,11 @@ internal class NativeListInlayRenderer(
 
     fun row(index: Int): NativeListRow = model.rows[index]
 
+    internal fun displayText(index: Int): String = model.rows[index].displayText
+
+    internal fun displayFontMasks(index: Int): List<Int> =
+        model.rows[index].displayRuns.map { it.style.fontMask }
+
     /**
      * The same row-size/indent/baseline formulas used by paint, observed without painting.
      * Bounds are in the native editor component coordinate space, not screen coordinates.
@@ -900,8 +995,7 @@ internal class NativeListInlayRenderer(
                     g2.drawLine(middleX, middleY, right, top)
                 }
                 contentX = checkbox.x + checkbox.width + MARKER_GAP
-                g2.font = font
-                g2.drawString(row.text, contentX, baseline)
+                drawRuns(g2, row.displayRuns, contentX, baseline, font)
             } else {
                 val displayMarker = nativeListDisplayMarker(row.marker)
                 g2.font = bold
@@ -909,9 +1003,9 @@ internal class NativeListInlayRenderer(
                 // Keep the existing content column stable: only the marker glyph is semantic.
                 val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
                 contentX = markerX + markerWidth + MARKER_GAP
-                g2.font = font
-                g2.drawString(row.text, contentX, baseline)
+                drawRuns(g2, row.displayRuns, contentX, baseline, font)
             }
+            g2.font = font
             row.continuations.forEachIndexed { continuationIndex, continuation ->
                 g2.drawString(
                     continuation.text,
@@ -920,6 +1014,24 @@ internal class NativeListInlayRenderer(
                 )
             }
         }
+    }
+
+    private fun drawRuns(
+        g2: Graphics2D,
+        runs: List<NativeListTextRun>,
+        startX: Int,
+        baseline: Int,
+        baseFont: Font,
+    ) {
+        var x = startX
+        runs.forEach { run ->
+            val style = baseFont.style or run.style.fontMask
+            val runFont = if (style == baseFont.style) baseFont else baseFont.deriveFont(style)
+            g2.font = runFont
+            g2.drawString(run.text, x, baseline)
+            x += g2.getFontMetrics(runFont).stringWidth(run.text)
+        }
+        g2.font = baseFont
     }
 
     private fun checkboxBounds(index: Int, bounds: Rectangle): Rectangle {

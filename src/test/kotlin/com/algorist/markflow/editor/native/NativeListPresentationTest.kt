@@ -109,16 +109,17 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
-    fun testIndentedUnsupportedRichListRemainsExactSourceFallback() {
+    fun testIndentedEmphasisListKeepsRichModelAcrossHierarchyReprojection() {
         val source = "- parent\n- child with *emphasis*\n- sibling\n\nTail\n"
         val indented = "- parent\n  - child with *emphasis*\n- sibling\n\nTail\n"
-        myFixture.configureByText("list-indent-rich-fallback.md", source)
+        myFixture.configureByText("list-indent-rich.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.indexOf("child") + 2)
         val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
 
         try {
-            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(1, controller.evidenceSnapshot().listModels)
+            assertEquals(listOf(0, 0, 0), controller.evidenceSnapshot().listDepths)
             assertEquals(0, controller.evidenceSnapshot().listInlays)
 
             val childMarkerStart = source.indexOf("- child")
@@ -130,11 +131,9 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
 
             assertEquals(indented, editor.document.text)
-            // Recompute from the mutated authoritative source before asserting fallback. Both the
-            // pre-edit and post-edit fallback evidence are zero-valued, so stale evidence would
-            // otherwise let this regression pass without proving the indented rich list itself.
             controller.refreshNow()
-            assertEquals(0, controller.evidenceSnapshot().listModels)
+            assertEquals(1, controller.evidenceSnapshot().listModels)
+            assertEquals(listOf(0, 1, 0), controller.evidenceSnapshot().listDepths)
             assertEquals(0, controller.evidenceSnapshot().listInlays)
             assertEquals(0, controller.evidenceSnapshot().listFolds)
         } finally {
@@ -199,14 +198,17 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         }
     }
 
-    fun testUnsupportedMixedNestedMultilineAndInlineRichListsFailClosedToExactSource() {
+    fun testUnsupportedMixedTaskAndUnownedInlineRichListsFailClosedToExactSource() {
         val sources = listOf(
             "- [ ] task\n- ordinary\n\nTail\n",
             "1. [ ] ordered task\n\nTail\n",
             "- [ ] parent\n  - [ ] nested\n\nTail\n",
             "- [ ] first task\n  task continuation\n\nTail\n",
-            "- item with *emphasis*\n\nTail\n",
+            "- [ ] *rich task*\n\nTail\n",
+            "- item\n  continuation with *emphasis*\n\nTail\n",
             "- item with ~~strikethrough~~\n\nTail\n",
+            "- item with `code`\n\nTail\n",
+            "- item with [link](https://example.com)\n\nTail\n",
         )
         sources.forEachIndexed { index, source ->
             myFixture.configureByText("list-fallback-$index.md", source)
@@ -226,6 +228,57 @@ class NativeListPresentationTest : BasePlatformTestCase() {
             } finally {
                 controller.dispose()
             }
+        }
+    }
+
+    fun testEmphasisAndStrongRowsUseStyledDisplayRunsWithoutChangingSource() {
+        val source =
+            "- plain *italic* and **bold**\n" +
+                "  - nested _emphasis_\n" +
+                "- sibling\n\nTail\n"
+        myFixture.configureByText("list-inline-rich.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val model = NativeListProjectionPlanner.plan(plan).single()
+
+        assertEquals(listOf(0, 1, 0), model.rows.map(NativeListRow::depth))
+        val first = model.rows[0]
+        assertEquals("plain *italic* and **bold**", first.text)
+        assertEquals(
+            first.text,
+            source.substring(first.contentRange.startOffset, first.contentRange.endOffset),
+        )
+        assertEquals("plain italic and bold", first.displayText)
+        assertTrue(first.displayRuns.any { it.text == "italic" && it.style == NativeListInlineStyle.EMPHASIS })
+        assertTrue(first.displayRuns.any { it.text == "bold" && it.style == NativeListInlineStyle.STRONG })
+
+        val nested = model.rows[1]
+        assertEquals("nested _emphasis_", nested.text)
+        assertEquals("nested emphasis", nested.displayText)
+        assertTrue(nested.displayRuns.any {
+            it.text == "emphasis" && it.style == NativeListInlineStyle.EMPHASIS
+        })
+
+        val controller = NativePresentationController(editor = editor, richPresentationEnabled = { true })
+        try {
+            val evidence = controller.evidenceSnapshot()
+            assertEquals(1, evidence.listModels)
+            assertEquals(3, evidence.listRows)
+            assertEquals(1, evidence.listInlays)
+            assertEquals(1, evidence.listFullyConcealed)
+
+            val renderer = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .mapNotNull { it.renderer as? NativeListInlayRenderer }
+                .single()
+            assertEquals(first.displayText, renderer.displayText(0))
+            assertEquals(first.displayRuns.map { it.style.fontMask }, renderer.displayFontMasks(0))
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
         }
     }
 
