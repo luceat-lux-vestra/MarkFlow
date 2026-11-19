@@ -141,7 +141,14 @@ internal object NativeBlockQuoteProjectionPlanner {
         sourceRange: ProjectionRange,
         syntaxRanges: List<ProjectionRange>,
     ): List<NativeBlockQuoteLine>? {
-        if (syntaxRanges.isEmpty() || syntaxRanges.any { !it.isInside(source) || !it.isInside(sourceRange) }) {
+        if (
+            syntaxRanges.isEmpty() ||
+            syntaxRanges.any { range ->
+                !range.isInside(source) ||
+                    range.startOffset < sourceRange.startOffset ||
+                    range.endOffset > sourceRange.endOffset
+            }
+        ) {
             return null
         }
 
