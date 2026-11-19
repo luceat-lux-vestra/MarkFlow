@@ -233,11 +233,14 @@ class MarkFlowStarterFullProductJourneyTest {
                 val persistenceMarker = "\nCanonical full-product persistence marker"
                 markFlow.appendAtEnd(readme, persistenceMarker)
                 val persistedReadme = readmeSource + persistenceMarker
+                val persistedReadmeBytes = persistedReadme.toByteArray(StandardCharsets.UTF_8)
                 check(markFlow.source(readme) == persistedReadme)
                 markFlow.save(readme)
-                check(
-                    Files.readAllBytes(readmePath)
-                        .contentEquals(persistedReadme.toByteArray(StandardCharsets.UTF_8))
+                waitFor(
+                    message = "canonical saved bytes reach disk",
+                    timeout = 10.seconds,
+                    getter = { Files.readAllBytes(readmePath) },
+                    checker = { bytes -> bytes.contentEquals(persistedReadmeBytes) },
                 )
                 markFlow.close(readme)
                 val reopenedReadme = markFlow.openMarkdown("README.md")
