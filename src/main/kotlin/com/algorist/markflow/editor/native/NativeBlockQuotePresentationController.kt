@@ -19,10 +19,16 @@ import java.util.LinkedHashMap
 import kotlin.math.max
 
 internal data class NativeBlockQuoteLine(
-    val markerRange: ProjectionRange,
+    val markerRanges: List<ProjectionRange>,
     val contentRange: ProjectionRange,
     val text: String,
-)
+) {
+    val markerRange: ProjectionRange
+        get() = markerRanges.first()
+
+    val depth: Int
+        get() = markerRanges.size - 1
+}
 
 internal data class NativeBlockQuoteModel(
     val sourceRange: ProjectionRange,
@@ -48,9 +54,9 @@ internal data class NativeBlockQuotePresentationEvidence(
 /**
  * Conservative parser-bounded blockquote model for corrective #316.
  *
- * This slice accepts one-level plain-text quotes, including contiguous same-depth physical lines.
- * Nested, blank-line, structured and inline-rich quotes remain exact source until their bounded
- * retained-renderer slices exist.
+ * This slice accepts plain-text quote lines at parser-proven nested depths, including ancestor
+ * return. Blank-line, structured and inline-rich quote content remains exact source until its
+ * bounded retained-renderer slice exists.
  */
 internal object NativeBlockQuoteProjectionPlanner {
     private val unsupportedNestedKinds = setOf(
@@ -62,7 +68,6 @@ internal object NativeBlockQuoteProjectionPlanner {
         NativeProjectionKind.UNORDERED_LIST,
         NativeProjectionKind.ORDERED_LIST,
         NativeProjectionKind.LIST_ITEM,
-        NativeProjectionKind.BLOCK_QUOTE,
         NativeProjectionKind.INLINE_CODE,
         NativeProjectionKind.CODE_FENCE,
         NativeProjectionKind.CODE_BLOCK,
@@ -165,14 +170,23 @@ internal object NativeBlockQuoteProjectionPlanner {
                 lineEnd += 1
             }
 
-            val markers = syntaxRanges.filter { marker ->
-                marker.startOffset >= lineStart && marker.endOffset <= lineEnd
-            }
-            val marker = markers.singleOrNull() ?: return null
-            if (source.substring(marker.startOffset, marker.endOffset) != ">") return null
-            if (source.substring(lineStart, marker.startOffset).any { it != ' ' && it != '\t' }) return null
+            val markers = syntaxRanges
+                .filter { marker ->
+                    marker.startOffset >= lineStart && marker.endOffset <= lineEnd
+                }
+                .sortedBy(ProjectionRange::startOffset)
+            if (markers.isEmpty()) return null
+            if (markers.any { marker -> source.substring(marker.startOffset, marker.endOffset) != ">" }) return null
 
-            var contentStart = marker.endOffset
+            var prefixStart = lineStart
+            markers.forEach { marker ->
+                if (source.substring(prefixStart, marker.startOffset).any { it != ' ' && it != '\t' }) {
+                    return null
+                }
+                prefixStart = marker.endOffset
+            }
+
+            var contentStart = markers.last().endOffset
             while (contentStart < lineEnd && (source[contentStart] == ' ' || source[contentStart] == '\t')) {
                 contentStart += 1
             }
@@ -185,7 +199,7 @@ internal object NativeBlockQuoteProjectionPlanner {
             val contentRange = ProjectionRange(contentStart, contentEnd)
             val text = source.substring(contentStart, contentEnd)
             if (text.any(::isPresentationSensitiveInlineChar)) return null
-            lines += NativeBlockQuoteLine(marker, contentRange, text)
+            lines += NativeBlockQuoteLine(markers, contentRange, text)
 
             cursor = lineEnd
             if (cursor < sourceRange.endOffset && source[cursor] == '\r') {
@@ -197,7 +211,7 @@ internal object NativeBlockQuoteProjectionPlanner {
         }
 
         if (lines.isEmpty()) return null
-        val usedMarkers = lines.map(NativeBlockQuoteLine::markerRange).toSet()
+        val usedMarkers = lines.flatMap(NativeBlockQuoteLine::markerRanges).toSet()
         if (usedMarkers.size != syntaxRanges.size || !usedMarkers.containsAll(syntaxRanges)) return null
         return lines
     }
@@ -538,8 +552,14 @@ internal class NativeBlockQuoteInlayRenderer(
     val displayLines: List<String>
         get() = model.lines.map(NativeBlockQuoteLine::text)
 
+    val displayDepths: List<Int>
+        get() = model.lines.map(NativeBlockQuoteLine::depth)
+
     internal val visualLineCount: Int
         get() = model.lines.size
+
+    internal fun contentIndentPx(index: Int): Int =
+        model.lines[index].depth * NESTED_LEVEL_INDENT
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_HORIZONTAL_MARGIN * 2)
@@ -559,8 +579,7 @@ internal class NativeBlockQuoteInlayRenderer(
         val bar = Color(foreground.red, foreground.green, foreground.blue, BAR_ALPHA)
         val font = editor.contentComponent.font
         val metrics = g2.getFontMetrics(font)
-        val textX = targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING
-        val availableTextWidth = max(1, targetRegion.x + targetRegion.width - OUTER_HORIZONTAL_MARGIN - textX)
+        val baseTextX = targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING
         val rowHeight = rowHeight()
 
         g2.color = background
@@ -580,12 +599,29 @@ internal class NativeBlockQuoteInlayRenderer(
             max(1, targetRegion.height - VERTICAL_PADDING * 2),
         )
         g2.font = font
-        g2.color = foreground
         model.lines.forEachIndexed { index, line ->
-            val rendered = clip(line.text, metrics, availableTextWidth)
             val rowTop = targetRegion.y + VERTICAL_PADDING + index * rowHeight
+            if (line.depth > 0) {
+                g2.color = bar
+                repeat(line.depth) { level ->
+                    g2.fillRect(
+                        baseTextX + level * NESTED_LEVEL_INDENT,
+                        rowTop + NESTED_BAR_VERTICAL_INSET,
+                        BAR_WIDTH,
+                        max(1, rowHeight - NESTED_BAR_VERTICAL_INSET * 2),
+                    )
+                }
+            }
+
+            val textX = baseTextX + contentIndentPx(index)
+            val availableTextWidth = max(
+                1,
+                targetRegion.x + targetRegion.width - OUTER_HORIZONTAL_MARGIN - textX,
+            )
+            val rendered = clip(line.text, metrics, availableTextWidth)
             val baseline = rowTop +
                 max(metrics.ascent, (rowHeight + metrics.ascent - metrics.descent) / 2)
+            g2.color = foreground
             g2.drawString(rendered, textX, baseline)
         }
     }
@@ -610,6 +646,8 @@ internal class NativeBlockQuoteInlayRenderer(
         private const val BAR_LEFT_PADDING = 4
         private const val BAR_WIDTH = 3
         private const val CONTENT_PADDING = 10
+        private const val NESTED_LEVEL_INDENT = 18
+        private const val NESTED_BAR_VERTICAL_INSET = 2
         private const val VERTICAL_PADDING = 6
         private const val ARC = 8
         private const val BACKGROUND_ALPHA = 20
