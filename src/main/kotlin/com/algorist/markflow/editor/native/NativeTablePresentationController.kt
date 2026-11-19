@@ -6,6 +6,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -36,6 +37,7 @@ internal enum class NativeTableInlineStyle(val fontMask: Int) {
     STRONG(Font.BOLD),
     STRONG_EMPHASIS(Font.BOLD or Font.ITALIC),
     INLINE_CODE(Font.PLAIN),
+    LINK(Font.PLAIN),
 }
 
 internal data class NativeTableTextRun(
@@ -76,10 +78,10 @@ internal object NativeTableProjectionPlanner {
         NativeProjectionKind.EMPHASIS,
         NativeProjectionKind.STRONG,
         NativeProjectionKind.INLINE_CODE,
+        NativeProjectionKind.LINK,
     )
     private val tableInlineKinds = supportedInlineKinds + setOf(
         NativeProjectionKind.STRIKETHROUGH,
-        NativeProjectionKind.LINK,
     )
 
     fun plan(plan: NativeProjectionPlan): List<NativeTableModel> {
@@ -153,7 +155,22 @@ internal object NativeTableProjectionPlanner {
         }
 
         val supported = intersecting.filter { it.kind in supportedInlineKinds }
-        val displayRuns = if (intersecting.any { it.kind !in supportedInlineKinds }) {
+        val links = supported.filter { it.kind == NativeProjectionKind.LINK }
+        val linkIsCompositeOrAmbiguous = links.size > 1 || links.any { link ->
+            val visible = link.contentRanges.singleOrNull()
+            visible == null ||
+                !visible.isInside(source) ||
+                !visible.isInside(visibleRange) ||
+                !visible.isInside(link.sourceRange) ||
+                supported.any { other ->
+                    other !== link &&
+                        other.sourceRange.intersects(visible.startOffset, visible.endOffset)
+                }
+        }
+        val displayRuns = if (
+            intersecting.any { it.kind !in supportedInlineKinds } ||
+            linkIsCompositeOrAmbiguous
+        ) {
             listOf(NativeTableTextRun(sourceText, NativeTableInlineStyle.PLAIN))
         } else {
             inlineRunsFor(source, visibleRange, supported) ?: return null
@@ -204,6 +221,10 @@ internal object NativeTableProjectionPlanner {
             val inlineCode = projections.any {
                 it.kind == NativeProjectionKind.INLINE_CODE && it.sourceRange.contains(offset)
             }
+            val link = projections.any {
+                it.kind == NativeProjectionKind.LINK &&
+                    it.contentRanges.singleOrNull()?.contains(offset) == true
+            }
             val bold = projections.any {
                 it.kind == NativeProjectionKind.STRONG && it.sourceRange.contains(offset)
             }
@@ -212,6 +233,7 @@ internal object NativeTableProjectionPlanner {
             }
             val style = when {
                 inlineCode -> NativeTableInlineStyle.INLINE_CODE
+                link -> NativeTableInlineStyle.LINK
                 bold && italic -> NativeTableInlineStyle.STRONG_EMPHASIS
                 bold -> NativeTableInlineStyle.STRONG
                 italic -> NativeTableInlineStyle.EMPHASIS
@@ -624,12 +646,12 @@ internal class NativeTableInlayRenderer(
             if (buffer.isNotEmpty()) {
                 val rendered = buffer.toString()
                 val drawn = metrics.stringWidth(rendered)
+                val baseForeground = g2.color
                 if (run.style == NativeTableInlineStyle.INLINE_CODE) {
-                    val foreground = g2.color
                     g2.color = Color(
-                        foreground.red,
-                        foreground.green,
-                        foreground.blue,
+                        baseForeground.red,
+                        baseForeground.green,
+                        baseForeground.blue,
                         INLINE_CODE_BACKGROUND_ALPHA,
                     )
                     g2.fillRect(
@@ -638,10 +660,27 @@ internal class NativeTableInlayRenderer(
                         drawn,
                         metrics.height,
                     )
-                    g2.color = foreground
+                    g2.color = baseForeground
                 }
+
+                val linkAttributes = if (run.style == NativeTableInlineStyle.LINK) {
+                    editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+                } else {
+                    null
+                }
+                g2.color = linkAttributes?.foregroundColor ?: baseForeground
                 g2.font = font
                 g2.drawString(rendered, x, baseline)
+                if (run.style == NativeTableInlineStyle.LINK) {
+                    paintLinkEffect(
+                        g2 = g2,
+                        attributes = linkAttributes,
+                        startX = x,
+                        baseline = baseline,
+                        width = drawn,
+                    )
+                }
+                g2.color = baseForeground
                 x += drawn
                 remaining -= drawn
             }
@@ -657,6 +696,25 @@ internal class NativeTableInlayRenderer(
     private fun styledFont(baseFont: Font, style: NativeTableInlineStyle): Font {
         val targetStyle = baseFont.style or style.fontMask
         return if (targetStyle == baseFont.style) baseFont else baseFont.deriveFont(targetStyle)
+    }
+
+    private fun paintLinkEffect(
+        g2: Graphics2D,
+        attributes: TextAttributes?,
+        startX: Int,
+        baseline: Int,
+        width: Int,
+    ) {
+        val effectName = attributes?.effectType?.toString() ?: return
+        if (effectName != "LINE_UNDERSCORE" && effectName != "BOLD_LINE_UNDERSCORE") return
+
+        val foreground = g2.color
+        g2.color = attributes.effectColor ?: attributes.foregroundColor ?: foreground
+        g2.drawLine(startX, baseline + 1, startX + width, baseline + 1)
+        if (effectName == "BOLD_LINE_UNDERSCORE") {
+            g2.drawLine(startX, baseline + 2, startX + width, baseline + 2)
+        }
+        g2.color = foreground
     }
 
     companion object {
