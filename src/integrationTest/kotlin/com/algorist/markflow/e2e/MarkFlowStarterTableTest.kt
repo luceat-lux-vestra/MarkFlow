@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class MarkFlowStarterTableTest {
     @Test
-    fun revealsNativeTableByMouseAndEditsExactSourceWithUndoRedo() {
+    fun revealsNativeTableByMouseAndProvesPasteUndoRedoAndPersistedReopen() {
         val pluginPath = System.getProperty("path.to.build.plugin")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
@@ -51,6 +51,12 @@ class MarkFlowStarterTableTest {
             editStart,
             editStart + editTarget.length,
             editedText,
+        )
+        val pastedMarkdown = "**table-paste**"
+        val expectedPastedSource = expectedSource.replaceRange(
+            editStart,
+            editStart + editTarget.length,
+            pastedMarkdown,
         )
 
         val platformVersion = System.getProperty("markflow.test.platformVersion")
@@ -153,6 +159,30 @@ class MarkFlowStarterTableTest {
                         "mouse table reveal dirtied the authoritative Document"
                     }
 
+                    try {
+                        markFlow.selectRangeWithKeyboard(editor, editStart, editTarget.length)
+                        markFlow.seedMarkdownClipboard(pastedMarkdown, "table-paste-plain")
+                        markFlow.paste(editor)
+                        waitFor(
+                            message = "Markdown paste inside the revealed table mutates only the selected cell span",
+                            timeout = 10.seconds,
+                            getter = { markFlow.source(editor) },
+                            checker = { source -> source == expectedPastedSource },
+                        )
+                        check(markFlow.isDirty(editor)) {
+                            "real table paste must dirty the authoritative Document"
+                        }
+                        markFlow.undo(editor)
+                        waitFor(
+                            message = "Undo after table paste restores exact original table source",
+                            timeout = 10.seconds,
+                            getter = { markFlow.source(editor) },
+                            checker = { source -> source == expectedSource },
+                        )
+                    } finally {
+                        markFlow.clearClipboard()
+                    }
+
                     markFlow.selectRangeWithKeyboard(editor, editStart, editTarget.length)
                     markFlow.typeText(editor, editedText)
                     waitFor(
@@ -179,13 +209,6 @@ class MarkFlowStarterTableTest {
                         getter = { markFlow.source(editor) },
                         checker = { source -> source == expectedEditedSource },
                     )
-                    markFlow.undo(editor)
-                    waitFor(
-                        message = "table edit cleanup restores exact original source",
-                        timeout = 10.seconds,
-                        getter = { markFlow.source(editor) },
-                        checker = { source -> source == expectedSource },
-                    )
 
                     markFlow.clickText(editor, "deterministic")
                     waitFor(
@@ -198,19 +221,43 @@ class MarkFlowStarterTableTest {
                     markFlow.assertProductionProjectionStillAttached(editor)
                 }
 
-                check(markFlow.source(editor) == expectedSource) {
-                    "table acceptance proof did not restore exact original source"
+                check(markFlow.source(editor) == expectedEditedSource) {
+                    "table acceptance proof lost the exact source-local edit before persistence"
                 }
                 check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
-                    "unsaved table acceptance proof changed fixture bytes"
+                    "unsaved table edit changed fixture bytes before explicit save"
                 }
+
                 markFlow.save(editor)
                 check(!markFlow.isDirty(editor)) {
-                    "explicit SaveAll after table proof must clear platform dirty tracking"
+                    "explicit SaveAll after table edit must clear platform dirty tracking"
                 }
-                check(Files.readAllBytes(fixturePath).contentEquals(expectedSource.toByteArray(StandardCharsets.UTF_8))) {
-                    "table acceptance cleanup changed deterministic fixture bytes"
+                check(
+                    Files.readAllBytes(fixturePath)
+                        .contentEquals(expectedEditedSource.toByteArray(StandardCharsets.UTF_8))
+                ) {
+                    "saved table edit bytes differ from the exact authoritative Document"
                 }
+
+                markFlow.close(editor)
+                val reopened = markFlow.openMarkdown("README.md")
+                check(markFlow.source(reopened) == expectedEditedSource) {
+                    "close/reopen did not restore the exact persisted table edit"
+                }
+                check(!markFlow.isDirty(reopened)) {
+                    "reopened persisted table edit must start clean"
+                }
+                markFlow.clickText(reopened, "deterministic")
+                waitFor(
+                    message = "reopened persisted table regains inactive native presentation",
+                    timeout = 10.seconds,
+                    getter = { markFlow.tableOwnedInlays(reopened) to markFlow.tableOwnedFolds(reopened) },
+                    checker = { (inlays, folds) -> inlays == 1 && folds == 2 },
+                )
+                check(markFlow.source(reopened) == expectedEditedSource) {
+                    "reopened inactive table presentation changed persisted source"
+                }
+                markFlow.close(reopened)
             }
         } finally {
             tempRoot.toFile().deleteRecursively()
