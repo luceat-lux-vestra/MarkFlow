@@ -1693,8 +1693,11 @@ Tail
     }
 
     fun testOversizedReferenceDefinitionMetadataFailsClosedToExactSource() {
-        val destination = "https://example.com/" + "x".repeat(1100)
-        val source = "A [consumer][huge].\n\n[huge]: $destination\n\nTail\n"
+        // JetBrains caps each label/destination/title part at 999 characters. Keep every parser-owned
+        // token valid while making the combined metadata placeholder exceed MarkFlow's 1024-char cap.
+        val destination = "https://example.com/" + "x".repeat(600)
+        val title = "t".repeat(600)
+        val source = "A [consumer][huge].\n\n[huge]: $destination \"$title\"\n\nTail\n"
         myFixture.configureByText("reference-definition-oversized.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
@@ -1708,8 +1711,15 @@ Tail
             val definition = requireNotNull(controller.currentPlan)
                 .projections
                 .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
+            val ranges = requireNotNull(definition.referenceDefinitionRanges)
+            assertTrue(
+                source.substring(ranges.destination.startOffset, ranges.destination.endOffset).length < 999
+            )
+            assertTrue(
+                source.substring(requireNotNull(ranges.title).startOffset, ranges.title.endOffset).length < 999
+            )
             assertNull(
-                "oversized metadata must fail closed instead of installing an unbounded fold placeholder",
+                "oversized combined metadata must fail closed instead of installing an unbounded fold placeholder",
                 editor.foldingModel.getFoldRegion(
                     definition.sourceRange.startOffset,
                     definition.sourceRange.endOffset,
