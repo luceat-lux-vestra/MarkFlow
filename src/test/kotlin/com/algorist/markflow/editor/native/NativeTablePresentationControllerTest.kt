@@ -82,9 +82,9 @@ After
         assertEquals(140, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.CENTER))
         assertEquals(172, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.RIGHT))
         assertEquals(
+            "clipped text must consume the full padded width rather than drift outside the cell",
             108,
             renderer.alignedTextStartX(100, 120, 200, NativeTableAlignment.CENTER),
-            "clipped text must consume the full padded width rather than drift outside the cell",
         )
     }
 
