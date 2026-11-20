@@ -38,6 +38,8 @@ Setext heading
 
 Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).
 
+[representative]: https://example.com/reference "Representative"
+
 - unordered item
 - second item
 
@@ -89,6 +91,13 @@ val fenced = 1
                 assertTrue(content.isInside(source))
                 assertTrue(content.startOffset >= projection.sourceRange.startOffset)
                 assertTrue(content.endOffset <= projection.sourceRange.endOffset)
+            }
+            projection.referenceDefinitionRanges?.let { ranges ->
+                listOfNotNull(ranges.label, ranges.destination, ranges.title).forEach { semantic ->
+                    assertTrue(semantic.isInside(source))
+                    assertTrue(semantic.startOffset >= projection.sourceRange.startOffset)
+                    assertTrue(semantic.endOffset <= projection.sourceRange.endOffset)
+                }
             }
         }
 
