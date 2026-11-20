@@ -464,4 +464,239 @@ class MarkFlowStarterSmokeTest {
             tempRoot.toFile().deleteRecursively()
         }
     }
+
+    @Test
+    fun referenceDefinitionLifecycleRevealsEditsUndoesRedoesSavesAndRestoresFoldAfterReopen() {
+        val pluginPath = System.getProperty("path.to.build.plugin")
+            ?.takeIf(String::isNotBlank)
+            ?.let(Path::of)
+            ?: error("path.to.build.plugin is required by the Starter/Driver integration-test task")
+        val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
+            .toAbsolutePath()
+            .normalize()
+        val tempRoot = Files.createTempDirectory("markflow-starter-reference-definition-")
+        val projectPath = tempRoot.resolve("project")
+        check(fixtureProject.toFile().copyRecursively(projectPath.toFile(), overwrite = true)) {
+            "failed to copy deterministic Starter/Driver fixture project"
+        }
+        val fixturePath = projectPath.resolve("REFERENCE_DEFINITION.md")
+        val originalSource = Files.readString(fixturePath)
+        val definitionLine = """[docs]: https://example.com/original "Original title""""
+        val definitionStart = originalSource.indexOf(definitionLine)
+        check(definitionStart >= 0) { "deterministic reference-definition fixture is missing" }
+        val definitionEnd = definitionStart + definitionLine.length
+        val originalPayload = """https://example.com/original "Original title""""
+        val payloadStart = originalSource.indexOf(originalPayload, definitionStart)
+        check(payloadStart >= definitionStart) { "reference-definition editable payload is missing" }
+        val payloadEnd = payloadStart + originalPayload.length
+        val replacementPayload = """https://example.com/edited "Edited title""""
+        val editedSource = originalSource.replaceRange(payloadStart, payloadEnd, replacementPayload)
+        val editedDefinitionLine = """[docs]: https://example.com/edited "Edited title""""
+        val editedDefinitionStart = editedSource.indexOf(editedDefinitionLine)
+        check(editedDefinitionStart >= 0) { "edited definition range cannot be derived" }
+        val editedDefinitionEnd = editedDefinitionStart + editedDefinitionLine.length
+        val originalTailOffset = originalSource.indexOf("Tail anchor.") + 1
+        val editedTailOffset = editedSource.indexOf("Tail anchor.") + 1
+        check(originalTailOffset > 0 && editedTailOffset > 0) { "tail anchor fixture is missing" }
+
+        val platformVersion = System.getProperty("markflow.test.platformVersion")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
+        val targetTestCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(projectPath)).let { testCase ->
+            if (isStarterEapBuildNumber(platformVersion)) {
+                testCase.useEAP(platformVersion)
+            } else {
+                testCase.useRelease(platformVersion)
+            }
+        }
+
+        try {
+            Starter.newContext(
+                testName = "markflow-starter-reference-definition-lifecycle",
+                testCase = targetTestCase,
+            ).apply {
+                PluginConfigurator(this).installPluginFromPath(pluginPath)
+            }.applyVMOptionsPatch {
+                addSystemProperty("ide.browser.jcef.enabled", false)
+                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                addSystemProperty("idea.trust.all.projects", true)
+                addSystemProperty("jb.consents.confirmation.enabled", false)
+            }.runIdeWithDriver().useDriverAndCloseIde {
+                waitForIndicators(5.minutes)
+                val markFlow = MarkFlowIdeDriver(this)
+                val editor = markFlow.openMarkdown("REFERENCE_DEFINITION.md")
+
+                check(markFlow.source(editor) == originalSource) {
+                    "opened reference-definition fixture differs from exact source bytes"
+                }
+                check(!markFlow.isDirty(editor)) {
+                    "opening the reference-definition fixture must not dirty the Document"
+                }
+                markFlow.assertProductionProjectionAttached(editor)
+                check(markFlow.isNativeProjectionPlanReady(editor)) {
+                    "reference-definition projection plan is not READY"
+                }
+                check(
+                    markFlow.hasProjection(
+                        editor,
+                        "REFERENCE_DEFINITION",
+                        definitionStart,
+                        definitionEnd,
+                    )
+                ) {
+                    "production plan does not contain the exact reference-definition projection"
+                }
+
+                markFlow.resetToSingleCaret(editor, originalTailOffset)
+                waitFor(
+                    message = "inactive reference definition is one collapsed full-range fold",
+                    timeout = 10.seconds,
+                    getter = { markFlow.isFoldCollapsed(editor, definitionStart, definitionEnd) },
+                    checker = { collapsed -> collapsed },
+                )
+
+                val revealSourceBefore = markFlow.source(editor)
+                val revealStampBefore = markFlow.modificationStamp(editor)
+                val destinationProbeOffset = payloadStart + "https://".length
+                markFlow.resetToSingleCaret(editor, destinationProbeOffset)
+                waitFor(
+                    message = "caret entering reference definition reveals exact source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.isFoldCollapsed(editor, definitionStart, definitionEnd) },
+                    checker = { collapsed -> !collapsed },
+                )
+                check(markFlow.source(editor) == revealSourceBefore) {
+                    "reference-definition reveal changed authoritative source"
+                }
+                check(markFlow.modificationStamp(editor) == revealStampBefore) {
+                    "reference-definition reveal changed Document modification stamp"
+                }
+                check(!markFlow.isDirty(editor)) {
+                    "reference-definition reveal dirtied the Document"
+                }
+
+                markFlow.selectRangeWithKeyboard(editor, payloadStart, originalPayload.length)
+                markFlow.typeText(editor, replacementPayload)
+                waitFor(
+                    message = "reference-definition destination/title edit changes only the selected payload",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == editedSource },
+                )
+                check(markFlow.isDirty(editor)) {
+                    "reference-definition edit must dirty the authoritative Document"
+                }
+                check(markFlow.modificationStamp(editor) != revealStampBefore) {
+                    "reference-definition edit must advance the Document modification stamp"
+                }
+
+                markFlow.undo(editor)
+                waitFor(
+                    message = "Undo restores exact original reference-definition bytes",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == originalSource },
+                )
+                markFlow.redo(editor)
+                waitFor(
+                    message = "Redo restores exact edited reference-definition bytes",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == editedSource },
+                )
+                check(markFlow.isDirty(editor)) {
+                    "redo of the reference-definition edit must leave the Document dirty"
+                }
+
+                markFlow.resetToSingleCaret(editor, editedTailOffset)
+                waitFor(
+                    message = "edited reference definition projection is rebuilt at its exact range",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.hasProjection(
+                            editor,
+                            "REFERENCE_DEFINITION",
+                            editedDefinitionStart,
+                            editedDefinitionEnd,
+                        )
+                    },
+                    checker = { present -> present },
+                )
+                waitFor(
+                    message = "edited inactive reference definition regains one collapsed full-range fold",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.isFoldCollapsed(
+                            editor,
+                            editedDefinitionStart,
+                            editedDefinitionEnd,
+                        )
+                    },
+                    checker = { collapsed -> collapsed },
+                )
+
+                markFlow.save(editor)
+                waitFor(
+                    message = "saved edited reference-definition bytes reach disk",
+                    timeout = 10.seconds,
+                    getter = { Files.readAllBytes(fixturePath) },
+                    checker = { bytes ->
+                        bytes.contentEquals(editedSource.toByteArray(StandardCharsets.UTF_8))
+                    },
+                )
+                check(!markFlow.isDirty(editor)) {
+                    "saving reference-definition edit must clear platform dirty tracking"
+                }
+                markFlow.close(editor)
+
+                val reopened = markFlow.openMarkdown("REFERENCE_DEFINITION.md")
+                check(markFlow.source(reopened) == editedSource) {
+                    "reopened reference-definition Document differs from persisted bytes"
+                }
+                check(!markFlow.isDirty(reopened)) {
+                    "reopened reference-definition Document must start clean"
+                }
+                markFlow.assertProductionProjectionAttached(reopened)
+                check(markFlow.isNativeProjectionPlanReady(reopened)) {
+                    "reopened reference-definition projection plan is not READY"
+                }
+                markFlow.resetToSingleCaret(reopened, editedTailOffset)
+                waitFor(
+                    message = "reopened edited definition restores exact parser-owned projection",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.hasProjection(
+                            reopened,
+                            "REFERENCE_DEFINITION",
+                            editedDefinitionStart,
+                            editedDefinitionEnd,
+                        )
+                    },
+                    checker = { present -> present },
+                )
+                waitFor(
+                    message = "reopened inactive reference definition restores collapsed metadata fold",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.isFoldCollapsed(
+                            reopened,
+                            editedDefinitionStart,
+                            editedDefinitionEnd,
+                        )
+                    },
+                    checker = { collapsed -> collapsed },
+                )
+                check(
+                    Files.readAllBytes(fixturePath)
+                        .contentEquals(editedSource.toByteArray(StandardCharsets.UTF_8))
+                ) {
+                    "reopened fixture bytes differ from the authoritative edited source"
+                }
+            }
+        } finally {
+            tempRoot.toFile().deleteRecursively()
+        }
+    }
+
 }
