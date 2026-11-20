@@ -262,6 +262,7 @@ internal object NativeMarkdownProjectionPlanner {
                 MarkdownTokenTypes.BACKTICK,
                 MarkdownTokenTypes.ESCAPED_BACKTICKS,
             )
+            NativeProjectionKind.TABLE -> setOf(GFMTokenTypes.TABLE_SEPARATOR)
             NativeProjectionKind.CODE_FENCE -> setOf(
                 MarkdownTokenTypes.CODE_FENCE_START,
                 MarkdownTokenTypes.CODE_FENCE_END,

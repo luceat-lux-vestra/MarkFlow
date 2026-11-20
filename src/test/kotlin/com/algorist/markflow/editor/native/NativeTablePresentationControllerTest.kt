@@ -37,6 +37,57 @@ After
         assertEquals("| Name | Value |", source.substring(model.rows.first().sourceRange.startOffset, model.rows.first().sourceRange.endOffset))
     }
 
+    fun testParserOwnedSeparatorProducesLeftCenterRightColumnAlignment() {
+        val source = """| left | center | right |
+| :--- | :----: | ---: |
+| plain | centered | 100 |
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
+        )
+        val tableProjection = plan.projections.single { it.kind == NativeProjectionKind.TABLE }
+        assertEquals(1, tableProjection.syntaxRanges.size)
+        assertEquals(
+            ":--- | :----: | ---:",
+            source.substring(
+                tableProjection.syntaxRanges.single().startOffset,
+                tableProjection.syntaxRanges.single().endOffset,
+            ).trim('|', ' ', '\n', '\r'),
+        )
+
+        val model = NativeTableProjectionPlanner.plan(plan).single()
+        assertEquals(
+            listOf(
+                NativeTableAlignment.LEFT,
+                NativeTableAlignment.CENTER,
+                NativeTableAlignment.RIGHT,
+            ),
+            model.alignments,
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testTableRendererComputesAlignmentSpecificTextOriginsWithinCellPadding() {
+        myFixture.configureByText("alignment.md", "plain\n")
+        val renderer = NativeTableInlayRenderer(
+            myFixture.editor,
+            NativeTableModel(
+                sourceRange = ProjectionRange(0, 1),
+                rows = emptyList(),
+                alignments = emptyList(),
+            ),
+        )
+
+        assertEquals(108, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.LEFT))
+        assertEquals(140, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.CENTER))
+        assertEquals(172, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.RIGHT))
+        assertEquals(
+            "clipped text must consume the full padded width rather than drift outside the cell",
+            108,
+            renderer.alignedTextStartX(100, 120, 200, NativeTableAlignment.CENTER),
+        )
+    }
+
     fun testParserOwnedEmphasisStrongInlineCodeAndSimpleLinkBecomeSemanticCellRuns() {
         val source = """| kind | emphasis | strong | link | code |
 | --- | --- | --- | --- | --- |
