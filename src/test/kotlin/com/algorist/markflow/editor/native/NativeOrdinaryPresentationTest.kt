@@ -1712,11 +1712,12 @@ Tail
                 .projections
                 .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
             val ranges = requireNotNull(definition.referenceDefinitionRanges)
+            val titleRange = requireNotNull(ranges.title)
             assertTrue(
                 source.substring(ranges.destination.startOffset, ranges.destination.endOffset).length < 999
             )
             assertTrue(
-                source.substring(requireNotNull(ranges.title).startOffset, ranges.title.endOffset).length < 999
+                source.substring(titleRange.startOffset, titleRange.endOffset).length < 999
             )
             assertNull(
                 "oversized combined metadata must fail closed instead of installing an unbounded fold placeholder",
