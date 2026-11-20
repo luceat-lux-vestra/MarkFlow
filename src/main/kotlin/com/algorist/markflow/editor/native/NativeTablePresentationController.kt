@@ -197,7 +197,9 @@ internal object NativeTableProjectionPlanner {
         if (projections.isEmpty()) {
             return listOf(
                 NativeTableTextRun(
-                    source.substring(contentRange.startOffset, contentRange.endOffset),
+                    displayTextForTableCell(
+                        source.substring(contentRange.startOffset, contentRange.endOffset)
+                    ),
                     NativeTableInlineStyle.PLAIN,
                 )
             )
@@ -211,7 +213,10 @@ internal object NativeTableProjectionPlanner {
         fun flush() {
             val style = currentStyle ?: return
             if (buffer.isNotEmpty()) {
-                runs += NativeTableTextRun(buffer.toString(), style)
+                runs += NativeTableTextRun(
+                    displayTextForTableCell(buffer.toString()),
+                    style,
+                )
                 buffer.setLength(0)
             }
         }
@@ -247,6 +252,11 @@ internal object NativeTableProjectionPlanner {
         }
         flush()
         return runs.takeIf { it.isNotEmpty() }
+    }
+
+    private fun displayTextForTableCell(sourceText: String): String {
+        if (!sourceText.contains("\\|")) return sourceText
+        return sourceText.replace("\\|", "|")
     }
 
     private fun ProjectionRange.isInside(other: ProjectionRange): Boolean =
