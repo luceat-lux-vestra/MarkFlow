@@ -388,8 +388,8 @@ Setext two
 [shortcut]: /shortcut
 [unused]: /unused
 [multi]:
-    /multi
-    'Multi title'
+      /multi
+           'Multi title'
 """
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot(ProjectionSourceIdentity(7L, source, 0L))
@@ -405,7 +405,7 @@ Setext two
             source.substring(range.startOffset, range.endOffset)
 
         val byLabel = definitions.associateBy { definition ->
-            val ranges = assertNotNull(definition.referenceDefinitionRanges)
+            val ranges = checkNotNull(definition.referenceDefinitionRanges)
             raw(ranges.label)
         }
         assertEquals(
@@ -413,18 +413,18 @@ Setext two
             byLabel.keys,
         )
 
-        val shared = assertNotNull(byLabel["[shared]"]?.referenceDefinitionRanges)
+        val shared = checkNotNull(byLabel["[shared]"]?.referenceDefinitionRanges)
         assertEquals("https://example.com/shared", raw(shared.destination))
-        assertEquals(""Shared title"", raw(assertNotNull(shared.title)))
+        assertEquals("\"Shared title\"", raw(checkNotNull(shared.title)))
 
-        val unused = assertNotNull(byLabel["[unused]"]?.referenceDefinitionRanges)
+        val unused = checkNotNull(byLabel["[unused]"]?.referenceDefinitionRanges)
         assertEquals("/unused", raw(unused.destination))
         assertNull(unused.title)
 
-        val multilineProjection = assertNotNull(byLabel["[multi]"])
-        val multiline = assertNotNull(multilineProjection.referenceDefinitionRanges)
+        val multilineProjection = checkNotNull(byLabel["[multi]"])
+        val multiline = checkNotNull(multilineProjection.referenceDefinitionRanges)
         assertEquals("/multi", raw(multiline.destination))
-        assertEquals("'Multi title'", raw(assertNotNull(multiline.title)))
+        assertEquals("'Multi title'", raw(checkNotNull(multiline.title)))
         assertTrue(
             source.substring(
                 multilineProjection.sourceRange.startOffset,
@@ -432,7 +432,7 @@ Setext two
             ).contains("\n")
         )
 
-        val sharedDefinition = assertNotNull(byLabel["[shared]"])
+        val sharedDefinition = checkNotNull(byLabel["[shared]"])
         assertEquals(
             1,
             definitions.count {
@@ -450,7 +450,7 @@ Setext two
 
         definitions.forEach { definition ->
             assertTrue(definition.block)
-            val ranges = assertNotNull(definition.referenceDefinitionRanges)
+            val ranges = checkNotNull(definition.referenceDefinitionRanges)
             listOfNotNull(ranges.label, ranges.destination, ranges.title).forEach { range ->
                 assertTrue(range.isInside(source))
                 assertTrue(range.startOffset >= definition.sourceRange.startOffset)

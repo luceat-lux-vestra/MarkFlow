@@ -228,7 +228,7 @@ internal object NativeMarkdownProjectionPlanner {
         if (kind == NativeProjectionKind.LINK && !isSupportedLinkProjection(node, source, sourceRange)) {
             return null
         }
-        val referenceDefinitionRanges = if (kind == NativeProjectionKind.REFERENCE_DEFINITION) {
+        val definitionRanges = if (kind == NativeProjectionKind.REFERENCE_DEFINITION) {
             referenceDefinitionRanges(node, source, sourceRange) ?: return null
         } else {
             null
@@ -241,7 +241,7 @@ internal object NativeMarkdownProjectionPlanner {
             contentRanges = contentRangesFor(kind, node, source, sourceRange),
             block = kind in BLOCK_KINDS,
             headingLevel = if (kind == NativeProjectionKind.HEADING) headingLevelFor(node.type) else null,
-            referenceDefinitionRanges = referenceDefinitionRanges,
+            referenceDefinitionRanges = definitionRanges,
         )
     }
 
