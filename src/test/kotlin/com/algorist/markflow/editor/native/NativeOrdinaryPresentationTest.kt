@@ -1570,6 +1570,230 @@ After
         }
     }
 
+    fun testInactiveReferenceDefinitionUsesExactMetadataPlaceholderAndCaretSelectionReveal() {
+        val source = """First [consumer][guide], second [consumer two][guide].
+
+[guide]: https://example.com/guide "Guide title"
+
+Tail
+"""
+        myFixture.configureByText("reference-definition.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val plan = requireNotNull(controller.currentPlan)
+            val definition = plan.projections.single {
+                it.kind == NativeProjectionKind.REFERENCE_DEFINITION
+            }
+            val ranges = requireNotNull(definition.referenceDefinitionRanges)
+            assertEquals(
+                2,
+                plan.projections.count {
+                    it.kind == NativeProjectionKind.LINK &&
+                        source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset)
+                            .endsWith("[guide]")
+                },
+            )
+
+            val fold = requireNotNull(
+                editor.foldingModel.getFoldRegion(
+                    definition.sourceRange.startOffset,
+                    definition.sourceRange.endOffset,
+                )
+            ) { "inactive reference definition did not install one full-range metadata fold" }
+            assertFalse(fold.isExpanded)
+            assertEquals(
+                "↳ [guide] → https://example.com/guide \"Guide title\"",
+                fold.placeholderText,
+            )
+            assertEquals(1, editor.foldingModel.allFoldRegions.count {
+                it.isValid &&
+                    it.startOffset == definition.sourceRange.startOffset &&
+                    it.endOffset == definition.sourceRange.endOffset
+            })
+
+            editor.caretModel.moveToOffset(ranges.destination.startOffset + 3)
+            assertTrue("caret inside definition must reveal exact source", fold.isExpanded)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            editor.caretModel.moveToOffset(tailOffset)
+            assertFalse("leaving definition must restore inactive metadata presentation", fold.isExpanded)
+
+            editor.selectionModel.setSelection(
+                definition.sourceRange.startOffset + 1,
+                definition.sourceRange.endOffset - 1,
+            )
+            assertTrue("selection intersecting definition must reveal exact source", fold.isExpanded)
+            editor.selectionModel.removeSelection()
+            assertFalse("clearing inactive selection must restore metadata presentation", fold.isExpanded)
+
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testMultilineReferenceDefinitionUsesOneExactMetadataFold() {
+        val source = """A [consumer][multi].
+
+[multi]:
+      /multi
+           'Multi title'
+
+Tail
+"""
+        myFixture.configureByText("reference-definition-multiline.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val definition = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
+            assertTrue(
+                source.substring(definition.sourceRange.startOffset, definition.sourceRange.endOffset)
+                    .contains("\n")
+            )
+            val fold = requireNotNull(
+                editor.foldingModel.getFoldRegion(
+                    definition.sourceRange.startOffset,
+                    definition.sourceRange.endOffset,
+                )
+            )
+            assertFalse(fold.isExpanded)
+            assertEquals("↳ [multi] → /multi 'Multi title'", fold.placeholderText)
+            assertEquals(
+                1,
+                editor.foldingModel.allFoldRegions.count {
+                    it.isValid &&
+                        it.startOffset == definition.sourceRange.startOffset &&
+                        it.endOffset == definition.sourceRange.endOffset
+                },
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testOversizedReferenceDefinitionMetadataFailsClosedToExactSource() {
+        // JetBrains caps each label/destination/title part at 999 characters. Keep every parser-owned
+        // token valid while making the combined metadata placeholder exceed MarkFlow's 1024-char cap.
+        val destination = "https://example.com/" + "x".repeat(600)
+        val title = "t".repeat(600)
+        val source = "A [consumer][huge].\n\n[huge]: $destination \"$title\"\n\nTail\n"
+        myFixture.configureByText("reference-definition-oversized.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val definition = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
+            val ranges = requireNotNull(definition.referenceDefinitionRanges)
+            val titleRange = requireNotNull(ranges.title)
+            assertTrue(
+                source.substring(ranges.destination.startOffset, ranges.destination.endOffset).length < 999
+            )
+            assertTrue(
+                source.substring(titleRange.startOffset, titleRange.endOffset).length < 999
+            )
+            assertNull(
+                "oversized combined metadata must fail closed instead of installing an unbounded fold placeholder",
+                editor.foldingModel.getFoldRegion(
+                    definition.sourceRange.startOffset,
+                    definition.sourceRange.endOffset,
+                ),
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testReferenceDefinitionPresentationFailsClosedWhenRichPresentationIsDisabledOrSyntaxIsMalformed() {
+        val valid = """A [consumer][guide].
+
+[guide]: https://example.com/guide
+
+Tail
+"""
+        myFixture.configureByText("reference-definition-accessible.md", valid)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(valid.indexOf("Tail") + 1)
+        val validStamp = editor.document.modificationStamp
+        val accessible = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { false },
+        )
+        try {
+            val definition = requireNotNull(accessible.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
+            assertNull(
+                editor.foldingModel.getFoldRegion(
+                    definition.sourceRange.startOffset,
+                    definition.sourceRange.endOffset,
+                )
+            )
+            assertEquals(valid, editor.document.text)
+            assertEquals(validStamp, editor.document.modificationStamp)
+        } finally {
+            accessible.dispose()
+        }
+
+        val malformed = """[broken] https://example.com/no-colon
+
+Tail
+"""
+        myFixture.configureByText("reference-definition-malformed.md", malformed)
+        val malformedEditor = myFixture.editor
+        malformedEditor.caretModel.moveToOffset(malformed.indexOf("Tail") + 1)
+        val malformedStamp = malformedEditor.document.modificationStamp
+        val fallback = NativePresentationController(
+            editor = malformedEditor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            assertTrue(
+                requireNotNull(fallback.currentPlan).projections.none {
+                    it.kind == NativeProjectionKind.REFERENCE_DEFINITION
+                }
+            )
+            assertFalse(
+                malformedEditor.foldingModel.allFoldRegions.any {
+                    it.isValid && it.placeholderText.startsWith("↳ ")
+                }
+            )
+            assertEquals(malformed, malformedEditor.document.text)
+            assertEquals(malformedStamp, malformedEditor.document.modificationStamp)
+        } finally {
+            fallback.dispose()
+        }
+    }
+
     fun testAccessibilityDispositionLeavesOrdinaryMarkdownAsExactSource() {
         val source = "# Heading\n\nA [link](https://example.com), **strong**, and ~~struck~~ text.\n\n- item\n"
         myFixture.configureByText("accessible.md", source)

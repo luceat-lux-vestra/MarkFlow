@@ -256,7 +256,7 @@ internal class NativeOrdinaryPresentationController(
             .filterNot { projection -> projection.isInsideAny(exactSourceHeadingRanges) }
             .flatMap { projection ->
                 val owner = foldOwner(projection.kind) ?: return@flatMap emptySequence()
-                projection.syntaxRanges.asSequence().map { range ->
+                presentationFoldRanges(projection, plan.identity.source).asSequence().map { range ->
                     FoldEntry(owner, projection, range)
                 }
             }
@@ -282,6 +282,19 @@ internal class NativeOrdinaryPresentationController(
         inline.supportsFold(kind) -> inline
         block.supportsFold(kind) -> block
         else -> null
+    }
+
+    private fun presentationFoldRanges(
+        projection: NativeProjection,
+        source: String,
+    ): List<ProjectionRange> = when (projection.kind) {
+        NativeProjectionKind.REFERENCE_DEFINITION ->
+            if (referenceDefinitionPlaceholderOrNull(projection, source) != null) {
+                listOf(projection.sourceRange)
+            } else {
+                emptyList()
+            }
+        else -> projection.syntaxRanges
     }
 
     private fun clearFolds() {
@@ -400,6 +413,7 @@ private class NativeBlockPresentationController(
             NativeProjectionKind.BLOCK_QUOTE,
             NativeProjectionKind.CODE_FENCE,
             NativeProjectionKind.THEMATIC_BREAK,
+            NativeProjectionKind.REFERENCE_DEFINITION,
         ),
         keyFor = ::blockKeyFor,
         placeholderFor = ::blockPlaceholderFor,
@@ -590,7 +604,45 @@ private fun blockPlaceholderFor(
     }
     NativeProjectionKind.BLOCK_QUOTE -> QUOTE_PLACEHOLDER
     NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_PLACEHOLDER
+    NativeProjectionKind.REFERENCE_DEFINITION ->
+        checkNotNull(referenceDefinitionPlaceholderOrNull(projection, source)) {
+            "reference definition fold was requested without safe parser-owned metadata"
+        }
     else -> ZERO_WIDTH_PLACEHOLDER
+}
+
+private fun referenceDefinitionPlaceholderOrNull(
+    projection: NativeProjection,
+    source: String,
+): String? {
+    val ranges = projection.referenceDefinitionRanges ?: return null
+
+    fun raw(range: ProjectionRange): String? {
+        if (!range.isInside(source)) return null
+        if (
+            range.startOffset < projection.sourceRange.startOffset ||
+            range.endOffset > projection.sourceRange.endOffset
+        ) return null
+        return source.substring(range.startOffset, range.endOffset)
+            .takeIf { value -> '\n' !in value && '\r' !in value }
+    }
+
+    val label = raw(ranges.label) ?: return null
+    val destination = raw(ranges.destination) ?: return null
+    val title = ranges.title?.let { titleRange ->
+        raw(titleRange) ?: return null
+    }
+    val placeholder = buildString {
+        append(REFERENCE_DEFINITION_PREFIX)
+        append(label)
+        append(REFERENCE_DEFINITION_ARROW)
+        append(destination)
+        if (title != null) {
+            append(' ')
+            append(title)
+        }
+    }
+    return placeholder.takeIf { it.length <= MAX_REFERENCE_DEFINITION_PLACEHOLDER_CHARS }
 }
 
 private fun inlineSemanticAttributes(editor: Editor, kind: NativeProjectionKind): TextAttributes? = when (kind) {
@@ -632,6 +684,9 @@ private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
 private const val BULLET_PLACEHOLDER = "•"
 private const val QUOTE_PLACEHOLDER = "│"
 private const val THEMATIC_BREAK_PLACEHOLDER = "────────"
+private const val REFERENCE_DEFINITION_PREFIX = "↳ "
+private const val REFERENCE_DEFINITION_ARROW = " → "
+private const val MAX_REFERENCE_DEFINITION_PLACEHOLDER_CHARS = 1024
 private const val INLINE_CODE_BACKGROUND_ALPHA = 24
 
 private val EMPHASIS_KEY = TextAttributesKey.createTextAttributesKey(
