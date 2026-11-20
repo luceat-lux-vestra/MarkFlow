@@ -40,6 +40,12 @@ internal enum class NativeTableInlineStyle(val fontMask: Int) {
     LINK(Font.PLAIN),
 }
 
+internal enum class NativeTableAlignment {
+    LEFT,
+    CENTER,
+    RIGHT,
+}
+
 internal data class NativeTableTextRun(
     val text: String,
     val style: NativeTableInlineStyle,
@@ -64,6 +70,7 @@ internal data class NativeTableRowModel(
 internal data class NativeTableModel(
     val sourceRange: ProjectionRange,
     val rows: List<NativeTableRowModel>,
+    val alignments: List<NativeTableAlignment>,
 ) {
     val firstContentOffset: Int
         get() = rows.firstOrNull()?.firstContentOffset ?: sourceRange.startOffset
@@ -104,7 +111,15 @@ internal object NativeTableProjectionPlanner {
                     .sortedBy { it.sourceRange.startOffset }
                     .mapNotNull { row -> row.toTableRow(source, inlineProjections) }
                     .toList()
-                if (tableRows.isEmpty()) null else NativeTableModel(table.sourceRange, tableRows)
+                if (tableRows.isEmpty()) {
+                    null
+                } else {
+                    val columnCount = tableRows.first().cells.size
+                    val separatorRange = table.syntaxRanges.singleOrNull() ?: return@mapNotNull null
+                    val alignments = tableAlignmentsFor(source, separatorRange, columnCount)
+                        ?: return@mapNotNull null
+                    NativeTableModel(table.sourceRange, tableRows, alignments)
+                }
             }
             .toList()
     }
@@ -257,6 +272,31 @@ internal object NativeTableProjectionPlanner {
     private fun displayTextForTableCell(sourceText: String): String {
         if (!sourceText.contains("\\|")) return sourceText
         return sourceText.replace("\\|", "|")
+    }
+
+    private fun tableAlignmentsFor(
+        source: String,
+        separatorRange: ProjectionRange,
+        columnCount: Int,
+    ): List<NativeTableAlignment>? {
+        if (!separatorRange.isInside(source) || columnCount <= 0) return null
+        val separator = source.substring(separatorRange.startOffset, separatorRange.endOffset)
+        val cells = separator.split('|')
+        val alignments = buildList {
+            cells.forEachIndexed { index, cell ->
+                if (!cell.isBlank() || index in 1 until cells.lastIndex) {
+                    val trimmed = cell.trim()
+                    add(
+                        when {
+                            trimmed.startsWith(':') && trimmed.endsWith(':') -> NativeTableAlignment.CENTER
+                            trimmed.endsWith(':') -> NativeTableAlignment.RIGHT
+                            else -> NativeTableAlignment.LEFT
+                        }
+                    )
+                }
+            }
+        }
+        return alignments.takeIf { it.size == columnCount }
     }
 
     private fun ProjectionRange.isInside(other: ProjectionRange): Boolean =
@@ -565,12 +605,20 @@ internal class NativeTableInlayRenderer(
                 val baseFont = if (row.header) boldFont else normalFont
                 val cellMetrics = if (row.header) boldMetrics else metrics
                 val baseline = y + max(cellMetrics.ascent + 2, (rowHeight + cellMetrics.ascent - cellMetrics.descent) / 2)
+                val contentWidth = max(1, width - CELL_HORIZONTAL_PADDING * 2)
+                val visibleTextWidth = min(runsWidth(cell.displayRuns, baseFont), contentWidth)
+                val startX = alignedTextStartX(
+                    cellX = x,
+                    cellWidth = width,
+                    visibleTextWidth = visibleTextWidth,
+                    alignment = model.alignments.getOrElse(index) { NativeTableAlignment.LEFT },
+                )
                 drawRunsClipped(
                     g2 = g2,
                     runs = cell.displayRuns,
-                    startX = x + CELL_HORIZONTAL_PADDING,
+                    startX = startX,
                     baseline = baseline,
-                    maxWidth = max(1, width - CELL_HORIZONTAL_PADDING * 2),
+                    maxWidth = contentWidth,
                     baseFont = baseFont,
                 )
                 x += width
@@ -706,6 +754,23 @@ internal class NativeTableInlayRenderer(
     private fun styledFont(baseFont: Font, style: NativeTableInlineStyle): Font {
         val targetStyle = baseFont.style or style.fontMask
         return if (targetStyle == baseFont.style) baseFont else baseFont.deriveFont(targetStyle)
+    }
+
+    internal fun alignedTextStartX(
+        cellX: Int,
+        cellWidth: Int,
+        visibleTextWidth: Int,
+        alignment: NativeTableAlignment,
+    ): Int {
+        val contentWidth = max(1, cellWidth - CELL_HORIZONTAL_PADDING * 2)
+        val boundedTextWidth = min(max(0, visibleTextWidth), contentWidth)
+        return when (alignment) {
+            NativeTableAlignment.LEFT -> cellX + CELL_HORIZONTAL_PADDING
+            NativeTableAlignment.CENTER ->
+                cellX + CELL_HORIZONTAL_PADDING + (contentWidth - boundedTextWidth) / 2
+            NativeTableAlignment.RIGHT ->
+                cellX + cellWidth - CELL_HORIZONTAL_PADDING - boundedTextWidth
+        }
     }
 
     private fun paintLinkEffect(
