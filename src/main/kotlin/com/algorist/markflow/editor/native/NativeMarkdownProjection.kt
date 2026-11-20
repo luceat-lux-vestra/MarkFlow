@@ -70,6 +70,7 @@ internal enum class NativeProjectionKind {
     STRONG,
     STRIKETHROUGH,
     LINK,
+    REFERENCE_DEFINITION,
     UNORDERED_LIST,
     ORDERED_LIST,
     LIST_ITEM,
@@ -83,6 +84,12 @@ internal enum class NativeProjectionKind {
     TABLE_ROW,
 }
 
+internal data class NativeReferenceDefinitionRanges(
+    val label: ProjectionRange,
+    val destination: ProjectionRange,
+    val title: ProjectionRange? = null,
+)
+
 internal data class NativeProjection(
     val kind: NativeProjectionKind,
     val sourceRange: ProjectionRange,
@@ -90,6 +97,7 @@ internal data class NativeProjection(
     val contentRanges: List<ProjectionRange> = emptyList(),
     val block: Boolean,
     val headingLevel: Int? = null,
+    val referenceDefinitionRanges: NativeReferenceDefinitionRanges? = null,
 )
 
 internal enum class ProjectionPlanStatus {
@@ -198,6 +206,7 @@ internal object NativeMarkdownProjectionPlanner {
             MarkdownElementTypes.STRONG -> NativeProjectionKind.STRONG
             GFMElementTypes.STRIKETHROUGH -> NativeProjectionKind.STRIKETHROUGH
             in linkTypes -> NativeProjectionKind.LINK
+            MarkdownElementTypes.LINK_DEFINITION -> NativeProjectionKind.REFERENCE_DEFINITION
             MarkdownElementTypes.UNORDERED_LIST -> NativeProjectionKind.UNORDERED_LIST
             MarkdownElementTypes.ORDERED_LIST -> NativeProjectionKind.ORDERED_LIST
             MarkdownElementTypes.LIST_ITEM -> NativeProjectionKind.LIST_ITEM
@@ -219,6 +228,11 @@ internal object NativeMarkdownProjectionPlanner {
         if (kind == NativeProjectionKind.LINK && !isSupportedLinkProjection(node, source, sourceRange)) {
             return null
         }
+        val definitionRanges = if (kind == NativeProjectionKind.REFERENCE_DEFINITION) {
+            referenceDefinitionRanges(node, source, sourceRange) ?: return null
+        } else {
+            null
+        }
 
         return NativeProjection(
             kind = kind,
@@ -227,6 +241,7 @@ internal object NativeMarkdownProjectionPlanner {
             contentRanges = contentRangesFor(kind, node, source, sourceRange),
             block = kind in BLOCK_KINDS,
             headingLevel = if (kind == NativeProjectionKind.HEADING) headingLevelFor(node.type) else null,
+            referenceDefinitionRanges = definitionRanges,
         )
     }
 
@@ -478,6 +493,31 @@ internal object NativeMarkdownProjectionPlanner {
         return ProjectionRange(start, end).takeIf { it.isInside(source) }
     }
 
+    /**
+     * A reference definition is a parser-owned block. Preserve the exact source range and expose
+     * only the parser's semantic children; never rescan or normalize label/destination/title text.
+     * Missing required label/destination proof fails closed to ordinary editable source.
+     */
+    private fun referenceDefinitionRanges(
+        node: ASTNode,
+        source: String,
+        sourceRange: ProjectionRange,
+    ): NativeReferenceDefinitionRanges? {
+        if (node.type != MarkdownElementTypes.LINK_DEFINITION) return null
+
+        fun directChild(type: IElementType): ProjectionRange? =
+            directChildRanges(node, setOf(type), source, sourceRange).singleOrNull()
+
+        val label = directChild(MarkdownElementTypes.LINK_LABEL) ?: return null
+        val destination = directChild(MarkdownElementTypes.LINK_DESTINATION) ?: return null
+        val title = directChild(MarkdownElementTypes.LINK_TITLE)
+        return NativeReferenceDefinitionRanges(
+            label = label,
+            destination = destination,
+            title = title,
+        )
+    }
+
     private fun directChildRanges(
         node: ASTNode,
         acceptedTypes: Set<IElementType>,
@@ -551,6 +591,7 @@ internal object NativeMarkdownProjectionPlanner {
         NativeProjectionKind.ORDERED_LIST,
         NativeProjectionKind.LIST_ITEM,
         NativeProjectionKind.BLOCK_QUOTE,
+        NativeProjectionKind.REFERENCE_DEFINITION,
         NativeProjectionKind.CODE_FENCE,
         NativeProjectionKind.CODE_BLOCK,
         NativeProjectionKind.THEMATIC_BREAK,

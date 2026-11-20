@@ -19,6 +19,7 @@ class ManualExamplesDerivedProjectionTest : BasePlatformTestCase() {
             NativeProjectionKind.STRONG,
             NativeProjectionKind.STRIKETHROUGH,
             NativeProjectionKind.LINK,
+            NativeProjectionKind.REFERENCE_DEFINITION,
             NativeProjectionKind.UNORDERED_LIST,
             NativeProjectionKind.ORDERED_LIST,
             NativeProjectionKind.LIST_ITEM,

@@ -38,6 +38,8 @@ Setext heading
 
 Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).
 
+[representative]: https://example.com/reference "Representative"
+
 - unordered item
 - second item
 
@@ -89,6 +91,13 @@ val fenced = 1
                 assertTrue(content.isInside(source))
                 assertTrue(content.startOffset >= projection.sourceRange.startOffset)
                 assertTrue(content.endOffset <= projection.sourceRange.endOffset)
+            }
+            projection.referenceDefinitionRanges?.let { ranges ->
+                listOfNotNull(ranges.label, ranges.destination, ranges.title).forEach { semantic ->
+                    assertTrue(semantic.isInside(source))
+                    assertTrue(semantic.startOffset >= projection.sourceRange.startOffset)
+                    assertTrue(semantic.endOffset <= projection.sourceRange.endOffset)
+                }
             }
         }
 
@@ -378,6 +387,104 @@ Setext two
                 assertTrue(range.endOffset <= link.sourceRange.endOffset)
             }
         }
+    }
+
+    fun testReferenceDefinitionsExposeOnlyParserOwnedSemanticRanges() {
+        val source = """First [consumer][shared], second [consumer two][shared], [collapsed][], and [shortcut].
+
+[shared]: https://example.com/shared "Shared title"
+[collapsed]: /collapsed
+[shortcut]: /shortcut
+[unused]: /unused
+[multi]:
+      /multi
+           'Multi title'
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(7L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val definitions = plan.projections.filter {
+            it.kind == NativeProjectionKind.REFERENCE_DEFINITION
+        }
+        assertEquals(5, definitions.size)
+
+        fun raw(range: ProjectionRange): String =
+            source.substring(range.startOffset, range.endOffset)
+
+        val byLabel = definitions.associateBy { definition ->
+            val ranges = checkNotNull(definition.referenceDefinitionRanges)
+            raw(ranges.label)
+        }
+        assertEquals(
+            setOf("[shared]", "[collapsed]", "[shortcut]", "[unused]", "[multi]"),
+            byLabel.keys,
+        )
+
+        val shared = checkNotNull(byLabel["[shared]"]?.referenceDefinitionRanges)
+        assertEquals("https://example.com/shared", raw(shared.destination))
+        assertEquals("\"Shared title\"", raw(checkNotNull(shared.title)))
+
+        val unused = checkNotNull(byLabel["[unused]"]?.referenceDefinitionRanges)
+        assertEquals("/unused", raw(unused.destination))
+        assertNull(unused.title)
+
+        val multilineProjection = checkNotNull(byLabel["[multi]"])
+        val multiline = checkNotNull(multilineProjection.referenceDefinitionRanges)
+        assertEquals("/multi", raw(multiline.destination))
+        assertEquals("'Multi title'", raw(checkNotNull(multiline.title)))
+        assertTrue(
+            source.substring(
+                multilineProjection.sourceRange.startOffset,
+                multilineProjection.sourceRange.endOffset,
+            ).contains("\n")
+        )
+
+        val sharedDefinition = checkNotNull(byLabel["[shared]"])
+        assertEquals(
+            1,
+            definitions.count {
+                it.sourceRange == sharedDefinition.sourceRange
+            },
+        )
+        assertEquals(
+            2,
+            plan.projections.count {
+                it.kind == NativeProjectionKind.LINK &&
+                    source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset)
+                        .endsWith("[shared]")
+            },
+        )
+
+        definitions.forEach { definition ->
+            assertTrue(definition.block)
+            val ranges = checkNotNull(definition.referenceDefinitionRanges)
+            listOfNotNull(ranges.label, ranges.destination, ranges.title).forEach { range ->
+                assertTrue(range.isInside(source))
+                assertTrue(range.startOffset >= definition.sourceRange.startOffset)
+                assertTrue(range.endOffset <= definition.sourceRange.endOffset)
+            }
+        }
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testMalformedReferenceDefinitionFailsClosedToExactSource() {
+        val source = """[broken] https://example.com/no-colon
+
+Ordinary paragraph remains editable.
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(8L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertTrue(
+            plan.projections.none {
+                it.kind == NativeProjectionKind.REFERENCE_DEFINITION
+            },
+        )
+        assertEquals(source, plan.identity.source)
     }
 
     fun testImageInlineLinkSubtreeRemainsOwnedByHostResourceProjection() {

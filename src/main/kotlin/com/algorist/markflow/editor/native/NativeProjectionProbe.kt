@@ -109,6 +109,8 @@ internal object NativeProjectionProbe {
 
 Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).
 
+[probe-ref]: https://example.invalid/reference "Probe reference"
+
 > quoted paragraph
 
 - unordered item
@@ -788,6 +790,13 @@ Plain body line for inactive caret state.
                 check(range.isInside(source))
                 check(range.startOffset >= projection.sourceRange.startOffset)
                 check(range.endOffset <= projection.sourceRange.endOffset)
+            }
+            projection.referenceDefinitionRanges?.let { ranges ->
+                listOfNotNull(ranges.label, ranges.destination, ranges.title).forEach { range ->
+                    check(range.isInside(source))
+                    check(range.startOffset >= projection.sourceRange.startOffset)
+                    check(range.endOffset <= projection.sourceRange.endOffset)
+                }
             }
         }
 
