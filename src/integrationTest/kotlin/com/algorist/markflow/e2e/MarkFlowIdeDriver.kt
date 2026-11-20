@@ -97,6 +97,44 @@ class MarkFlowIdeDriver(private val driver: Driver) {
     fun isDirty(editor: JEditorUiComponent): Boolean =
         driver.service<FileDocumentManagerRemote>().isDocumentUnsaved(editor.document)
 
+    fun isIdeThemeDark(): Boolean {
+        val manager = driver.service<LafManagerRemote>()
+        return driver.withContext(OnDispatcher.EDT) {
+            manager.getCurrentUIThemeLookAndFeel().isDark()
+        }
+    }
+
+    fun switchIdeTheme(dark: Boolean) {
+        val manager = driver.service<LafManagerRemote>()
+        driver.withContext(OnDispatcher.EDT) {
+            val target = if (dark) {
+                manager.getDefaultDarkLaf()
+            } else {
+                manager.getDefaultLightLaf()
+            }
+            checkNotNull(target) {
+                "IntelliJ test host does not expose the requested " +
+                    (if (dark) "dark" else "light") +
+                    " default UI theme"
+            }
+            if (manager.getCurrentUIThemeLookAndFeel().isDark() != dark) {
+                manager.setCurrentUIThemeLookAndFeel(target)
+                manager.updateUI()
+            }
+        }
+        waitFor(
+            message = "IntelliJ UI theme switches to " + if (dark) "dark" else "light",
+            timeout = 20.seconds,
+            getter = { isIdeThemeDark() },
+            checker = { actual -> actual == dark },
+        )
+    }
+
+    fun synchronizeExternalChanges(editor: JEditorUiComponent) {
+        editor.setFocus()
+        driver.invokeAction("Synchronize", component = editor.component)
+    }
+
     fun appendAtEnd(editor: JEditorUiComponent, text: String) {
         val sourceBefore = source(editor)
         val appendOffset = sourceBefore.length
@@ -493,6 +531,20 @@ private interface FileEditorManagerRemote {
 
 @Remote("com.intellij.openapi.fileEditor.FileEditor")
 private interface FileEditorRemote
+
+@Remote("com.intellij.ide.ui.LafManager")
+private interface LafManagerRemote {
+    fun getCurrentUIThemeLookAndFeel(): UIThemeLookAndFeelInfoRemote
+    fun getDefaultLightLaf(): UIThemeLookAndFeelInfoRemote?
+    fun getDefaultDarkLaf(): UIThemeLookAndFeelInfoRemote?
+    fun setCurrentUIThemeLookAndFeel(lookAndFeelInfo: UIThemeLookAndFeelInfoRemote)
+    fun updateUI()
+}
+
+@Remote("com.intellij.ide.ui.laf.UIThemeLookAndFeelInfo")
+private interface UIThemeLookAndFeelInfoRemote {
+    fun isDark(): Boolean
+}
 
 @Remote("com.intellij.openapi.fileEditor.FileDocumentManager")
 private interface FileDocumentManagerRemote {

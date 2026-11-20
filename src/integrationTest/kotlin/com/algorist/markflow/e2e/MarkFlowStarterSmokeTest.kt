@@ -495,9 +495,22 @@ class MarkFlowStarterSmokeTest {
         val editedDefinitionStart = editedSource.indexOf(editedDefinitionLine)
         check(editedDefinitionStart >= 0) { "edited definition range cannot be derived" }
         val editedDefinitionEnd = editedDefinitionStart + editedDefinitionLine.length
+        val externalPayload = """https://example.com/external "External title""""
+        val externalSource = editedSource.replaceRange(
+            payloadStart,
+            payloadStart + replacementPayload.length,
+            externalPayload,
+        )
+        val externalDefinitionLine = """[docs]: https://example.com/external "External title""""
+        val externalDefinitionStart = externalSource.indexOf(externalDefinitionLine)
+        check(externalDefinitionStart >= 0) { "external definition range cannot be derived" }
+        val externalDefinitionEnd = externalDefinitionStart + externalDefinitionLine.length
         val originalTailOffset = originalSource.indexOf("Tail anchor.") + 1
         val editedTailOffset = editedSource.indexOf("Tail anchor.") + 1
-        check(originalTailOffset > 0 && editedTailOffset > 0) { "tail anchor fixture is missing" }
+        val externalTailOffset = externalSource.indexOf("Tail anchor.") + 1
+        check(originalTailOffset > 0 && editedTailOffset > 0 && externalTailOffset > 0) {
+            "tail anchor fixture is missing"
+        }
 
         val platformVersion = System.getProperty("markflow.test.platformVersion")
             ?.trim()
@@ -693,6 +706,125 @@ class MarkFlowStarterSmokeTest {
                 ) {
                     "reopened fixture bytes differ from the authoritative edited source"
                 }
+
+
+                val themeSourceBefore = markFlow.source(reopened)
+                val themeStampBefore = markFlow.modificationStamp(reopened)
+                val initialDarkTheme = markFlow.isIdeThemeDark()
+                try {
+                    markFlow.switchIdeTheme(dark = !initialDarkTheme)
+                    waitFor(
+                        message = "reference-definition projection remains ready after IDE theme transition",
+                        timeout = 20.seconds,
+                        getter = { markFlow.isNativeProjectionPlanReady(reopened) },
+                        checker = { ready -> ready },
+                    )
+                    markFlow.resetToSingleCaret(reopened, editedTailOffset)
+                    waitFor(
+                        message = "reference-definition fold survives opposite IDE theme",
+                        timeout = 20.seconds,
+                        getter = {
+                            markFlow.isFoldCollapsed(
+                                reopened,
+                                editedDefinitionStart,
+                                editedDefinitionEnd,
+                            )
+                        },
+                        checker = { collapsed -> collapsed },
+                    )
+                    check(markFlow.source(reopened) == themeSourceBefore) {
+                        "IDE theme transition changed authoritative reference-definition source"
+                    }
+                    check(markFlow.modificationStamp(reopened) == themeStampBefore) {
+                        "IDE theme transition changed Document modification stamp"
+                    }
+                    check(!markFlow.isDirty(reopened)) {
+                        "IDE theme transition dirtied the reference-definition Document"
+                    }
+                    markFlow.assertProductionProjectionStillAttached(reopened)
+
+                    markFlow.switchIdeTheme(dark = initialDarkTheme)
+                    waitFor(
+                        message = "reference-definition fold survives restored IDE theme",
+                        timeout = 20.seconds,
+                        getter = {
+                            markFlow.isFoldCollapsed(
+                                reopened,
+                                editedDefinitionStart,
+                                editedDefinitionEnd,
+                            )
+                        },
+                        checker = { collapsed -> collapsed },
+                    )
+                    check(markFlow.source(reopened) == themeSourceBefore) {
+                        "restoring IDE theme changed authoritative reference-definition source"
+                    }
+                    check(markFlow.modificationStamp(reopened) == themeStampBefore) {
+                        "restoring IDE theme changed Document modification stamp"
+                    }
+                    check(!markFlow.isDirty(reopened)) {
+                        "restoring IDE theme dirtied the reference-definition Document"
+                    }
+                } finally {
+                    if (markFlow.isIdeThemeDark() != initialDarkTheme) {
+                        markFlow.switchIdeTheme(dark = initialDarkTheme)
+                    }
+                }
+
+                val stampBeforeExternalChange = markFlow.modificationStamp(reopened)
+                Files.writeString(fixturePath, externalSource, StandardCharsets.UTF_8)
+                markFlow.synchronizeExternalChanges(reopened)
+                waitFor(
+                    message = "platform reloads externally changed reference-definition bytes",
+                    timeout = 20.seconds,
+                    getter = { markFlow.source(reopened) },
+                    checker = { source -> source == externalSource },
+                )
+                check(markFlow.modificationStamp(reopened) != stampBeforeExternalChange) {
+                    "external file reload did not advance the authoritative Document stamp"
+                }
+                check(!markFlow.isDirty(reopened)) {
+                    "clean external file reload must remain platform-clean"
+                }
+                check(
+                    Files.readAllBytes(fixturePath)
+                        .contentEquals(externalSource.toByteArray(StandardCharsets.UTF_8))
+                ) {
+                    "external file bytes differ from the platform-reloaded Document"
+                }
+                markFlow.assertProductionProjectionStillAttached(reopened)
+                waitFor(
+                    message = "external reload rebuilds a ready reference-definition plan",
+                    timeout = 20.seconds,
+                    getter = { markFlow.isNativeProjectionPlanReady(reopened) },
+                    checker = { ready -> ready },
+                )
+                waitFor(
+                    message = "external reload rebuilds exact parser-owned reference definition",
+                    timeout = 20.seconds,
+                    getter = {
+                        markFlow.hasProjection(
+                            reopened,
+                            "REFERENCE_DEFINITION",
+                            externalDefinitionStart,
+                            externalDefinitionEnd,
+                        )
+                    },
+                    checker = { present -> present },
+                )
+                markFlow.resetToSingleCaret(reopened, externalTailOffset)
+                waitFor(
+                    message = "externally reloaded inactive reference definition regains metadata fold",
+                    timeout = 20.seconds,
+                    getter = {
+                        markFlow.isFoldCollapsed(
+                            reopened,
+                            externalDefinitionStart,
+                            externalDefinitionEnd,
+                        )
+                    },
+                    checker = { collapsed -> collapsed },
+                )
             }
         } finally {
             tempRoot.toFile().deleteRecursively()
