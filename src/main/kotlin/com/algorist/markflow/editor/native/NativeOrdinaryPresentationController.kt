@@ -629,7 +629,9 @@ private fun referenceDefinitionPlaceholderOrNull(
 
     val label = raw(ranges.label) ?: return null
     val destination = raw(ranges.destination) ?: return null
-    val title = ranges.title?.let(::raw) ?: ranges.title?.let { return null }
+    val title = ranges.title?.let { titleRange ->
+        raw(titleRange) ?: return null
+    }
     val placeholder = buildString {
         append(REFERENCE_DEFINITION_PREFIX)
         append(label)

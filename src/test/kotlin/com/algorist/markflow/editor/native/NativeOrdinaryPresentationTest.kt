@@ -1692,6 +1692,36 @@ Tail
         }
     }
 
+    fun testOversizedReferenceDefinitionMetadataFailsClosedToExactSource() {
+        val destination = "https://example.com/" + "x".repeat(1100)
+        val source = "A [consumer][huge].\n\n[huge]: $destination\n\nTail\n"
+        myFixture.configureByText("reference-definition-oversized.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val definition = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
+            assertNull(
+                "oversized metadata must fail closed instead of installing an unbounded fold placeholder",
+                editor.foldingModel.getFoldRegion(
+                    definition.sourceRange.startOffset,
+                    definition.sourceRange.endOffset,
+                ),
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testReferenceDefinitionPresentationFailsClosedWhenRichPresentationIsDisabledOrSyntaxIsMalformed() {
         val valid = """A [consumer][guide].
 
