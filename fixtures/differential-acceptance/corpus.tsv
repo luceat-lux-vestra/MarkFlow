@@ -16,7 +16,7 @@ md-fenced-tilde	markdown	fenced-code-tilde	supported	covered	fixtures/markdown-f
 md-fence-length-info	markdown	fence-length-info	supported	covered	fixtures/markdown-fidelity/cases/code-forms-and-fences.md	exact-source	source-anchored-geometry	yes	none	-	code,fence-length,info
 md-indented-code	markdown	indented-code	supported	covered	fixtures/markdown-fidelity/cases/code-forms-and-fences.md	exact-source	source-anchored-geometry	yes	none	-	code,indented
 md-table-basic	markdown	table-basic	supported	covered	examples/eg2.md	exact-source	source-anchored-geometry	yes	none	-	table,gfm
-md-table-alignment	markdown	table-alignment	degraded	covered	fixtures/markdown-fidelity/cases/table-lexical-variants.md	exact-source	diagnostic-only	yes	none	-	table,alignment,gfm
+md-table-alignment	markdown	table-alignment	supported	covered	fixtures/markdown-fidelity/cases/table-lexical-variants.md	exact-source	source-anchored-geometry	yes	none	-	table,alignment,gfm
 md-table-escaped-pipe	markdown	table-escaped-pipe	supported	covered	fixtures/markdown-fidelity/cases/table-lexical-variants.md	exact-source	source-anchored-geometry	yes	none	-	table,escaped-pipe,gfm
 md-raw-html-safe	markdown	raw-html-safe	supported	covered	fixtures/markdown-fidelity/cases/raw-html-safe.md	exact-source	source-anchored-geometry	yes	none	-	raw-html,safe
 md-raw-html-hostile	markdown	raw-html-hostile	degraded	covered	fixtures/markdown-fidelity/cases/raw-html-hostile.md	exact-source	diagnostic-only	no	none	-	raw-html,hostile,degraded
