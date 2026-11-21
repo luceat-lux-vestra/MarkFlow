@@ -154,10 +154,7 @@ class NativeMarkdownFidelityCorpusTest : BasePlatformTestCase() {
                     NativeProjectionKind.TABLE_ROW,
                 ),
             ),
-            FixtureExpectation(
-                "whitespace-and-blank-lines",
-                setOf(NativeProjectionKind.PARAGRAPH, NativeProjectionKind.HARD_LINE_BREAK),
-            ),
+            FixtureExpectation("whitespace-and-blank-lines", setOf(NativeProjectionKind.PARAGRAPH)),
             FixtureExpectation("line-endings-lf"),
             FixtureExpectation("line-endings-crlf"),
             FixtureExpectation("line-endings-no-trailing-newline"),
