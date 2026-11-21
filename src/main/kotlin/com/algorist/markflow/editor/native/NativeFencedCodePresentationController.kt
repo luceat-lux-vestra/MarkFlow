@@ -169,6 +169,7 @@ internal object NativeFencedCodeProjectionPlanner {
  */
 internal class NativeFencedCodePresentationController(
     private val editor: Editor,
+    private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeFencedCodeModel>()
@@ -249,6 +250,7 @@ internal class NativeFencedCodePresentationController(
         editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
         mouseReveals += 1
         event.consume()
+        postMouseActivityReconciliation()
         return true
     }
 

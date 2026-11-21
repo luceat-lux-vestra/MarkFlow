@@ -89,10 +89,15 @@ internal class NativePresentationController(
     headingPreviewPilotGap: Boolean = true,
 ) : Disposable {
     private val ordinaryPresentation = NativeOrdinaryPresentationController(
-        editor, headingSourceLineReplacement, headingNativeEditorTypography, headingPreviewPilotGap,
+        editor = editor,
+        headingSourceLineReplacement = headingSourceLineReplacement,
+        headingNativeEditorTypography = headingNativeEditorTypography,
+        headingPreviewPilotGap = headingPreviewPilotGap,
+        postMouseActivityReconciliation = ::schedulePostMouseActivityReconciliation,
     )
     private var disposed = false
     private var refreshRequestGeneration = 0L
+    private var activityRefreshRequestGeneration = 0L
     private var refreshesApplied = 0L
     private var refreshesScheduled = 0L
     private var sourceFallbacks = 0L
@@ -128,6 +133,7 @@ internal class NativePresentationController(
 
     init {
         ApplicationManager.getApplication().assertIsDispatchThread()
+        tablePresentation.setPostMouseActivityReconciliation(::schedulePostMouseActivityReconciliation)
         editor.document.addDocumentListener(documentListener, this)
         editor.caretModel.addCaretListener(caretListener, this)
         editor.selectionModel.addSelectionListener(selectionListener, this)
@@ -268,6 +274,24 @@ internal class NativePresentationController(
         }
     }
 
+    /**
+     * Mouse reveal handlers move the caret while the IDE is still dispatching the gesture.
+     * Caret listeners therefore provide the immediate source-reveal transition, then this
+     * coalesced EDT turn performs one final all-owner reconciliation after platform folding and
+     * the remaining mouse listeners have settled. Keyboard/programmatic caret moves keep their
+     * existing synchronous path.
+     */
+    private fun schedulePostMouseActivityReconciliation() {
+        if (disposed || editor.isDisposed) return
+        val request = ++activityRefreshRequestGeneration
+        ApplicationManager.getApplication().invokeLater {
+            if (disposed || editor.isDisposed || request != activityRefreshRequestGeneration) {
+                return@invokeLater
+            }
+            refreshActivityPresentation()
+        }
+    }
+
     private fun matchesCurrentIdentity(identity: ProjectionSourceIdentity): Boolean =
         ProjectionSnapshot.capture(editor.document, configGeneration()).identity == identity
 
@@ -302,6 +326,7 @@ internal class NativePresentationController(
         if (disposed) return
         ApplicationManager.getApplication().assertIsDispatchThread()
         refreshRequestGeneration += 1
+        activityRefreshRequestGeneration += 1
         ordinaryPresentation.dispose()
         tablePresentation.dispose()
         hostResources?.dispose()

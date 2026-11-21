@@ -115,6 +115,7 @@ internal object NativeIndentedCodeProjectionPlanner {
  */
 internal class NativeIndentedCodePresentationController(
     private val editor: Editor,
+    private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeIndentedCodeModel>()
@@ -194,6 +195,7 @@ internal class NativeIndentedCodePresentationController(
         editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
         mouseReveals += 1
         event.consume()
+        postMouseActivityReconciliation()
         return true
     }
 

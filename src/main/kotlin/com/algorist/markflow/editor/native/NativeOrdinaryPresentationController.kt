@@ -82,6 +82,7 @@ internal class NativeOrdinaryPresentationController(
     headingSourceLineReplacement: Boolean = false,
     headingNativeEditorTypography: Boolean = false,
     headingPreviewPilotGap: Boolean = true,
+    postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
@@ -89,11 +90,12 @@ internal class NativeOrdinaryPresentationController(
         editor, sourceLineReplacement = headingSourceLineReplacement,
         nativeEditorTypography = headingNativeEditorTypography,
         previewPilotParagraphGap = headingPreviewPilotGap,
+        postMouseActivityReconciliation = postMouseActivityReconciliation,
     )
-    private val blockQuotes = NativeBlockQuotePresentationController(editor)
-    private val fencedCodes = NativeFencedCodePresentationController(editor)
-    private val indentedCodes = NativeIndentedCodePresentationController(editor)
-    private val lists = NativeListPresentationController(editor)
+    private val blockQuotes = NativeBlockQuotePresentationController(editor, postMouseActivityReconciliation)
+    private val fencedCodes = NativeFencedCodePresentationController(editor, postMouseActivityReconciliation)
+    private val indentedCodes = NativeIndentedCodePresentationController(editor, postMouseActivityReconciliation)
+    private val lists = NativeListPresentationController(editor, postMouseActivityReconciliation)
     private var disposed = false
 
     fun clearPresentation() {
