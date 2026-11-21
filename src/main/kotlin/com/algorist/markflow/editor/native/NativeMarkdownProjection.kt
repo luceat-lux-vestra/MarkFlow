@@ -213,7 +213,7 @@ internal object NativeMarkdownProjectionPlanner {
                 return@mapNotNull null
             }
             val eolStart = child.startOffset
-            val lineStart = source.lastIndexOf('\\n', eolStart - 1)
+            val lineStart = source.lastIndexOf('\n', eolStart - 1)
                 .let { previous -> maxOf(node.startOffset, previous + 1) }
 
             var slashCursor = eolStart - 1
