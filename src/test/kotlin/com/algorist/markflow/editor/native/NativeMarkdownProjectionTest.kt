@@ -36,7 +36,8 @@ class NativeMarkdownProjectionTest : BasePlatformTestCase() {
 Setext heading
 ==============
 
-Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).\\
+Hard-break continuation.
 
 [representative]: https://example.com/reference "Representative"
 
