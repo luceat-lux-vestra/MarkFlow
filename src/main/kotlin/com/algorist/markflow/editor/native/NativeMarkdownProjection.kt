@@ -217,7 +217,7 @@ internal object NativeMarkdownProjectionPlanner {
                 .let { previous -> maxOf(node.startOffset, previous + 1) }
 
             var slashCursor = eolStart - 1
-            while (slashCursor >= lineStart && source[slashCursor] == '\\\\') slashCursor -= 1
+            while (slashCursor >= lineStart && source[slashCursor] == '\\') slashCursor -= 1
             val trailingBackslashes = eolStart - 1 - slashCursor
 
             val markerStart = if (trailingBackslashes % 2 == 1) {
