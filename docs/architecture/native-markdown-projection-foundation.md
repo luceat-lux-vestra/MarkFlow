@@ -62,6 +62,7 @@ The #145 representative slice has been expanded to parser-proven projections for
 - unordered/ordered lists and list-item markers;
 - block quotes;
 - inline code, fenced code and indented code;
+- CommonMark hard line-break markers at parser-proven paragraph EOL boundaries;
 - thematic breaks;
 - GFM tables, headers, rows and cell ranges.
 
@@ -95,8 +96,11 @@ Inactive supported constructs may use public editor highlighters and folding to 
 - link syntax concealment around a parser-proven visible label;
 - source-neutral list marker placeholders;
 - source-neutral block-quote marker placeholders;
+- source-neutral CommonMark hard-break marker concealment while preserving the physical newline;
 - thematic-break presentation;
 - syntax-aware highlighting for supported ordinary constructs.
+
+CommonMark hard line breaks are derived only from parser-proven direct paragraph EOLs. An odd trailing backslash contributes only its final backslash marker; two or more trailing spaces contribute the exact trailing-space marker range. Soft breaks and escaped trailing backslashes remain unprojected. The authoritative physical newline stays outside the fold, and reveal/edit restores the exact lexical marker without normalization.
 
 Caret/selection source reveal is boundary-inclusive for presentation purposes: a caret touching either edge of a projected construct reveals its exact syntax so a hidden fold never owns the caret boundary. Parser containment itself remains half-open `[start,end)`.
 
