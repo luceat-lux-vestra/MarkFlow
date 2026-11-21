@@ -213,8 +213,7 @@ internal object NativeMarkdownProjectionPlanner {
                 return@mapNotNull null
             }
             val eolStart = child.startOffset
-            val lineStart = source.lastIndexOf('\n', eolStart - 1)
-                .let { previous -> maxOf(node.startOffset, previous + 1) }
+            val lineStart = maxOf(node.startOffset, source.lastIndexOf('\n', eolStart - 1) + 1)
 
             var slashCursor = eolStart - 1
             while (slashCursor >= lineStart && source[slashCursor] == '\\') slashCursor -= 1
