@@ -811,6 +811,7 @@ expected = {
             prefix + "MarkFlowStarterTableTest",
             prefix + "MarkFlowStarterTaskListTest",
             prefix + "MarkFlowStarterListIndentTest",
+            prefix + "MarkFlowStarterHardLineBreakTest",
         ]),
     },
     "derived-content": {

@@ -63,12 +63,10 @@ jobs:
           set -euo pipefail
           for _ in $(seq 1 240); do
             runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=pull_request&head_sha=$EXPECTED_SHA&per_page=100")"
+            canonical_pending=false
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
               [ "$run_id" != "$GITHUB_RUN_ID" ] || continue
-
-              status="$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .status' <<<"$runs")"
-              [ "$status" = "completed" ] || continue
 
               jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
               anchor_count="$(jq '[.jobs[]
@@ -77,27 +75,55 @@ jobs:
                 | select(.name == "Head validation anchor" and .conclusion == "success")] | length' <<<"$jobs")"
               [ "$anchor_count" = "1" ] || continue
 
-              valid=true
+              status="$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .status' <<<"$runs")"
+              if [ "$status" != "completed" ]; then
+                canonical_pending=true
+                echo "Canonical exact-SHA validation run $run_id is status=$status; waiting for completion."
+                break
+              fi
+
+              conclusion="$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | (.conclusion // "")' <<<"$runs")"
+              if [ "$conclusion" != "success" ]; then
+                echo "::error::Canonical exact-SHA validation run $run_id for $EXPECTED_SHA concluded '$conclusion'; refusing metadata-only replay."
+                exit 1
+              fi
+
+              failed_components=()
               for component in "Build" "Test" "Inspect code" "Verify plugin" "Dependency Review"; do
-                count="$(jq --arg name "$component" '[.jobs[] | select(.name == $name and .status == "completed" and .conclusion == "success")] | length' <<<"$jobs")"
-                if [ "$count" != "1" ]; then
-                  valid=false
-                  break
+                matching="$(jq --arg name "$component" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
+                if [ "$matching" != "1" ]; then
+                  failed_components+=("$component(count=$matching)")
+                  continue
+                fi
+                job_status="$(jq -r --arg name "$component" '.jobs[] | select(.name == $name) | .status' <<<"$jobs")"
+                job_conclusion="$(jq -r --arg name "$component" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")"
+                if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
+                  failed_components+=("$component(status=$job_status,conclusion=$job_conclusion)")
                 fi
               done
-              if [ "$valid" = true ]; then
+
+              if [ "${#failed_components[@]}" -eq 0 ]; then
                 echo "Reused canonical exact-SHA product/dependency evidence from run $run_id for $EXPECTED_SHA."
                 exit 0
               fi
+
+              printf '::error::Canonical exact-SHA validation run %s completed successfully but required evidence is not reusable: %s\n' \
+                "$run_id" "${failed_components[*]}"
+              exit 1
             done < <(jq -r --arg current "$GITHUB_RUN_ID" --arg sha "$EXPECTED_SHA" '
               [.workflow_runs[]
                | select(.head_sha == $sha)
                | select((.id | tostring) != $current)]
               | sort_by(.id) | reverse | .[].id
             ' <<<"$runs")
+
+            if [ "$canonical_pending" = "true" ]; then
+              sleep 15
+              continue
+            fi
             sleep 15
           done
-          echo "::error::No completed canonical exact-SHA product/dependency validation became available for metadata-only replay."
+          echo "::error::No canonical exact-SHA validation became available for metadata-only replay."
           exit 1
 
       - name: Fetch replacement proof workspace
