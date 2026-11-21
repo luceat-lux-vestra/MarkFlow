@@ -691,4 +691,60 @@ Footnote-like syntax remains unsupported.[^note]
         assertEquals(source, plan.identity.source)
     }
 
+    fun testLineAndThematicBreakContractSurvivesHeadingListAndParagraphAdjacency() {
+        val source =
+            "# Heading neighbor\n\n" +
+                "Heading-adjacent hard break\\\n" +
+                "heading continuation\n\n" +
+                "- List hard break\\\n" +
+                "  list continuation\n\n" +
+                "Paragraph hard break with spaces  \n" +
+                "paragraph continuation\n\n" +
+                "Soft line starts here\n" +
+                "soft continuation\n\n" +
+                "---\n\n" +
+                "***\n\n" +
+                "___\n"
+
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(
+                ProjectionSourceIdentity(
+                    modificationStamp = 17L,
+                    source = source,
+                    configGeneration = 0L,
+                )
+            )
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+
+        val hardBreaks = plan.projections.filter { it.kind == NativeProjectionKind.HARD_LINE_BREAK }
+        assertEquals(3, hardBreaks.size)
+        assertEquals(
+            listOf("\\", "\\", "  "),
+            hardBreaks.map { source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset) },
+        )
+        hardBreaks.forEach { projection ->
+            assertEquals(
+                "hard-break projection must leave the physical newline outside its source range",
+                '\n',
+                source[projection.sourceRange.endOffset],
+            )
+        }
+
+        val softLineEnd = source.indexOf('\n', source.indexOf("Soft line starts here"))
+        assertTrue(softLineEnd > 0)
+        assertTrue(
+            "soft line break must not acquire a hard-break projection",
+            hardBreaks.none { it.sourceRange.endOffset == softLineEnd },
+        )
+
+        val thematicBreaks = plan.projections.filter { it.kind == NativeProjectionKind.THEMATIC_BREAK }
+        assertEquals(3, thematicBreaks.size)
+        assertEquals(
+            listOf("---", "***", "___"),
+            thematicBreaks.map { source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset) },
+        )
+    }
+
 }
