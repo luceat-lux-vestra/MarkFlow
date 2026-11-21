@@ -30,7 +30,7 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set([]);
 // Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
-const reviewedManifestGitBlobSha = "0b308f948e38c7f0255a5dc0cc3c674366c27884";
+const reviewedManifestGitBlobSha = "ab92e5aad4868660d318d70f818ff11c9a1a20c9";
 const reviewedManifestRows = 88;
 const reviewedMarkdownAnchorGitBlobSha = "cefb6ca6770559a0b606eb988af9ff114594ee13";
 const reviewedMarkdownAnchorRows = 49;
@@ -38,7 +38,6 @@ const reviewedMarkdownAnchorRows = 49;
 const correctedMarkdownDegradedCaseIds = new Set([
   "md-blockquote",
   "md-tight-loose-lists",
-  "md-hard-break",
   "md-escaped-punctuation",
   "md-entity-reference",
   "md-autolink-email",
@@ -216,7 +215,7 @@ test("differential acceptance corpus inventory is explicit and self-consistent",
 
 test("#502 corrected Markdown authority stays degraded and non-interactive", () => {
   const entries = new Map(parseManifest().map((entry) => [entry.case_id, entry]));
-  assert.equal(correctedMarkdownDegradedCaseIds.size, 7);
+  assert.equal(correctedMarkdownDegradedCaseIds.size, 6);
   for (const caseId of correctedMarkdownDegradedCaseIds) {
     const entry = entries.get(caseId);
     assert.ok(entry, caseId + ": corrected authority row is missing");
