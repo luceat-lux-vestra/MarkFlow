@@ -327,6 +327,7 @@ internal class NativeTablePresentationController(
     private var accessibilityFallbacks = 0L
     private var mouseReveals = 0L
     private var disposed = false
+    private var postMouseActivityReconciliation: () -> Unit = {}
 
     private val mouseListener = object : EditorMouseListener {
         override fun mouseClicked(event: EditorMouseEvent) {
@@ -337,6 +338,12 @@ internal class NativeTablePresentationController(
     init {
         ApplicationManager.getApplication().assertIsDispatchThread()
         editor.addEditorMouseListener(mouseListener)
+    }
+
+    internal fun setPostMouseActivityReconciliation(reconciliation: () -> Unit) {
+        requireAlive()
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        postMouseActivityReconciliation = reconciliation
     }
 
     fun applyPlan(plan: NativeProjectionPlan) {
@@ -403,7 +410,10 @@ internal class NativeTablePresentationController(
     /** Exact callback path used by the registered [EditorMouseListener], exposed internally for real-IDE proof. */
     internal fun handleMouseReveal(event: EditorMouseEvent): Boolean {
         val revealed = revealTableAt(event)
-        if (revealed) event.consume()
+        if (revealed) {
+            event.consume()
+            postMouseActivityReconciliation()
+        }
         return revealed
     }
 

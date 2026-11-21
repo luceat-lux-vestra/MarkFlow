@@ -140,6 +140,7 @@ internal class NativeHeadingPresentationController(
     private val sourceLineReplacement: Boolean = false,
     private val nativeEditorTypography: Boolean = false,
     private val previewPilotParagraphGap: Boolean = true,
+    private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeHeadingModel>()
@@ -233,6 +234,7 @@ internal class NativeHeadingPresentationController(
             editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
             mouseReveals += 1
             event.consume()
+            postMouseActivityReconciliation()
             return true
         }
         val renderer = event.inlay?.renderer ?: return false
@@ -258,6 +260,7 @@ internal class NativeHeadingPresentationController(
         editor.caretModel.primaryCaret.moveToOffset(contentOffset)
         mouseReveals += 1
         event.consume()
+        postMouseActivityReconciliation()
         return true
     }
 

@@ -82,6 +82,7 @@ internal class NativeOrdinaryPresentationController(
     headingSourceLineReplacement: Boolean = false,
     headingNativeEditorTypography: Boolean = false,
     headingPreviewPilotGap: Boolean = true,
+    postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private val inline = NativeInlinePresentationController(editor)
     private val block = NativeBlockPresentationController(editor)
@@ -89,11 +90,12 @@ internal class NativeOrdinaryPresentationController(
         editor, sourceLineReplacement = headingSourceLineReplacement,
         nativeEditorTypography = headingNativeEditorTypography,
         previewPilotParagraphGap = headingPreviewPilotGap,
+        postMouseActivityReconciliation = postMouseActivityReconciliation,
     )
-    private val blockQuotes = NativeBlockQuotePresentationController(editor)
-    private val fencedCodes = NativeFencedCodePresentationController(editor)
-    private val indentedCodes = NativeIndentedCodePresentationController(editor)
-    private val lists = NativeListPresentationController(editor)
+    private val blockQuotes = NativeBlockQuotePresentationController(editor, postMouseActivityReconciliation)
+    private val fencedCodes = NativeFencedCodePresentationController(editor, postMouseActivityReconciliation)
+    private val indentedCodes = NativeIndentedCodePresentationController(editor, postMouseActivityReconciliation)
+    private val lists = NativeListPresentationController(editor, postMouseActivityReconciliation)
     private var disposed = false
 
     fun clearPresentation() {
@@ -114,8 +116,7 @@ internal class NativeOrdinaryPresentationController(
         ApplicationManager.getApplication().assertIsDispatchThread()
         val blockQuotePlan = plan
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
-        val blockQuotePresentationRanges = NativeBlockQuoteProjectionPlanner.presentationSourceRanges(blockQuotePlan)
-        val listPlan = plan.withoutProjectionsInside(blockQuotePresentationRanges)
+        val listPlan = plan.withoutBlockQuotePresentationProjections()
         val listSourceRanges = NativeListProjectionPlanner.sourceRanges(listPlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
@@ -149,8 +150,7 @@ internal class NativeOrdinaryPresentationController(
         block.clearHighlighters()
         val blockQuotePlan = plan
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
-        val blockQuotePresentationRanges = NativeBlockQuoteProjectionPlanner.presentationSourceRanges(blockQuotePlan)
-        val listPlan = plan.withoutProjectionsInside(blockQuotePresentationRanges)
+        val listPlan = plan.withoutBlockQuotePresentationProjections()
         val listSourceRanges = NativeListProjectionPlanner.sourceRanges(listPlan)
         val fencedCodePlan = plan.withoutProjectionsInside(listSourceRanges + blockQuoteSourceRanges)
         val fencedCodeSourceRanges = NativeFencedCodeProjectionPlanner.sourceRanges(fencedCodePlan)
@@ -584,6 +584,9 @@ private class NativeSyntaxPresentationOwner(
             }
         }
 }
+
+internal fun NativeProjectionPlan.withoutBlockQuotePresentationProjections(): NativeProjectionPlan =
+    withoutProjectionsInside(NativeBlockQuoteProjectionPlanner.presentationSourceRanges(this))
 
 private fun NativeProjectionPlan.withoutProjectionsInside(ranges: List<ProjectionRange>): NativeProjectionPlan =
     if (ranges.isEmpty()) this else copy(projections = projections.filterNot { it.isInsideAny(ranges) })
