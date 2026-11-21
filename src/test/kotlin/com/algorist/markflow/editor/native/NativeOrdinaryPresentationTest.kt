@@ -3048,4 +3048,60 @@ Tail
         }
     }
 
+    fun testInactiveHardLineBreakMarkersAreConcealedWithoutChangingPhysicalLineBoundaryOrSource() {
+        val source =
+            "Soft line\n" +
+                "soft continuation\n\n" +
+                "Backslash hard\\\n" +
+                "backslash continuation\n\n" +
+                "Two-space hard  \n" +
+                "space continuation\n\n" +
+                "Tail\n"
+        myFixture.configureByText("hard-line-break-presentation.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val hardBreaks = requireNotNull(controller.currentPlan)
+                .projections
+                .filter { it.kind == NativeProjectionKind.HARD_LINE_BREAK }
+            assertEquals(2, hardBreaks.size)
+
+            hardBreaks.forEach { projection ->
+                val fold = requireNotNull(
+                    editor.foldingModel.getFoldRegion(
+                        projection.sourceRange.startOffset,
+                        projection.sourceRange.endOffset,
+                    )
+                ) { "inactive hard-break marker did not get an owned syntax fold" }
+                assertFalse(fold.isExpanded)
+                assertEquals("\u200B", fold.placeholderText)
+                assertEquals('\n', source[projection.sourceRange.endOffset])
+            }
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+
+            val first = hardBreaks.first()
+            editor.caretModel.moveToOffset(first.sourceRange.startOffset)
+            assertTrue(
+                "caret touching hard-break marker must reveal exact source marker",
+                requireNotNull(
+                    editor.foldingModel.getFoldRegion(
+                        first.sourceRange.startOffset,
+                        first.sourceRange.endOffset,
+                    )
+                ).isExpanded,
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
 }

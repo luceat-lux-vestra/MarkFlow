@@ -369,6 +369,7 @@ private class NativeInlinePresentationController(
             NativeProjectionKind.STRIKETHROUGH,
             NativeProjectionKind.LINK,
             NativeProjectionKind.INLINE_CODE,
+            NativeProjectionKind.HARD_LINE_BREAK,
         ),
         keyFor = ::inlineKeyFor,
         placeholderFor = { _, _, _ -> ZERO_WIDTH_PLACEHOLDER },

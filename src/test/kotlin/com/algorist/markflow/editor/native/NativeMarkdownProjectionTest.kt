@@ -36,7 +36,8 @@ class NativeMarkdownProjectionTest : BasePlatformTestCase() {
 Setext heading
 ==============
 
-Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [a link](https://example.com).\
+Hard-break continuation.
 
 [representative]: https://example.com/reference "Representative"
 
@@ -655,6 +656,38 @@ Footnote-like syntax remains unsupported.[^note]
             "unsupported footnote-like reference acquired LINK presentation",
             links.none { link -> link.sourceRange.intersects(footnoteStart, footnoteStart + "[^note]".length) },
         )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testHardLineBreakProjectionDistinguishesBackslashAndTwoSpaceMarkersFromSoftBreaks() {
+        val source =
+            "Soft line starts here\n" +
+                "and continues softly.\n\n" +
+                "Backslash hard break\\\n" +
+                "remains a distinct line.\n\n" +
+                "Two-space hard break  \n" +
+                "also remains distinct.\n\n" +
+                "Escaped backslash\\\\\n" +
+                "is only a soft break.\n"
+        myFixture.configureByText("hard-line-break-projection.md", source)
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot.capture(myFixture.editor.document, 0L)
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val hardBreaks = plan.projections.filter { it.kind == NativeProjectionKind.HARD_LINE_BREAK }
+        assertEquals(2, hardBreaks.size)
+        assertEquals(
+            listOf("\\", "  "),
+            hardBreaks.map { projection ->
+                source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
+            },
+        )
+        hardBreaks.forEach { projection ->
+            assertEquals(listOf(projection.sourceRange), projection.syntaxRanges)
+            assertFalse(projection.block)
+            assertEquals('\n', source[projection.sourceRange.endOffset])
+        }
         assertEquals(source, plan.identity.source)
     }
 

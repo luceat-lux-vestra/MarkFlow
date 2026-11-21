@@ -162,6 +162,7 @@ internal object NativeMarkdownParityProbe {
                         NativeProjectionKind.CODE_FENCE,
                         NativeProjectionKind.CODE_BLOCK,
                         NativeProjectionKind.THEMATIC_BREAK,
+                        NativeProjectionKind.HARD_LINE_BREAK,
                         NativeProjectionKind.TABLE,
                         NativeProjectionKind.TABLE_HEADER,
                         NativeProjectionKind.TABLE_ROW,
@@ -587,7 +588,8 @@ internal object NativeMarkdownParityProbe {
             val path = root.resolve("parity.md")
             val source = """# Heading
 
-Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).\
+Hard-break continuation.
 
 > quote
 
