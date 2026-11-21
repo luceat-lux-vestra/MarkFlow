@@ -588,7 +588,7 @@ internal object NativeMarkdownParityProbe {
             val path = root.resolve("parity.md")
             val source = """# Heading
 
-Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).\\
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).\
 Hard-break continuation.
 
 > quote
