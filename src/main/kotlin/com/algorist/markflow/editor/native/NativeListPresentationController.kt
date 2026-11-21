@@ -399,6 +399,7 @@ internal object NativeListProjectionPlanner {
 /** Native source-neutral presentation for one editor's supported inactive lists. */
 internal class NativeListPresentationController(
     private val editor: Editor,
+    private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeListModel>()
@@ -638,6 +639,7 @@ internal class NativeListPresentationController(
         editor.caretModel.primaryCaret.moveToOffset(contentOffset)
         mouseReveals += 1
         event.consume()
+        postMouseActivityReconciliation()
         return true
     }
 

@@ -346,6 +346,7 @@ internal object NativeBlockQuoteProjectionPlanner {
  */
 internal class NativeBlockQuotePresentationController(
     private val editor: Editor,
+    private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
     private var currentModels = emptyList<NativeBlockQuoteModel>()
@@ -424,6 +425,7 @@ internal class NativeBlockQuotePresentationController(
         editor.caretModel.primaryCaret.moveToOffset(renderer.contentOffset)
         mouseReveals += 1
         event.consume()
+        postMouseActivityReconciliation()
         return true
     }
 

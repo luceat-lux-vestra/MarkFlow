@@ -1,5 +1,6 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.CustomFoldRegion
 import com.intellij.openapi.editor.CustomFoldRegionRenderer
 import com.intellij.openapi.editor.colors.EditorColors
@@ -11,9 +12,12 @@ import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.Font
 import java.awt.event.MouseEvent
+import java.nio.file.Files
+import java.nio.file.Path
 
 class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     /**
@@ -3160,6 +3164,113 @@ Tail
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
             controller.dispose()
+        }
+    }
+
+
+    fun testMouseRevealTransitionReconcilesPreviousRichBlockAfterGesture() {
+        val source = Files.readString(Path.of("examples/markdown-core.md"))
+        myFixture.configureByText("markdown-core-mouse-transition.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(editor.document.textLength)
+        val stampBefore = editor.document.modificationStamp
+        val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+
+        lateinit var blockQuotes: NativeBlockQuotePresentationController
+        lateinit var lists: NativeListPresentationController
+        var reconciliationRequests = 0
+
+        val requestReconciliation = {
+            reconciliationRequests += 1
+            ApplicationManager.getApplication().invokeLater {
+                blockQuotes.refreshActivity(plan, richPresentationEnabled = true)
+                lists.refreshActivity(plan, richPresentationEnabled = true)
+            }
+        }
+        blockQuotes = NativeBlockQuotePresentationController(editor, requestReconciliation)
+        lists = NativeListPresentationController(editor, requestReconciliation)
+
+        fun click(inlay: com.intellij.openapi.editor.Inlay<*>): EditorMouseEvent {
+            val mouseEvent = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                0,
+                0,
+                1,
+                false,
+                MouseEvent.BUTTON1,
+            )
+            val offset = inlay.offset.coerceIn(0, editor.document.textLength)
+            return EditorMouseEvent(
+                editor,
+                mouseEvent,
+                EditorMouseEventArea.EDITING_AREA,
+                offset,
+                editor.offsetToLogicalPosition(offset),
+                editor.offsetToVisualPosition(offset),
+                false,
+                null,
+                inlay,
+                null,
+            )
+        }
+
+        fun quoteInlay(): com.intellij.openapi.editor.Inlay<*> =
+            editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .single { it.renderer is NativeBlockQuoteInlayRenderer }
+
+        fun firstListInlay(): com.intellij.openapi.editor.Inlay<*> =
+            checkNotNull(
+                editor.inlayModel
+                    .getBlockElementsInRange(0, editor.document.textLength)
+                    .filter { it.renderer is NativeListInlayRenderer }
+                    .minByOrNull { it.offset }
+            ) { "manual Markdown fixture has no visible native list presentation" }
+
+        try {
+            blockQuotes.applyPlan(plan, richPresentationEnabled = true)
+            lists.applyPlan(plan, richPresentationEnabled = true)
+            val inactiveListInlays = lists.evidenceSnapshot().ownedInlays
+            assertEquals(1, blockQuotes.evidenceSnapshot().ownedInlays)
+            assertTrue(inactiveListInlays > 0)
+
+            val quoteClick = click(quoteInlay())
+            assertTrue(blockQuotes.handleMouseReveal(quoteClick))
+            assertTrue(quoteClick.isConsumed)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(0, blockQuotes.evidenceSnapshot().ownedInlays)
+            assertEquals(inactiveListInlays, lists.evidenceSnapshot().ownedInlays)
+
+            val listClick = click(firstListInlay())
+            assertTrue(lists.handleMouseReveal(listClick))
+            assertTrue(listClick.isConsumed)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(
+                "leaving the blockquote for another rich block must restore its inactive presentation",
+                1,
+                blockQuotes.evidenceSnapshot().ownedInlays,
+            )
+            assertEquals(1, blockQuotes.evidenceSnapshot().fullyConcealed)
+            assertEquals(inactiveListInlays - 1, lists.evidenceSnapshot().ownedInlays)
+
+            val restoredQuoteClick = click(quoteInlay())
+            assertTrue(blockQuotes.handleMouseReveal(restoredQuoteClick))
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(0, blockQuotes.evidenceSnapshot().ownedInlays)
+            assertEquals(
+                "repeated A -> B -> A transitions must restore the list rather than leave stale source",
+                inactiveListInlays,
+                lists.evidenceSnapshot().ownedInlays,
+            )
+            assertEquals(3, reconciliationRequests)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            lists.dispose()
+            blockQuotes.dispose()
         }
     }
 
