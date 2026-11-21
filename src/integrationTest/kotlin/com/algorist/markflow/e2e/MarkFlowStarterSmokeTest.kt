@@ -964,12 +964,15 @@ class MarkFlowStarterSmokeTest {
                     check(!markFlow.isDirty(editor))
 
                     markFlow.resetToSingleCaret(editor, tailOffset)
-                    waitFor(
+                    val reconcealed = waitFor(
                         message = "thematic marker $marker reconceals after caret leaves",
                         timeout = 10.seconds,
                         getter = { markFlow.isFoldCollapsed(editor, start, end) },
-                        checker = { it },
+                        checker = { collapsed -> collapsed },
                     )
+                    check(reconcealed) {
+                        "thematic marker $marker did not remain concealed after caret left"
+                    }
                 }
 
                 markFlow.resetToSingleCaret(editor, editStart)
