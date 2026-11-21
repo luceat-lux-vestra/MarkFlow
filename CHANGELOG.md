@@ -15,6 +15,7 @@ The unreleased line describes the current native-editor implementation. Browser-
 - IDE_SYNC Mermaid appearance now derives arrow, node, and label colors from the captured palette and invalidates only when Mermaid-relevant palette values change.
 
 ### Fixed
+- CommonMark backslash and two-space hard line-break markers now use source-neutral native presentation while soft-break semantics, exact lexical source, undo/redo, and save/reopen remain authoritative.
 - Native Markdown source editing, save, undo/redo, settings, and exact-source access remain available when optional JCEF renderer infrastructure is unavailable.
 - The body font family is now a dropdown of installed families (single value); the IDE-configured
   font is the default and is shown as `IDE Default (<actual family>)`; an explicit selection of
