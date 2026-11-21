@@ -745,6 +745,10 @@ Footnote-like syntax remains unsupported.[^note]
             listOf("---", "***", "___"),
             thematicBreaks.map { source.substring(it.sourceRange.startOffset, it.sourceRange.endOffset) },
         )
+        thematicBreaks.forEach { projection ->
+            assertEquals(listOf(projection.sourceRange), projection.syntaxRanges)
+            assertTrue(projection.block)
+        }
     }
 
 }
