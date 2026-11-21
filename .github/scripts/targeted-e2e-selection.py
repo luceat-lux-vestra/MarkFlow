@@ -20,6 +20,7 @@ SHARDS = {
         "MarkFlowStarterTableTest",
         "MarkFlowStarterTaskListTest",
         "MarkFlowStarterListIndentTest",
+        "MarkFlowStarterHardLineBreakTest",
     ),
     "derived-content": (
         "MarkFlowStarterSharedJcefDerivedContentTest",
