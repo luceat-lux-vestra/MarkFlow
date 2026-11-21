@@ -107,7 +107,7 @@ internal object NativeProjectionProbe {
 
                     val representativeSource = """# Heading
 
-Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).\\
+Paragraph with *emphasis*, **strong**, ~~struck~~, `code`, and [link](https://example.invalid/).\
 Hard-break continuation.
 
 [probe-ref]: https://example.invalid/reference "Probe reference"
