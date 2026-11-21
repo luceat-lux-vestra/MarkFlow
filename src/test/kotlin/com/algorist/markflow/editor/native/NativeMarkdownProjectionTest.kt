@@ -659,6 +659,44 @@ Footnote-like syntax remains unsupported.[^note]
         assertEquals(source, plan.identity.source)
     }
 
+    fun testThematicBreakVariantsShareOneSemanticKindAndPreserveExactLexicalSource() {
+        val source = """# Heading before
+
+---
+
+- list neighbor
+
+***
+
+Paragraph neighbor.
+
+___
+
+## Heading after
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(12L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val thematicBreaks = plan.projections.filter { it.kind == NativeProjectionKind.THEMATIC_BREAK }
+        assertEquals(3, thematicBreaks.size)
+        assertEquals(
+            listOf("---", "***", "___"),
+            thematicBreaks.map { projection ->
+                source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
+            },
+        )
+        thematicBreaks.forEach { projection ->
+            assertEquals(listOf(projection.sourceRange), projection.syntaxRanges)
+            assertTrue(projection.block)
+        }
+        assertTrue(plan.projections.any { it.kind == NativeProjectionKind.HEADING })
+        assertTrue(plan.projections.any { it.kind == NativeProjectionKind.LIST_ITEM })
+        assertTrue(plan.projections.any { it.kind == NativeProjectionKind.PARAGRAPH })
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testHardLineBreakProjectionDistinguishesBackslashAndTwoSpaceMarkersFromSoftBreaks() {
         val source =
             "Soft line starts here\n" +
