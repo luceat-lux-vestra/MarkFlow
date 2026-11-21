@@ -747,5 +747,4 @@ Footnote-like syntax remains unsupported.[^note]
         )
     }
 
-
 }
