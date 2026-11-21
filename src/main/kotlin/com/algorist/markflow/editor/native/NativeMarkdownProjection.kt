@@ -78,6 +78,7 @@ internal enum class NativeProjectionKind {
     INLINE_CODE,
     CODE_FENCE,
     CODE_BLOCK,
+    HARD_LINE_BREAK,
     THEMATIC_BREAK,
     TABLE,
     TABLE_HEADER,
@@ -193,7 +194,53 @@ internal object NativeMarkdownProjectionPlanner {
         if (node.type == MarkdownElementTypes.IMAGE) return
 
         projectionFor(node, source)?.let(output::add)
+        if (node.type == MarkdownElementTypes.PARAGRAPH) {
+            hardLineBreakProjections(node, source).forEach(output::add)
+        }
         node.children.forEach { child -> collect(child, source, output) }
+    }
+
+    /**
+     * CommonMark hard line breaks are inline semantics owned by a parser-proven paragraph/EOL.
+     * The parser exposes the physical EOL but not a dedicated hard-break node, so derive only the
+     * exact lexical marker immediately preceding a direct paragraph EOL. Soft breaks produce no
+     * projection. The authoritative newline is intentionally outside the projection range.
+     */
+    private fun hardLineBreakProjections(node: ASTNode, source: String): List<NativeProjection> {
+        if (node.type != MarkdownElementTypes.PARAGRAPH) return emptyList()
+        return node.children.mapNotNull { child ->
+            if (child.type != MarkdownTokenTypes.EOL || child.startOffset <= node.startOffset) {
+                return@mapNotNull null
+            }
+            val eolStart = child.startOffset
+            val lineStart = source.lastIndexOf('\\n', eolStart - 1)
+                .let { previous -> maxOf(node.startOffset, previous + 1) }
+
+            var slashCursor = eolStart - 1
+            while (slashCursor >= lineStart && source[slashCursor] == '\\\\') slashCursor -= 1
+            val trailingBackslashes = eolStart - 1 - slashCursor
+
+            val markerStart = if (trailingBackslashes % 2 == 1) {
+                eolStart - 1
+            } else {
+                var spaceCursor = eolStart - 1
+                while (spaceCursor >= lineStart && source[spaceCursor] == ' ') spaceCursor -= 1
+                val trailingSpaces = eolStart - 1 - spaceCursor
+                if (trailingSpaces < 2) return@mapNotNull null
+                spaceCursor + 1
+            }
+            if (markerStart <= lineStart || source.substring(lineStart, markerStart).none { !it.isWhitespace() }) {
+                return@mapNotNull null
+            }
+
+            val markerRange = ProjectionRange(markerStart, eolStart)
+            NativeProjection(
+                kind = NativeProjectionKind.HARD_LINE_BREAK,
+                sourceRange = markerRange,
+                syntaxRanges = listOf(markerRange),
+                block = false,
+            )
+        }
     }
 
     private fun projectionFor(node: ASTNode, source: String): NativeProjection? {
