@@ -20,6 +20,7 @@ REQUIRED_SUITES = {
     "com.algorist.markflow.e2e.MarkFlowStarterDifferentialManifestTest",
     "com.algorist.markflow.e2e.MarkFlowStarterHeadingRobotTest",
     "com.algorist.markflow.e2e.MarkFlowStarterFullProductJourneyTest",
+    "com.algorist.markflow.e2e.MarkFlowStarterHardLineBreakTest",
 }
 MARKFLOW_MARKER = "com.algorist.markflow."
 MARKFLOW_FRAME = re.compile(r"(?m)^\s*at\s+com\.algorist\.markflow\.")

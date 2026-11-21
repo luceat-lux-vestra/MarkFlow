@@ -231,6 +231,22 @@ class MarkFlowStarterHardLineBreakTest {
                         markFlow.switchIdeTheme(dark = initialDarkTheme)
                     }
                 }
+                waitFor(
+                    message = "hard-break marker remains concealed after restoring IDE theme",
+                    timeout = 20.seconds,
+                    getter = { markFlow.isFoldCollapsed(reopened, editedBackslashStart, editedBackslashStart + 2) },
+                    checker = { it },
+                )
+                check(markFlow.source(reopened) == themeSourceBefore) {
+                    "restoring IDE theme changed authoritative hard-break source"
+                }
+                check(markFlow.modificationStamp(reopened) == themeStampBefore) {
+                    "restoring IDE theme changed hard-break Document modification stamp"
+                }
+                check(!markFlow.isDirty(reopened)) {
+                    "restoring IDE theme dirtied the hard-break Document"
+                }
+                markFlow.assertProductionProjectionStillAttached(reopened)
             }
         } finally {
             tempRoot.toFile().deleteRecursively()
