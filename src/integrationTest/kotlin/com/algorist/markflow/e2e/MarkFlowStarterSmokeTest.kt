@@ -831,4 +831,301 @@ class MarkFlowStarterSmokeTest {
         }
     }
 
+    @Test
+    fun lineBreakLifecyclePreservesHardSoftAndThematicSourceAcrossEditUndoSaveReopenAndTheme() {
+        val pluginPath = System.getProperty("path.to.build.plugin")
+            ?.takeIf(String::isNotBlank)
+            ?.let(Path::of)
+            ?: error("path.to.build.plugin is required by the Starter/Driver integration-test task")
+        val fixtureProject = Path.of("src/integrationTest/resources/projects/markdown-smoke")
+            .toAbsolutePath()
+            .normalize()
+        val tempRoot = Files.createTempDirectory("markflow-starter-line-break-lifecycle-")
+        val projectPath = tempRoot.resolve("project")
+        check(fixtureProject.toFile().copyRecursively(projectPath.toFile(), overwrite = true)) {
+            "failed to copy deterministic Starter/Driver fixture project"
+        }
+        val fixturePath = projectPath.resolve("LINE_BREAKS.md")
+        val originalSource = Files.readString(fixturePath)
+        val softPrefix = "Soft line starts here"
+        val backslashPrefix = "Backslash hard break starts here"
+        val twoSpacePrefix = "Two-space hard break starts here"
+        val softEol = originalSource.indexOf(softPrefix) + softPrefix.length
+        val backslashMarkerStart = originalSource.indexOf(backslashPrefix) + backslashPrefix.length
+        val backslashMarkerEnd = backslashMarkerStart + 1
+        val twoSpaceMarkerStart = originalSource.indexOf(twoSpacePrefix) + twoSpacePrefix.length
+        val twoSpaceMarkerEnd = twoSpaceMarkerStart + 2
+        check(softEol >= softPrefix.length)
+        check(backslashMarkerStart >= backslashPrefix.length)
+        check(twoSpaceMarkerStart >= twoSpacePrefix.length)
+        check(originalSource.substring(backslashMarkerStart, backslashMarkerEnd) == "\\")
+        check(originalSource.substring(twoSpaceMarkerStart, twoSpaceMarkerEnd) == "  ")
+
+        val thematicMarkers = listOf("---", "***", "___")
+        val thematicRanges = thematicMarkers.map { marker ->
+            val start = originalSource.indexOf("\n$marker\n") + 1
+            check(start > 0) { "line-break fixture is missing thematic marker $marker" }
+            start to start + marker.length
+        }
+        val originalTailOffset = originalSource.indexOf("Tail anchor.") + 2
+        check(originalTailOffset > 1) { "line-break fixture is missing tail anchor" }
+
+        val editedSource = originalSource.replaceRange(backslashMarkerStart, backslashMarkerEnd, "  ")
+        val editedBackslashMarkerEnd = backslashMarkerStart + 2
+        val editedSecondTwoSpaceMarkerStart = editedSource.indexOf(twoSpacePrefix) + twoSpacePrefix.length
+        val editedSecondTwoSpaceMarkerEnd = editedSecondTwoSpaceMarkerStart + 2
+        val editedTailOffset = editedSource.indexOf("Tail anchor.") + 2
+
+        val platformVersion = System.getProperty("markflow.test.platformVersion")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: error("markflow.test.platformVersion must be supplied by the Gradle integrationTest task")
+        val targetTestCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(projectPath)).let { testCase ->
+            if (isStarterEapBuildNumber(platformVersion)) {
+                testCase.useEAP(platformVersion)
+            } else {
+                testCase.useRelease(platformVersion)
+            }
+        }
+
+        try {
+            Starter.newContext(
+                testName = "markflow-starter-line-break-lifecycle",
+                testCase = targetTestCase,
+            ).apply {
+                PluginConfigurator(this).installPluginFromPath(pluginPath)
+            }.applyVMOptionsPatch {
+                addSystemProperty("ide.browser.jcef.enabled", false)
+                addSystemProperty("ide.browser.jcef.testMode.enabled", true)
+                addSystemProperty("idea.trust.all.projects", true)
+                addSystemProperty("jb.consents.confirmation.enabled", false)
+            }.runIdeWithDriver().useDriverAndCloseIde {
+                waitForIndicators(5.minutes)
+                val markFlow = MarkFlowIdeDriver(this)
+                val editor = markFlow.openMarkdown("LINE_BREAKS.md")
+
+                check(markFlow.source(editor) == originalSource) {
+                    "opened line-break fixture differs from exact source bytes"
+                }
+                check(!markFlow.isDirty(editor)) {
+                    "opening line-break fixture must not dirty the Document"
+                }
+                markFlow.assertProductionProjectionAttached(editor)
+                check(markFlow.isNativeProjectionPlanReady(editor)) {
+                    "line-break projection plan is not READY"
+                }
+                check(markFlow.hasProjection(editor, "HARD_LINE_BREAK", backslashMarkerStart, backslashMarkerEnd)) {
+                    "backslash hard break is missing its exact projection"
+                }
+                check(markFlow.hasProjection(editor, "HARD_LINE_BREAK", twoSpaceMarkerStart, twoSpaceMarkerEnd)) {
+                    "two-space hard break is missing its exact projection"
+                }
+                check(!markFlow.hasProjection(editor, "HARD_LINE_BREAK", softEol, softEol + 1)) {
+                    "soft break accidentally acquired hard-break projection semantics"
+                }
+                thematicRanges.forEachIndexed { index, (start, end) ->
+                    check(markFlow.hasProjection(editor, "THEMATIC_BREAK", start, end)) {
+                        "thematic marker ${thematicMarkers[index]} is missing semantic projection"
+                    }
+                }
+
+                markFlow.resetToSingleCaret(editor, originalTailOffset)
+                waitFor(
+                    message = "inactive backslash hard-break marker is concealed",
+                    timeout = 10.seconds,
+                    getter = { markFlow.isFoldCollapsed(editor, backslashMarkerStart, backslashMarkerEnd) },
+                    checker = { collapsed -> collapsed },
+                )
+                waitFor(
+                    message = "inactive two-space hard-break marker is concealed",
+                    timeout = 10.seconds,
+                    getter = { markFlow.isFoldCollapsed(editor, twoSpaceMarkerStart, twoSpaceMarkerEnd) },
+                    checker = { collapsed -> collapsed },
+                )
+                thematicRanges.forEachIndexed { index, (start, end) ->
+                    waitFor(
+                        message = "thematic marker ${thematicMarkers[index]} uses inactive semantic presentation",
+                        timeout = 10.seconds,
+                        getter = { markFlow.isFoldCollapsed(editor, start, end) },
+                        checker = { collapsed -> collapsed },
+                    )
+                }
+
+                val revealSourceBefore = markFlow.source(editor)
+                val revealStampBefore = markFlow.modificationStamp(editor)
+                markFlow.resetToSingleCaret(editor, backslashMarkerStart)
+                waitFor(
+                    message = "caret touching hard-break marker reveals exact lexical source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.isFoldCollapsed(editor, backslashMarkerStart, backslashMarkerEnd) },
+                    checker = { collapsed -> !collapsed },
+                )
+                check(markFlow.source(editor) == revealSourceBefore) {
+                    "hard-break reveal changed authoritative source"
+                }
+                check(markFlow.modificationStamp(editor) == revealStampBefore) {
+                    "hard-break reveal changed Document modification stamp"
+                }
+                check(!markFlow.isDirty(editor)) {
+                    "hard-break reveal dirtied the Document"
+                }
+
+                markFlow.selectRangeWithKeyboard(editor, backslashMarkerStart, 1)
+                markFlow.typeText(editor, "  ")
+                waitFor(
+                    message = "hard-break lexical edit preserves every unrelated source byte",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == editedSource },
+                )
+                check(markFlow.isDirty(editor)) {
+                    "hard-break lexical edit must dirty the authoritative Document"
+                }
+
+                markFlow.undo(editor)
+                waitFor(
+                    message = "Undo restores exact backslash hard-break source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == originalSource },
+                )
+                markFlow.redo(editor)
+                waitFor(
+                    message = "Redo restores exact two-space hard-break source",
+                    timeout = 10.seconds,
+                    getter = { markFlow.source(editor) },
+                    checker = { source -> source == editedSource },
+                )
+
+                markFlow.resetToSingleCaret(editor, editedTailOffset)
+                waitFor(
+                    message = "edited hard-break projection is rebuilt at exact two-space marker",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.hasProjection(
+                            editor,
+                            "HARD_LINE_BREAK",
+                            backslashMarkerStart,
+                            editedBackslashMarkerEnd,
+                        )
+                    },
+                    checker = { present -> present },
+                )
+                waitFor(
+                    message = "edited hard-break marker regains inactive concealment",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.isFoldCollapsed(
+                            editor,
+                            backslashMarkerStart,
+                            editedBackslashMarkerEnd,
+                        )
+                    },
+                    checker = { collapsed -> collapsed },
+                )
+                check(
+                    markFlow.hasProjection(
+                        editor,
+                        "HARD_LINE_BREAK",
+                        editedSecondTwoSpaceMarkerStart,
+                        editedSecondTwoSpaceMarkerEnd,
+                    )
+                ) {
+                    "unrelated two-space hard break lost projection after neighboring lexical edit"
+                }
+
+                markFlow.save(editor)
+                waitFor(
+                    message = "saved line-break bytes reach disk exactly",
+                    timeout = 10.seconds,
+                    getter = { Files.readAllBytes(fixturePath) },
+                    checker = { bytes ->
+                        bytes.contentEquals(editedSource.toByteArray(StandardCharsets.UTF_8))
+                    },
+                )
+                check(!markFlow.isDirty(editor)) {
+                    "saving line-break edit must clear platform dirty tracking"
+                }
+                markFlow.close(editor)
+
+                val reopened = markFlow.openMarkdown("LINE_BREAKS.md")
+                check(markFlow.source(reopened) == editedSource) {
+                    "reopened line-break Document differs from persisted bytes"
+                }
+                check(!markFlow.isDirty(reopened)) {
+                    "reopened line-break Document must start clean"
+                }
+                markFlow.assertProductionProjectionAttached(reopened)
+                markFlow.resetToSingleCaret(reopened, editedTailOffset)
+                waitFor(
+                    message = "reopened hard-break marker restores exact projection",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.hasProjection(
+                            reopened,
+                            "HARD_LINE_BREAK",
+                            backslashMarkerStart,
+                            editedBackslashMarkerEnd,
+                        )
+                    },
+                    checker = { present -> present },
+                )
+                waitFor(
+                    message = "reopened hard-break marker restores inactive concealment",
+                    timeout = 10.seconds,
+                    getter = {
+                        markFlow.isFoldCollapsed(
+                            reopened,
+                            backslashMarkerStart,
+                            editedBackslashMarkerEnd,
+                        )
+                    },
+                    checker = { collapsed -> collapsed },
+                )
+
+                val themeSourceBefore = markFlow.source(reopened)
+                val themeStampBefore = markFlow.modificationStamp(reopened)
+                val initialDarkTheme = markFlow.isIdeThemeDark()
+                try {
+                    markFlow.switchIdeTheme(dark = !initialDarkTheme)
+                    waitFor(
+                        message = "hard-break projection remains ready after IDE theme transition",
+                        timeout = 20.seconds,
+                        getter = { markFlow.isNativeProjectionPlanReady(reopened) },
+                        checker = { ready -> ready },
+                    )
+                    markFlow.resetToSingleCaret(reopened, editedTailOffset)
+                    waitFor(
+                        message = "hard-break concealment survives opposite IDE theme",
+                        timeout = 20.seconds,
+                        getter = {
+                            markFlow.isFoldCollapsed(
+                                reopened,
+                                backslashMarkerStart,
+                                editedBackslashMarkerEnd,
+                            )
+                        },
+                        checker = { collapsed -> collapsed },
+                    )
+                    check(markFlow.source(reopened) == themeSourceBefore) {
+                        "IDE theme transition changed authoritative line-break source"
+                    }
+                    check(markFlow.modificationStamp(reopened) == themeStampBefore) {
+                        "IDE theme transition changed line-break Document modification stamp"
+                    }
+                    check(!markFlow.isDirty(reopened)) {
+                        "IDE theme transition dirtied line-break Document"
+                    }
+                    markFlow.assertProductionProjectionStillAttached(reopened)
+                } finally {
+                    if (markFlow.isIdeThemeDark() != initialDarkTheme) {
+                        markFlow.switchIdeTheme(dark = initialDarkTheme)
+                    }
+                }
+            }
+        } finally {
+            tempRoot.toFile().deleteRecursively()
+        }
+    }
+
 }
