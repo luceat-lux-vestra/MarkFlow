@@ -947,7 +947,7 @@ class MarkFlowStarterSmokeTest {
                         message = "thematic marker ${thematicMarkers[index]} uses inactive semantic presentation",
                         timeout = 10.seconds,
                         getter = { markFlow.isFoldCollapsed(editor, start, end) },
-                        checker = { collapsed -> collapsed },
+                        checker = { collapsed: Boolean -> collapsed },
                     )
                 }
 
