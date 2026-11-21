@@ -3048,6 +3048,65 @@ Tail
         }
     }
 
+    fun testThematicBreakVariantsUseSameSemanticPlaceholderAndRevealExactLexicalSource() {
+        val source = """Paragraph before.
+
+---
+
+***
+
+___
+
+Tail
+"""
+        myFixture.configureByText("thematic-break-presentation.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val thematicBreaks = requireNotNull(controller.currentPlan)
+                .projections
+                .filter { it.kind == NativeProjectionKind.THEMATIC_BREAK }
+            assertEquals(3, thematicBreaks.size)
+            assertEquals(
+                listOf("---", "***", "___"),
+                thematicBreaks.map { projection ->
+                    source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
+                },
+            )
+            thematicBreaks.forEach { projection ->
+                val fold = requireNotNull(
+                    editor.foldingModel.getFoldRegion(
+                        projection.sourceRange.startOffset,
+                        projection.sourceRange.endOffset,
+                    )
+                )
+                assertFalse(fold.isExpanded)
+                assertEquals("────────", fold.placeholderText)
+            }
+
+            val middle = thematicBreaks[1]
+            editor.caretModel.moveToOffset(middle.sourceRange.startOffset)
+            assertTrue(
+                requireNotNull(
+                    editor.foldingModel.getFoldRegion(
+                        middle.sourceRange.startOffset,
+                        middle.sourceRange.endOffset,
+                    )
+                ).isExpanded,
+            )
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testInactiveHardLineBreakMarkersAreConcealedWithoutChangingPhysicalLineBoundaryOrSource() {
         val source =
             "Soft line\n" +
