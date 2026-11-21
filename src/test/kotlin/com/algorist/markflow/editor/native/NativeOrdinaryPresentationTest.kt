@@ -3175,6 +3175,7 @@ Tail
         editor.caretModel.moveToOffset(editor.document.textLength)
         val stampBefore = editor.document.modificationStamp
         val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
+        val listPlan = plan.withoutBlockQuotePresentationProjections()
 
         lateinit var blockQuotes: NativeBlockQuotePresentationController
         lateinit var lists: NativeListPresentationController
@@ -3184,7 +3185,7 @@ Tail
             reconciliationRequests += 1
             ApplicationManager.getApplication().invokeLater {
                 blockQuotes.refreshActivity(plan, richPresentationEnabled = true)
-                lists.refreshActivity(plan, richPresentationEnabled = true)
+                lists.refreshActivity(listPlan, richPresentationEnabled = true)
             }
         }
         blockQuotes = NativeBlockQuotePresentationController(editor, requestReconciliation)
@@ -3232,7 +3233,7 @@ Tail
 
         try {
             blockQuotes.applyPlan(plan, richPresentationEnabled = true)
-            lists.applyPlan(plan, richPresentationEnabled = true)
+            lists.applyPlan(listPlan, richPresentationEnabled = true)
             val inactiveListInlays = lists.evidenceSnapshot().ownedInlays
             assertEquals(1, blockQuotes.evidenceSnapshot().ownedInlays)
             assertTrue(inactiveListInlays > 0)
