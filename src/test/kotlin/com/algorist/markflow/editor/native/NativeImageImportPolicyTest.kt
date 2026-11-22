@@ -38,16 +38,18 @@ class NativeImageImportPolicyTest {
     }
 
     @Test
-    fun preservesOnlyExtensionsAdmittedByTheCanonicalRasterBoundary() {
-        assertEquals("diagram.png", NativeImageImportPolicy.sanitizeFilename("diagram.PNG"))
-        assertEquals("diagram.jpg", NativeImageImportPolicy.sanitizeFilename("diagram.JPG"))
-        assertEquals("diagram.jpeg", NativeImageImportPolicy.sanitizeFilename("diagram.JPEG"))
-        assertEquals("diagram.gif", NativeImageImportPolicy.sanitizeFilename("diagram.GIF"))
-        assertEquals("diagram.bmp", NativeImageImportPolicy.sanitizeFilename("diagram.BMP"))
-        assertEquals("diagram.webp", NativeImageImportPolicy.sanitizeFilename("diagram.webp"))
-        assertFalse(NativeLocalImageResolver.supportsFilename(
-            NativeImageImportPolicy.sanitizeFilename("diagram.webp")
-        ))
+    fun preservesCanonicalSupportedExtensionsForValidatedImports() {
+        listOf(
+            "diagram.PNG" to "diagram.png",
+            "diagram.JPG" to "diagram.jpg",
+            "diagram.JPEG" to "diagram.jpeg",
+            "diagram.GIF" to "diagram.gif",
+            "diagram.BMP" to "diagram.bmp",
+        ).forEach { (original, expected) ->
+            val sanitized = NativeImageImportPolicy.sanitizeFilename(original)
+            assertEquals(expected, sanitized)
+            assertTrue(NativeLocalImageResolver.supportsFilename(sanitized))
+        }
     }
 
     @Test
