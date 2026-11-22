@@ -70,9 +70,9 @@ Tail
 
             assertEquals(1, firstController.footnoteEvidenceSnapshot().fullyPresented)
             assertEquals(
+                "revealing source in one editor must not remove the other editor's presentation",
                 2,
                 secondController.footnoteEvidenceSnapshot().fullyPresented,
-                "revealing source in one editor must not remove the other editor's presentation",
             )
             assertEquals(source, first.document.text)
         } finally {
