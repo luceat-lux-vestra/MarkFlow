@@ -510,27 +510,31 @@ Tail
                     try {
                         footnoteEditor.contentComponent.setSize(1000, 700)
                         footnoteEditor.contentComponent.doLayout()
-                        footnoteEditor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+                        val tailOffset = source.indexOf("Tail") + 1
+                        footnoteEditor.caretModel.moveToOffset(tailOffset)
                         footnoteEditor.selectionModel.removeSelection()
                         val stampBefore = footnoteEditor.document.modificationStamp
-                        val controller = NativePresentationController(
+
+                        val parent = NativePresentationController(
                             editor = footnoteEditor,
                             richPresentationEnabled = { true },
                         )
+                        val referenceRange: ProjectionRange
                         try {
-                            val plan = requireNotNull(controller.currentPlan)
+                            val plan = requireNotNull(parent.currentPlan)
                             val reference = plan.projections.single {
                                 it.kind == NativeProjectionKind.FOOTNOTE_REFERENCE
                             }
                             val definition = plan.projections.single {
                                 it.kind == NativeProjectionKind.FOOTNOTE_DEFINITION
                             }
+                            referenceRange = reference.sourceRange
                             check(source.substring(reference.sourceRange.startOffset, reference.sourceRange.endOffset) ==
                                 "[^manual-note]")
                             check(source.substring(definition.sourceRange.startOffset, definition.sourceRange.endOffset) ==
                                 "[^manual-note]: Footnote definition text.")
 
-                            var evidence = controller.footnoteEvidenceSnapshot()
+                            var evidence = parent.footnoteEvidenceSnapshot()
                             check(evidence.models == 2)
                             check(evidence.references == 1 && evidence.definitions == 1)
                             check(evidence.ownedInlays == 2)
@@ -542,28 +546,37 @@ Tail
                             check(footnoteEditor.document.text == source)
                             check(footnoteEditor.document.modificationStamp == stampBefore)
 
-                            footnoteEditor.caretModel.moveToOffset(reference.sourceRange.startOffset + 2)
-                            controller.refreshNow()
-                            evidence = controller.footnoteEvidenceSnapshot()
+                            footnoteEditor.caretModel.moveToOffset(referenceRange.startOffset + 2)
+                            parent.refreshNow()
+                            evidence = parent.footnoteEvidenceSnapshot()
                             check(evidence.fullyPresented == 1) {
                                 "reference caret did not reveal exact footnote source: $evidence"
                             }
                             check(footnoteEditor.document.text == source)
                             check(footnoteEditor.document.modificationStamp == stampBefore)
 
-                            footnoteEditor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
-                            controller.refreshNow()
-                            evidence = controller.footnoteEvidenceSnapshot()
-                            check(evidence.fullyPresented == 2)
+                            footnoteEditor.caretModel.moveToOffset(tailOffset)
+                            parent.refreshNow()
+                            check(parent.footnoteEvidenceSnapshot().fullyPresented == 2)
+                        } finally {
+                            Disposer.dispose(parent)
+                        }
 
-                            val referenceInlay = footnoteEditor.inlayModel
+                        footnoteEditor.caretModel.moveToOffset(tailOffset)
+                        val clickPlan = NativeMarkdownProjectionPlanner.plan(
+                            ProjectionSnapshot.capture(footnoteEditor.document, 0L)
+                        )
+                        val clickController = NativeFootnotePresentationController(footnoteEditor)
+                        try {
+                            clickController.applyPlan(clickPlan, true)
+                            val clickInlay = footnoteEditor.inlayModel
                                 .getInlineElementsInRange(0, footnoteEditor.document.textLength)
                                 .single { inlay ->
                                     (inlay.renderer as? NativeFootnoteMarkerRenderer)?.role ==
                                         FootnoteRole.REFERENCE
                                 }
-                            referenceInlay.update()
-                            val bounds = requireNotNull(referenceInlay.bounds) {
+                            clickInlay.update()
+                            val bounds = requireNotNull(clickInlay.bounds) {
                                 "real-IDE footnote reference inlay has no bounds"
                             }
                             val click = MouseEvent(
@@ -577,8 +590,8 @@ Tail
                                 false,
                                 MouseEvent.BUTTON1,
                             )
-                            val offset = referenceInlay.offset.coerceIn(0, footnoteEditor.document.textLength)
-                            val event = EditorMouseEvent(
+                            val offset = clickInlay.offset.coerceIn(0, footnoteEditor.document.textLength)
+                            val editorEvent = EditorMouseEvent(
                                 footnoteEditor,
                                 click,
                                 EditorMouseEventArea.EDITING_AREA,
@@ -587,95 +600,22 @@ Tail
                                 footnoteEditor.offsetToVisualPosition(offset),
                                 false,
                                 null,
-                                referenceInlay,
+                                clickInlay,
                                 null,
                             )
-                            val footnotes = NativeFootnotePresentationController(
-                                editor = footnoteEditor,
-                            )
-                            try {
-                                // The parent owner already owns the current presentation. Use its
-                                // exact public evidence path for lifecycle, then prove the same
-                                // registered callback contract in isolation without navigation.
-                                controller.refreshNow()
-                                footnotes.applyPlan(requireNotNull(controller.currentPlan), true)
-                                val isolatedReferenceInlay = footnoteEditor.inlayModel
-                                    .getInlineElementsInRange(0, footnoteEditor.document.textLength)
-                                    .singleOrNull { inlay ->
-                                        (inlay.renderer as? NativeFootnoteMarkerRenderer)?.role ==
-                                            FootnoteRole.REFERENCE &&
-                                            inlay !== referenceInlay
-                                    }
-                                if (isolatedReferenceInlay != null) {
-                                    // Foreign-fold collision correctly fails closed; the parent
-                                    // presentation remains authoritative for this editor.
-                                    footnotes.clearPresentation()
-                                }
-                            } finally {
-                                footnotes.dispose()
-                            }
-
-                            // Exercise the parent-installed renderer through a dedicated controller
-                            // after releasing the parent presentation, so no two owners overlap.
-                            controller.dispose()
-                            val clickController = NativeFootnotePresentationController(footnoteEditor)
-                            try {
-                                val clickPlan = NativeMarkdownProjectionPlanner.plan(
-                                    ProjectionSnapshot.capture(footnoteEditor.document, 0L)
-                                )
-                                footnoteEditor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
-                                clickController.applyPlan(clickPlan, true)
-                                val clickInlay = footnoteEditor.inlayModel
-                                    .getInlineElementsInRange(0, footnoteEditor.document.textLength)
-                                    .single { inlay ->
-                                        (inlay.renderer as? NativeFootnoteMarkerRenderer)?.role ==
-                                            FootnoteRole.REFERENCE
-                                    }
-                                clickInlay.update()
-                                val clickBounds = requireNotNull(clickInlay.bounds)
-                                val clickEvent = MouseEvent(
-                                    footnoteEditor.contentComponent,
-                                    MouseEvent.MOUSE_CLICKED,
-                                    System.currentTimeMillis(),
-                                    0,
-                                    clickBounds.x + clickBounds.width / 2,
-                                    clickBounds.y + clickBounds.height / 2,
-                                    1,
-                                    false,
-                                    MouseEvent.BUTTON1,
-                                )
-                                val clickOffset = clickInlay.offset.coerceIn(0, footnoteEditor.document.textLength)
-                                val editorEvent = EditorMouseEvent(
-                                    footnoteEditor,
-                                    clickEvent,
-                                    EditorMouseEventArea.EDITING_AREA,
-                                    clickOffset,
-                                    footnoteEditor.offsetToLogicalPosition(clickOffset),
-                                    footnoteEditor.offsetToVisualPosition(clickOffset),
-                                    false,
-                                    null,
-                                    clickInlay,
-                                    null,
-                                )
-                                check(clickController.handleMouseReveal(editorEvent))
-                                check(clickEvent.isConsumed)
-                                check(footnoteEditor.caretModel.primaryCaret.offset ==
-                                    reference.sourceRange.startOffset)
-                                check(clickController.evidenceSnapshot().mouseReveals == 1L)
-                                check(footnoteEditor.document.text == source)
-                                check(footnoteEditor.document.modificationStamp == stampBefore)
-                            } finally {
-                                clickController.dispose()
-                            }
-
-                            "models=2 references=1 definitions=1 inlays=2 folds=2 highlighters=1 " +
-                                "caretReveal=true mouseReveal=true eventConsumed=true navigation=false " +
-                                "sourceStable=true stampStable=true"
+                            check(clickController.handleMouseReveal(editorEvent))
+                            check(click.isConsumed)
+                            check(footnoteEditor.caretModel.primaryCaret.offset == referenceRange.startOffset)
+                            check(clickController.evidenceSnapshot().mouseReveals == 1L)
+                            check(footnoteEditor.document.text == source)
+                            check(footnoteEditor.document.modificationStamp == stampBefore)
                         } finally {
-                            if (!controllerDisposed(controller)) {
-                                Disposer.dispose(controller)
-                            }
+                            clickController.dispose()
                         }
+
+                        "models=2 references=1 definitions=1 inlays=2 folds=2 highlighters=1 " +
+                            "caretReveal=true mouseReveal=true eventConsumed=true navigation=false " +
+                            "sourceStable=true stampStable=true"
                     } finally {
                         EditorFactory.getInstance().releaseEditor(footnoteEditor)
                     }
@@ -786,11 +726,6 @@ Tail
             return EditorFactory.getInstance().createEditor(document, project, file, false)
         }
 
-        private fun controllerDisposed(controller: NativePresentationController): Boolean =
-            runCatching {
-                controller.evidenceSnapshot()
-                false
-            }.getOrDefault(true)
 
         private fun createFixture(): Fixture {
             val base = project.basePath?.let(Paths::get) ?: error("#152 parity project base unavailable")
