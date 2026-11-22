@@ -58,7 +58,7 @@ class NativeImageFileDropHandler : FileDropHandler {
         val droppedFiles = e.files.toList()
         val applicable = readAction {
             isSupportedEditor(editor) && droppedFiles.isNotEmpty() &&
-                droppedFiles.all { file -> NativeImageImportTransferable.looksLikeImageFilename(file.name) }
+                droppedFiles.all { file -> NativeImageImportTransferable.isSupportedImageFilename(file.name) }
         }
         if (!applicable) return false
 
@@ -121,7 +121,7 @@ internal object NativeImageImportTransferable {
     fun isImageImportPayload(transferable: Transferable): Boolean {
         if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
             val files = localFiles(transferable) ?: return false
-            return files.isNotEmpty() && files.all { looksLikeImageFilename(it.name) }
+            return files.isNotEmpty() && files.all { isSupportedImageFilename(it.name) }
         }
         return transferable.isDataFlavorSupported(DataFlavor.imageFlavor)
     }
@@ -129,7 +129,7 @@ internal object NativeImageImportTransferable {
     fun inputsOrNull(transferable: Transferable): List<NativeImageImportInput>? {
         if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
             val files = localFiles(transferable) ?: return null
-            if (files.isEmpty() || files.any { !looksLikeImageFilename(it.name) }) return null
+            if (files.isEmpty() || files.any { !isSupportedImageFilename(it.name) }) return null
             return files.map { NativeImageImportInput.LocalFile(it.toPath()) }
         }
         if (!transferable.isDataFlavorSupported(DataFlavor.imageFlavor)) return null
@@ -137,7 +137,7 @@ internal object NativeImageImportTransferable {
         return listOf(NativeImageImportInput.ClipboardImage(image))
     }
 
-    fun looksLikeImageFilename(name: String): Boolean =
+    fun isSupportedImageFilename(name: String): Boolean =
         NativeLocalImageResolver.supportsFilename(name)
 
     private fun localFiles(transferable: Transferable): List<File>? {
