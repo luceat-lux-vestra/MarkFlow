@@ -1,6 +1,7 @@
 package com.algorist.markflow.editor.native
 
 import com.algorist.markflow.file.MarkFlowFileSupport
+import com.algorist.markflow.trust.NativeLocalImageResolver
 import com.intellij.codeInsight.hint.HintManager
 import com.intellij.ide.PasteProvider
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -24,7 +25,6 @@ import java.awt.Image
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.io.File
-import java.util.Locale
 
 /** Exact-active-transferable clipboard adapter for #151. Plain text never grants file authority. */
 class NativeImageImportPasteProvider : PasteProvider {
@@ -118,12 +118,10 @@ internal fun importChosenFiles(editor: Editor, files: Iterable<VirtualFile>): Na
 }
 
 internal object NativeImageImportTransferable {
-    private val imageLikeExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp")
-
     fun isImageImportPayload(transferable: Transferable): Boolean {
         if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
             val files = localFiles(transferable) ?: return false
-            return files.isNotEmpty() && files.any { looksLikeImageFilename(it.name) }
+            return files.isNotEmpty() && files.all { looksLikeImageFilename(it.name) }
         }
         return transferable.isDataFlavorSupported(DataFlavor.imageFlavor)
     }
@@ -131,7 +129,7 @@ internal object NativeImageImportTransferable {
     fun inputsOrNull(transferable: Transferable): List<NativeImageImportInput>? {
         if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
             val files = localFiles(transferable) ?: return null
-            if (files.isEmpty() || files.none { looksLikeImageFilename(it.name) }) return null
+            if (files.isEmpty() || files.any { !looksLikeImageFilename(it.name) }) return null
             return files.map { NativeImageImportInput.LocalFile(it.toPath()) }
         }
         if (!transferable.isDataFlavorSupported(DataFlavor.imageFlavor)) return null
@@ -140,7 +138,7 @@ internal object NativeImageImportTransferable {
     }
 
     fun looksLikeImageFilename(name: String): Boolean =
-        name.substringAfterLast('.', "").lowercase(Locale.ROOT) in imageLikeExtensions
+        NativeLocalImageResolver.supportsFilename(name)
 
     private fun localFiles(transferable: Transferable): List<File>? {
         val raw = runCatching { transferable.getTransferData(DataFlavor.javaFileListFlavor) }.getOrNull() ?: return null
