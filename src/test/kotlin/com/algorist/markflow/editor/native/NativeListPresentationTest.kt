@@ -300,9 +300,9 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf(null, false, true, null), model.rows.map { it.task?.checked })
 
         val renderer = NativeListInlayRenderer(editor, model)
-        val bounds = Rectangle(10, 20, 500, 140)
-        val firstTaskCenter = requireNotNull(renderer.firstTaskCheckboxCenter(bounds))
-        assertEquals(1, renderer.taskRowAt(firstTaskCenter, bounds))
+        val firstTaskCenter = requireNotNull(renderer.firstTaskCheckboxCenter(Rectangle()))
+        val hitBounds = Rectangle(0, 0, firstTaskCenter.x + 1, firstTaskCenter.y + 1)
+        assertEquals(1, renderer.taskRowAt(firstTaskCenter, hitBounds))
         assertEquals(source, editor.document.text)
         assertEquals(stampBefore, editor.document.modificationStamp)
 
@@ -346,7 +346,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         )
 
         val renderer = NativeListInlayRenderer(editor, model)
-        val geometry = renderer.visualRowGeometryEvidence(Rectangle(10, 20, 600, 160))
+        val geometry = renderer.visualRowGeometryEvidence(Rectangle())
         assertTrue(geometry.contains("row=0\tdepth=0\tmarker=-"))
         assertTrue(geometry.contains("\tcontinuations=1\tvisual_lines=2\ttask=true\t"))
         assertEquals(source, editor.document.text)
@@ -405,9 +405,9 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf("first task", "second task"), model.rows.map(NativeListRow::text))
 
         val renderer = NativeListInlayRenderer(editor, model)
-        val bounds = Rectangle(10, 20, 400, 100)
-        val center = requireNotNull(renderer.firstTaskCheckboxCenter(bounds))
-        assertEquals(0, renderer.taskRowAt(center, bounds))
+        val center = requireNotNull(renderer.firstTaskCheckboxCenter(Rectangle()))
+        val hitBounds = Rectangle(0, 0, center.x + 1, center.y + 1)
+        assertEquals(0, renderer.taskRowAt(center, hitBounds))
     }
 
     fun testTaskListSupportsParserOwnedStrongInlineRunsAndToggleLocality() {
@@ -788,7 +788,7 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         )
 
         val geometry = NativeListInlayRenderer(editor, model)
-            .visualRowGeometryEvidence(Rectangle(10, 20, 600, 300))
+            .visualRowGeometryEvidence(Rectangle())
         assertTrue(geometry.contains("row=1\tdepth=0\tmarker=-"))
         assertTrue(geometry.contains("\tcontinuations=1\tvisual_lines=2\t"))
         assertEquals(source, plan.identity.source)
