@@ -2347,11 +2347,11 @@ class MarkFlowStarterDifferentialManifestTest {
                         // Do not close the primary case editor here. The finally block below owns
                         // the only lifecycle transition for it: hide bundled Preview, prove the
                         // Markdown JCEF panel detached, then close the exact FileEditor/native Editor.
-                        // Auxiliary H1 A/B editors use different files and retain their own cleanup.
+                        // The auxiliary production Heading editor uses a distinct file and owns
+                        // its cleanup independently from the primary corpus case.
                         if (entry.id == "md-atx-headings-h1-h6") {
-                            // C is the actual product default; A is the frozen
-                            // legacy baseline, B the pinned JCEF typography probe.
-                            // The same authoritative source bytes drive all three.
+                            // Re-open the same authoritative source bytes through the production
+                            // Heading path for topology, font reflow and screenshot evidence.
                             val cDest = output.resolve("heading-layout-product")
                             Files.createDirectories(cDest)
                             val candidate = markFlow.openMarkdown("heading-layout-product.md")
@@ -4694,7 +4694,7 @@ class MarkFlowStarterDifferentialManifestTest {
     }
 
     /**
-     * Stage E5: measured installed native *block inlay rectangle* versus
+     * Stage E5: measured installed native Heading presentation rectangle versus
      * measured bundled Preview *heading element rectangle*. This is a
      * substantially closer pair of geometric objects than source-line Y
      * versus DOM top, but these still have DIFFERENT box models, font metrics
