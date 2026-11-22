@@ -9,6 +9,8 @@ import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
+import com.intellij.openapi.editor.event.VisibleAreaEvent
+import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.editor.markup.TextAttributes
 import java.awt.Color
 import java.awt.Graphics
@@ -123,6 +125,19 @@ internal class NativeIndentedCodePresentationController(
     private var accessibilityFallbacks = 0L
     private var mouseReveals = 0L
     private var disposed = false
+    private var lastVisibleAreaWidth = editor.scrollingModel.visibleArea.width
+
+    private val visibleAreaListener = object : VisibleAreaListener {
+        override fun visibleAreaChanged(event: VisibleAreaEvent) {
+            if (disposed || editor.isDisposed) return
+            val visibleWidth = event.newRectangle.width
+            if (visibleWidth == lastVisibleAreaWidth) return
+            lastVisibleAreaWidth = visibleWidth
+            owned.values.forEach { presentation ->
+                if (presentation.inlay.isValid) presentation.inlay.update()
+            }
+        }
+    }
 
     private val mouseListener = object : EditorMouseListener {
         override fun mouseClicked(event: EditorMouseEvent) {
@@ -133,6 +148,7 @@ internal class NativeIndentedCodePresentationController(
     init {
         ApplicationManager.getApplication().assertIsDispatchThread()
         editor.addEditorMouseListener(mouseListener)
+        editor.scrollingModel.addVisibleAreaListener(visibleAreaListener)
     }
 
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
@@ -357,6 +373,7 @@ internal class NativeIndentedCodePresentationController(
             return
         }
         editor.removeEditorMouseListener(mouseListener)
+        editor.scrollingModel.removeVisibleAreaListener(visibleAreaListener)
         clearOwned()
         currentModels = emptyList()
         currentPlanIdentity = null
