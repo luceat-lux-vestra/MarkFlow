@@ -2,7 +2,12 @@ package com.algorist.markflow.editor.native
 
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
+import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.colors.EditorColors
+import com.intellij.openapi.editor.colors.EditorColorsScheme
+import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
@@ -133,6 +138,64 @@ Tail
             controller.refreshNow()
             assertEquals(updated, document.text)
             assertEquals(2, controller.footnoteEvidenceSnapshot().fullyPresented)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testFootnoteMarkersResolveCurrentEditorThemeAtPaintTime() {
+        val source = """Reference.[^theme]
+
+[^theme]: Definition.
+
+Tail
+"""
+        myFixture.configureByText("footnote-theme.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot.capture(editor.document, 0L)
+        )
+        val controller = NativeFootnotePresentationController(editor)
+
+        try {
+            controller.applyPlan(plan, richPresentationEnabled = true)
+            val renderers = editor.inlayModel
+                .getInlineElementsInRange(0, editor.document.textLength)
+                .mapNotNull { inlay -> inlay.renderer as? NativeFootnoteMarkerRenderer }
+            val reference = renderers.single { renderer -> renderer.role == FootnoteRole.REFERENCE }
+            val definition = renderers.single { renderer -> renderer.role == FootnoteRole.DEFINITION }
+
+            val editorEx = editor as EditorEx
+            val originalScheme = editorEx.colorsScheme
+            val themedScheme = originalScheme.clone() as EditorColorsScheme
+            val referenceAttributes = requireNotNull(
+                themedScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR)
+            ).clone()
+            val definitionAttributes = requireNotNull(
+                themedScheme.getAttributes(DefaultLanguageHighlighterColors.LINE_COMMENT)
+            ).clone()
+
+            themedScheme.setAttributes(
+                EditorColors.REFERENCE_HYPERLINK_COLOR,
+                definitionAttributes,
+            )
+            themedScheme.setAttributes(
+                DefaultLanguageHighlighterColors.LINE_COMMENT,
+                referenceAttributes,
+            )
+            editorEx.setColorsScheme(themedScheme)
+
+            val fallback = TextAttributes()
+            assertEquals(
+                themedScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR).foregroundColor,
+                reference.presentationForeground(fallback),
+            )
+            assertEquals(
+                themedScheme.getAttributes(DefaultLanguageHighlighterColors.LINE_COMMENT).foregroundColor,
+                definition.presentationForeground(fallback),
+            )
+            assertEquals(source, editor.document.text)
         } finally {
             controller.dispose()
         }
