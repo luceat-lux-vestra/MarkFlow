@@ -1062,12 +1062,9 @@ internal class NativeListInlayRenderer(
     ) {
         val icon = currentCheckboxIcon()
         if (icon != null) {
-            val rollover = if (editor.contentComponent.isShowing) {
-                runCatching { editor.contentComponent.mousePosition?.let { point -> bounds.contains(point) } == true }
-                    .getOrDefault(false)
-            } else {
-                false
-            }
+            val rollover = runCatching {
+                editor.contentComponent.mousePosition?.let { point -> bounds.contains(point) } == true
+            }.getOrDefault(false)
             val checkbox = JCheckBox().apply {
                 isOpaque = false
                 isSelected = task.checked
@@ -1172,7 +1169,7 @@ internal fun nativePresentationRangeWithFollowingBlankLine(
 }
 
 private fun consumeLineSeparator(source: String, offset: Int): Int? {
-    if (offset !in 0 until source.length) return null
+    if (offset !in source.indices) return null
     return when (source[offset]) {
         '\n' -> offset + 1
         '\r' -> if (offset + 1 < source.length && source[offset + 1] == '\n') offset + 2 else offset + 1
