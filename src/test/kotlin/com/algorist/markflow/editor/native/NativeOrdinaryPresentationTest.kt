@@ -116,7 +116,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf(1, 2), NativeHeadingProjectionPlanner.plan(plan).map { it.level })
 
         var foreign: com.intellij.openapi.editor.FoldRegion? = null
-        val pilot = NativeHeadingPresentationController(editor)
+        val controller = NativeHeadingPresentationController(editor)
         try {
             editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
                 foreign = editor.foldingModel.addFoldRegion(
@@ -127,7 +127,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val section = requireNotNull(foreign)
             assertTrue(section.isValid)
             assertTrue(section.isExpanded)
-            pilot.applyPlan(plan, richPresentationEnabled = true)
+            controller.applyPlan(plan, richPresentationEnabled = true)
             val installed = editor.foldingModel.allFoldRegions
                 .filterIsInstance<CustomFoldRegion>()
                 .filter { it.isValid && !it.isExpanded &&
@@ -137,7 +137,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
                 1, installed.size,
             )
             assertEquals(source.indexOf("## Heading level 2"), installed.single().startOffset)
-            assertEquals(1, pilot.evidenceSnapshot().ownedCustomFolds)
+            assertEquals(1, controller.evidenceSnapshot().ownedCustomFolds)
             // The new H1 candidate is a source-line inline inlay, NOT a
             // duplicate-height block. The nested H2 stays a real CustomFold.
             val inline = editor.inlayModel.getInlineElementsInRange(0, document.textLength)
@@ -147,7 +147,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals("Do not reintroduce additive H1 block presentation", 0,
                 editor.inlayModel.getBlockElementsInRange(0, document.textLength)
                     .count { it.isValid })
-            assertEquals(2, pilot.evidenceSnapshot().fullyConcealed)
+            assertEquals(2, controller.evidenceSnapshot().fullyConcealed)
             assertEquals("H1 following paragraph must keep its source anchor",
                 firstParagraphY, editor.offsetToXY(firstParagraphOffset).y)
             assertEquals("Heading replacement must not invent section spacing",
@@ -155,13 +155,13 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             // Reveal by moving the caret inside authoritative H1. The owner
             // must remove only its own fold/inlay; JetBrains's section remains.
             editor.caretModel.moveToOffset(source.indexOf("Heading level 1") + 2)
-            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
             assertEquals(0, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
                 .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
             assertTrue(section.isValid)
             assertTrue(section.isExpanded)
             editor.caretModel.moveToOffset(caret)
-            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            controller.refreshActivity(plan, richPresentationEnabled = true)
             assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
                 .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
             assertTrue("Never remove or replace the foreign section fold", section.isValid)
@@ -170,7 +170,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(source, document.text)
             assertEquals(caret, editor.caretModel.offset)
         } finally {
-            pilot.dispose()
+            controller.dispose()
             // Even disposal must leave platform-owned folding untouched.
             assertTrue(requireNotNull(foreign).isValid)
             assertTrue(requireNotNull(foreign).isExpanded)
@@ -900,10 +900,9 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
 
 
     /**
-     * #353 H1-H6 layout migration pilot: six actual Heading models must
-     * replace their own heading + verified blank source lines, never add an
-     * inlay on top of the old line height. This is intentionally independent
-     * of Preview CSS parity and keeps the shipping opt-in disabled.
+     * Production H1-H6 layout: six actual Heading models must replace their
+     * own heading + verified blank source lines, never add a second block height.
+     * This remains independent of Preview CSS parity.
      *
      * Preserve the native per-paragraph line-Y accounting exactly: every
      * CustomFoldRegion contributes (physical height - replaced source height)
@@ -915,7 +914,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         val source = (1..6).joinToString("\n\n") { level ->
             "${"#".repeat(level)} Heading level $level\n\nParagraph after H$level."
         } + "\n"
-        myFixture.configureByText("six-heading-custom-layout-pilot.md", source)
+        myFixture.configureByText("six-heading-production-layout.md", source)
         val editor = myFixture.editor
         val doc = editor.document
         val paragraphOffsets = (1..6).map { level ->
@@ -1194,13 +1193,12 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
-     * Integration pilot: real production heading controller with explicit
-     * sourceLineReplacement=true (the shipping default stays false).
-     * Tests ownership through the actual controller's click and refresh paths.
+     * Real production heading controller ownership through the actual
+     * click/reveal and refresh paths.
      */
     fun testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach() {
         val source = "# Heading\n\nTail\n"
-        myFixture.configureByText("heading-custom-controller-pilot.md", source)
+        myFixture.configureByText("heading-production-controller.md", source)
         val editor = myFixture.editor
         val document = editor.document
         val caretInTail = source.indexOf("Tail") + 1
@@ -1240,7 +1238,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val fold = editor.foldingModel.allFoldRegions
                 .filterIsInstance<CustomFoldRegion>().single()
             assertEquals(
-                "Product pilot must replace both heading and verified blank source lines",
+                "Product heading must replace both heading and verified blank source lines",
                 fold.heightInPixels - editor.lineHeight * 2,
                 editor.offsetToXY(caretInTail).y - baselineY,
             )
