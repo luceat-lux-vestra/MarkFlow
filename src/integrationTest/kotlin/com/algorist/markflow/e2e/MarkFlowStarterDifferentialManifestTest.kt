@@ -4132,7 +4132,7 @@ class MarkFlowStarterDifferentialManifestTest {
     )
 
     /**
-     * Controlled-B can install a real H1 CustomFold when no platform-owned
+     * Production can install a real H1 CustomFold when no platform-owned
      * 0..EOF fold conflicts with offset zero. Only fall back to the explicit
      * owned H1 inline + ordinary-fold topology when the H1 CustomFold is
      * actually missing. H2-H6 must remain real CustomFolds.
@@ -4218,7 +4218,7 @@ class MarkFlowStarterDifferentialManifestTest {
         val result = mutableListOf(
             "schema=markflow-heading-painted-ink-y-baseline/v1",
             "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
-            "native_scope=RESEARCH_ONLY_B_HEADING_PAINT_NOT_PRODUCTION_DEFAULT",
+            "native_scope=PRODUCTION_HEADING_REPLACEMENT",
             "comparison=RELATIVE_TO_H1_WITHIN_INDEPENDENT_SCREENSHOT_CROPS",
             "native_scroll_offset_px=" + nativeScrollY,
             "level\tsource_line\tnative_ink_top_px\tpreview_ink_top_px" +
