@@ -62,12 +62,6 @@ internal object NativeMarkFlowProductionLifecycle {
                 derivedPresentation = derivedPresentation,
                 hostResources = hostResources,
                 rawHtmlPresentation = rawHtmlPresentation,
-                // Production has one heading policy: parser-proven source-line replacement
-                // with typography derived from the active editor/theme. Historical Preview A/B
-                // experiments must never change product behavior by fixture name or VM property.
-                headingSourceLineReplacement = true,
-                headingNativeEditorTypography = true,
-                headingPreviewPilotGap = false,
             )
             editor.putUserData(controllerKey, controller)
             true
