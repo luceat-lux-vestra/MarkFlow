@@ -460,7 +460,7 @@ internal class NativeFootnoteMarkerRenderer(
             val font = presentationFont()
             g2.font = font
             val metrics = g2.getFontMetrics(font)
-            g2.color = markerForeground(textAttributes)
+            g2.color = presentationForeground(textAttributes)
             val centeredBaseline =
                 targetRegion.y + (targetRegion.height + metrics.ascent - metrics.descent) / 2
             val baseline = if (role == FootnoteRole.REFERENCE) {
@@ -481,7 +481,7 @@ internal class NativeFootnoteMarkerRenderer(
         return base.deriveFont(max(MIN_FONT_SIZE, base.size2D * scale))
     }
 
-    private fun markerForeground(fallback: TextAttributes): java.awt.Color =
+    internal fun presentationForeground(fallback: TextAttributes): java.awt.Color =
         when (role) {
             FootnoteRole.REFERENCE ->
                 editor.colorsScheme.getAttributes(EditorColors.REFERENCE_HYPERLINK_COLOR).foregroundColor
