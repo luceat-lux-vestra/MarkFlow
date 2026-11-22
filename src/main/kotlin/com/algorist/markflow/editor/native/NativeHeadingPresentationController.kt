@@ -124,10 +124,11 @@ internal object NativeHeadingProjectionPlanner {
 /**
  * Source-neutral native heading presentation owned by one editor.
  *
- * Supported inactive headings conceal their exact source through MarkFlow-owned folds plus any
- * already-collapsed parser-syntax fold owned by the platform, then render a native block inlay with
- * H1-H6 typography. Active headings remove only MarkFlow-owned rich presentation so the original
- * Markdown is visible and directly editable.
+ * Supported inactive headings replace parser-proven source rows with a MarkFlow-owned
+ * CustomFoldRegion. When an expanded foreign section fold blocks the document-start H1 custom
+ * fold, the bounded fallback owns only that exact H1 source fold plus one same-line inline
+ * presentation. Active headings remove only MarkFlow-owned presentation so the original Markdown
+ * is visible and directly editable.
  */
 // JetBrains CustomFoldRegion and addCustomLinesFolding are @ApiStatus.Experimental.
 // The dependency is isolated here and exercised against the maintained IntelliJ compatibility
@@ -531,7 +532,7 @@ internal class NativeHeadingInlineFoldRenderer(
 }
 
 /**
- * Fail-closed physical-line eligibility for a future custom heading fold.
+ * Fail-closed physical-line eligibility for the production custom heading fold.
  * Never let a custom fold hide any unrelated source text: its region always
  * covers whole editor lines, unlike the old subrange syntax folds.
  */
@@ -579,10 +580,8 @@ internal object NativeHeadingCustomFoldLinePlanner {
 }
 
 /**
- * Production source-line replacement renderer. CustomFoldRegion occupies the parser-proven
- * heading source rows directly; no additive block-inlay implementation exists.
- */
-/**
+ * Production source-line replacement renderer support. CustomFoldRegion occupies the
+ * parser-proven heading source rows directly; no additive block-inlay implementation exists.
  * An inactive Heading is always displayed as ONE native line with ellipsis.
  * Truncation happens only in paint input, never in Markdown source bytes.
  * BreakIterator prevents slicing Unicode surrogate or grapheme boundaries.
