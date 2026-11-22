@@ -1315,14 +1315,18 @@ grep -Fq 'testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight' 
   die "Heading replacement lost verified blank-row geometry coverage"
 grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation' "$heading_test" ||
   die "Heading replacement lost click/reveal ownership coverage"
-grep -Fq 'testHeadingCustomFoldRendererUsesCurrentEditorTypographyAndPaintsPixels' "$heading_test" ||
+grep -Fq 'testHeadingCustomFoldRendererUsesCurrentLafTypographyAndPaintsPixels' "$heading_test" ||
   die "Heading renderer lost current-editor typography/paint coverage"
-grep -Fq 'testNativeHeadingLayoutMetricsFollowCurrentEditorFont' "$heading_test" ||
+grep -Fq 'testNativeHeadingLayoutMetricsFollowCurrentEditorSizeAndLaf' "$heading_test" ||
   die "Heading layout metrics lost current-editor font derivation coverage"
 grep -Fq 'fun horizontalPadding(editor: Editor)' "$heading_controller" ||
   die "Heading horizontal geometry is no longer derived from current editor metrics"
 grep -Fq 'internal fun nativeHeadingFont(editor: Editor, level: Int)' "$heading_controller" ||
-  die "Heading typography no longer has one current-editor font authority"
+  die "Heading typography no longer has one production font authority"
+grep -Fq 'UIManager.getFont("Label.font")' "$heading_controller" ||
+  die "Heading typography no longer derives its family from current Look and Feel"
+grep -Fq 'fun verticalPadding(level: Int, bodyFontPx: Float)' "$heading_controller" ||
+  die "Heading vertical rhythm no longer derives from live editor font size"
 grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "$heading_controller" ||
   die "Heading replacement lost fail-closed full-line eligibility checks"
 grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "$heading_test" ||
@@ -1372,17 +1376,8 @@ grep -Fq 'followingTextAnchorNegativeControls()' "$manifest_test" ||
 grep -Fq 'DIAGNOSTIC_NATIVE_LOGICAL_LINE_VS_JCEF_TEXT_RANGE' "$manifest_test" ||
   die "Stage E6 cannot assert unreviewed font-baseline parity"
 
-# #353 E19: preserve real painted heading text Y plus JCEF DOM baseline.
-grep -Fq 'headingInkVerticalNegativeControls()' "$manifest_test" ||
-  die "Stage E19 dropped painted-text raster Y negative controls"
-grep -Fq 'heading-ink-y-baseline-diagnostic.tsv' "$manifest_test" ||
-  die "Stage E19 lost six-heading screenshot baseline evidence"
-grep -Fq 'reference_baseline_marker_css_px' "$manifest_test" ||
-  die "Stage E19 lost real JCEF inline baseline marker"
-grep -Fq 'native_paint_baseline_document_px' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
-  die "Stage E19 lost renderer paint baseline inputs"
-grep -Fq 'native_scope=PRODUCTION_HEADING_REPLACEMENT' "$manifest_test" ||
-  die "Stage E19 heading paint evidence is not bound to production replacement topology"
+# Historical Stage E19 A/B heading paint diagnostics were removed with the single-policy cutover.
+# Product quality is guarded by production metric tests and deterministic visual acceptance.
 # Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
 # Source positions remain diagnostic, while native inlay boxes and Preview DOM
 # boxes have their own independently measured, source-joined ledger.

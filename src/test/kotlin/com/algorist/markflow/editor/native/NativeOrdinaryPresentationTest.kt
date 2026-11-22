@@ -522,13 +522,10 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
-     * Renderer intended for #350 product migration, not yet wired into the
-     * production controller. These two presentation paths intentionally use
-     * DIFFERENT typography: legacy editor font for additive Inlay versus
-     * pinned JCEF Preview font for opt-in CustomFold. Validate each contract
-     * independently instead of asserting invalid cross-renderer width parity.
+     * Production CustomFold typography uses the current LAF font family while
+     * editor color-scheme size remains the document size authority.
      */
-    fun testHeadingCustomFoldRendererUsesCurrentEditorTypographyAndPaintsPixels() {
+    fun testHeadingCustomFoldRendererUsesCurrentLafTypographyAndPaintsPixels() {
         val source = "## Heading\n\nTail\n"
         myFixture.configureByText("heading-custom-renderer-typography.md", source)
         val editor = myFixture.editor
@@ -552,7 +549,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val custom = requireNotNull(region) { "Custom two-line region unavailable" }
             assertTrue(custom.isValid)
             val font = nativeHeadingFont(editor, model.level)
-            assertEquals(editor.contentComponent.font.family, font.family)
+            assertEquals(nativeHeadingBaseFont(editor).family, font.family)
             assertEquals(java.awt.Font.BOLD, font.style)
             assertEquals(
                 editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(model.level),
@@ -565,7 +562,12 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val expectedWidth = if (
                 editor.contentComponent.isShowing && viewportWidth > padding * 2 + 1
             ) minOf(naturalWidth, viewportWidth - padding * 2) else naturalWidth
-            val expectedHeight = maxOf(editor.lineHeight, metrics.height)
+            val expectedHeight = maxOf(
+                editor.lineHeight,
+                metrics.height + NativeHeadingLayoutMetrics.verticalPadding(
+                    model.level, editor.colorsScheme.editorFontSize2D,
+                ) * 2,
+            )
             assertEquals(expectedWidth, custom.widthInPixels)
             assertEquals(expectedHeight, custom.heightInPixels)
             assertEquals(
@@ -654,7 +656,12 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
                     .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
                 val font = nativeHeadingFont(editor, model.level)
                 val metrics = editor.contentComponent.getFontMetrics(font)
-                val expected = maxOf(editor.lineHeight, metrics.height)
+                val expected = maxOf(
+                    editor.lineHeight,
+                    metrics.height + NativeHeadingLayoutMetrics.verticalPadding(
+                        model.level, editor.colorsScheme.editorFontSize2D,
+                    ) * 2,
+                )
                 assertEquals("Measured font $size must determine owned fold height",
                     expected, custom.heightInPixels)
                 assertEquals("Following paragraph must see replacement, not additive height",
@@ -683,17 +690,21 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(stamp, document.modificationStamp)
     }
 
-    fun testNativeHeadingLayoutMetricsFollowCurrentEditorFont() {
+    fun testNativeHeadingLayoutMetricsFollowCurrentEditorSizeAndLaf() {
         myFixture.configureByText("heading-layout-metrics.md", "# Heading\n")
         val editor = myFixture.editor as com.intellij.openapi.editor.impl.EditorImpl
         val original = editor.colorsScheme.editorFontSize2D
         try {
             for (fontPx in listOf(11f, 13f, 16f, 20f)) {
                 editor.setFontSize(fontPx)
-                val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+                val metrics = editor.contentComponent.getFontMetrics(nativeHeadingBaseFont(editor))
                 assertEquals(
                     maxOf(1, metrics.charWidth(' ')),
                     NativeHeadingLayoutMetrics.horizontalPadding(editor),
+                )
+                assertTrue(
+                    NativeHeadingLayoutMetrics.verticalPadding(1, fontPx) >
+                        NativeHeadingLayoutMetrics.verticalPadding(6, fontPx)
                 )
             }
         } finally {
@@ -741,17 +752,21 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             val fold = editor.foldingModel.allFoldRegions.filterIsInstance<CustomFoldRegion>()
                 .single { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
             val renderer = fold.renderer as NativeHeadingCustomFoldRenderer
-            val baseFont = editor.contentComponent.font
-            val nativeFont = baseFont.deriveFont(Font.BOLD,
-                editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(2))
+            val nativeFont = nativeHeadingFont(editor, 2)
             val metrics = editor.contentComponent.getFontMetrics(nativeFont)
-            val available = maxOf(1, fold.widthInPixels - 8)
+            val padding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
+            val available = maxOf(1, fold.widthInPixels - padding * 2)
             val displayed = NativeHeadingEllipsis.rendered(model.text, metrics, available)
             assertTrue("Long Heading must end in ellipsis", displayed.endsWith("…"))
             assertTrue(displayed.length < model.text.length)
             assertTrue(metrics.stringWidth(displayed) <= available)
-            assertEquals("Heading must own only a single font-metric line box",
-                maxOf(editor.lineHeight, metrics.height), fold.heightInPixels)
+            assertEquals("Heading must own one typography-derived replacement box",
+                maxOf(
+                    editor.lineHeight,
+                    metrics.height + NativeHeadingLayoutMetrics.verticalPadding(
+                        model.level, editor.colorsScheme.editorFontSize2D,
+                    ) * 2,
+                ), fold.heightInPixels)
             assertEquals("No extra block inlay on top of the original source line",
                 fold.heightInPixels - editor.lineHeight * 2,
                 editor.offsetToXY(tail).y - plainY)
@@ -2351,7 +2366,7 @@ Tail
         try {
             val inactive = controller.evidenceSnapshot()
             assertEquals(1, inactive.headingModels)
-            assertEquals(1, inactive.headingInlays)
+            assertEquals(0, inactive.headingInlays)
             assertTrue(inactive.headingFolds > 0)
             assertEquals(1, inactive.headingFullyConcealed)
             assertTrue(requireNotNull(foreignFold).isValid)
@@ -2373,7 +2388,7 @@ Tail
                 requireNotNull(foreignFold).isExpanded = false
             }
             editor.caretModel.moveToOffset(tailOffset)
-            assertEquals(1, controller.evidenceSnapshot().headingInlays)
+            assertEquals(0, controller.evidenceSnapshot().headingInlays)
             assertTrue(controller.evidenceSnapshot().headingFolds > 0)
             assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
             assertTrue(requireNotNull(foreignFold).isValid)
@@ -2388,12 +2403,12 @@ Tail
         }
     }
 
-    fun testHeadingTypographyScaleIsStrictlyDescendingFromH1ToH6() {
+    fun testHeadingTypographyScalePreservesDocumentHierarchyWithoutPreviewSpecificPolicy() {
         val scales = (1..6).map(::nativeHeadingFontScale)
-        assertTrue(scales.zipWithNext().all { (higher, lower) -> higher > lower })
-        assertEquals(1.0f, scales.last())
+        assertEquals(listOf(2.20f, 1.80f, 1.30f, 1.00f, 1.00f, 1.00f), scales)
+        assertTrue(scales.zipWithNext().all { (higher, lower) -> higher >= lower })
+        assertTrue(scales[0] > scales[1] && scales[1] > scales[2] && scales[2] > scales[3])
     }
-
 
     fun testInactiveSimpleBlockQuoteUsesNativeQuoteBlockWithoutChangingSource() {
         val source = "> quoted text\n\nTail\n"

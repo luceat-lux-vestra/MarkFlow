@@ -20,8 +20,10 @@ import java.awt.geom.Rectangle2D
 import java.awt.RenderingHints
 import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
+import javax.swing.UIManager
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal data class NativeHeadingModel(
     val sourceRange: ProjectionRange,
@@ -452,9 +454,18 @@ internal class NativeHeadingPresentationController(
 }
 
 internal object NativeHeadingLayoutMetrics {
+    private val verticalPaddingEm = floatArrayOf(
+        10f / 13f, 8f / 13f, 7f / 13f, 6f / 13f, 5f / 13f, 4f / 13f,
+    )
+
     fun horizontalPadding(editor: Editor): Int {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        val metrics = editor.contentComponent.getFontMetrics(nativeHeadingBaseFont(editor))
         return max(1, metrics.charWidth(' '))
+    }
+
+    fun verticalPadding(level: Int, bodyFontPx: Float): Int {
+        require(level in 1..6 && bodyFontPx > 0f)
+        return (bodyFontPx * verticalPaddingEm[level - 1]).roundToInt().coerceAtLeast(0)
     }
 
     fun fitsVerifiedBlankRow(glyphHeight: Int, lineHeight: Int): Boolean =
@@ -630,7 +641,11 @@ internal class NativeHeadingCustomFoldRenderer(
 
     override fun calcHeightInPixels(region: CustomFoldRegion): Int {
         val metrics = editor.contentComponent.getFontMetrics(headingFont())
-        return max(editor.lineHeight, metrics.height)
+        val verticalPadding = NativeHeadingLayoutMetrics.verticalPadding(
+            model.level,
+            editor.colorsScheme.editorFontSize2D,
+        )
+        return max(editor.lineHeight, metrics.height + verticalPadding * 2)
     }
 
     override fun paint(
@@ -668,17 +683,21 @@ internal class NativeHeadingCustomFoldRenderer(
     private fun headingFont(): Font = nativeHeadingFont(editor, model.level)
 }
 
-internal fun nativeHeadingFont(editor: Editor, level: Int): Font {
-    val base = editor.contentComponent.font
-    return base.deriveFont(Font.BOLD, editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(level))
-}
+internal fun nativeHeadingBaseFont(editor: Editor): Font =
+    UIManager.getFont("Label.font") ?: editor.contentComponent.font
+
+internal fun nativeHeadingFont(editor: Editor, level: Int): Font =
+    nativeHeadingBaseFont(editor).deriveFont(
+        Font.BOLD,
+        editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(level),
+    )
 
 internal fun nativeHeadingFontScale(level: Int): Float = when (level) {
-    1 -> 1.75f
-    2 -> 1.55f
-    3 -> 1.35f
-    4 -> 1.20f
-    5 -> 1.10f
+    1 -> 2.20f
+    2 -> 1.80f
+    3 -> 1.30f
+    4 -> 1.00f
+    5 -> 1.00f
     6 -> 1.00f
     else -> error("unsupported heading level: $level")
 }

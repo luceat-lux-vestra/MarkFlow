@@ -1137,6 +1137,9 @@ internal object NativeDifferentialPreviewE2EBridge {
      * Source-line geometry ledger measured from the installed production heading replacement.
      * CustomFold and same-start inline fallback are the only supported native heading surfaces.
      */
+    // Observes the exact CustomFoldRegion production surface; the product controller
+    // already isolates this pinned IntelliJ experimental API.
+    @Suppress("UnstableApiUsage")
     fun nativeHeadingSourceGeometry(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val document = editor.document
