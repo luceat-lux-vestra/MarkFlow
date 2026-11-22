@@ -3135,7 +3135,7 @@ Tail
         }
     }
 
-    fun testThematicBreakVariantsUseEditorRelativeRuleAndCompactBlankSeparator() {
+    fun testThematicBreakVariantsUseEditorRelativeRuleAndPreserveFollowingSeparator() {
         val source = """Paragraph before.
 
 ---
@@ -3176,16 +3176,14 @@ Tail
                         candidate.placeholderText.all { char -> char == '─' }
                 }
 
-            thematicBreaks.forEachIndexed { index, projection ->
+            thematicBreaks.forEach { projection ->
                 val fold = requireNotNull(thematicFoldFor(projection))
                 assertFalse(fold.isExpanded)
-                assertTrue(fold.endOffset >= projection.sourceRange.endOffset)
-                if (index < thematicBreaks.lastIndex) {
-                    assertTrue(
-                        "inactive thematic break should compact its verified following blank separator",
-                        fold.endOffset > projection.sourceRange.endOffset,
-                    )
-                }
+                assertEquals(
+                    "thematic placeholder must preserve the following separator as a block boundary",
+                    projection.sourceRange.endOffset,
+                    fold.endOffset,
+                )
             }
 
             val middle = thematicBreaks[1]
