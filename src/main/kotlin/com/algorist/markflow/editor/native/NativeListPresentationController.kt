@@ -1075,8 +1075,10 @@ internal class NativeListInlayRenderer(
                 isOpaque = false
                 isSelected = task.checked
                 isEnabled = editor.contentComponent.isEnabled
+                // The inlay does not own a Swing button press/focus lifecycle. Preserve the
+                // LAF hover state, but do not synthesize ButtonModel.armed from editor focus:
+                // armed is a press/action state and some LAFs render it as a pressed checkbox.
                 model.isRollover = rollover
-                model.isArmed = rollover && editor.contentComponent.hasFocus()
             }
             val x = bounds.x + max(0, (bounds.width - icon.iconWidth) / 2)
             val y = bounds.y + max(0, (bounds.height - icon.iconHeight) / 2)
