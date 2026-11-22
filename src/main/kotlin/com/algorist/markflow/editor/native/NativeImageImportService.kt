@@ -649,12 +649,9 @@ internal object NativeImageImportPolicy {
     private val unsafeFilenameChar = Regex("[<>:\"/\\\\|?*#%\\p{Cc}]")
     private val trailingDotsOrSpaces = Regex("[. ]+$")
     private val windowsReserved = Regex("(?i)^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$")
-    private val admittedExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp")
-
     fun sanitizeFilename(original: String): String {
         val dot = original.lastIndexOf('.')
-        val rawExtension = if (dot > 0 && dot < original.lastIndex) original.substring(dot + 1) else ""
-        val extension = rawExtension.lowercase(Locale.ROOT).takeIf { it in admittedExtensions }.orEmpty()
+        val extension = NativeLocalImageResolver.supportedExtensionOrNull(original).orEmpty()
         val rawStem = if (extension.isNotEmpty()) original.substring(0, dot) else original
         val sanitizedStem = rawStem
             .replace(unsafeFilenameChar, "_")
