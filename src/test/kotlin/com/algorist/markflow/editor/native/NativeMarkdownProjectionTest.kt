@@ -723,6 +723,15 @@ user@example.com
         assertTrue(footnoteSemantics(duplicate).references.isEmpty())
         assertTrue(footnoteSemantics(duplicate).definitions.isEmpty())
 
+        val validPlusMalformedDuplicate = """Ambiguous reference.[^same]
+
+[^same]: Valid definition.
+
+[^same]:
+"""
+        assertTrue(footnoteSemantics(validPlusMalformedDuplicate).references.isEmpty())
+        assertTrue(footnoteSemantics(validPlusMalformedDuplicate).definitions.isEmpty())
+
         val missing = "Missing reference.[^missing]\n"
         assertTrue(footnoteSemantics(missing).references.isEmpty())
         assertTrue(footnoteSemantics(missing).definitions.isEmpty())
