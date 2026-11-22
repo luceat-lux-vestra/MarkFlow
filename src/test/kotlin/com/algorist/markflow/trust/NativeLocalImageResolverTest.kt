@@ -121,6 +121,11 @@ class NativeLocalImageResolverTest {
         ).forEach { filename ->
             assertEquals(filename, false, NativeLocalImageResolver.supportsFilename(filename))
         }
+
+        assertEquals("png", NativeLocalImageResolver.supportedExtensionOrNull("IMAGE.PNG"))
+        assertEquals("jpg", NativeLocalImageResolver.supportedExtensionOrNull("image.JPG"))
+        assertEquals("jpeg", NativeLocalImageResolver.supportedExtensionOrNull("image.jpeg"))
+        assertEquals(null, NativeLocalImageResolver.supportedExtensionOrNull("image.webp"))
     }
 
     @Test
