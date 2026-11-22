@@ -849,15 +849,15 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         candidate("## Heading\nTail\n", 0..0)
         candidate("## Heading\n \nTail\n", 0..0)
         candidate("## Heading\n\n", 0..0)
-        // Setext consumes multiple physical lines: the current proposed
-        // single-line-rich renderer must not hide its underline or its source.
+        // Setext consumes multiple parser-proven physical lines. Production may replace
+        // the heading text + underline + verified blank separator as one owned custom fold.
         candidate("Heading\n=======\n\nTail\n", 0..2)
     }
 
     /**
-     * #350 fail-closed boundary: multiline Setext headings are valid Markdown,
-     * but cannot be replaced by a whole-line custom fold in the current pilot.
-     * They must not regain the old double-height block inlay as a fallback.
+     * Production Setext boundary: multiline Setext headings are replaced only when the
+     * planner proves the exact text, underline and optional blank-row ownership. They must
+     * never fall back to the retired additive block presentation.
      */
     fun testSourceReplacingSetextPreservesRichHeadingWithoutAdditiveInlay() {
         val source = "Prelude\n\nHeading\n=======\n\nTail\n"
@@ -1289,7 +1289,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
     }
 
     /**
-     * #350 production-path pilot: unlike constructed EditorMouseEvent tests,
+     * Production-path mouse contract: unlike constructed EditorMouseEvent tests,
      * dispatch an AWT click to the actual IntelliJ editor component so
      * EditorImpl.createEditorMouseEvent must hit-test the visible custom fold.
      * This is in-process platform UI evidence, not a full Starter Robot run.
