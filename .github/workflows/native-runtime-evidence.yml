@@ -1388,6 +1388,7 @@ jobs:
               'ordinary-parser-table-boundary',
               'ordinary-native-presentation-source-neutral',
               'ordinary-accessibility-source-fallback',
+              'footnote-native-presentation-source-neutral',
               'table-native-presentation-source-neutral',
               'table-caret-selection-and-end-boundary-reveal',
               'table-mouse-inlay-reveal',
@@ -1425,6 +1426,11 @@ jobs:
               ),
               'ordinary-accessibility-source-fallback': (
                   'sourceFallback=true', 'folds=0', 'highlighters=0', 'sourceStable=true', 'stampStable=true'
+              ),
+              'footnote-native-presentation-source-neutral': (
+                  'models=2', 'references=1', 'definitions=1', 'inlays=2', 'folds=2', 'highlighters=1',
+                  'caretReveal=true', 'mouseReveal=true', 'eventConsumed=true', 'navigation=false',
+                  'sourceStable=true', 'stampStable=true'
               ),
               'table-native-presentation-source-neutral': ('inlays=1', 'folds=2', 'sourceStable=true'),
               'table-caret-selection-and-end-boundary-reveal': ('caretReveal=true', 'selectionReveal=true', 'endBoundaryInactive=true'),
