@@ -58,12 +58,18 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         }
     }
 
-    fun testListPresentationDoesNotConsumeNonBlankFollowingLine() {
-        val source = "- first\n- second\nTail\n"
+    fun testListPresentationDoesNotConsumeParserProvenFollowingHeading() {
+        val source = "- first\n- second\n# Tail\n"
         val plan = NativeMarkdownProjectionPlanner.plan(
             ProjectionSnapshot(ProjectionSourceIdentity(1L, source, 0L))
         )
-        val model = NativeListProjectionPlanner.plan(plan).single()
+        val models = NativeListProjectionPlanner.plan(plan)
+        assertEquals(1, models.size)
+        val model = models.single()
+        assertTrue(
+            "heading must remain outside the parser-owned list source range",
+            model.sourceRange.endOffset <= source.indexOf("# Tail"),
+        )
         assertEquals(
             model.sourceRange,
             nativePresentationRangeWithFollowingBlankLine(model.sourceRange, source),

@@ -1516,12 +1516,20 @@ After
             assertTrue("expected MarkFlow-owned ordinary syntax folds", evidence.ownedFolds >= 8)
             assertTrue(evidence.collapsedFolds > 0)
 
-            val placeholders = editor.foldingModel.allFoldRegions
-                .filter { it.isValid && !it.isExpanded }
-                .map { it.placeholderText }
-            assertTrue(
-                "thematic break was not projected with current editor-relative width",
-                placeholders.contains(nativeThematicBreakPlaceholder(editor)),
+            val thematicBreak = requireNotNull(controller.currentPlan)
+                .projections
+                .single { projection -> projection.kind == NativeProjectionKind.THEMATIC_BREAK }
+            val thematicFold = editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
+                candidate.isValid &&
+                    !candidate.isExpanded &&
+                    candidate.startOffset == thematicBreak.sourceRange.startOffset &&
+                    candidate.endOffset >= thematicBreak.sourceRange.endOffset &&
+                    candidate.placeholderText.isNotEmpty() &&
+                    candidate.placeholderText.all { char -> char == '─' }
+            }
+            assertNotNull(
+                "thematic break was not projected as a collapsed rule fold over its parser-owned source",
+                thematicFold,
             )
 
             val link = requireNotNull(controller.currentPlan)
@@ -3159,18 +3167,18 @@ Tail
                 },
             )
 
-            val expectedPlaceholder = nativeThematicBreakPlaceholder(editor)
+            fun thematicFoldFor(projection: NativeProjection) =
+                editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
+                    candidate.isValid &&
+                        candidate.startOffset == projection.sourceRange.startOffset &&
+                        candidate.endOffset >= projection.sourceRange.endOffset &&
+                        candidate.placeholderText.isNotEmpty() &&
+                        candidate.placeholderText.all { char -> char == '─' }
+                }
+
             thematicBreaks.forEachIndexed { index, projection ->
-                val fold = requireNotNull(
-                    editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
-                        candidate.isValid &&
-                            candidate.startOffset == projection.sourceRange.startOffset &&
-                            candidate.placeholderText == expectedPlaceholder
-                    }
-                )
+                val fold = requireNotNull(thematicFoldFor(projection))
                 assertFalse(fold.isExpanded)
-                assertTrue(expectedPlaceholder.all { it == '─' })
-                assertTrue(expectedPlaceholder.isNotEmpty())
                 assertTrue(fold.endOffset >= projection.sourceRange.endOffset)
                 if (index < thematicBreaks.lastIndex) {
                     assertTrue(
@@ -3182,13 +3190,7 @@ Tail
 
             val middle = thematicBreaks[1]
             editor.caretModel.moveToOffset(middle.sourceRange.startOffset)
-            val middleFold = requireNotNull(
-                editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
-                    candidate.isValid &&
-                        candidate.startOffset == middle.sourceRange.startOffset &&
-                        candidate.placeholderText == expectedPlaceholder
-                }
-            )
+            val middleFold = requireNotNull(thematicFoldFor(middle))
             assertTrue(middleFold.isExpanded)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)

@@ -206,11 +206,20 @@ internal object NativeMarkdownParityProbe {
                         check(evidence.planStatus == ProjectionPlanStatus.READY)
                         check(evidence.ownedFolds > 0) { "ordinary fallback installed no owned folds" }
                         check(evidence.ownedHighlighters > 0) { "ordinary fallback installed no highlighters" }
-                        val placeholders = fixture.editor.foldingModel.allFoldRegions
-                            .filter { it.isValid && !it.isExpanded }
-                            .map { it.placeholderText }
-                        check(nativeThematicBreakPlaceholder(fixture.editor) in placeholders) {
-                            "thematic break was not projected with current editor-relative width"
+                        val thematicBreak = requireNotNull(controller.currentPlan)
+                            .projections
+                            .single { projection -> projection.kind == NativeProjectionKind.THEMATIC_BREAK }
+                        check(
+                            fixture.editor.foldingModel.allFoldRegions.any { fold ->
+                                fold.isValid &&
+                                    !fold.isExpanded &&
+                                    fold.startOffset == thematicBreak.sourceRange.startOffset &&
+                                    fold.endOffset >= thematicBreak.sourceRange.endOffset &&
+                                    fold.placeholderText.isNotEmpty() &&
+                                    fold.placeholderText.all { char -> char == '─' }
+                            }
+                        ) {
+                            "thematic break was not projected as a collapsed rule fold over parser-owned source"
                         }
                         check(
                             evidence.listModels == 2 &&
