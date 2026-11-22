@@ -597,8 +597,10 @@ internal class NativeTableInlayRenderer(
         val metrics = component.getFontMetrics(normalFont)
         val boldFont = normalFont.deriveFont(Font.BOLD)
         val boldMetrics = component.getFontMetrics(boldFont)
-        val columnWidths = columnWidths(metrics, boldMetrics)
-        val rowHeight = rowHeight(metrics)
+        val layout = layoutMetrics()
+        val columnWidths = columnWidths(metrics, boldMetrics, layout)
+        val rowHeight = tableRowHeight(layout)
+        val fallbackCellWidth = layout.tableCellMinimumWidth(metrics.stringWidth("…"))
         val foreground = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
         val background = textAttributes.backgroundColor ?: editor.colorsScheme.defaultBackground
 
@@ -610,12 +612,13 @@ internal class NativeTableInlayRenderer(
         model.rows.forEach { row ->
             var x = targetRegion.x
             row.cells.forEachIndexed { index, cell ->
-                val width = columnWidths.getOrElse(index) { MIN_COLUMN_WIDTH }
+                val width = columnWidths.getOrElse(index) { fallbackCellWidth }
                 g2.drawRect(x, y, width, rowHeight)
                 val baseFont = if (row.header) boldFont else normalFont
                 val cellMetrics = if (row.header) boldMetrics else metrics
-                val baseline = y + max(cellMetrics.ascent + 2, (rowHeight + cellMetrics.ascent - cellMetrics.descent) / 2)
-                val contentWidth = max(1, width - CELL_HORIZONTAL_PADDING * 2)
+                val baseline = y +
+                    max(cellMetrics.ascent, (rowHeight + cellMetrics.ascent - cellMetrics.descent) / 2)
+                val contentWidth = max(1, width - layout.horizontalPadding * 2)
                 val visibleTextWidth = min(runsWidth(cell.displayRuns, baseFont), contentWidth)
                 val startX = alignedTextStartX(
                     cellX = x,
@@ -641,32 +644,51 @@ internal class NativeTableInlayRenderer(
         val component = editor.contentComponent
         val metrics = component.getFontMetrics(component.font)
         val boldMetrics = component.getFontMetrics(component.font.deriveFont(Font.BOLD))
-        val widths = columnWidths(metrics, boldMetrics)
-        val required = widths.sum().coerceAtLeast(MIN_TABLE_WIDTH)
-        val viewport = max(MIN_TABLE_WIDTH, component.visibleRect.width - 16)
-        val width = min(required, viewport.coerceAtLeast(MIN_TABLE_WIDTH))
-        val height = rowHeight(metrics) * model.rows.size.coerceAtLeast(1)
+        val layout = layoutMetrics()
+        val widths = columnWidths(metrics, boldMetrics, layout)
+        val width = widths.sum().coerceAtLeast(layout.rowHeight)
+        val height = tableRowHeight(layout) * model.rows.size.coerceAtLeast(1)
         return width to height
     }
 
-    private fun columnWidths(normal: java.awt.FontMetrics, bold: java.awt.FontMetrics): List<Int> {
+    private fun columnWidths(
+        normal: java.awt.FontMetrics,
+        bold: java.awt.FontMetrics,
+        layout: NativePresentationLayoutMetrics,
+    ): List<Int> {
         val columns = model.rows.maxOfOrNull { it.cells.size } ?: 1
-        val raw = MutableList(columns) { MIN_COLUMN_WIDTH }
+        val minimum = layout.tableCellMinimumWidth(normal.stringWidth("…"))
+        val raw = MutableList(columns) { minimum }
         model.rows.forEach { row ->
             row.cells.forEachIndexed { index, cell ->
                 val baseFont = if (row.header) bold.font else normal.font
-                val desired = runsWidth(cell.displayRuns, baseFont) + CELL_HORIZONTAL_PADDING * 2
-                raw[index] = max(raw[index], min(MAX_COLUMN_WIDTH, desired))
+                val desired = runsWidth(cell.displayRuns, baseFont) + layout.horizontalPadding * 2
+                raw[index] = max(raw[index], desired)
             }
         }
-        val viewport = max(MIN_TABLE_WIDTH, editor.contentComponent.visibleRect.width - 16)
+
         val total = raw.sum()
-        if (total <= viewport || total == 0) return raw
-        val scale = viewport.toDouble() / total.toDouble()
-        return raw.map { width -> max(MIN_COLUMN_WIDTH, (width * scale).toInt()) }
+        val viewport = layout.viewportWidth
+        if (total <= viewport) return raw
+
+        val minimumTotal = minimum * columns
+        if (viewport <= minimumTotal) return List(columns) { minimum }
+
+        val availableExtra = viewport - minimumTotal
+        val rawExtras = raw.map { width -> width - minimum }
+        val totalExtra = rawExtras.sum()
+        if (totalExtra <= 0) return List(columns) { minimum }
+
+        return rawExtras.map { extra ->
+            minimum + ((extra.toLong() * availableExtra) / totalExtra).toInt()
+        }
     }
 
-    private fun rowHeight(metrics: java.awt.FontMetrics): Int = max(editor.lineHeight + 4, metrics.height + 8)
+    private fun tableRowHeight(layout: NativePresentationLayoutMetrics): Int =
+        layout.rowHeight + layout.verticalPadding
+
+    private fun layoutMetrics(): NativePresentationLayoutMetrics =
+        nativePresentationLayoutMetrics(editor)
 
     private fun runsWidth(runs: List<NativeTableTextRun>, baseFont: Font): Int =
         runs.sumOf { run ->
@@ -772,14 +794,15 @@ internal class NativeTableInlayRenderer(
         visibleTextWidth: Int,
         alignment: NativeTableAlignment,
     ): Int {
-        val contentWidth = max(1, cellWidth - CELL_HORIZONTAL_PADDING * 2)
+        val padding = layoutMetrics().horizontalPadding
+        val contentWidth = max(1, cellWidth - padding * 2)
         val boundedTextWidth = min(max(0, visibleTextWidth), contentWidth)
         return when (alignment) {
-            NativeTableAlignment.LEFT -> cellX + CELL_HORIZONTAL_PADDING
+            NativeTableAlignment.LEFT -> cellX + padding
             NativeTableAlignment.CENTER ->
-                cellX + CELL_HORIZONTAL_PADDING + (contentWidth - boundedTextWidth) / 2
+                cellX + padding + (contentWidth - boundedTextWidth) / 2
             NativeTableAlignment.RIGHT ->
-                cellX + cellWidth - CELL_HORIZONTAL_PADDING - boundedTextWidth
+                cellX + cellWidth - padding - boundedTextWidth
         }
     }
 
@@ -803,10 +826,6 @@ internal class NativeTableInlayRenderer(
     }
 
     companion object {
-        private const val MIN_TABLE_WIDTH = 160
-        private const val MIN_COLUMN_WIDTH = 72
-        private const val MAX_COLUMN_WIDTH = 320
-        private const val CELL_HORIZONTAL_PADDING = 8
         private const val INLINE_CODE_BACKGROUND_ALPHA = 24
     }
 }
