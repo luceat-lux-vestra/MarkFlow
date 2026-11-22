@@ -922,9 +922,13 @@ internal class NativeListInlayRenderer(
         val metrics = editor.contentComponent.getFontMetrics(font)
         val height = rowHeight()
         val verticalPadding = verticalPadding()
+        val layout = layoutMetrics()
         return buildString {
             appendLine(
                 "renderer_row_height_px=$height\tvertical_padding_px=$verticalPadding" +
+                    "\touter_padding_px=${layout.outerPadding}" +
+                    "\tdepth_indent_px=${layout.depthIndent}" +
+                    "\tmarker_gap_px=${layout.markerGap}" +
                     "\tcalculated_inlay_height_px=${height * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) +
                         verticalPadding * 2}"
             )
@@ -933,7 +937,7 @@ internal class NativeListInlayRenderer(
                 val baseline = rowTop?.let {
                     it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
                 }
-                val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+                val indent = layout.outerPadding + row.depth * layout.depthIndent
                 val markerX = bounds?.let { it.x + indent }
                 appendLine(
                     "row=$index\tdepth=${row.depth}\tmarker=${row.marker}" +
@@ -982,8 +986,14 @@ internal class NativeListInlayRenderer(
         return Point(box.x + box.width / 2, box.y + box.height / 2)
     }
 
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-        max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+        val layout = layoutMetrics()
+        val availableWidth = max(
+            editor.scrollingModel.visibleArea.width,
+            editor.contentComponent.width,
+        ) - layout.outerPadding * 2
+        return max(editor.lineHeight, availableWidth)
+    }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
         rowHeight() * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) + verticalPadding() * 2
@@ -1002,17 +1012,18 @@ internal class NativeListInlayRenderer(
         g2.color = foreground
 
         val height = rowHeight()
+        val layout = layoutMetrics()
         model.rows.forEachIndexed { index, row ->
             val y = targetRegion.y + verticalPadding() + rowTopOffset(index, height)
             val baseline = y + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
-            val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+            val indent = layout.outerPadding + row.depth * layout.depthIndent
             val markerX = targetRegion.x + indent
             val task = row.task
             val contentX: Int
             if (task != null) {
                 val checkbox = checkboxBounds(index, targetRegion)
                 paintTaskCheckbox(g2, task, checkbox, foreground)
-                contentX = checkbox.x + checkbox.width + MARKER_GAP
+                contentX = checkbox.x + checkbox.width + layout.markerGap
                 drawRuns(g2, row.displayRuns, contentX, baseline, font)
             } else {
                 val displayMarker = nativeListDisplayMarker(row.marker)
@@ -1020,7 +1031,7 @@ internal class NativeListInlayRenderer(
                 g2.drawString(displayMarker, markerX, baseline)
                 // Keep the existing content column stable: only the marker glyph is semantic.
                 val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
-                contentX = markerX + markerWidth + MARKER_GAP
+                contentX = markerX + markerWidth + layout.markerGap
                 drawRuns(g2, row.displayRuns, contentX, baseline, font)
             }
             g2.font = font
@@ -1107,7 +1118,8 @@ internal class NativeListInlayRenderer(
 
     private fun checkboxBounds(index: Int, bounds: Rectangle): Rectangle {
         val row = model.rows[index]
-        val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+        val layout = layoutMetrics()
+        val indent = layout.outerPadding + row.depth * layout.depthIndent
         val size = checkboxSize()
         val height = rowHeight()
         val rowTop = bounds.y + verticalPadding() + rowTopOffset(index, height)
@@ -1119,6 +1131,17 @@ internal class NativeListInlayRenderer(
 
     private fun rowTopOffset(index: Int, height: Int): Int =
         model.rows.take(index).sumOf(::rowVisualLineCount) * height
+
+    private fun layoutMetrics(): NativeListLayoutMetrics {
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        val spaceWidth = max(1, metrics.charWidth(' '))
+        val tabColumns = editor.settings.getTabSize(editor.project).coerceAtLeast(1)
+        return NativeListLayoutMetrics(
+            outerPadding = spaceWidth,
+            depthIndent = spaceWidth * tabColumns,
+            markerGap = spaceWidth,
+        )
+    }
 
     private fun rowHeight(): Int {
         val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
@@ -1141,11 +1164,13 @@ internal class NativeListInlayRenderer(
         UIManager.getIcon(CHECKBOX_ICON_KEY)
             ?.takeIf { icon -> icon.iconWidth > 0 && icon.iconHeight > 0 }
 
+    private data class NativeListLayoutMetrics(
+        val outerPadding: Int,
+        val depthIndent: Int,
+        val markerGap: Int,
+    )
+
     companion object {
-        private const val MIN_WIDTH = 160
-        private const val OUTER_PADDING = 8
-        private const val DEPTH_INDENT = 24
-        private const val MARKER_GAP = 8
         private const val CHECKBOX_ICON_KEY = "CheckBox.icon"
         private const val CHECKBOX_FOREGROUND_KEY = "CheckBox.foreground"
     }
