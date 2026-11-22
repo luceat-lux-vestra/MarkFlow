@@ -326,8 +326,13 @@ internal class NativeOrdinaryPresentationController(
             } else {
                 emptyList()
             }
-        NativeProjectionKind.THEMATIC_BREAK ->
-            listOf(nativePresentationRangeWithFollowingBlankLine(projection.sourceRange, source))
+        NativeProjectionKind.THEMATIC_BREAK -> {
+            // Keep the rule's following blank separator outside the fold. A fold placeholder
+            // occupies its own visual line; consuming the separator can collapse the following
+            // native block inlay onto that same line and render later content above the rule.
+            // Adjacent native blocks compact their own trailing separators independently.
+            listOf(projection.sourceRange)
+        }
         else -> projection.syntaxRanges
     }
 
