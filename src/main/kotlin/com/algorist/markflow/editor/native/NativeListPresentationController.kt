@@ -988,10 +988,9 @@ internal class NativeListInlayRenderer(
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val layout = layoutMetrics()
-        val availableWidth = max(
-            editor.scrollingModel.visibleArea.width,
-            editor.contentComponent.width,
-        ) - layout.outerPadding * 2
+        val viewportWidth = editor.scrollingModel.visibleArea.width
+        val measuredWidth = if (viewportWidth > 0) viewportWidth else editor.contentComponent.width
+        val availableWidth = measuredWidth - layout.outerPadding * 2
         return max(editor.lineHeight, availableWidth)
     }
 
