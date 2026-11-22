@@ -20,6 +20,514 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
+    fun testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight() {
+        val source = "# Heading\n\nParagraph after heading.\n"
+        myFixture.configureByText("single-line-fold-geometry.txt", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val nextTextOffset = source.indexOf("Paragraph")
+        editor.caretModel.moveToOffset(nextTextOffset + 1)
+        val caretBefore = editor.caretModel.offset
+        val stampBefore = document.modificationStamp
+        val baselineY = editor.offsetToXY(nextTextOffset).y
+        val blockHeight = editor.lineHeight + 18
+        var region: CustomFoldRegion? = null
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 360
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = blockHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Geometry probe only: do not mutate editor state.
+            }
+        }
+        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+            region = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
+        }
+        val installed = requireNotNull(region) { "Platform custom line fold unavailable" }
+        try {
+            assertTrue(installed.isValid)
+            assertFalse(installed.isExpanded)
+            assertEquals(
+                "Single-line custom fold must replace, not add to, source line",
+                blockHeight - editor.lineHeight,
+                editor.offsetToXY(nextTextOffset).y - baselineY,
+            )
+            assertEquals(caretBefore, editor.caretModel.offset)
+            assertEquals(stampBefore, document.modificationStamp)
+            assertEquals(source, document.text)
+
+            // Platform API: custom line folds are always collapsed and
+            // cannot be expanded. Reveal means REMOVE, then reinstall.
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                editor.foldingModel.removeFoldRegion(installed)
+            }
+            assertEquals("Removing custom fold must restore plain vertical rhythm",
+                baselineY, editor.offsetToXY(nextTextOffset).y)
+            assertEquals(source, document.text)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
+            }
+            assertTrue(requireNotNull(region).isValid)
+            assertEquals(blockHeight - editor.lineHeight,
+                editor.offsetToXY(nextTextOffset).y - baselineY)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals("Disposal must restore source-line advance",
+            baselineY, editor.offsetToXY(nextTextOffset).y)
+        assertEquals(caretBefore, editor.caretModel.offset)
+        assertEquals(stampBefore, document.modificationStamp)
+        assertEquals(source, document.text)
+    }
+
+    /**
+     * #545 H1: distinguish an enclosing platform-style section fold from a
+     * short Markdown syntax fold. A long expanded region beginning at H1's
+     * source offset competes with a whole-line H1 CustomFoldRegion, while a
+     * strictly nested H2 CustomFold can be installed. Preserve all foreign
+     * fold ownership; do not manufacture a green 6/6 by removing it.
+     *
+     * This is a deterministic synthetic platform-fold contract in
+     * BasePlatformTestCase. The maintained Markdown provider topology remains independently validated in Starter.
+     */
+    fun testH1CustomFoldFailsClosedOnExpandedForeignSectionSharingStart() {
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
+        myFixture.configureByText("heading-platform-section-collision.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val stamp = document.modificationStamp
+        editor.caretModel.moveToOffset(source.length)
+        val caret = editor.caretModel.offset
+        val firstParagraphOffset = source.indexOf("Paragraph after H1.")
+        val secondHeadingOffset = source.indexOf("## Heading level 2")
+        val firstParagraphY = editor.offsetToXY(firstParagraphOffset).y
+        val secondHeadingY = editor.offsetToXY(secondHeadingOffset).y
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot.capture(document, 0L)
+        )
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertEquals(listOf(1, 2), NativeHeadingProjectionPlanner.plan(plan).map { it.level })
+
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        val pilot = NativeHeadingPresentationController(editor)
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(
+                    0, document.textLength - 1, "platform-owned Markdown section"
+                )
+                requireNotNull(foreign).isExpanded = true
+            }
+            val section = requireNotNull(foreign)
+            assertTrue(section.isValid)
+            assertTrue(section.isExpanded)
+            pilot.applyPlan(plan, richPresentationEnabled = true)
+            val installed = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>()
+                .filter { it.isValid && !it.isExpanded &&
+                    it.renderer is NativeHeadingCustomFoldRenderer }
+            assertEquals(
+                "The same-start platform section must block H1 without blocking the nested H2",
+                1, installed.size,
+            )
+            assertEquals(source.indexOf("## Heading level 2"), installed.single().startOffset)
+            assertEquals(1, pilot.evidenceSnapshot().ownedCustomFolds)
+            // The new H1 candidate is a source-line inline inlay, NOT a
+            // duplicate-height block. The nested H2 stays a real CustomFold.
+            val inline = editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .filter { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid }
+            assertEquals("Co-start H1 must render through exactly one owned inline", 1, inline.size)
+            assertTrue(inline.single().heightInPixels >= editor.lineHeight)
+            assertEquals("Do not reintroduce additive H1 block presentation", 0,
+                editor.inlayModel.getBlockElementsInRange(0, document.textLength)
+                    .count { it.isValid })
+            assertEquals(2, pilot.evidenceSnapshot().fullyConcealed)
+            assertEquals("H1 following paragraph must keep its source anchor",
+                firstParagraphY, editor.offsetToXY(firstParagraphOffset).y)
+            assertEquals("Heading replacement must not invent section spacing",
+                secondHeadingY, editor.offsetToXY(secondHeadingOffset).y)
+            // Reveal by moving the caret inside authoritative H1. The owner
+            // must remove only its own fold/inlay; JetBrains's section remains.
+            editor.caretModel.moveToOffset(source.indexOf("Heading level 1") + 2)
+            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(0, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
+            assertTrue(section.isValid)
+            assertTrue(section.isExpanded)
+            editor.caretModel.moveToOffset(caret)
+            pilot.refreshActivity(plan, richPresentationEnabled = true)
+            assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+                .count { it.renderer is NativeHeadingInlineFoldRenderer && it.isValid })
+            assertTrue("Never remove or replace the foreign section fold", section.isValid)
+            assertTrue("Never change platform expansion state to force H1", section.isExpanded)
+            assertEquals(stamp, document.modificationStamp)
+            assertEquals(source, document.text)
+            assertEquals(caret, editor.caretModel.offset)
+        } finally {
+            pilot.dispose()
+            // Even disposal must leave platform-owned folding untouched.
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(stamp, document.modificationStamp)
+        assertEquals(source, document.text)
+        assertEquals(caret, editor.caretModel.offset)
+    }
+
+    /**
+     * #545 non-destructive fallback: only probe whether IDEA allows a
+     * conventional source-heading fold inside an expanded platform section
+     * with the *same start*. A successful CustomFold is explicitly NOT required
+     * here (see the separate failing-H1 contract), and no foreign fold may be
+     * changed to make this proof pass. It is intentionally a feasibility probe,
+     * not a claim that native heading presentation now matches the Preview.
+     */
+    fun testH1ConventionalSourceFoldCanNestInsideForeignSectionAtSameStart() {
+        val source = "# Heading level 1\n\nParagraph after H1.\n\n" +
+            "## Heading level 2\n\nParagraph after H2.\n"
+        myFixture.configureByText("heading-section-same-start-normal-fold.txt", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val stamp = document.modificationStamp
+        val tailOffset = source.indexOf("Paragraph after H2.") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        var sourceFold: com.intellij.openapi.editor.FoldRegion? = null
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(
+                    0, document.textLength - 1, "platform section"
+                )
+                requireNotNull(foreign).isExpanded = true
+            }
+            val platformFold = requireNotNull(foreign)
+            val h1End = document.getLineEndOffset(0)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                sourceFold = editor.foldingModel.addFoldRegion(0, h1End, "\u200B")
+                sourceFold?.isExpanded = false
+            }
+            val own = requireNotNull(sourceFold) {
+                "Same-start conventional source fold also rejected by pinned IDEA"
+            }
+            assertTrue(own.isValid)
+            assertFalse(own.isExpanded)
+            assertEquals(0, own.startOffset)
+            assertEquals(h1End, own.endOffset)
+            assertTrue(platformFold.isValid)
+            assertTrue(platformFold.isExpanded)
+            assertEquals(source, document.text)
+            assertEquals(stamp, document.modificationStamp)
+            assertEquals(tailOffset, editor.caretModel.offset)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                sourceFold?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+            // The normal-fold owner must only dispose its own region.
+            assertTrue(requireNotNull(foreign).isValid)
+            assertTrue(requireNotNull(foreign).isExpanded)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(source, document.text)
+        assertEquals(stamp, document.modificationStamp)
+        assertEquals(tailOffset, editor.caretModel.offset)
+    }
+
+    /**
+     * #545 custom-fold compatibility with the bundled Markdown editor's own
+     * collapsed heading-syntax fold. A custom line fold may coexist with a
+     * foreign fold entirely inside that line; neither must be owned/removed
+     * by our projection when revealing exact source.
+     */
+    fun testCustomHeadingFoldCoexistsWithPlatformSyntaxFoldAndSourceReveal() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-platform-syntax-custom-fold.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val tailOffset = source.indexOf("Tail") + 1
+        val headingOffset = source.indexOf("Heading") + 2
+        editor.caretModel.moveToOffset(tailOffset)
+        val stampBefore = document.modificationStamp
+        val beforeY = editor.offsetToXY(tailOffset).y
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        var rich: CustomFoldRegion? = null
+        val targetHeight = editor.lineHeight + 16
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 360
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = targetHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Geometry and lifetime compatibility only; production paint is unchanged.
+            }
+        }
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(0, 2, "markdown syntax")
+                requireNotNull(foreign).isExpanded = false
+            }
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                rich = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
+            }
+            assertTrue("Native heading custom fold must coexist with a foreign syntax fold",
+                requireNotNull(rich).isValid)
+            assertEquals(targetHeight - editor.lineHeight,
+                editor.offsetToXY(tailOffset).y - beforeY)
+            assertEquals(tailOffset, editor.caretModel.offset)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+
+            // Custom line folds cannot expand. Removing ours must reveal the
+            // original source without deleting or expanding JetBrains's fold.
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                requireNotNull(rich).takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+            rich = null
+            assertEquals(beforeY, editor.offsetToXY(tailOffset).y)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+
+            editor.caretModel.moveToOffset(headingOffset)
+            assertEquals(headingOffset, editor.caretModel.offset)
+            assertEquals(source, document.text)
+            editor.caretModel.moveToOffset(tailOffset)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                rich = editor.foldingModel.addCustomLinesFolding(0, 0, renderer)
+            }
+            assertTrue(requireNotNull(rich).isValid)
+            assertEquals(targetHeight - editor.lineHeight,
+                editor.offsetToXY(tailOffset).y - beforeY)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                rich?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(beforeY, editor.offsetToXY(tailOffset).y)
+        assertEquals(tailOffset, editor.caretModel.offset)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
+    /**
+     * #545 verifies two-line fold of an ATX heading plus the verified
+     * immediately following blank line. It must replace TWO source lines,
+     * not conceal any nonblank paragraph text or change the authoritative file.
+     */
+    fun testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight() {
+        val source = "# Heading\n\nParagraph after heading.\n"
+        myFixture.configureByText("heading-plus-blank-custom-fold.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        assertEquals("", document.getText(
+            com.intellij.openapi.util.TextRange(
+                document.getLineStartOffset(1), document.getLineEndOffset(1),
+            )
+        ))
+        val paragraphOffset = source.indexOf("Paragraph") + 2
+        editor.caretModel.moveToOffset(paragraphOffset)
+        val stampBefore = document.modificationStamp
+        val plainY = editor.offsetToXY(paragraphOffset).y
+        val targetHeight = editor.lineHeight + 20
+        var region: CustomFoldRegion? = null
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 360
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = targetHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Proof-only, no product glyphs changed.
+            }
+        }
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region = editor.foldingModel.addCustomLinesFolding(0, 1, renderer)
+            }
+            val installed = requireNotNull(region)
+            assertTrue(installed.isValid)
+            assertEquals(
+                "Two-line custom fold must replace both original visual lines",
+                targetHeight - editor.lineHeight * 2,
+                editor.offsetToXY(paragraphOffset).y - plainY,
+            )
+            assertEquals(paragraphOffset, editor.caretModel.offset)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                region?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(plainY, editor.offsetToXY(paragraphOffset).y)
+        assertEquals(paragraphOffset, editor.caretModel.offset)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
+    /**
+     * #545 ownership contract: EditorImpl reports a visible CustomFoldRegion in
+     * EditorMouseEvent.collapsedFoldRegion. Its owner must gate removal; an
+     * arbitrary foreign fold, wrong button or non-editing area must not reveal.
+     *
+     * Events here are constructed to exercise the ownership callback, not
+     * physical hit testing. A real Starter mouse path remains mandatory before
+     * changing production heading presentation.
+     */
+    fun testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation() {
+        val source = "# Heading\n\nTail\n"
+        myFixture.configureByText("heading-custom-click-ownership.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val caretInTail = source.indexOf("Tail") + 1
+        val headingContentOffset = source.indexOf("Heading")
+        editor.caretModel.moveToOffset(caretInTail)
+        val plainY = editor.offsetToXY(caretInTail).y
+        val stampBefore = document.modificationStamp
+        var foreign: com.intellij.openapi.editor.FoldRegion? = null
+        var owned: CustomFoldRegion? = null
+        val displayHeight = editor.lineHeight + 16
+        val renderer = object : CustomFoldRegionRenderer {
+            override fun calcWidthInPixels(region: CustomFoldRegion): Int = 320
+            override fun calcHeightInPixels(region: CustomFoldRegion): Int = displayHeight
+            override fun paint(
+                region: CustomFoldRegion,
+                g: Graphics2D,
+                targetRegion: Rectangle2D,
+                textAttributes: TextAttributes,
+            ) {
+                // Event and lifetime contract only; product paint is untouched.
+            }
+        }
+        var revealCount = 0
+        val clickListener = object : com.intellij.openapi.editor.event.EditorMouseListener {
+            override fun mouseClicked(event: EditorMouseEvent) {
+                if (event.editor !== editor ||
+                    event.area != EditorMouseEventArea.EDITING_AREA ||
+                    event.mouseEvent.button != MouseEvent.BUTTON1) return
+                val target = event.collapsedFoldRegion as? CustomFoldRegion ?: return
+                if (target !== owned || !target.isValid) return
+
+                editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                    editor.foldingModel.removeFoldRegion(target)
+                }
+                owned = null
+                editor.selectionModel.removeSelection()
+                editor.caretModel.primaryCaret.moveToOffset(headingContentOffset)
+                revealCount++
+                event.consume()
+            }
+        }
+        fun click(
+            region: com.intellij.openapi.editor.FoldRegion?,
+            button: Int = MouseEvent.BUTTON1,
+            area: EditorMouseEventArea = EditorMouseEventArea.EDITING_AREA,
+        ): EditorMouseEvent {
+            val mouseEvent = MouseEvent(
+                editor.contentComponent,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0, 0, 0, 1, false, button,
+            )
+            return EditorMouseEvent(
+                editor, mouseEvent, area, 0,
+                editor.offsetToLogicalPosition(0),
+                editor.offsetToVisualPosition(0),
+                false, region, null, null,
+            )
+        }
+        editor.addEditorMouseListener(clickListener)
+        try {
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                foreign = editor.foldingModel.addFoldRegion(0, 2, "platform marker")
+                requireNotNull(foreign).isExpanded = false
+                owned = editor.foldingModel.addCustomLinesFolding(0, 1, renderer)
+            }
+            val target = requireNotNull(owned) {
+                "Two-line custom heading fold must coexist with platform marker"
+            }
+            assertTrue(target.isValid)
+            assertTrue(requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+            assertEquals(displayHeight - editor.lineHeight * 2,
+                editor.offsetToXY(caretInTail).y - plainY)
+
+            val foreignClick = click(foreign)
+            clickListener.mouseClicked(foreignClick)
+            assertFalse(foreignClick.isConsumed)
+            val rightClick = click(target, MouseEvent.BUTTON3)
+            clickListener.mouseClicked(rightClick)
+            assertFalse(rightClick.isConsumed)
+            val wrongArea = click(target, area = EditorMouseEventArea.LINE_NUMBERS_AREA)
+            clickListener.mouseClicked(wrongArea)
+            assertFalse(wrongArea.isConsumed)
+            assertEquals(0, revealCount)
+            assertTrue(requireNotNull(owned).isValid)
+            assertEquals(caretInTail, editor.caretModel.offset)
+
+            val ownedClick = click(target)
+            clickListener.mouseClicked(ownedClick)
+            assertTrue(ownedClick.isConsumed)
+            assertEquals(1, revealCount)
+            assertNull(owned)
+            assertFalse(target.isValid)
+            assertEquals(headingContentOffset, editor.caretModel.offset)
+            assertEquals(plainY, editor.offsetToXY(caretInTail).y)
+            assertTrue("Foreign Markdown syntax region must not be removed",
+                requireNotNull(foreign).isValid)
+            assertFalse(requireNotNull(foreign).isExpanded)
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+
+            // An inactive heading can be projected again only after caret
+            // leaves the source range. No stale click may remove its replacement.
+            editor.caretModel.moveToOffset(caretInTail)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                owned = editor.foldingModel.addCustomLinesFolding(0, 1, renderer)
+            }
+            assertTrue(requireNotNull(owned).isValid)
+            val staleClick = click(target)
+            clickListener.mouseClicked(staleClick)
+            assertFalse(staleClick.isConsumed)
+            assertEquals(1, revealCount)
+            assertTrue(requireNotNull(owned).isValid)
+        } finally {
+            editor.removeEditorMouseListener(clickListener)
+            editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
+                owned?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+                foreign?.takeIf { it.isValid }?.let(editor.foldingModel::removeFoldRegion)
+            }
+        }
+        assertEquals(plainY, editor.offsetToXY(caretInTail).y)
+        assertEquals(caretInTail, editor.caretModel.offset)
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
+    /**
+     * Renderer intended for #350 product migration, not yet wired into the
+     * production controller. These two presentation paths intentionally use
+     * DIFFERENT typography: legacy editor font for additive Inlay versus
+     * pinned JCEF Preview font for opt-in CustomFold. Validate each contract
+     * independently instead of asserting invalid cross-renderer width parity.
+     */
     fun testHeadingCustomFoldRendererUsesCurrentEditorTypographyAndPaintsPixels() {
         val source = "## Heading\n\nTail\n"
         myFixture.configureByText("heading-custom-renderer-typography.md", source)
