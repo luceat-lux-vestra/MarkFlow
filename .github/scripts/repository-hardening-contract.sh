@@ -1317,6 +1317,12 @@ grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreserva
   die "Heading replacement lost click/reveal ownership coverage"
 grep -Fq 'testHeadingCustomFoldRendererUsesCurrentEditorTypographyAndPaintsPixels' "$heading_test" ||
   die "Heading renderer lost current-editor typography/paint coverage"
+grep -Fq 'testNativeHeadingLayoutMetricsFollowCurrentEditorFont' "$heading_test" ||
+  die "Heading layout metrics lost current-editor font derivation coverage"
+grep -Fq 'fun horizontalPadding(editor: Editor)' "$heading_controller" ||
+  die "Heading horizontal geometry is no longer derived from current editor metrics"
+grep -Fq 'internal fun nativeHeadingFont(editor: Editor, level: Int)' "$heading_controller" ||
+  die "Heading typography no longer has one current-editor font authority"
 grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "$heading_controller" ||
   die "Heading replacement lost fail-closed full-line eligibility checks"
 grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "$heading_test" ||
