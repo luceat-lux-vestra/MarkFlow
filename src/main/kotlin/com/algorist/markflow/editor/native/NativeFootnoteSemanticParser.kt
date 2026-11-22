@@ -177,8 +177,7 @@ internal object NativeFootnoteSemanticParser {
             .drop(colonIndex + 1)
             .firstOrNull { child -> !child.isLayoutToken() }
             ?.startOffset
-            ?.let { bodyStart -> projectionRangeOrNull(bodyStart, node.endOffset, source) }
-            ?.takeIf { range -> !source.substring(range.startOffset, range.endOffset).isBlank() }
+            ?.let { bodyStart -> singleLineBodyRangeOrNull(bodyStart, node.endOffset, source) }
 
         return DefinitionCandidate(
             sourceRange = sourceRange,
@@ -209,8 +208,7 @@ internal object NativeFootnoteSemanticParser {
             .drop(colonIndex + 1)
             .firstOrNull { child -> !child.isLayoutToken() }
             ?.startOffset
-            ?.let { bodyStart -> projectionRangeOrNull(bodyStart, node.endOffset, source) }
-            ?.takeIf { range -> !source.substring(range.startOffset, range.endOffset).isBlank() }
+            ?.let { bodyStart -> singleLineBodyRangeOrNull(bodyStart, node.endOffset, source) }
 
         return DefinitionCandidate(
             sourceRange = sourceRange,
@@ -250,6 +248,17 @@ internal object NativeFootnoteSemanticParser {
 
         val labelRange = projectionRangeOrNull(node.startOffset, node.endOffset, source) ?: return null
         return Label(labelRange, value)
+    }
+
+    private fun singleLineBodyRangeOrNull(
+        start: Int,
+        end: Int,
+        source: String,
+    ): ProjectionRange? {
+        val range = projectionRangeOrNull(start, end, source) ?: return null
+        val raw = source.substring(range.startOffset, range.endOffset)
+        if (raw.isBlank() || '\n' in raw || '\r' in raw) return null
+        return range
     }
 
     private fun ASTNode.isLayoutToken(): Boolean =
