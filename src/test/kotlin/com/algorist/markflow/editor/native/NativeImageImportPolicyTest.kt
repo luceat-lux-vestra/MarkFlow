@@ -38,6 +38,21 @@ class NativeImageImportPolicyTest {
     }
 
     @Test
+    fun preservesCanonicalSupportedExtensionsForValidatedImports() {
+        listOf(
+            "diagram.PNG" to "diagram.png",
+            "diagram.JPG" to "diagram.jpg",
+            "diagram.JPEG" to "diagram.jpeg",
+            "diagram.GIF" to "diagram.gif",
+            "diagram.BMP" to "diagram.bmp",
+        ).forEach { (original, expected) ->
+            val sanitized = NativeImageImportPolicy.sanitizeFilename(original)
+            assertEquals(expected, sanitized)
+            assertTrue(NativeLocalImageResolver.supportsFilename(sanitized))
+        }
+    }
+
+    @Test
     fun allocatesCollisionSuffixesDeterministicallyAndCaseInsensitively() {
         val reserved = setOf("diagram.png", "diagram-2.png", "other.png")
         assertEquals("diagram-3.png", NativeImageImportPolicy.firstAvailableName("diagram.png", reserved))

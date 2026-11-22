@@ -101,6 +101,34 @@ class NativeLocalImageResolverTest {
     }
 
     @Test
+    fun exposesTheSameSupportedFilenameContractUsedByImportAndGesturePreflight() {
+        listOf(
+            "image.png",
+            "image.PNG",
+            "image.jpg",
+            "image.jpeg",
+            "image.gif",
+            "image.bmp",
+        ).forEach { filename ->
+            assertTrue(filename, NativeLocalImageResolver.supportsFilename(filename))
+        }
+
+        listOf(
+            "image.svg",
+            "image.webp",
+            "image.pdf",
+            "image",
+        ).forEach { filename ->
+            assertEquals(filename, false, NativeLocalImageResolver.supportsFilename(filename))
+        }
+
+        assertEquals("png", NativeLocalImageResolver.supportedExtensionOrNull("IMAGE.PNG"))
+        assertEquals("jpg", NativeLocalImageResolver.supportedExtensionOrNull("image.JPG"))
+        assertEquals("jpeg", NativeLocalImageResolver.supportedExtensionOrNull("image.jpeg"))
+        assertEquals(null, NativeLocalImageResolver.supportedExtensionOrNull("image.webp"))
+    }
+
+    @Test
     fun rejectsMissingUnknownMediaAndExtensionContentMismatch() {
         assertEquals(
             NativeLocalImageFailureCode.NOT_FOUND,

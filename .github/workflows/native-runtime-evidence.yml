@@ -1157,7 +1157,7 @@ jobs:
               raise SystemExit(f'gesture hardening verdict is not PASS: {gesture}')
           gesture_required = {
               'file-drop-single-multi-stable-order': ('dropSingle=true', 'dropMulti=2', 'stableOrder=true', 'insertedAtResolvedCaret=true'),
-              'mixed-file-list-atomic-rejection': ('mixedFileListRecognized=true', 'atomicReject=true', 'sourceStable=true', 'filesCreated=0'),
+              'mixed-file-list-delegation': ('mixedFileListClaimed=false', 'delegated=true', 'sourceStable=true', 'filesCreated=0'),
               'case-insensitive-multi-collision-reservation': ('caseInsensitiveReservation=true', 'sameBasenameMulti=true', 'suffixes=-2,-3', 'overwrite=false', 'preexistingBytesStable=true'),
           }
           gesture_cases = gesture.get('cases') or []
