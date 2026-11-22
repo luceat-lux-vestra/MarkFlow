@@ -690,6 +690,81 @@ user@example.com
         )
     }
 
+    fun testFootnoteSemanticGrammarAcceptsMinimumFixtureFromParserOwnedAst() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertEquals(1, semantics.references.size)
+        assertEquals(1, semantics.definitions.size)
+
+        val reference = semantics.references.single()
+        val definition = semantics.definitions.single()
+        assertEquals("manual-note", reference.label)
+        assertEquals("manual-note", definition.label)
+        assertEquals(1, reference.number)
+        assertEquals(1, definition.number)
+        assertEquals("[^manual-note]", raw(source, reference.sourceRange))
+        assertEquals("[^manual-note]", raw(source, reference.labelRange))
+        assertEquals("[^manual-note]: Footnote definition text.", raw(source, definition.sourceRange))
+        assertEquals("[^manual-note]", raw(source, definition.labelRange))
+        assertEquals("Footnote definition text.", raw(source, definition.bodyRange))
+    }
+
+    fun testFootnoteSemanticGrammarFailsClosedForDuplicateMissingAndMalformedLabels() {
+        val duplicate = """Duplicate reference.[^same]
+
+[^same]: First definition.
+
+[^same]: Second definition.
+"""
+        assertTrue(footnoteSemantics(duplicate).references.isEmpty())
+        assertTrue(footnoteSemantics(duplicate).definitions.isEmpty())
+
+        val missing = "Missing reference.[^missing]\n"
+        assertTrue(footnoteSemantics(missing).references.isEmpty())
+        assertTrue(footnoteSemantics(missing).definitions.isEmpty())
+
+        val malformed = """Malformed reference.[^bad label]
+
+[^bad label]: Must remain exact source.
+"""
+        assertTrue(footnoteSemantics(malformed).references.isEmpty())
+        assertTrue(footnoteSemantics(malformed).definitions.isEmpty())
+    }
+
+    fun testFootnoteSemanticGrammarNumbersUniqueDefinitionsByFirstReferenceOrder() {
+        val source = """Second first.[^second] First next.[^first] Second again.[^second]
+
+[^first]: First definition.
+[^second]: Second definition.
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertEquals(
+            listOf("second" to 1, "first" to 2, "second" to 1),
+            semantics.references.map { reference -> reference.label to reference.number },
+        )
+        assertEquals(
+            mapOf("first" to 2, "second" to 1),
+            semantics.definitions.associate { definition -> definition.label to definition.number },
+        )
+    }
+
+    fun testFootnoteSemanticGrammarDoesNotClaimOrdinaryReferenceLinksOrDefinitions() {
+        val source = """Ordinary [reference][target] and [shortcut].
+
+[target]: https://example.com/target
+[shortcut]: /shortcut
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertTrue(semantics.references.isEmpty())
+        assertTrue(semantics.definitions.isEmpty())
+    }
+
     fun testFootnoteLikeReferenceFailsClosedWithoutRegressingOrdinaryReferenceLinks() {
         val source = """A [reference link][guide] and [shortcut].
 
@@ -813,4 +888,21 @@ Footnote-like syntax remains unsupported.[^note]
         }
     }
 
+
+
+    private fun footnoteSemantics(source: String): NativeFootnoteSemanticParser.Result {
+        val parser = MarkdownParserManager.createMarkdownParser(
+            MarkdownParserManager.FLAVOUR,
+            assertionsEnabled = false,
+        )
+        val root = parser.parse(
+            MarkdownElementTypes.MARKDOWN_FILE,
+            source,
+            parseInlines = true,
+        )
+        return NativeFootnoteSemanticParser.parse(root, source)
+    }
+
+    private fun raw(source: String, range: ProjectionRange): String =
+        source.substring(range.startOffset, range.endOffset)
 }
