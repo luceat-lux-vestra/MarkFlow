@@ -608,8 +608,12 @@ internal object NativeDifferentialPreviewE2EBridge {
                 ProjectionRange(row.markerRange.startOffset, row.contentRange.endOffset)
             }
             val rowIndex = sourceRowIndex(lineStart, lineEnd, rowRanges) ?: return@forEach
+            val presentationEnd = nativePresentationRangeWithFollowingBlankLine(
+                model.sourceRange,
+                document.immutableCharSequence.toString(),
+            ).endOffset
             val inlay = blockInlays.singleOrNull { candidate ->
-                candidate.offset == model.sourceRange.endOffset &&
+                candidate.offset == presentationEnd &&
                     (candidate.renderer as? NativeListInlayRenderer)?.sourceRange == model.sourceRange
             } ?: return@forEach
             val renderer = inlay.renderer as NativeListInlayRenderer

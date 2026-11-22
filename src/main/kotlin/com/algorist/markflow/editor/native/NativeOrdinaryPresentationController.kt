@@ -6,6 +6,8 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.FoldRegion
+import com.intellij.openapi.editor.event.VisibleAreaEvent
+import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
@@ -96,11 +98,37 @@ internal class NativeOrdinaryPresentationController(
     private val fencedCodes = NativeFencedCodePresentationController(editor, postMouseActivityReconciliation)
     private val indentedCodes = NativeIndentedCodePresentationController(editor, postMouseActivityReconciliation)
     private val lists = NativeListPresentationController(editor, postMouseActivityReconciliation)
+    private var currentPlan: NativeProjectionPlan? = null
+    private var currentRichPresentationEnabled = false
+    private var lastVisibleAreaWidth = editor.scrollingModel.visibleArea.width
     private var disposed = false
+
+    private val visibleAreaListener = object : VisibleAreaListener {
+        override fun visibleAreaChanged(event: VisibleAreaEvent) {
+            if (disposed || editor.isDisposed) return
+            val width = event.newRectangle.width
+            if (width == lastVisibleAreaWidth) return
+            lastVisibleAreaWidth = width
+            val plan = currentPlan ?: return
+            if (!currentRichPresentationEnabled || plan.status != ProjectionPlanStatus.READY) return
+
+            // Fold placeholders are immutable. Rebuild source-neutral ordinary folds so
+            // width-relative thematic rules converge with the current editor viewport.
+            clearFolds()
+            refreshActivity(plan, richPresentationEnabled = true)
+        }
+    }
+
+    init {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        editor.scrollingModel.addVisibleAreaListener(visibleAreaListener)
+    }
 
     fun clearPresentation() {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
+        currentPlan = null
+        currentRichPresentationEnabled = false
         inline.clearHighlighters()
         block.clearHighlighters()
         headings.clearPresentation()
@@ -114,6 +142,8 @@ internal class NativeOrdinaryPresentationController(
     fun applyPlan(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
+        currentPlan = plan
+        currentRichPresentationEnabled = richPresentationEnabled
         val blockQuotePlan = plan
         val blockQuoteSourceRanges = NativeBlockQuoteProjectionPlanner.sourceRanges(blockQuotePlan)
         val listPlan = plan.withoutBlockQuotePresentationProjections()
@@ -146,6 +176,8 @@ internal class NativeOrdinaryPresentationController(
     fun refreshActivity(plan: NativeProjectionPlan, richPresentationEnabled: Boolean) {
         requireAlive()
         ApplicationManager.getApplication().assertIsDispatchThread()
+        currentPlan = plan
+        currentRichPresentationEnabled = richPresentationEnabled
         inline.clearHighlighters()
         block.clearHighlighters()
         val blockQuotePlan = plan
@@ -294,6 +326,8 @@ internal class NativeOrdinaryPresentationController(
             } else {
                 emptyList()
             }
+        NativeProjectionKind.THEMATIC_BREAK ->
+            listOf(nativePresentationRangeWithFollowingBlankLine(projection.sourceRange, source))
         else -> projection.syntaxRanges
     }
 
@@ -317,6 +351,9 @@ internal class NativeOrdinaryPresentationController(
     override fun dispose() {
         if (disposed) return
         ApplicationManager.getApplication().assertIsDispatchThread()
+        editor.scrollingModel.removeVisibleAreaListener(visibleAreaListener)
+        currentPlan = null
+        currentRichPresentationEnabled = false
         inline.clearHighlighters()
         block.clearHighlighters()
         headings.dispose()
@@ -417,7 +454,9 @@ private class NativeBlockPresentationController(
             NativeProjectionKind.REFERENCE_DEFINITION,
         ),
         keyFor = ::blockKeyFor,
-        placeholderFor = ::blockPlaceholderFor,
+        placeholderFor = { projection, range, source ->
+            blockPlaceholderFor(editor, projection, range, source)
+        },
     )
 
     override fun supportsFold(kind: NativeProjectionKind): Boolean = owner.supportsFold(kind)
@@ -597,6 +636,7 @@ private fun NativeProjection.isInsideAny(ranges: List<ProjectionRange>): Boolean
     }
 
 private fun blockPlaceholderFor(
+    editor: Editor,
     projection: NativeProjection,
     range: ProjectionRange,
     source: String,
@@ -607,7 +647,7 @@ private fun blockPlaceholderFor(
         if (digits.isNotEmpty()) "$digits." else BULLET_PLACEHOLDER
     }
     NativeProjectionKind.BLOCK_QUOTE -> QUOTE_PLACEHOLDER
-    NativeProjectionKind.THEMATIC_BREAK -> THEMATIC_BREAK_PLACEHOLDER
+    NativeProjectionKind.THEMATIC_BREAK -> nativeThematicBreakPlaceholder(editor)
     NativeProjectionKind.REFERENCE_DEFINITION ->
         checkNotNull(referenceDefinitionPlaceholderOrNull(projection, source)) {
             "reference definition fold was requested without safe parser-owned metadata"
@@ -632,20 +672,12 @@ private fun referenceDefinitionPlaceholderOrNull(
     }
 
     val label = raw(ranges.label) ?: return null
-    val destination = raw(ranges.destination) ?: return null
-    val title = ranges.title?.let { titleRange ->
-        raw(titleRange) ?: return null
-    }
-    val placeholder = buildString {
-        append(REFERENCE_DEFINITION_PREFIX)
-        append(label)
-        append(REFERENCE_DEFINITION_ARROW)
-        append(destination)
-        if (title != null) {
-            append(' ')
-            append(title)
-        }
-    }
+    // Destination/title remain exact source behind the fold. Inactive presentation intentionally
+    // exposes only a compact, self-explanatory secondary label so metadata does not compete with
+    // ordinary document body content.
+    raw(ranges.destination) ?: return null
+    ranges.title?.let { titleRange -> raw(titleRange) ?: return null }
+    val placeholder = REFERENCE_DEFINITION_PREFIX + label
     return placeholder.takeIf { it.length <= MAX_REFERENCE_DEFINITION_PLACEHOLDER_CHARS }
 }
 
@@ -687,10 +719,25 @@ private fun blockKeyFor(kind: NativeProjectionKind): TextAttributesKey = when (k
 private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
 private const val BULLET_PLACEHOLDER = "•"
 private const val QUOTE_PLACEHOLDER = "│"
-private const val THEMATIC_BREAK_PLACEHOLDER = "────────"
-private const val REFERENCE_DEFINITION_PREFIX = "↳ "
-private const val REFERENCE_DEFINITION_ARROW = " → "
+private const val REFERENCE_DEFINITION_PREFIX = "↳ reference "
 private const val MAX_REFERENCE_DEFINITION_PLACEHOLDER_CHARS = 1024
+private const val THEMATIC_BREAK_GLYPH = "─"
+
+internal fun nativeThematicBreakPlaceholder(
+    editor: Editor,
+    measuredWidth: Int = maxOf(
+        editor.scrollingModel.visibleArea.width,
+        editor.contentComponent.width,
+        editor.lineHeight,
+    ),
+): String {
+    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+    val glyphWidth = maxOf(1, metrics.stringWidth(THEMATIC_BREAK_GLYPH))
+    val horizontalInset = maxOf(editor.lineHeight, glyphWidth)
+    val availableWidth = maxOf(glyphWidth, measuredWidth - horizontalInset * 2)
+    val glyphCount = maxOf(1, availableWidth / glyphWidth)
+    return THEMATIC_BREAK_GLYPH.repeat(glyphCount)
+}
 private const val INLINE_CODE_BACKGROUND_ALPHA = 24
 
 private val EMPHASIS_KEY = TextAttributesKey.createTextAttributesKey(

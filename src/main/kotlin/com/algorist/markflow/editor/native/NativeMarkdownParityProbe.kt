@@ -209,7 +209,9 @@ internal object NativeMarkdownParityProbe {
                         val placeholders = fixture.editor.foldingModel.allFoldRegions
                             .filter { it.isValid && !it.isExpanded }
                             .map { it.placeholderText }
-                        check("────────" in placeholders) { "thematic break was not projected" }
+                        check(nativeThematicBreakPlaceholder(fixture.editor) in placeholders) {
+                            "thematic break was not projected with current editor-relative width"
+                        }
                         check(
                             evidence.listModels == 2 &&
                                 evidence.listRows == 2 &&
