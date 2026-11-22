@@ -36,7 +36,7 @@ md-inline-raw-html	markdown	inline-raw-html	supported	covered	fixtures/markdown-
 md-katex-inline	markdown	katex-inline	supported	covered	fixtures/markdown-fidelity/cases/math-success.md	exact-source	source-anchored-geometry	yes	none	-	derived,katex,inline
 md-katex-display	markdown	katex-display	supported	covered	fixtures/markdown-fidelity/cases/math-success.md	exact-source	source-anchored-geometry	yes	none	-	derived,katex,display
 md-mermaid-block	markdown	mermaid-fenced-block	supported	covered	fixtures/markdown-fidelity/cases/mermaid-success.md	exact-source	source-anchored-geometry	yes	click	-	derived,mermaid
-md-footnote-extension	markdown	footnote-extension	unsupported	covered	fixtures/differential-acceptance/markdown/footnote-unsupported.md	exact-source	no-parity-expected	yes	none	-	extension,footnote,unsupported
+md-footnote-extension	markdown	footnote-extension	supported	covered	fixtures/differential-acceptance/markdown/footnote-supported.md	exact-source	source-anchored-geometry	yes	click	-	extension,footnote
 md-tabs-indentation	markdown	tabs-indentation	degraded	covered	fixtures/differential-acceptance/markdown/tabs-indentation.md	exact-source	diagnostic-only	yes	none	-	block,tabs,indentation
 md-blank-lines-whitespace	markdown	blank-lines-whitespace	supported	covered	fixtures/markdown-fidelity/cases/whitespace-and-blank-lines.md	exact-source	source-anchored-geometry	yes	none	-	block,blank-lines,whitespace
 md-closing-atx	markdown	closing-atx-heading	supported	covered	fixtures/markdown-fidelity/cases/headings-and-delimiters.md	exact-source	source-anchored-geometry	yes	none	-	heading,atx,closing-marker
