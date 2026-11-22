@@ -922,18 +922,22 @@ internal class NativeListInlayRenderer(
         val metrics = editor.contentComponent.getFontMetrics(font)
         val height = rowHeight()
         val verticalPadding = verticalPadding()
+        val layout = layoutMetrics()
         return buildString {
             appendLine(
                 "renderer_row_height_px=$height\tvertical_padding_px=$verticalPadding" +
+                    "\touter_padding_px=${layout.outerPadding}" +
+                    "\tdepth_indent_px=${layout.depthIndent}" +
+                    "\tmarker_gap_px=${layout.markerGap}" +
                     "\tcalculated_inlay_height_px=${height * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) +
                         verticalPadding * 2}"
             )
             model.rows.forEachIndexed { index, row ->
                 val rowTop = bounds?.let { it.y + verticalPadding + rowTopOffset(index, height) }
                 val baseline = rowTop?.let {
-                    it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
+                    it + max(metrics.ascent, (height + metrics.ascent - metrics.descent) / 2)
                 }
-                val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+                val indent = layout.outerPadding + row.depth * layout.depthIndent
                 val markerX = bounds?.let { it.x + indent }
                 appendLine(
                     "row=$index\tdepth=${row.depth}\tmarker=${row.marker}" +
@@ -983,7 +987,23 @@ internal class NativeListInlayRenderer(
     }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-        max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
+        preferredWidthForCurrentEditor()
+
+    internal fun preferredWidthForCurrentEditor(): Int {
+        val layout = layoutMetrics()
+        val viewportWidth = editor.scrollingModel.visibleArea.width
+        val componentWidth = editor.contentComponent.width
+        val measuredWidth = when {
+            viewportWidth > 0 -> viewportWidth
+            componentWidth > 0 -> componentWidth
+            else -> 0
+        }
+        return if (measuredWidth > 0) {
+            max(1, measuredWidth - layout.outerPadding * 2)
+        } else {
+            intrinsicContentWidth(layout)
+        }
+    }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
         rowHeight() * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) + verticalPadding() * 2
@@ -1002,17 +1022,18 @@ internal class NativeListInlayRenderer(
         g2.color = foreground
 
         val height = rowHeight()
+        val layout = layoutMetrics()
         model.rows.forEachIndexed { index, row ->
             val y = targetRegion.y + verticalPadding() + rowTopOffset(index, height)
-            val baseline = y + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
-            val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+            val baseline = y + max(metrics.ascent, (height + metrics.ascent - metrics.descent) / 2)
+            val indent = layout.outerPadding + row.depth * layout.depthIndent
             val markerX = targetRegion.x + indent
             val task = row.task
             val contentX: Int
             if (task != null) {
                 val checkbox = checkboxBounds(index, targetRegion)
                 paintTaskCheckbox(g2, task, checkbox, foreground)
-                contentX = checkbox.x + checkbox.width + MARKER_GAP
+                contentX = checkbox.x + checkbox.width + layout.markerGap
                 drawRuns(g2, row.displayRuns, contentX, baseline, font)
             } else {
                 val displayMarker = nativeListDisplayMarker(row.marker)
@@ -1020,7 +1041,7 @@ internal class NativeListInlayRenderer(
                 g2.drawString(displayMarker, markerX, baseline)
                 // Keep the existing content column stable: only the marker glyph is semantic.
                 val markerWidth = g2.getFontMetrics(bold).stringWidth(row.marker)
-                contentX = markerX + markerWidth + MARKER_GAP
+                contentX = markerX + markerWidth + layout.markerGap
                 drawRuns(g2, row.displayRuns, contentX, baseline, font)
             }
             g2.font = font
@@ -1089,7 +1110,12 @@ internal class NativeListInlayRenderer(
         val oldColor = g2.color
         try {
             g2.color = UIManager.getColor(CHECKBOX_FOREGROUND_KEY) ?: fallbackForeground
-            g2.drawRect(bounds.x, bounds.y, bounds.width, bounds.height)
+            g2.drawRect(
+                bounds.x,
+                bounds.y,
+                max(0, bounds.width - 1),
+                max(0, bounds.height - 1),
+            )
             if (task.checked) {
                 val inset = max(1, bounds.width / 4)
                 val left = bounds.x + inset
@@ -1107,7 +1133,8 @@ internal class NativeListInlayRenderer(
 
     private fun checkboxBounds(index: Int, bounds: Rectangle): Rectangle {
         val row = model.rows[index]
-        val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
+        val layout = layoutMetrics()
+        val indent = layout.outerPadding + row.depth * layout.depthIndent
         val size = checkboxSize()
         val height = rowHeight()
         val rowTop = bounds.y + verticalPadding() + rowTopOffset(index, height)
@@ -1119,6 +1146,45 @@ internal class NativeListInlayRenderer(
 
     private fun rowTopOffset(index: Int, height: Int): Int =
         model.rows.take(index).sumOf(::rowVisualLineCount) * height
+
+    private fun layoutMetrics(): NativeListLayoutMetrics {
+        val gutter = nativeListTypographicGutter(editor)
+        return NativeListLayoutMetrics(
+            outerPadding = gutter,
+            depthIndent = nativeListIndentPixels(editor, 1),
+            markerGap = gutter,
+        )
+    }
+
+    private fun intrinsicContentWidth(layout: NativeListLayoutMetrics): Int {
+        val baseFont = editor.contentComponent.font
+        val boldFont = baseFont.deriveFont(Font.BOLD)
+        val baseMetrics = editor.contentComponent.getFontMetrics(baseFont)
+        val boldMetrics = editor.contentComponent.getFontMetrics(boldFont)
+
+        val contentRight = model.rows.maxOfOrNull { row ->
+            val indent = layout.outerPadding + row.depth * layout.depthIndent
+            val markerWidth = if (row.task != null) {
+                checkboxSize()
+            } else {
+                // Paint intentionally keeps the source-marker advance so the content column
+                // remains stable while unordered markers are presented with a bullet glyph.
+                boldMetrics.stringWidth(row.marker)
+            }
+            val contentStart = indent + markerWidth + layout.markerGap
+            val firstLineRight = contentStart + row.displayRuns.sumOf { run ->
+                val style = baseFont.style or run.style.fontMask
+                val runFont = if (style == baseFont.style) baseFont else baseFont.deriveFont(style)
+                editor.contentComponent.getFontMetrics(runFont).stringWidth(run.text)
+            }
+            val continuationRight = row.continuations.maxOfOrNull { continuation ->
+                contentStart + baseMetrics.stringWidth(continuation.text)
+            } ?: firstLineRight
+            max(firstLineRight, continuationRight)
+        } ?: layout.outerPadding
+
+        return max(1, contentRight + layout.outerPadding)
+    }
 
     private fun rowHeight(): Int {
         val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
@@ -1141,11 +1207,13 @@ internal class NativeListInlayRenderer(
         UIManager.getIcon(CHECKBOX_ICON_KEY)
             ?.takeIf { icon -> icon.iconWidth > 0 && icon.iconHeight > 0 }
 
+    private data class NativeListLayoutMetrics(
+        val outerPadding: Int,
+        val depthIndent: Int,
+        val markerGap: Int,
+    )
+
     companion object {
-        private const val MIN_WIDTH = 160
-        private const val OUTER_PADDING = 8
-        private const val DEPTH_INDENT = 24
-        private const val MARKER_GAP = 8
         private const val CHECKBOX_ICON_KEY = "CheckBox.icon"
         private const val CHECKBOX_FOREGROUND_KEY = "CheckBox.foreground"
     }
@@ -1191,7 +1259,17 @@ internal fun nativeListDisplayMarker(marker: String): String =
         else -> marker
     }
 
-internal fun nativeListIndentPixels(depth: Int): Int {
+internal fun nativeListTypographicGutter(editor: Editor): Int {
+    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+    val spaceWidth = max(1, metrics.charWidth(' '))
+    return max(spaceWidth, metrics.height / 2)
+}
+
+internal fun nativeListIndentPixels(editor: Editor, depth: Int): Int {
     require(depth >= 0)
-    return depth * 24
+    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+    val spaceWidth = max(1, metrics.charWidth(' '))
+    val tabColumns = editor.settings.getTabSize(editor.project).coerceAtLeast(1)
+    val tabWidth = spaceWidth * tabColumns
+    return depth * (tabWidth + nativeListTypographicGutter(editor))
 }

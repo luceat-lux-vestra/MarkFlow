@@ -681,7 +681,7 @@ internal class NativeBlockQuoteInlayRenderer(
     internal fun listMarkerIndentPx(index: Int): Int {
         val line = model.lines[index]
         val row = line.listRow ?: return contentIndentPx(index)
-        return contentIndentPx(index) + nativeListIndentPixels(row.depth)
+        return contentIndentPx(index) + nativeListIndentPixels(editor, row.depth)
     }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
