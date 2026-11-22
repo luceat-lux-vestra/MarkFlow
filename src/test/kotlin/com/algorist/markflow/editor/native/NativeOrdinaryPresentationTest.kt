@@ -175,19 +175,22 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
         assertEquals(stamp, document.modificationStamp)
     }
 
-    fun testNativeHeadingEmMetricsScaleAcrossEditorFontSizes() {
-        for (fontPx in listOf(11f, 13f, 16f, 20f)) {
-            assertTrue(NativeHeadingLayoutMetrics.followingSectionGap(fontPx) > 0)
-            for (level in 1..6) {
-                assertTrue(NativeHeadingLayoutMetrics.verticalPadding(level, fontPx) >= 0)
+    fun testNativeHeadingLayoutMetricsFollowCurrentEditorFont() {
+        myFixture.configureByText("heading-layout-metrics.md", "# Heading\n")
+        val editor = myFixture.editor as com.intellij.openapi.editor.impl.EditorImpl
+        val original = editor.colorsScheme.editorFontSize2D
+        try {
+            for (fontPx in listOf(11f, 13f, 16f, 20f)) {
+                editor.setFontSize(fontPx)
+                val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+                assertEquals(
+                    maxOf(1, metrics.charWidth(' ')),
+                    NativeHeadingLayoutMetrics.horizontalPadding(editor),
+                )
             }
+        } finally {
+            editor.setFontSize(original)
         }
-        assertEquals(16, NativeHeadingLayoutMetrics.followingSectionGap(13f))
-        assertEquals(25, NativeHeadingLayoutMetrics.followingSectionGap(20f))
-        assertEquals(8, NativeHeadingLayoutMetrics.verticalPadding(2, 13f))
-        assertEquals(12, NativeHeadingLayoutMetrics.verticalPadding(2, 20f))
-        assertEquals(4, NativeHeadingLayoutMetrics.verticalPadding(6, 13f))
-        assertEquals(6, NativeHeadingLayoutMetrics.verticalPadding(6, 20f))
         assertTrue(NativeHeadingLayoutMetrics.fitsVerifiedBlankRow(33, 22))
         assertFalse(NativeHeadingLayoutMetrics.fitsVerifiedBlankRow(45, 22))
     }
@@ -239,11 +242,8 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertTrue("Long Heading must end in ellipsis", displayed.endsWith("…"))
             assertTrue(displayed.length < model.text.length)
             assertTrue(metrics.stringWidth(displayed) <= available)
-            assertEquals("Heading must own only a single font-scaled line box",
-                maxOf(editor.lineHeight, metrics.height +
-                    2 * NativeHeadingLayoutMetrics.verticalPadding(
-                        2, editor.colorsScheme.editorFontSize2D
-                    )), fold.heightInPixels)
+            assertEquals("Heading must own only a single font-metric line box",
+                maxOf(editor.lineHeight, metrics.height), fold.heightInPixels)
             assertEquals("No extra block inlay on top of the original source line",
                 fold.heightInPixels - editor.lineHeight * 2,
                 editor.offsetToXY(tail).y - plainY)
