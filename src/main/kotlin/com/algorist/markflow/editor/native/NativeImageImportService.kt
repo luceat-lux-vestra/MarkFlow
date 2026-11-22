@@ -504,6 +504,9 @@ internal object NativeImageImportService {
             } else {
                 val sanitized = NativeImageImportPolicy.sanitizeFilename(input.originalName)
                 val destination = NativeImageImportPolicy.firstAvailableName(sanitized, reserved)
+                check(NativeLocalImageResolver.supportsFilename(destination)) {
+                    "validated image import lost its supported media extension"
+                }
                 reserved += destination.lowercase(Locale.ROOT)
                 val target = "$ASSETS_DIRECTORY/${NativeImageImportPolicy.encodePathSegment(destination)}"
                 check(NativeLocalImageResolver.decodeRelativeTarget(target) == "$ASSETS_DIRECTORY/$destination") {
