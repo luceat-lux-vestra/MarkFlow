@@ -86,10 +86,16 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
         val expectedRowHeight = max(editor.lineHeight, metrics.height)
         val expectedVerticalPadding = max(0, (editor.lineHeight - metrics.height) / 2)
-        val evidence = renderer.visualRowGeometryEvidence(Rectangle(0, 0, 600, 200))
+        val expectedSpaceWidth = max(1, metrics.charWidth(' '))
+        val expectedDepthIndent =
+            expectedSpaceWidth * editor.settings.getTabSize(editor.project).coerceAtLeast(1)
+        val evidence = renderer.visualRowGeometryEvidence(Rectangle())
 
         assertTrue(evidence.contains("renderer_row_height_px=$expectedRowHeight"))
         assertTrue(evidence.contains("vertical_padding_px=$expectedVerticalPadding"))
+        assertTrue(evidence.contains("outer_padding_px=$expectedSpaceWidth"))
+        assertTrue(evidence.contains("depth_indent_px=$expectedDepthIndent"))
+        assertTrue(evidence.contains("marker_gap_px=$expectedSpaceWidth"))
     }
 
     fun testTaskCheckboxGeometryUsesCurrentLookAndFeelIconWhenAvailable() {
@@ -99,7 +105,7 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         val plan = NativeMarkdownProjectionPlanner.plan(ProjectionSnapshot.capture(editor.document, 0L))
         val model = NativeListProjectionPlanner.plan(plan).single()
         val renderer = NativeListInlayRenderer(editor, model)
-        val bounds = Rectangle(0, 0, 600, 200)
+        val bounds = Rectangle()
         val checkbox = requireNotNull(renderer.firstTaskCheckboxBounds(bounds))
         val lafIcon = UIManager.getIcon("CheckBox.icon")
 
@@ -152,8 +158,11 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
     fun testThematicRuleWidthTracksCurrentEditorGeometryInsteadOfFixedGlyphCount() {
         myFixture.configureByText("thematic-width.md", "---\n\nTail\n")
         val editor = myFixture.editor
-        val narrowWidth = editor.lineHeight * 12
-        val wideWidth = editor.lineHeight * 36
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        val glyphWidth = max(1, metrics.stringWidth("─"))
+        val horizontalInset = max(editor.lineHeight, glyphWidth)
+        val narrowWidth = horizontalInset * 2 + glyphWidth
+        val wideWidth = narrowWidth + glyphWidth
         val narrow = nativeThematicBreakPlaceholder(editor, narrowWidth)
         val wide = nativeThematicBreakPlaceholder(editor, wideWidth)
 
@@ -179,7 +188,11 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         var controller: NativePresentationController? = null
         try {
             window.contentPane.add(editor.component, BorderLayout.CENTER)
-            window.setSize(editor.lineHeight * 16, editor.lineHeight * 12)
+            window.pack()
+            window.setSize(
+                max(window.width, editor.lineHeight),
+                max(window.height, editor.lineHeight),
+            )
             window.isVisible = true
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertTrue(editor.contentComponent.isShowing)
@@ -201,7 +214,11 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
 
             val narrow = currentFold().placeholderText
             val initialViewport = editor.scrollingModel.visibleArea.width
-            window.setSize(window.width * 2, window.height)
+            val resizeStep = max(
+                editor.lineHeight,
+                editor.contentComponent.getFontMetrics(editor.contentComponent.font).charWidth(' '),
+            )
+            window.setSize(window.width + resizeStep, window.height)
             window.validate()
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
 
