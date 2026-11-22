@@ -613,9 +613,46 @@ Tail
                             clickController.dispose()
                         }
 
+                        val file = requireNotNull(
+                            FileDocumentManager.getInstance().getFile(footnoteEditor.document)
+                        ) {
+                            "real-IDE footnote editor lost its authoritative VirtualFile"
+                        }
+                        FileDocumentManager.getInstance().saveDocument(footnoteEditor.document)
+                        check(Files.readString(Path.of(file.path), StandardCharsets.UTF_8) == source) {
+                            "saved footnote bytes differ from the authoritative Document"
+                        }
+
+                        val reopenedEditor = EditorFactory.getInstance().createEditor(
+                            footnoteEditor.document,
+                            project,
+                            file,
+                            false,
+                        )
+                        try {
+                            reopenedEditor.caretModel.moveToOffset(tailOffset)
+                            val reopened = NativePresentationController(
+                                editor = reopenedEditor,
+                                richPresentationEnabled = { true },
+                            )
+                            try {
+                                val reopenedEvidence = reopened.footnoteEvidenceSnapshot()
+                                check(reopenedEvidence.models == 2)
+                                check(reopenedEvidence.fullyPresented == 2) {
+                                    "saved/recreated editor did not restore footnote presentation: $reopenedEvidence"
+                                }
+                                check(reopenedEditor.document.text == source)
+                                check(reopenedEditor.document.modificationStamp == stampBefore)
+                            } finally {
+                                Disposer.dispose(reopened)
+                            }
+                        } finally {
+                            EditorFactory.getInstance().releaseEditor(reopenedEditor)
+                        }
+
                         "models=2 references=1 definitions=1 inlays=2 folds=2 highlighters=1 " +
                             "caretReveal=true mouseReveal=true eventConsumed=true navigation=false " +
-                            "sourceStable=true stampStable=true"
+                            "saveReopen=true savedBytes=true sourceStable=true stampStable=true"
                     } finally {
                         EditorFactory.getInstance().releaseEditor(footnoteEditor)
                     }
