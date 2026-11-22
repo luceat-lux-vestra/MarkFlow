@@ -504,6 +504,9 @@ internal object NativeImageImportService {
             } else {
                 val sanitized = NativeImageImportPolicy.sanitizeFilename(input.originalName)
                 val destination = NativeImageImportPolicy.firstAvailableName(sanitized, reserved)
+                check(NativeLocalImageResolver.supportsFilename(destination)) {
+                    "validated image import lost its supported media extension"
+                }
                 reserved += destination.lowercase(Locale.ROOT)
                 val target = "$ASSETS_DIRECTORY/${NativeImageImportPolicy.encodePathSegment(destination)}"
                 check(NativeLocalImageResolver.decodeRelativeTarget(target) == "$ASSETS_DIRECTORY/$destination") {
@@ -649,12 +652,9 @@ internal object NativeImageImportPolicy {
     private val unsafeFilenameChar = Regex("[<>:\"/\\\\|?*#%\\p{Cc}]")
     private val trailingDotsOrSpaces = Regex("[. ]+$")
     private val windowsReserved = Regex("(?i)^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$")
-    private val admittedExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp")
-
     fun sanitizeFilename(original: String): String {
         val dot = original.lastIndexOf('.')
-        val rawExtension = if (dot > 0 && dot < original.lastIndex) original.substring(dot + 1) else ""
-        val extension = rawExtension.lowercase(Locale.ROOT).takeIf { it in admittedExtensions }.orEmpty()
+        val extension = NativeLocalImageResolver.supportedExtensionOrNull(original).orEmpty()
         val rawStem = if (extension.isNotEmpty()) original.substring(0, dot) else original
         val sanitizedStem = rawStem
             .replace(unsafeFilenameChar, "_")

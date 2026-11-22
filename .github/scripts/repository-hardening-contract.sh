@@ -69,6 +69,9 @@ fi
 if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeForNativeEditorShellProbe|native-editor-shell-probe' src build.gradle.kts .github/workflows; then
   die "#584 superseded platform-augmentation shell proof was reintroduced"
 fi
+if grep -R -Eq 'MarkdownPreviewLifecycleGuard|StaleMarkdownPreviewPanelPolicy|markflow\.353\.lifecycle\.trace|MARKFLOW_JCEF_GUARD' src --exclude='repository-hardening-contract.sh'; then
+  die "#643 historical bundled-Markdown lifecycle patch was reintroduced into the product/evidence surface"
+fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
 presentation_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationController.kt"
@@ -1287,9 +1290,9 @@ grep -Fq 'targetRasterIndex' "$manifest_test" ||
 grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
   die "Stage E1 dropped source-anchored heading geometry evidence"
 grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
-  die "Stage E1 no longer requires all H1-H6 installed heading presentations"
+  die "Stage E1 no longer requires all H1-H6 installed heading inlays"
 grep -Fq 'fun nativeHeadingSourceGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
-  die "Stage E1 lost production heading source-geometry bridge"
+  die "Stage E1 lost production-inlay source-geometry bridge"
 # #353 Stage E2: browser DOM measurements must be source-identical and retained.
 grep -Fq 'val dom = driver.ui.jcef()' "$manifest_test" ||
   die "Stage E2 dropped actual JCEF DOM platform-reference acquisition"
@@ -1351,6 +1354,18 @@ grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
   die "Stage E7 lost Gantt minimum-width negative controls"
+
+# #628 native list geometry must remain derived from the live editor/LAF contract.
+list_presentation="src/main/kotlin/com/algorist/markflow/editor/native/NativeListPresentationController.kt"
+if grep -Eq 'private const val (MIN_WIDTH|OUTER_PADDING|DEPTH_INDENT|MARKER_GAP)[[:space:]]*=' "$list_presentation"; then
+  die "#628 native list geometry regressed to fixed device-pixel layout constants"
+fi
+grep -Fq 'internal fun nativeListTypographicGutter(editor: Editor)' "$list_presentation" ||
+  die "#628 list gutter no longer derives from current editor typography"
+grep -Fq 'internal fun nativeListIndentPixels(editor: Editor, depth: Int)' "$list_presentation" ||
+  die "#628 list nesting no longer derives from current editor metrics"
+grep -Fq 'UIManager.getIcon(CHECKBOX_ICON_KEY)' "$list_presentation" ||
+  die "#628 task checkbox geometry no longer consults the current Look and Feel"
 
 # #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
 grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||

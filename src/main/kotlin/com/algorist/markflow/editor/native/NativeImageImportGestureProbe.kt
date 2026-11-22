@@ -54,7 +54,7 @@ internal object NativeImageImportGestureProbe {
             ApplicationManager.getApplication().assertIsDispatchThread()
             try {
                 case("file-drop-single-multi-stable-order") { fileDropSingleMultiCase() }
-                case("mixed-file-list-atomic-rejection") { mixedFileListCase() }
+                case("mixed-file-list-delegation") { mixedFileListCase() }
                 case("case-insensitive-multi-collision-reservation") { multiCollisionCase() }
             } finally {
                 finish()
@@ -102,25 +102,29 @@ internal object NativeImageImportGestureProbe {
             withContext(Dispatchers.IO) {
                 Files.writeString(text, "not an image", StandardCharsets.UTF_8)
             }
-            val transferable = FileListTransferable(listOf(image.toFile(), text.toFile()))
-            check(NativeImageImportTransferable.isImageImportPayload(transferable)) {
-                "mixed file list with an explicit image was not recognized as an image-import gesture"
+            val files = listOf(image.toFile(), text.toFile())
+            val transferable = FileListTransferable(files)
+            check(!NativeImageImportTransferable.isImageImportPayload(transferable)) {
+                "mixed supported/unsupported file list must remain available to other paste handlers"
             }
-            val inputs = NativeImageImportTransferable.inputsOrNull(transferable)
-                ?: error("mixed file list did not preserve the active file-list authority")
+            check(NativeImageImportTransferable.inputsOrNull(transferable) == null) {
+                "mixed file list unexpectedly granted image-import authority"
+            }
 
             return withFixture("mixed\n") { fixture ->
                 val before = fixture.document.text
                 fixture.editor.caretModel.moveToOffset(fixture.document.textLength)
-                val result = NativeImageImportService.import(fixture.editor, inputs)
-                check(result is NativeImageImportResult.Failure && result.code == NativeImageImportFailureCode.UNSUPPORTED_MEDIA) {
-                    "mixed supported/unsupported file list did not fail atomically: $result"
+                val handled = NativeImageFileDropHandler().handleDrop(
+                    FileDropEvent(project, transferable, files, fixture.editor),
+                )
+                check(!handled) {
+                    "mixed supported/unsupported file drop must delegate instead of being consumed"
                 }
                 check(fixture.document.text == before)
                 check(fixture.file.parent.findChild("assets") == null) {
-                    "mixed file-list rejection created a partial destination"
+                    "delegated mixed file list created an image destination"
                 }
-                "mixedFileListRecognized=true atomicReject=true sourceStable=true filesCreated=0"
+                "mixedFileListClaimed=false delegated=true sourceStable=true filesCreated=0"
             }
         }
 
