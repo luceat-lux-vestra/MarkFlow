@@ -4193,9 +4193,9 @@ class MarkFlowStarterDifferentialManifestTest {
 
     /**
      * Source-aligned H1-H6 production ink-Y and text baseline evidence.
-     * Native baseline is a renderer paint input; reference baseline is an
-     * actual JCEF DOM marker. Both are normalized to their own H1. This
-     * RESEARCH-only pilot does not establish production #350 visual parity.
+     * Native baseline is a production renderer paint input; reference baseline is an
+     * actual JCEF DOM marker. Both are normalized to their own H1. This diagnostic
+     * remains non-normative and does not by itself establish Preview visual parity.
      */
     private fun headingInkYBaselineDiagnostic(
         native: BufferedImage, reference: BufferedImage,
