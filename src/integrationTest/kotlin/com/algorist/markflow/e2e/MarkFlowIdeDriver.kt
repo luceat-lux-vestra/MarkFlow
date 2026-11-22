@@ -476,6 +476,17 @@ class MarkFlowIdeDriver(private val driver: Driver) {
             region.isValid() && !region.isExpanded()
         }
 
+    fun isFoldCollapsedCovering(editor: JEditorUiComponent, startOffset: Int, endOffset: Int): Boolean =
+        driver.withContext(OnDispatcher.EDT) {
+            val remoteEditor = driver.cast(editor.editor, FoldingEditorRemote::class)
+            remoteEditor.getFoldingModel().getAllFoldRegions().any { region ->
+                region.isValid() &&
+                    !region.isExpanded() &&
+                    region.getStartOffset() <= startOffset &&
+                    region.getEndOffset() >= endOffset
+            }
+        }
+
     fun save(editor: JEditorUiComponent) {
         driver.invokeAction("SaveAll", component = editor.component)
         waitFor(
@@ -617,10 +628,13 @@ private interface FoldingEditorRemote {
 @Remote("com.intellij.openapi.editor.FoldingModel")
 private interface FoldingModelRemote {
     fun getFoldRegion(startOffset: Int, endOffset: Int): FoldRegionRemote?
+    fun getAllFoldRegions(): Array<FoldRegionRemote>
 }
 
 @Remote("com.intellij.openapi.editor.FoldRegion")
 private interface FoldRegionRemote {
+    fun getStartOffset(): Int
+    fun getEndOffset(): Int
     fun isValid(): Boolean
     fun isExpanded(): Boolean
 }

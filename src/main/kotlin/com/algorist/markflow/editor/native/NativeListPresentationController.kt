@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.InlayProperties
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -18,6 +19,8 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
+import javax.swing.JCheckBox
+import javax.swing.UIManager
 import kotlin.math.max
 
 internal data class NativeTaskMarker(
@@ -651,7 +654,8 @@ internal class NativeListPresentationController(
 
         val sourceBefore = editor.document.immutableCharSequence.toString()
         val stampBefore = editor.document.modificationStamp
-        val foldRanges = listFoldRanges(model) ?: return
+        val presentationRange = nativePresentationRangeWithFollowingBlankLine(model.sourceRange, sourceBefore)
+        val foldRanges = listFoldRanges(model, presentationRange, sourceBefore) ?: return
         val installedFolds = mutableListOf<FoldRegion>()
         val coverageFolds = mutableListOf<FoldRegion>()
         var foldsInstalled = true
@@ -725,11 +729,23 @@ internal class NativeListPresentationController(
         if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
 
         val renderer = NativeListInlayRenderer(editor, model)
+        // Compacting adjacent list groups can collapse every list anchor onto one visual line.
+        // IntelliJ orders ABOVE_LINE block inlays by ascending priority (lower = farther from the
+        // line), so assign negative source-order ranks: the first list stays visually first and
+        // later ordinary block inlays at the default priority remain after the compacted lists.
+        val modelIndex = currentModels.indexOf(model)
+        check(modelIndex >= 0) { "native list model is not part of the current projection plan" }
+        val presentationPriority = modelIndex - currentModels.size
+        // The verified following blank line may end exactly where the next Markdown block starts.
+        // showWhenFolded keeps the replacement allocated at that shared folded boundary; explicit
+        // priority above preserves document order when several such anchors share one visual line.
         val inlay = editor.inlayModel.addBlockElement(
-            model.sourceRange.endOffset,
-            true,
-            true,
-            0,
+            presentationRange.endOffset,
+            InlayProperties()
+                .relatesToPrecedingText(true)
+                .showAbove(true)
+                .showWhenFolded(true)
+                .priority(presentationPriority),
             renderer,
         )
         if (inlay == null) {
@@ -746,10 +762,16 @@ internal class NativeListPresentationController(
         }
     }
 
-    private fun listFoldRanges(model: NativeListModel): List<ProjectionRange>? {
-        val range = model.sourceRange
-        val source = editor.document.immutableCharSequence.toString()
-        if (!range.isInside(source)) return null
+    private fun listFoldRanges(
+        model: NativeListModel,
+        range: ProjectionRange,
+        source: String,
+    ): List<ProjectionRange>? {
+        if (!range.isInside(source) || !model.sourceRange.isInside(source)) return null
+        if (
+            range.startOffset != model.sourceRange.startOffset ||
+            range.endOffset < model.sourceRange.endOffset
+        ) return null
 
         val boundaries = linkedSetOf(range.startOffset, range.endOffset)
         // Keep our folds strictly nested when IntelliJ owns an expanded whole-list fold. Splitting
@@ -899,14 +921,15 @@ internal class NativeListInlayRenderer(
         val font = editor.contentComponent.font
         val metrics = editor.contentComponent.getFontMetrics(font)
         val height = rowHeight()
+        val verticalPadding = verticalPadding()
         return buildString {
             appendLine(
-                "renderer_row_height_px=$height\tvertical_padding_px=$VERTICAL_PADDING" +
+                "renderer_row_height_px=$height\tvertical_padding_px=$verticalPadding" +
                     "\tcalculated_inlay_height_px=${height * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) +
-                        VERTICAL_PADDING * 2}"
+                        verticalPadding * 2}"
             )
             model.rows.forEachIndexed { index, row ->
-                val rowTop = bounds?.let { it.y + VERTICAL_PADDING + rowTopOffset(index, height) }
+                val rowTop = bounds?.let { it.y + verticalPadding + rowTopOffset(index, height) }
                 val baseline = rowTop?.let {
                     it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
                 }
@@ -934,7 +957,7 @@ internal class NativeListInlayRenderer(
 
     fun rowAt(point: Point, bounds: Rectangle): Int? {
         if (!bounds.contains(point)) return null
-        val relative = point.y - bounds.y - VERTICAL_PADDING
+        val relative = point.y - bounds.y - verticalPadding()
         if (relative < 0) return null
         val height = rowHeight()
         var rowTop = 0
@@ -963,7 +986,7 @@ internal class NativeListInlayRenderer(
         max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_PADDING * 2)
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
-        rowHeight() * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) + VERTICAL_PADDING * 2
+        rowHeight() * model.rows.sumOf(::rowVisualLineCount).coerceAtLeast(1) + verticalPadding() * 2
 
     override fun paint(
         inlay: Inlay<*>,
@@ -980,7 +1003,7 @@ internal class NativeListInlayRenderer(
 
         val height = rowHeight()
         model.rows.forEachIndexed { index, row ->
-            val y = targetRegion.y + VERTICAL_PADDING + rowTopOffset(index, height)
+            val y = targetRegion.y + verticalPadding() + rowTopOffset(index, height)
             val baseline = y + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
             val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
             val markerX = targetRegion.x + indent
@@ -988,16 +1011,7 @@ internal class NativeListInlayRenderer(
             val contentX: Int
             if (task != null) {
                 val checkbox = checkboxBounds(index, targetRegion)
-                g2.drawRect(checkbox.x, checkbox.y, checkbox.width, checkbox.height)
-                if (task.checked) {
-                    val left = checkbox.x + 3
-                    val middleX = checkbox.x + checkbox.width / 2 - 1
-                    val middleY = checkbox.y + checkbox.height - 4
-                    val right = checkbox.x + checkbox.width - 2
-                    val top = checkbox.y + 3
-                    g2.drawLine(left, checkbox.y + checkbox.height / 2, middleX, middleY)
-                    g2.drawLine(middleX, middleY, right, top)
-                }
+                paintTaskCheckbox(g2, task, checkbox, foreground)
                 contentX = checkbox.x + checkbox.width + MARKER_GAP
                 drawRuns(g2, row.displayRuns, contentX, baseline, font)
             } else {
@@ -1038,12 +1052,65 @@ internal class NativeListInlayRenderer(
         g2.font = baseFont
     }
 
+    internal fun firstTaskCheckboxBounds(bounds: Rectangle): Rectangle? {
+        val index = model.rows.indexOfFirst { it.task != null }
+        return index.takeIf { it >= 0 }?.let { checkboxBounds(it, bounds) }
+    }
+
+    internal fun taskCheckboxUsesCurrentLafIcon(): Boolean =
+        currentCheckboxIcon() != null
+
+    private fun paintTaskCheckbox(
+        g2: Graphics2D,
+        task: NativeTaskMarker,
+        bounds: Rectangle,
+        fallbackForeground: java.awt.Color,
+    ) {
+        val icon = currentCheckboxIcon()
+        if (icon != null) {
+            val rollover = runCatching {
+                editor.contentComponent.mousePosition?.let { point -> bounds.contains(point) } == true
+            }.getOrDefault(false)
+            val checkbox = JCheckBox().apply {
+                isOpaque = false
+                isSelected = task.checked
+                isEnabled = editor.contentComponent.isEnabled
+                // The inlay does not own a Swing button press/focus lifecycle. Preserve the
+                // LAF hover state, but do not synthesize ButtonModel.armed from editor focus:
+                // armed is a press/action state and some LAFs render it as a pressed checkbox.
+                model.isRollover = rollover
+            }
+            val x = bounds.x + max(0, (bounds.width - icon.iconWidth) / 2)
+            val y = bounds.y + max(0, (bounds.height - icon.iconHeight) / 2)
+            icon.paintIcon(checkbox, g2, x, y)
+            return
+        }
+
+        val oldColor = g2.color
+        try {
+            g2.color = UIManager.getColor(CHECKBOX_FOREGROUND_KEY) ?: fallbackForeground
+            g2.drawRect(bounds.x, bounds.y, bounds.width, bounds.height)
+            if (task.checked) {
+                val inset = max(1, bounds.width / 4)
+                val left = bounds.x + inset
+                val middleX = bounds.x + bounds.width / 2
+                val middleY = bounds.y + bounds.height - inset
+                val right = bounds.x + bounds.width - inset
+                val top = bounds.y + inset
+                g2.drawLine(left, bounds.y + bounds.height / 2, middleX, middleY)
+                g2.drawLine(middleX, middleY, right, top)
+            }
+        } finally {
+            g2.color = oldColor
+        }
+    }
+
     private fun checkboxBounds(index: Int, bounds: Rectangle): Rectangle {
         val row = model.rows[index]
         val indent = OUTER_PADDING + row.depth * DEPTH_INDENT
-        val size = CHECKBOX_SIZE
+        val size = checkboxSize()
         val height = rowHeight()
-        val rowTop = bounds.y + VERTICAL_PADDING + rowTopOffset(index, height)
+        val rowTop = bounds.y + verticalPadding() + rowTopOffset(index, height)
         val y = rowTop + max(0, (height - size) / 2)
         return Rectangle(bounds.x + indent, y, size, size)
     }
@@ -1055,17 +1122,66 @@ internal class NativeListInlayRenderer(
 
     private fun rowHeight(): Int {
         val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        return max(editor.lineHeight + ROW_VERTICAL_PADDING * 2, metrics.height + ROW_VERTICAL_PADDING * 2)
+        return max(editor.lineHeight, metrics.height)
     }
+
+    private fun verticalPadding(): Int {
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        return max(0, (editor.lineHeight - metrics.height) / 2)
+    }
+
+    private fun checkboxSize(): Int {
+        val icon = currentCheckboxIcon()
+        if (icon != null) return max(icon.iconWidth, icon.iconHeight)
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        return max(1, metrics.height)
+    }
+
+    private fun currentCheckboxIcon() =
+        UIManager.getIcon(CHECKBOX_ICON_KEY)
+            ?.takeIf { icon -> icon.iconWidth > 0 && icon.iconHeight > 0 }
 
     companion object {
         private const val MIN_WIDTH = 160
         private const val OUTER_PADDING = 8
-        private const val VERTICAL_PADDING = 4
-        private const val ROW_VERTICAL_PADDING = 2
         private const val DEPTH_INDENT = 24
         private const val MARKER_GAP = 8
-        private const val CHECKBOX_SIZE = 13
+        private const val CHECKBOX_ICON_KEY = "CheckBox.icon"
+        private const val CHECKBOX_FOREGROUND_KEY = "CheckBox.foreground"
+    }
+}
+
+internal fun nativePresentationRangeWithFollowingBlankLine(
+    range: ProjectionRange,
+    source: String,
+): ProjectionRange {
+    if (range.startOffset < 0 || range.endOffset < range.startOffset || range.endOffset > source.length) {
+        return range
+    }
+    if (range.endOffset >= source.length) return range
+
+    var cursor = range.endOffset
+    val alreadyAtNextLine =
+        cursor > 0 && (source[cursor - 1] == '\n' || source[cursor - 1] == '\r')
+    if (!alreadyAtNextLine) {
+        cursor = consumeLineSeparator(source, cursor) ?: return range
+    }
+
+    var blankEnd = cursor
+    while (blankEnd < source.length && source[blankEnd] != '\n' && source[blankEnd] != '\r') {
+        if (source[blankEnd] != ' ' && source[blankEnd] != '\t') return range
+        blankEnd += 1
+    }
+    val afterBlankLine = consumeLineSeparator(source, blankEnd) ?: return range
+    return ProjectionRange(range.startOffset, afterBlankLine)
+}
+
+private fun consumeLineSeparator(source: String, offset: Int): Int? {
+    if (offset !in source.indices) return null
+    return when (source[offset]) {
+        '\n' -> offset + 1
+        '\r' -> if (offset + 1 < source.length && source[offset + 1] == '\n') offset + 2 else offset + 1
+        else -> null
     }
 }
 

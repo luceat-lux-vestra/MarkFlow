@@ -1516,10 +1516,21 @@ After
             assertTrue("expected MarkFlow-owned ordinary syntax folds", evidence.ownedFolds >= 8)
             assertTrue(evidence.collapsedFolds > 0)
 
-            val placeholders = editor.foldingModel.allFoldRegions
-                .filter { it.isValid && !it.isExpanded }
-                .map { it.placeholderText }
-            assertTrue("thematic break was not projected", placeholders.contains("────────"))
+            val thematicBreak = requireNotNull(controller.currentPlan)
+                .projections
+                .single { projection -> projection.kind == NativeProjectionKind.THEMATIC_BREAK }
+            val thematicFold = editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
+                candidate.isValid &&
+                    !candidate.isExpanded &&
+                    candidate.startOffset == thematicBreak.sourceRange.startOffset &&
+                    candidate.endOffset >= thematicBreak.sourceRange.endOffset &&
+                    candidate.placeholderText.isNotEmpty() &&
+                    candidate.placeholderText.all { char -> char == '─' }
+            }
+            assertNotNull(
+                "thematic break was not projected as a collapsed rule fold over its parser-owned source",
+                thematicFold,
+            )
 
             val link = requireNotNull(controller.currentPlan)
                 .projections
@@ -1615,7 +1626,7 @@ Tail
             ) { "inactive reference definition did not install one full-range metadata fold" }
             assertFalse(fold.isExpanded)
             assertEquals(
-                "↳ [guide] → https://example.com/guide \"Guide title\"",
+                "↳ reference [guide]",
                 fold.placeholderText,
             )
             assertEquals(1, editor.foldingModel.allFoldRegions.count {
@@ -1680,7 +1691,7 @@ Tail
                 )
             )
             assertFalse(fold.isExpanded)
-            assertEquals("↳ [multi] → /multi 'Multi title'", fold.placeholderText)
+            assertEquals("↳ reference [multi]", fold.placeholderText)
             assertEquals(
                 1,
                 editor.foldingModel.allFoldRegions.count {
@@ -1696,13 +1707,11 @@ Tail
         }
     }
 
-    fun testOversizedReferenceDefinitionMetadataFailsClosedToExactSource() {
-        // JetBrains caps each label/destination/title part at 999 characters. Keep every parser-owned
-        // token valid while making the combined metadata placeholder exceed MarkFlow's 1024-char cap.
+    fun testOversizedReferenceDefinitionUsesCompactSecondaryLabelWithoutLeakingDestinationOrTitle() {
         val destination = "https://example.com/" + "x".repeat(600)
         val title = "t".repeat(600)
         val source = "A [consumer][huge].\n\n[huge]: $destination \"$title\"\n\nTail\n"
-        myFixture.configureByText("reference-definition-oversized.md", source)
+        myFixture.configureByText("reference-definition-compact-metadata.md", source)
         val editor = myFixture.editor
         editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
         val stampBefore = editor.document.modificationStamp
@@ -1715,21 +1724,16 @@ Tail
             val definition = requireNotNull(controller.currentPlan)
                 .projections
                 .single { it.kind == NativeProjectionKind.REFERENCE_DEFINITION }
-            val ranges = requireNotNull(definition.referenceDefinitionRanges)
-            val titleRange = requireNotNull(ranges.title)
-            assertTrue(
-                source.substring(ranges.destination.startOffset, ranges.destination.endOffset).length < 999
-            )
-            assertTrue(
-                source.substring(titleRange.startOffset, titleRange.endOffset).length < 999
-            )
-            assertNull(
-                "oversized combined metadata must fail closed instead of installing an unbounded fold placeholder",
+            val fold = requireNotNull(
                 editor.foldingModel.getFoldRegion(
                     definition.sourceRange.startOffset,
                     definition.sourceRange.endOffset,
-                ),
+                )
             )
+            assertFalse(fold.isExpanded)
+            assertEquals("↳ reference [huge]", fold.placeholderText)
+            assertFalse(fold.placeholderText.contains("example.com"))
+            assertFalse(fold.placeholderText.contains(title.take(16)))
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
@@ -3131,7 +3135,7 @@ Tail
         }
     }
 
-    fun testThematicBreakVariantsUseSameSemanticPlaceholderAndRevealExactLexicalSource() {
+    fun testThematicBreakVariantsUseEditorRelativeRuleAndPreserveFollowingSeparator() {
         val source = """Paragraph before.
 
 ---
@@ -3162,27 +3166,30 @@ Tail
                     source.substring(projection.sourceRange.startOffset, projection.sourceRange.endOffset)
                 },
             )
+
+            fun thematicFoldFor(projection: NativeProjection) =
+                editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
+                    candidate.isValid &&
+                        candidate.startOffset == projection.sourceRange.startOffset &&
+                        candidate.endOffset >= projection.sourceRange.endOffset &&
+                        candidate.placeholderText.isNotEmpty() &&
+                        candidate.placeholderText.all { char -> char == '─' }
+                }
+
             thematicBreaks.forEach { projection ->
-                val fold = requireNotNull(
-                    editor.foldingModel.getFoldRegion(
-                        projection.sourceRange.startOffset,
-                        projection.sourceRange.endOffset,
-                    )
-                )
+                val fold = requireNotNull(thematicFoldFor(projection))
                 assertFalse(fold.isExpanded)
-                assertEquals("────────", fold.placeholderText)
+                assertEquals(
+                    "thematic placeholder must preserve the following separator as a block boundary",
+                    projection.sourceRange.endOffset,
+                    fold.endOffset,
+                )
             }
 
             val middle = thematicBreaks[1]
             editor.caretModel.moveToOffset(middle.sourceRange.startOffset)
-            assertTrue(
-                requireNotNull(
-                    editor.foldingModel.getFoldRegion(
-                        middle.sourceRange.startOffset,
-                        middle.sourceRange.endOffset,
-                    )
-                ).isExpanded,
-            )
+            val middleFold = requireNotNull(thematicFoldFor(middle))
+            assertTrue(middleFold.isExpanded)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {

@@ -942,7 +942,7 @@ class MarkFlowStarterSmokeTest {
                     waitFor(
                         message = "inactive thematic marker $marker is concealed",
                         timeout = 10.seconds,
-                        getter = { markFlow.isFoldCollapsed(editor, start, end) },
+                        getter = { markFlow.isFoldCollapsedCovering(editor, start, end) },
                         checker = { it },
                     )
 
@@ -952,7 +952,7 @@ class MarkFlowStarterSmokeTest {
                     waitFor(
                         message = "caret reveals exact thematic marker $marker",
                         timeout = 10.seconds,
-                        getter = { markFlow.isFoldCollapsed(editor, start, end) },
+                        getter = { markFlow.isFoldCollapsedCovering(editor, start, end) },
                         checker = { collapsed -> !collapsed },
                     )
                     check(markFlow.source(editor) == sourceBeforeReveal) {
@@ -967,7 +967,7 @@ class MarkFlowStarterSmokeTest {
                     val reconcealed = waitFor(
                         message = "thematic marker $marker reconceals after caret leaves",
                         timeout = 10.seconds,
-                        getter = { markFlow.isFoldCollapsed(editor, start, end) },
+                        getter = { markFlow.isFoldCollapsedCovering(editor, start, end) },
                         checker = { collapsed -> collapsed },
                     )
                     check(reconcealed) {
@@ -979,7 +979,7 @@ class MarkFlowStarterSmokeTest {
                 waitFor(
                     message = "editable thematic marker is revealed",
                     timeout = 10.seconds,
-                    getter = { markFlow.isFoldCollapsed(editor, editStart, editEnd) },
+                    getter = { markFlow.isFoldCollapsedCovering(editor, editStart, editEnd) },
                     checker = { collapsed -> !collapsed },
                 )
                 markFlow.selectRangeWithKeyboard(editor, editStart, 3)
@@ -1017,7 +1017,7 @@ class MarkFlowStarterSmokeTest {
                 waitFor(
                     message = "edited thematic marker regains inactive presentation",
                     timeout = 10.seconds,
-                    getter = { markFlow.isFoldCollapsed(editor, editStart, editEnd) },
+                    getter = { markFlow.isFoldCollapsedCovering(editor, editStart, editEnd) },
                     checker = { it },
                 )
 
@@ -1050,7 +1050,7 @@ class MarkFlowStarterSmokeTest {
                 waitFor(
                     message = "reopened edited thematic marker restores inactive presentation",
                     timeout = 10.seconds,
-                    getter = { markFlow.isFoldCollapsed(reopened, editStart, editEnd) },
+                    getter = { markFlow.isFoldCollapsedCovering(reopened, editStart, editEnd) },
                     checker = { it },
                 )
 
@@ -1068,7 +1068,7 @@ class MarkFlowStarterSmokeTest {
                     waitFor(
                         message = "thematic fold survives opposite IDE theme",
                         timeout = 20.seconds,
-                        getter = { markFlow.isFoldCollapsed(reopened, editStart, editEnd) },
+                        getter = { markFlow.isFoldCollapsedCovering(reopened, editStart, editEnd) },
                         checker = { it },
                     )
                     check(markFlow.source(reopened) == themeSourceBefore)
@@ -1083,7 +1083,7 @@ class MarkFlowStarterSmokeTest {
                 waitFor(
                     message = "thematic fold survives restored IDE theme",
                     timeout = 20.seconds,
-                    getter = { markFlow.isFoldCollapsed(reopened, editStart, editEnd) },
+                    getter = { markFlow.isFoldCollapsedCovering(reopened, editStart, editEnd) },
                     checker = { it },
                 )
                 check(markFlow.source(reopened) == themeSourceBefore)
