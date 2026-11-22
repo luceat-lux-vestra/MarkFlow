@@ -22,7 +22,6 @@ import java.awt.event.MouseEvent
 import java.util.LinkedHashMap
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 internal data class NativeHeadingModel(
     val sourceRange: ProjectionRange,
