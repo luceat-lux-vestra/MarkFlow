@@ -374,7 +374,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(document.getLineStartOffset(2), fold.startOffset)
             assertTrue(fold.heightInPixels > editor.lineHeight)
             assertTrue(editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-                .none { it.renderer is NativeHeadingInlayRenderer })
+                .none { it.isValid })
             assertEquals(tailOffset, editor.caretModel.offset)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
@@ -618,23 +618,16 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(1, editor.inlayModel.getInlineElementsInRange(0, document.textLength)
                 .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer })
             assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-                .count { it.isValid && it.renderer is NativeHeadingInlayRenderer })
-            assertEquals("Exactly one measured paragraph-spacing inlay, never a second heading", 1,
-                editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-                    .count { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer })
+                .count { it.isValid })
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
             assertEquals(0, foreign.startOffset)
             assertEquals(document.textLength, foreign.endOffset)
             val projectedY = editor.offsetToXY(tailOffset).y
-            assertEquals("H1 bottom spacing must NOT precede the title", originalHeadingY,
+            assertEquals("Same-line fallback must not shift the title", originalHeadingY,
                 editor.offsetToXY(0).y)
-            assertEquals("The paragraph immediately after H1 must not shift",
+            assertEquals("Same-line fallback must not invent paragraph spacing",
                 originalY, projectedY)
-            val onlyGap = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-                .single { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer }
-            assertEquals("Section spacing must be anchored after the paragraph",
-                document.getLineEndOffset(2), onlyGap.offset)
             assertEquals(source, document.text)
             assertEquals(stamp, document.modificationStamp)
 
@@ -656,7 +649,7 @@ class NativeOrdinaryPresentationTest : BasePlatformTestCase() {
             assertEquals(0, evidence.ownedInlays)
             assertEquals(0, evidence.ownedFolds)
             assertEquals(0, editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-                .count { it.isValid && it.renderer === NativeHeadingParagraphGapRenderer })
+                .count { it.isValid })
             assertEquals(originalY, editor.offsetToXY(tailOffset).y)
             assertTrue(foreign.isValid)
             assertTrue(foreign.isExpanded)
@@ -1698,19 +1691,19 @@ Tail
         try {
             val evidence = controller.evidenceSnapshot()
             assertEquals(8, evidence.headingModels)
-            assertEquals(8, evidence.headingInlays)
-            assertTrue(evidence.headingFolds >= 16)
             assertEquals(8, evidence.headingFullyConcealed)
+            assertTrue(evidence.headingFolds >= 8)
             assertEquals(listOf(1, 2, 3, 4, 5, 6, 1, 2), evidence.headingLevels)
-
-            val renderers = editor.inlayModel
+            assertEquals(0, editor.inlayModel
                 .getBlockElementsInRange(0, editor.document.textLength)
-                .mapNotNull { inlay -> inlay.renderer as? NativeHeadingInlayRenderer }
-            assertEquals(8, renderers.size)
-            assertEquals(
-                listOf("H1", "H2", "H3", "H4", "H5", "H6", "Setext one", "Setext two"),
-                renderers.map(NativeHeadingInlayRenderer::displayText),
-            )
+                .count { it.isValid })
+            val customHeadings = editor.foldingModel.allFoldRegions
+                .filterIsInstance<CustomFoldRegion>()
+                .count { it.isValid && it.renderer is NativeHeadingCustomFoldRenderer }
+            val inlineHeadings = editor.inlayModel
+                .getInlineElementsInRange(0, editor.document.textLength)
+                .count { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer }
+            assertEquals(8, customHeadings + inlineHeadings)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
         } finally {
@@ -1731,19 +1724,16 @@ Tail
             richPresentationEnabled = { true },
         )
         try {
-            assertEquals(1, controller.evidenceSnapshot().headingInlays)
             assertTrue(controller.evidenceSnapshot().headingFolds > 0)
             assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
 
             editor.caretModel.moveToOffset(source.indexOf("Heading") + 2)
-            assertEquals(0, controller.evidenceSnapshot().headingInlays)
             assertEquals(0, controller.evidenceSnapshot().headingFolds)
             assertEquals(0, controller.evidenceSnapshot().headingFullyConcealed)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
 
             editor.caretModel.moveToOffset(tailOffset)
-            assertEquals(1, controller.evidenceSnapshot().headingInlays)
             assertTrue(controller.evidenceSnapshot().headingFolds > 0)
             assertEquals(1, controller.evidenceSnapshot().headingFullyConcealed)
             assertEquals(source, editor.document.text)
