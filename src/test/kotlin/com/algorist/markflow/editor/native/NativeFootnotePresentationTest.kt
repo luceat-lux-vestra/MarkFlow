@@ -6,6 +6,33 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.event.MouseEvent
 
 class NativeFootnotePresentationTest : BasePlatformTestCase() {
+    fun testParentPresentationControllerWiresFootnoteOwner() {
+        val source = """Reference.[^one]
+
+[^one]: Definition.
+
+Tail
+"""
+        myFixture.configureByText("footnote-parent-controller.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.indexOf("Tail") + 1)
+        val stampBefore = editor.document.modificationStamp
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+
+        try {
+            val evidence = controller.footnoteEvidenceSnapshot()
+            assertEquals(2, evidence.models)
+            assertEquals(2, evidence.fullyPresented)
+            assertEquals(source, editor.document.text)
+            assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testInactiveFootnotePairUsesNativePresentationWithoutChangingSource() {
         val source = """Text with a footnote reference.[^manual-note]
 
