@@ -200,6 +200,9 @@ internal object NativeLocalImageResolver {
         false
     }
 
+    internal fun supportsFilename(filename: String): Boolean =
+        expectedFormat(filename) != null
+
     private fun expectedFormat(filename: String): ExpectedFormat? {
         val extension = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return when (extension) {
