@@ -20,8 +20,9 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf("-", "-", "7.", "-"), model.rows.map(NativeListRow::marker))
         assertEquals(listOf("parent", "child", "grandchild", "sibling"), model.rows.map(NativeListRow::text))
         assertEquals(listOf(0, 1, 2, 0), model.rows.map(NativeListRow::depth))
-        assertTrue(nativeListIndentPixels(2) > nativeListIndentPixels(1))
-        assertTrue(nativeListIndentPixels(1) > nativeListIndentPixels(0))
+        val editor = myFixture.editor
+        assertTrue(nativeListIndentPixels(editor, 2) > nativeListIndentPixels(editor, 1))
+        assertTrue(nativeListIndentPixels(editor, 1) > nativeListIndentPixels(editor, 0))
     }
 
     fun testListIndentResultRefreshesNativeHierarchyWithUndoRedo() {
