@@ -748,6 +748,7 @@ user@example.com
         val source = """Second first.[^second] First next.[^first] Second again.[^second]
 
 [^first]: First definition.
+
 [^second]: Second definition.
 """
         val semantics = footnoteSemantics(source)
