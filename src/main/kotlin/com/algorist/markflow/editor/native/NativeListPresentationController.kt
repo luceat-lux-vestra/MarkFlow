@@ -986,12 +986,23 @@ internal class NativeListInlayRenderer(
         return Point(box.x + box.width / 2, box.y + box.height / 2)
     }
 
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int =
+        preferredWidthForCurrentEditor()
+
+    internal fun preferredWidthForCurrentEditor(): Int {
         val layout = layoutMetrics()
         val viewportWidth = editor.scrollingModel.visibleArea.width
-        val measuredWidth = if (viewportWidth > 0) viewportWidth else editor.contentComponent.width
-        val availableWidth = measuredWidth - layout.outerPadding * 2
-        return max(editor.lineHeight, availableWidth)
+        val componentWidth = editor.contentComponent.width
+        val measuredWidth = when {
+            viewportWidth > 0 -> viewportWidth
+            componentWidth > 0 -> componentWidth
+            else -> 0
+        }
+        return if (measuredWidth > 0) {
+            max(1, measuredWidth - layout.outerPadding * 2)
+        } else {
+            intrinsicContentWidth(layout)
+        }
     }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
@@ -1099,7 +1110,12 @@ internal class NativeListInlayRenderer(
         val oldColor = g2.color
         try {
             g2.color = UIManager.getColor(CHECKBOX_FOREGROUND_KEY) ?: fallbackForeground
-            g2.drawRect(bounds.x, bounds.y, bounds.width, bounds.height)
+            g2.drawRect(
+                bounds.x,
+                bounds.y,
+                max(0, bounds.width - 1),
+                max(0, bounds.height - 1),
+            )
             if (task.checked) {
                 val inset = max(1, bounds.width / 4)
                 val left = bounds.x + inset
@@ -1138,6 +1154,34 @@ internal class NativeListInlayRenderer(
             depthIndent = nativeListIndentPixels(editor, 1),
             markerGap = gutter,
         )
+    }
+
+    private fun intrinsicContentWidth(layout: NativeListLayoutMetrics): Int {
+        val baseFont = editor.contentComponent.font
+        val boldFont = baseFont.deriveFont(Font.BOLD)
+        val baseMetrics = editor.contentComponent.getFontMetrics(baseFont)
+        val boldMetrics = editor.contentComponent.getFontMetrics(boldFont)
+
+        val contentRight = model.rows.maxOfOrNull { row ->
+            val indent = layout.outerPadding + row.depth * layout.depthIndent
+            val markerWidth = if (row.task != null) {
+                checkboxSize()
+            } else {
+                boldMetrics.stringWidth(nativeListDisplayMarker(row.marker))
+            }
+            val contentStart = indent + markerWidth + layout.markerGap
+            val firstLineRight = contentStart + row.displayRuns.sumOf { run ->
+                val style = baseFont.style or run.style.fontMask
+                val runFont = if (style == baseFont.style) baseFont else baseFont.deriveFont(style)
+                editor.contentComponent.getFontMetrics(runFont).stringWidth(run.text)
+            }
+            val continuationRight = row.continuations.maxOfOrNull { continuation ->
+                contentStart + baseMetrics.stringWidth(continuation.text)
+            } ?: firstLineRight
+            max(firstLineRight, continuationRight)
+        } ?: layout.outerPadding
+
+        return max(1, contentRight + layout.outerPadding)
     }
 
     private fun rowHeight(): Int {
