@@ -477,12 +477,17 @@ internal class NativeFencedCodeInlayRenderer(
             .map { line -> line.removeSuffix("\r") }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-        max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_MARGIN * 2)
+        layoutMetrics().surfaceWidth()
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        val header = if (model.info.isBlank()) 0 else metrics.height + HEADER_GAP
-        return VERTICAL_PADDING * 2 + header + max(1, lines.size) * max(editor.lineHeight, metrics.height)
+        val layout = layoutMetrics()
+        val header = if (model.info.isBlank()) {
+            0
+        } else {
+            editor.contentComponent.getFontMetrics(editor.contentComponent.font.deriveFont(Font.BOLD)).height +
+                layout.halfRhythm
+        }
+        return layout.verticalPadding * 2 + header + max(1, lines.size) * layout.rowHeight
     }
 
     override fun paint(
@@ -496,31 +501,49 @@ internal class NativeFencedCodeInlayRenderer(
         val background = Color(foreground.red, foreground.green, foreground.blue, BACKGROUND_ALPHA)
         val font = editor.contentComponent.font
         val metrics = g2.getFontMetrics(font)
-        val lineHeight = max(editor.lineHeight, metrics.height)
-        val left = targetRegion.x + OUTER_MARGIN
-        val width = max(1, targetRegion.width - OUTER_MARGIN * 2)
+        val layout = layoutMetrics()
+        val left = targetRegion.x + layout.surfaceMargin
+        val width = max(1, targetRegion.width - layout.surfaceMargin * 2)
 
         g2.color = background
-        g2.fillRoundRect(left, targetRegion.y, width, targetRegion.height, ARC, ARC)
+        g2.fillRoundRect(
+            left,
+            targetRegion.y,
+            width,
+            targetRegion.height,
+            layout.surfaceArc,
+            layout.surfaceArc,
+        )
 
-        var y = targetRegion.y + VERTICAL_PADDING
+        var y = targetRegion.y + layout.verticalPadding
         if (model.info.isNotBlank()) {
-            val infoFont = font.deriveFont(Font.BOLD, max(9f, font.size2D * 0.9f))
+            val infoFont = font.deriveFont(Font.BOLD)
             g2.font = infoFont
             g2.color = Color(foreground.red, foreground.green, foreground.blue, INFO_ALPHA)
             val infoMetrics = g2.getFontMetrics(infoFont)
-            g2.drawString(clip(model.info, infoMetrics, width - HORIZONTAL_PADDING * 2), left + HORIZONTAL_PADDING, y + infoMetrics.ascent)
-            y += infoMetrics.height + HEADER_GAP
+            g2.drawString(
+                clip(model.info, infoMetrics, width - layout.horizontalPadding * 2),
+                left + layout.horizontalPadding,
+                y + infoMetrics.ascent,
+            )
+            y += infoMetrics.height + layout.halfRhythm
         }
 
         g2.font = font
         g2.color = foreground
-        val available = max(1, width - HORIZONTAL_PADDING * 2)
+        val available = max(1, width - layout.horizontalPadding * 2)
         lines.forEach { line ->
-            g2.drawString(clip(line, metrics, available), left + HORIZONTAL_PADDING, y + metrics.ascent)
-            y += lineHeight
+            g2.drawString(
+                clip(line, metrics, available),
+                left + layout.horizontalPadding,
+                y + metrics.ascent,
+            )
+            y += layout.rowHeight
         }
     }
+
+    private fun layoutMetrics(): NativePresentationLayoutMetrics =
+        nativePresentationLayoutMetrics(editor)
 
     private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
         if (metrics.stringWidth(text) <= maxWidth) return text
@@ -550,12 +573,6 @@ internal class NativeFencedCodeInlayRenderer(
     }
 
     companion object {
-        private const val MIN_WIDTH = 180
-        private const val OUTER_MARGIN = 6
-        private const val HORIZONTAL_PADDING = 10
-        private const val VERTICAL_PADDING = 8
-        private const val HEADER_GAP = 4
-        private const val ARC = 8
         private const val BACKGROUND_ALPHA = 18
         private const val INFO_ALPHA = 150
     }
