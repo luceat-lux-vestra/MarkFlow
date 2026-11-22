@@ -30,9 +30,9 @@ const expectedMarkdownFeatures = new Set(["atx-headings-h1-h6", "autolink", "aut
 const knownGapIds = new Set([]);
 // Git blob SHA-1 of the reviewed 88-case corpus.tsv: pins every column and row,
 // not merely detector/feature set membership. Deliberate changes require audited rebaseline.
-const reviewedManifestGitBlobSha = "ab92e5aad4868660d318d70f818ff11c9a1a20c9";
+const reviewedManifestGitBlobSha = "4d3bad3f5cbc46cc07a6e4bc9388f7a3e19b06ec";
 const reviewedManifestRows = 88;
-const reviewedMarkdownAnchorGitBlobSha = "cefb6ca6770559a0b606eb988af9ff114594ee13";
+const reviewedMarkdownAnchorGitBlobSha = "a2616581c1de229b628819f25745dcd11c69c615";
 const reviewedMarkdownAnchorRows = 49;
 
 const correctedMarkdownDegradedCaseIds = new Set([
