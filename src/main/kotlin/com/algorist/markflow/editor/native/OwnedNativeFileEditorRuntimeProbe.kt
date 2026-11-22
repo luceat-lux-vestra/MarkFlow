@@ -32,7 +32,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.text.AttributedString
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -544,15 +543,16 @@ internal object OwnedNativeFileEditorRuntimeProbe {
             directEditors.clear()
         }
 
-        private fun awaitEvidence(controller: NativePresentationController): NativeDerivedPresentationEvidence {
-            var last = requireNotNull(onEdt { controller.derivedEvidenceSnapshot() })
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
-            while (expectJcef && last.renderRequests == 0L && System.nanoTime() < deadline) {
-                Thread.sleep(100)
-                last = requireNotNull(onEdt { controller.derivedEvidenceSnapshot() })
-            }
-            return last
-        }
+        private fun awaitEvidence(controller: NativePresentationController): NativeDerivedPresentationEvidence =
+            requireNotNull(
+                onEdt {
+                    // applyPlan creates the retained renderer and records renderRequests
+                    // synchronously before the asynchronous renderer result arrives. Force one
+                    // exact-current plan application instead of polling wall-clock time.
+                    controller.refreshNow()
+                    controller.derivedEvidenceSnapshot()
+                }
+            )
 
         private fun resourceSnapshot(name: String, openFiles: Int): ResourceSnapshot {
             val editorCounts = onEdt {
