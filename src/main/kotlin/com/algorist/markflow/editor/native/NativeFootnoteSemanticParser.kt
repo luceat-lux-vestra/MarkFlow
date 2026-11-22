@@ -45,7 +45,7 @@ internal object NativeFootnoteSemanticParser {
         val sourceRange: ProjectionRange,
         val definingReferenceRange: ProjectionRange?,
         val label: Label,
-        val bodyRange: ProjectionRange,
+        val bodyRange: ProjectionRange?,
     )
 
     private data class ReferenceCandidate(
@@ -77,8 +77,13 @@ internal object NativeFootnoteSemanticParser {
 
         val definitionsByLabel = definitions.groupBy { definition -> definition.label.value }
         val uniqueDefinitions = definitionsByLabel
-            .filterValues { candidates -> candidates.size == 1 }
-            .mapValues { (_, candidates) -> candidates.single() }
+            .mapNotNull { (label, candidates) ->
+                candidates
+                    .singleOrNull()
+                    ?.takeIf { candidate -> candidate.bodyRange != null }
+                    ?.let { candidate -> label to candidate }
+            }
+            .toMap()
 
         // Number only labels that have one unambiguous definition and at least one consumer reference.
         // First reference source order is the stable numbering contract.
@@ -102,10 +107,11 @@ internal object NativeFootnoteSemanticParser {
         val acceptedDefinitions = numbers.entries
             .mapNotNull { (label, number) ->
                 uniqueDefinitions[label]?.let { definition ->
+                    val bodyRange = definition.bodyRange ?: return@let null
                     Definition(
                         sourceRange = definition.sourceRange,
                         labelRange = definition.label.sourceRange,
-                        bodyRange = definition.bodyRange,
+                        bodyRange = bodyRange,
                         label = label,
                         number = number,
                     )
@@ -167,13 +173,12 @@ internal object NativeFootnoteSemanticParser {
         val colon = children[colonIndex]
         if (colon.type != MarkdownTokenTypes.COLON || colon.startOffset != first.endOffset) return null
 
-        val bodyStart = children
+        val bodyRange = children
             .drop(colonIndex + 1)
             .firstOrNull { child -> !child.isLayoutToken() }
             ?.startOffset
-            ?: return null
-        val bodyRange = projectionRangeOrNull(bodyStart, node.endOffset, source) ?: return null
-        if (source.substring(bodyRange.startOffset, bodyRange.endOffset).isBlank()) return null
+            ?.let { bodyStart -> projectionRangeOrNull(bodyStart, node.endOffset, source) }
+            ?.takeIf { range -> !source.substring(range.startOffset, range.endOffset).isBlank() }
 
         return DefinitionCandidate(
             sourceRange = sourceRange,
@@ -200,13 +205,12 @@ internal object NativeFootnoteSemanticParser {
 
         val colonIndex = children.indexOfFirst { child -> child.type == MarkdownTokenTypes.COLON }
         if (colonIndex < 0) return null
-        val bodyStart = children
+        val bodyRange = children
             .drop(colonIndex + 1)
             .firstOrNull { child -> !child.isLayoutToken() }
             ?.startOffset
-            ?: return null
-        val bodyRange = projectionRangeOrNull(bodyStart, node.endOffset, source) ?: return null
-        if (source.substring(bodyRange.startOffset, bodyRange.endOffset).isBlank()) return null
+            ?.let { bodyStart -> projectionRangeOrNull(bodyStart, node.endOffset, source) }
+            ?.takeIf { range -> !source.substring(range.startOffset, range.endOffset).isBlank() }
 
         return DefinitionCandidate(
             sourceRange = sourceRange,
