@@ -765,6 +765,62 @@ user@example.com
         assertTrue(semantics.definitions.isEmpty())
     }
 
+    fun testProjectionPlannerPublishesOnlyValidatedFootnotePair() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(31L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val reference = plan.projections.single { it.kind == NativeProjectionKind.FOOTNOTE_REFERENCE }
+        val definition = plan.projections.single { it.kind == NativeProjectionKind.FOOTNOTE_DEFINITION }
+
+        assertEquals("[^manual-note]", raw(source, reference.sourceRange))
+        assertEquals("manual-note", requireNotNull(reference.footnote).label)
+        assertEquals(1, requireNotNull(reference.footnote).number)
+        assertEquals("[^manual-note]: Footnote definition text.", raw(source, definition.sourceRange))
+        assertEquals("Footnote definition text.", raw(source, requireNotNull(definition.footnote).bodyRange!!))
+        assertEquals(1, requireNotNull(definition.footnote).number)
+
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.LINK &&
+                    projection.sourceRange == reference.sourceRange
+            }
+        )
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.REFERENCE_DEFINITION &&
+                    projection.sourceRange == definition.sourceRange
+            }
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testProjectionPlannerLeavesAmbiguousFootnotesAsExactSource() {
+        val source = """Duplicate reference.[^same]
+
+[^same]: First definition.
+
+[^same]: Second definition.
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(32L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.FOOTNOTE_REFERENCE ||
+                    projection.kind == NativeProjectionKind.FOOTNOTE_DEFINITION
+            }
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testFootnoteLikeReferenceFailsClosedWithoutRegressingOrdinaryReferenceLinks() {
         val source = """A [reference link][guide] and [shortcut].
 
