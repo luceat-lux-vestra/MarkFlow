@@ -1330,6 +1330,18 @@ grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
   die "Stage E7 lost Gantt minimum-width negative controls"
 
+# #628 native list geometry must remain derived from the live editor/LAF contract.
+list_presentation="src/main/kotlin/com/algorist/markflow/editor/native/NativeListPresentationController.kt"
+if grep -Eq 'private const val (MIN_WIDTH|OUTER_PADDING|DEPTH_INDENT|MARKER_GAP)[[:space:]]*=' "$list_presentation"; then
+  die "#628 native list geometry regressed to fixed device-pixel layout constants"
+fi
+grep -Fq 'internal fun nativeListTypographicGutter(editor: Editor)' "$list_presentation" ||
+  die "#628 list gutter no longer derives from current editor typography"
+grep -Fq 'internal fun nativeListIndentPixels(editor: Editor, depth: Int)' "$list_presentation" ||
+  die "#628 list nesting no longer derives from current editor metrics"
+grep -Fq 'UIManager.getIcon(CHECKBOX_ICON_KEY)' "$list_presentation" ||
+  die "#628 task checkbox geometry no longer consults the current Look and Feel"
+
 # #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
 grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
   die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
