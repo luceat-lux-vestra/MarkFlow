@@ -116,6 +116,39 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         }
     }
 
+    fun testThematicRuleKeepsFollowingBlankSeparatorOutsideFold() {
+        val source = "---\n\n| A | B |\n| --- | --- |\n| a | b |\n"
+        myFixture.configureByText("thematic-following-block.md", source)
+        val editor = myFixture.editor
+        editor.caretModel.moveToOffset(source.lastIndex)
+
+        val controller = NativePresentationController(
+            editor = editor,
+            richPresentationEnabled = { true },
+        )
+        try {
+            val thematic = requireNotNull(controller.currentPlan)
+                .projections
+                .single { it.kind == NativeProjectionKind.THEMATIC_BREAK }
+            val fold = requireNotNull(
+                editor.foldingModel.allFoldRegions.singleOrNull { candidate ->
+                    candidate.isValid &&
+                        !candidate.isExpanded &&
+                        candidate.startOffset == thematic.sourceRange.startOffset
+                }
+            )
+            assertEquals(thematic.sourceRange.startOffset, fold.startOffset)
+            assertEquals(
+                "thematic placeholder must not absorb the separator that owns the next block boundary",
+                thematic.sourceRange.endOffset,
+                fold.endOffset,
+            )
+            assertEquals(source, editor.document.text)
+        } finally {
+            controller.dispose()
+        }
+    }
+
     fun testThematicRuleWidthTracksCurrentEditorGeometryInsteadOfFixedGlyphCount() {
         myFixture.configureByText("thematic-width.md", "---\n\nTail\n")
         val editor = myFixture.editor
