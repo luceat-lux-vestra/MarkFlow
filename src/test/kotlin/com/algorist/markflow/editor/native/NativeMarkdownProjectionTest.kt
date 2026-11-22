@@ -1,6 +1,9 @@
 package com.algorist.markflow.editor.native
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.plugins.markdown.lang.parser.MarkdownParserManager
 
 class NativeMarkdownProjectionTest : BasePlatformTestCase() {
     fun testSnapshotCapturePreservesExactDocumentIdentity() {
@@ -626,6 +629,65 @@ user@example.com
             },
         )
         assertEquals(source, plan.identity.source)
+    }
+
+    fun testPinnedParserDoesNotExposeCompleteFootnoteStructure() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val parser = MarkdownParserManager.createMarkdownParser(
+            MarkdownParserManager.FLAVOUR,
+            assertionsEnabled = false,
+        )
+        val root = parser.parse(
+            MarkdownElementTypes.MARKDOWN_FILE,
+            source,
+            parseInlines = true,
+        )
+
+        fun descendants(node: ASTNode): Sequence<ASTNode> =
+            sequenceOf(node) + node.children.asSequence().flatMap(::descendants)
+
+        val nodes = descendants(root).toList()
+        val evidence = nodes.joinToString("\n") { node ->
+            val raw = source.substring(node.startOffset, node.endOffset)
+                .replace("\n", "\\n")
+            "${node.type}@${node.startOffset}..${node.endOffset}=$raw"
+        }
+
+        val referenceStart = source.indexOf("[^manual-note]")
+        val referenceEnd = referenceStart + "[^manual-note]".length
+        val genericReference = nodes.singleOrNull { node ->
+            node.startOffset == referenceStart &&
+                node.endOffset == referenceEnd &&
+                node.type in setOf(
+                    MarkdownElementTypes.FULL_REFERENCE_LINK,
+                    MarkdownElementTypes.SHORT_REFERENCE_LINK,
+                )
+        }
+        assertNotNull(
+            "pinned parser no longer exposes the footnote-like reference through the generic reference grammar:\n$evidence",
+            genericReference,
+        )
+
+        assertFalse(
+            "pinned parser unexpectedly acquired a dedicated footnote element; revisit #631 parser-boundary strategy:\n$evidence",
+            nodes.any { node -> node.type.toString().contains("FOOTNOTE", ignoreCase = true) },
+        )
+
+        val definitionStart = source.indexOf("[^manual-note]:")
+        val definitionEnd = source.indexOf('\n', definitionStart).let { newline ->
+            if (newline >= 0) newline else source.length
+        }
+        assertFalse(
+            "generic LINK_DEFINITION unexpectedly owns the complete footnote body; revisit #631 parser-boundary strategy:\n$evidence",
+            nodes.any { node ->
+                node.type == MarkdownElementTypes.LINK_DEFINITION &&
+                    node.startOffset == definitionStart &&
+                    node.endOffset >= definitionEnd
+            },
+        )
     }
 
     fun testFootnoteLikeReferenceFailsClosedWithoutRegressingOrdinaryReferenceLinks() {
