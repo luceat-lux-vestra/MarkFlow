@@ -359,6 +359,16 @@ class MarkFlowStarterVisualAcceptanceTest {
             "structure list model lacks a valid, allocated native inlay"
         }
 
+        val modelTops = models.map { model ->
+            model.getValue("inlay_bounds_xywh")
+                .split(',')
+                .also { parts -> check(parts.size == 4) { "malformed structure list inlay bounds" } }[1]
+                .toInt()
+        }
+        check(modelTops.zipWithNext().all { (first, second) -> first < second }) {
+            "structure list inlays must remain vertically ordered by lexical source: $modelTops"
+        }
+
         val rows = List(3) { mutableListOf<Map<String, String>>() }
         var currentModel = -1
         lines.forEach { line ->
