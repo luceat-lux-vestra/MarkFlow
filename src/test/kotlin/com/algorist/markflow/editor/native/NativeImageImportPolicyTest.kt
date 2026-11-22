@@ -38,6 +38,19 @@ class NativeImageImportPolicyTest {
     }
 
     @Test
+    fun preservesOnlyExtensionsAdmittedByTheCanonicalRasterBoundary() {
+        assertEquals("diagram.png", NativeImageImportPolicy.sanitizeFilename("diagram.PNG"))
+        assertEquals("diagram.jpg", NativeImageImportPolicy.sanitizeFilename("diagram.JPG"))
+        assertEquals("diagram.jpeg", NativeImageImportPolicy.sanitizeFilename("diagram.JPEG"))
+        assertEquals("diagram.gif", NativeImageImportPolicy.sanitizeFilename("diagram.GIF"))
+        assertEquals("diagram.bmp", NativeImageImportPolicy.sanitizeFilename("diagram.BMP"))
+        assertEquals("diagram.webp", NativeImageImportPolicy.sanitizeFilename("diagram.webp"))
+        assertFalse(NativeLocalImageResolver.supportsFilename(
+            NativeImageImportPolicy.sanitizeFilename("diagram.webp")
+        ))
+    }
+
+    @Test
     fun allocatesCollisionSuffixesDeterministicallyAndCaseInsensitively() {
         val reserved = setOf("diagram.png", "diagram-2.png", "other.png")
         assertEquals("diagram-3.png", NativeImageImportPolicy.firstAvailableName("diagram.png", reserved))
