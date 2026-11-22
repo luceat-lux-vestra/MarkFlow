@@ -548,9 +548,6 @@ class MarkFlowStarterDifferentialManifestTest {
                 // Keep IntelliJ's default global JSQuery pool (0).
                 // The bundled MarkdownJCEFHtmlPanel configures 20 slots on its OWN
                 // JBCefClient before native browser creation; no global override needed.
-            // #353 acceptance: distinguish absent FileEditor listener registration
-            // from no stale JCEF panels found. Logging is off in normal IDE use.
-            addSystemProperty("markflow.353.lifecycle.trace", "true")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 if (abHeading != null) {
