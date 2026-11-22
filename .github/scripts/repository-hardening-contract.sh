@@ -1323,8 +1323,18 @@ grep -Fq 'testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReatta
   die "Stage E12 lost guarded heading controller test"
 grep -Fq 'testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
   die "Stage E13 lost real editor hit-test evidence"
-grep -Fq 'private val sourceLineReplacement: Boolean = false' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
-  die "Stage E12 accidentally enabled unvalidated custom heading rendering by default"
+if grep -Fq 'markflow.starter.headingLegacyBaselinePilot' "$production_lifecycle"; then
+  die "Production heading behavior must not depend on Starter-only VM properties"
+fi
+if grep -Fq 'file.name == "md-atx-headings-h1-h6.md"' "$production_lifecycle"; then
+  die "Production heading behavior must not depend on an evidence fixture filename"
+fi
+grep -Fq 'headingSourceLineReplacement = true' "$production_lifecycle" ||
+  die "Production heading source-line replacement policy is not explicit"
+grep -Fq 'headingNativeEditorTypography = true' "$production_lifecycle" ||
+  die "Production heading typography must derive from the active editor/theme"
+grep -Fq 'headingPreviewPilotGap = false' "$production_lifecycle" ||
+  die "Historical Preview paragraph-gap pilot leaked into production"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||

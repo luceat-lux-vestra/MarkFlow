@@ -62,19 +62,12 @@ internal object NativeMarkFlowProductionLifecycle {
                 derivedPresentation = derivedPresentation,
                 hostResources = hostResources,
                 rawHtmlPresentation = rawHtmlPresentation,
-                // Product now replaces parser-proven Heading source lines instead
-                // of adding a second block-inlay height. The old additive A
-                // baseline is limited to a named IDE evidence-only fixture.
-                headingSourceLineReplacement = !(
-                    System.getProperty("markflow.starter.headingLegacyBaselinePilot") == "true" &&
-                        file.name == "md-atx-headings-h1-h6.md"
-                ),
-                // Reuse the actual B layout typography as the product 13px
-                // Preview baseline. Text scales with editor font size; the
-                // section gap and fold padding are editor-relative em tokens.
-                // Normal product does NOT downsize H1 to the 22px base line.
-                headingNativeEditorTypography = false,
-                headingPreviewPilotGap = true,
+                // Production has one heading policy: parser-proven source-line replacement
+                // with typography derived from the active editor/theme. Historical Preview A/B
+                // experiments must never change product behavior by fixture name or VM property.
+                headingSourceLineReplacement = true,
+                headingNativeEditorTypography = true,
+                headingPreviewPilotGap = false,
             )
             editor.putUserData(controllerKey, controller)
             true

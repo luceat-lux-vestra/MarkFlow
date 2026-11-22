@@ -136,7 +136,8 @@ internal object NativeHeadingProjectionPlanner {
 @Suppress("UnstableApiUsage")
 internal class NativeHeadingPresentationController(
     private val editor: Editor,
-    // Explicit integration pilot; no production call site enables it yet.
+    // Production enables source-line replacement explicitly. The false default is retained only
+    // for historical evidence fixtures until their separate cleanup; product behavior never reads it.
     private val sourceLineReplacement: Boolean = false,
     private val nativeEditorTypography: Boolean = false,
     private val previewPilotParagraphGap: Boolean = true,
@@ -372,12 +373,9 @@ internal class NativeHeadingPresentationController(
             )
         }
         if (installed == null) {
-            // In the explicit #353 source-line-replacement pilot ONLY:
-            // the Markdown provider may own an expanded section fold with the
-            // same start as document H1. IDEA rejects a CustomFoldRegion there.
-            // Try a small ordinary MarkFlow-owned source fold plus a SAME-LINE
-            // inline heading. Never remove/change the platform-owned region,
-            // and never fall back to the legacy additive block inlay.
+            // A foreign expanded section fold can share the H1 start and make IDEA reject
+            // CustomFoldRegion creation. Keep that foreign owner untouched and use the bounded
+            // same-line fallback; if its source/blank-row proof fails, leave exact source visible.
             installSameStartInlineFallback(identity, key, model, lineSpan)
             return
         }
@@ -398,10 +396,11 @@ internal class NativeHeadingPresentationController(
     }
 
     /**
-     * Isolated #353 H1 candidate, enabled only for sourceLineReplacement tests.
-     * The added InlineElement uses the existing heading source line rather
-     * than introducing a second block height. This is NOT release acceptance:
-     * the pinned full-IDE mouse/selection and baseline contracts remain gates.
+     * Bounded same-start H1 fallback for a foreign expanded section fold.
+     *
+     * The InlineElement consumes only the parser-proven heading line plus a verified blank-row
+     * capacity. Failure to prove those bounds leaves exact source visible instead of inventing
+     * alternate layout ownership.
      */
     private fun installSameStartInlineFallback(
         identity: ProjectionSourceIdentity,
@@ -848,9 +847,14 @@ internal class NativeHeadingInlineFoldRenderer(
         try {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g2.font = font
-            g2.color = NativeHeadingPreviewTypographyPilot.foreground(
-                editor, model.level, textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
-            )
+            g2.color = if (nativeEditorTypography) {
+                textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            } else {
+                NativeHeadingPreviewTypographyPilot.foreground(
+                    editor, model.level,
+                    textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground,
+                )
+            }
             val baseline = targetRegion.y +
                 max(metrics.ascent, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
             val previousClip = g2.clip

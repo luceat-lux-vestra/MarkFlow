@@ -500,16 +500,12 @@ class MarkFlowStarterDifferentialManifestTest {
             // original fixture lived in a different repository directory.
             writeDeterministicLocalImage(project.resolve("visual-proof.png"))
             writeDeterministicLocalImage(project.resolve("images/example.png"))
-            // A and B are byte-identical but distinct file-editor lifecycles.
-            // Only this exact B filename is opted into source-line replacement.
-            val abHeading = selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }
-            if (abHeading != null) {
-                val bFixture = project.resolve("heading-layout-b.md")
-                check(!Files.exists(bFixture))
-                Files.write(bFixture, abHeading.bytes)
+            // The heading font-size reflow probe uses the same production policy as every
+            // other file. No fixture name or VM property is allowed to select alternate behavior.
+            selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }?.let { heading ->
                 val productFixture = project.resolve("heading-layout-product.md")
                 check(!Files.exists(productFixture))
-                Files.write(productFixture, abHeading.bytes)
+                Files.write(productFixture, heading.bytes)
             }
             selected.forEach { entry ->
                 val target = project.resolve(entry.id + ".md")
@@ -553,10 +549,6 @@ class MarkFlowStarterDifferentialManifestTest {
             addSystemProperty("markflow.353.lifecycle.trace", "true")
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
-                if (abHeading != null) {
-                    addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
-                    addSystemProperty("markflow.starter.headingLegacyBaselinePilot", "true")
-                }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
             }.runIdeWithDriver(
@@ -2494,284 +2486,6 @@ class MarkFlowStarterDifferentialManifestTest {
                                     candidateFailure.addSuppressed(cleanupError)
                                 }
                             }
-                            val abDest = output.resolve("heading-layout-ab")
-                            Files.createDirectories(abDest)
-                            val b = markFlow.openMarkdown("heading-layout-b.md")
-                            val bEditor = b.editor
-                            var bFailure: Throwable? = null
-                            try {
-                                markFlow.assertProductionProjectionAttached(b)
-                                check(markFlow.source(b) == source)
-                                val bStamp = markFlow.modificationStamp(b)
-                                driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
-                                markFlow.resetToSingleCaret(b, source.length)
-                                val bCaretBefore = markFlow.primaryCaretOffset(b)
-                                check(bCaretBefore == source.length)
-                                driver.withContext(OnDispatcher.EDT) {
-                                    preview.showNativeAtSourceLine(bEditor, entry.line)
-                                }
-                                waitFor(
-                                    message = "CustomFold IDE lifecycle settled",
-                                    timeout = 50.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
-                                        visual.visualEvidence(bEditor)
-                                    } },
-                                    checker = { it.contains("derivedPending=0") }
-                                )
-                                val nativeB = driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeHeadingReplacementGeometry(bEditor)
-                                }
-                                // Retain the actual five/six-fold observation BEFORE
-                                // any later screen or JCEF probe can fail.
-                                Files.writeString(
-                                    abDest.resolve("native-b-customfold.txt"), nativeB
-                                )
-                                val bCustomCount = nativeB.lineSequence().single {
-                                    it.startsWith("measured_atx_heading_count=")
-                                }.substringAfter('=').toInt()
-                                val bMissing = nativeB.lineSequence().single {
-                                    it.startsWith("missing_heading_levels=")
-                                }.substringAfter('=')
-                                val bShowing = nativeB.lineSequence().single {
-                                    it.startsWith("editor_is_showing=")
-                                }.substringAfter('=') == "true"
-                                // A CustomFold at H1's 0-offset is rejected by IDEA
-                                // because the platform owns an expanded 0..EOF
-                                // section. The explicit opt-in candidate uses a
-                                // same-line InlineElement + a collapsed *owned*
-                                // ordinary FoldRegion instead. Demand evidence
-                                // for both owners; 5 CustomFolds alone is NOT 6/6.
-                                val bInlineCount = nativeB.lineSequence().single {
-                                    it.startsWith("co_start_inline_pilot_count=")
-                                }.substringAfter('=').toInt()
-                                val h1Evidence = nativeB.lineSequence().single {
-                                    it.startsWith("level=1\t")
-                                }.split('\t').associate { part ->
-                                    val pair = part.split('=', limit = 2)
-                                    check(pair.size == 2) { "Malformed H1 geometry evidence" }
-                                    pair[0] to pair[1]
-                                }
-                                val h1InlineInstalled =
-                                    bInlineCount == 1 &&
-                                    h1Evidence["fold_status"] == "MISSING" &&
-                                    h1Evidence["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
-                                    h1Evidence["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
-                                    (h1Evidence["inline_pilot_width_px"]?.toIntOrNull() ?: 0) > 1 &&
-                                    (h1Evidence["inline_pilot_height_px"]?.toIntOrNull() ?: 0) >=
-                                        nativeB.lineSequence().single {
-                                            it.startsWith("plain_line_height_px=")
-                                        }.substringAfter('=').toInt()
-                                val compositeCount = bCustomCount + (if (h1InlineInstalled) 1 else 0)
-                                Files.writeString(abDest.resolve("capture-status.txt"),
-                                    "candidate=UNVERIFIED\n" +
-                                        "installed_heading_customfolds=" + bCustomCount + "\n" +
-                                        "installed_heading_inline_pilot=" + (if (h1InlineInstalled) 1 else 0) + "\n" +
-                                        "installed_heading_composite=" + compositeCount + "\n" +
-                                        "missing_customfold_levels=" + bMissing + "\n" +
-                                        "editor_is_showing=" + bShowing + "\n")
-                                // A candidate screen obtained while the native Editor is
-                                // hidden is not comparable with the JCEF screenshot.
-                                check(bShowing) { "E9 B native editor is hidden; diagnostic retained" }
-                                val bEnv = driver.withContext(OnDispatcher.EDT) {
-                                    visual.environmentIdentity(bEditor)
-                                }
-                                val bBounds = driver.withContext(OnDispatcher.EDT) {
-                                    Rectangle(
-                                        visual.contentScreenX(bEditor), visual.contentScreenY(bEditor),
-                                        visual.contentWidth(bEditor), visual.contentHeight(bEditor)
-                                    )
-                                }
-                                check(bBounds.width == native.width && bBounds.height == native.height)
-                                val nativeBScrollY = driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeVerticalScrollOffset(bEditor)
-                                }
-                                check(nativeBScrollY >= 0)
-                                robot.waitForIdle()
-                                check(ImageIO.write(robot.createScreenCapture(bBounds), "png",
-                                    abDest.resolve("native-b.png").toFile()))
-                                driver.withContext(OnDispatcher.EDT) {
-                                    preview.showReferenceAtSourceLine(bEditor, entry.line)
-                                }
-                                waitFor(
-                                    message = "B bundled Preview visible",
-                                    timeout = 30.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
-                                        preview.referenceShowing(bEditor)
-                                    } },
-                                    checker = { it }
-                                )
-                                val refBounds = driver.withContext(OnDispatcher.EDT) {
-                                    val p = preview.referenceBounds(bEditor).split(',').map(String::toInt)
-                                    check(p.size == 4)
-                                    Rectangle(p[0], p[1], p[2], p[3])
-                                }
-                                val domB = driver.ui.jcef()
-                                waitFor(
-                                    message = "B bundled JCEF paints all six source-aligned headings",
-                                    timeout = 60.seconds,
-                                    getter = {
-                                        robot.waitForIdle()
-                                        val img = robot.createScreenCapture(refBounds)
-                                        check(ImageIO.write(img, "png",
-                                            abDest.resolve("preview-b.png").toFile()))
-                                        val headingLedger = domB.callJs(headingReferenceDomProbe)
-                                        referenceHeadingRasterHasAllInk(img, headingLedger)
-                                    },
-                                    checker = { it }
-                                )
-                                val headingB = domB.callJs(headingReferenceDomProbe)
-                                val paragraphB = domB.callJs(followingParagraphDomProbe)
-                                check(headingB.startsWith(
-                                    "schema=markflow-reference-heading-dom-geometry/v1\n"
-                                ) && paragraphB.startsWith(
-                                    "schema=markflow-reference-paragraph-text-range/v1\n"
-                                )) { "Missing actual B source-aligned JCEF DOM evidence" }
-                                // Unlike Editor Insets or drawString inputs, this
-                                // evidence reads actual ink from both retained
-                                // screen captures. It remains diagnostic-only:
-                                // raster offsets and DOM Range bounds are not
-                                // an approved common box-model contract.
-                                val nativeImage = requireNotNull(ImageIO.read(
-                                    abDest.resolve("native-b.png").toFile()
-                                )) { "Native B screenshot could not be decoded" }
-                                val previewImage = requireNotNull(ImageIO.read(
-                                    abDest.resolve("preview-b.png").toFile()
-                                )) { "JCEF B screenshot could not be decoded" }
-                                Files.writeString(
-                                    abDest.resolve("heading-ink-x-diagnostic.tsv"),
-                                    headingInkXDiagnostic(nativeImage, previewImage, nativeB, headingB)
-                                )
-                                Files.writeString(
-                                    abDest.resolve("heading-ink-y-baseline-diagnostic.tsv"),
-                                    headingInkYBaselineDiagnostic(
-                                        nativeImage, previewImage, nativeB, headingB, nativeBScrollY
-                                    )
-                                )
-                                val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
-                                val driftA = Files.readString(
-                                    dest.resolve("source-following-text-line-drift.tsv"))
-                                fun tableRows(text: String): List<List<String>> =
-                                    text.lineSequence().filter {
-                                        it.firstOrNull() in '1'..'6' && it.contains('\t')
-                                    }.map { it.split('\t') }.toList()
-                                val rowsA = tableRows(driftA)
-                                val rowsB = tableRows(driftB)
-                                check(rowsA.size == 6 && rowsB.size == 6)
-                                val abRows = rowsA.zip(rowsB).mapIndexed { index, (a, bb) ->
-                                    check(a.size == 5 && bb.size == 5 &&
-                                        a[0] == (index + 1).toString() &&
-                                        bb[0] == a[0] &&
-                                        a[1] == (4 * index + 2).toString() &&
-                                        bb[1] == a[1]) { "A/B source identity mismatch" }
-                                    val ya = a[2].toInt()
-                                    val yb = bb[2].toInt()
-                                    check(a[3].toDouble().isFinite() && bb[3].toDouble().isFinite())
-                                    listOf(
-                                        a[0], a[1], ya.toString(), yb.toString(),
-                                        a[3], bb[3], (ya - yb).toString(),
-                                        a[4], bb[4]
-                                    ).joinToString("\t")
-                                }
-                                Files.writeString(abDest.resolve("ab-paragraph-deltas.tsv"),
-                                    "schema=markflow-heading-ab-relative-diagnostic/v1\n" +
-                                        "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
-                                        "level\tsource_line\tnative_a_px\tnative_b_px\tpreview_a_css_px\tpreview_b_css_px\tnative_a_minus_b_px\tdelta_a_px\tdelta_b_px\n" +
-                                        abRows.joinToString("\n", postfix = "\n"))
-                                Files.writeString(abDest.resolve("native-a-inlay.txt"),
-                                    Files.readString(dest.resolve("native-heading-source-geometry.txt")))
-                                Files.writeString(abDest.resolve("native-b-customfold.txt"), nativeB)
-                                Files.writeString(abDest.resolve("preview-a-heading-dom.txt"),
-                                    Files.readString(dest.resolve("intellij-heading-dom-geometry.txt")))
-                                Files.writeString(abDest.resolve("preview-b-heading-dom.txt"), headingB)
-                                Files.writeString(abDest.resolve("preview-a-paragraph-dom.txt"),
-                                    Files.readString(dest.resolve("intellij-following-paragraph-dom-geometry.txt")))
-                                Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
-                                // SHOW_PREVIEW deliberately hides EditorComponentImpl.
-                                // Use the exact remote Editor captured before the switch,
-                                // not MarkFlowIdeDriver's visible UI locator.
-                                val hiddenIdentity = driver.withContext(OnDispatcher.EDT) {
-                                    listOf(
-                                        preview.sourceText(bEditor),
-                                        preview.sourceStamp(bEditor).toString(),
-                                        preview.primaryCaretOffset(bEditor).toString(),
-                                    )
-                                }
-                                check(hiddenIdentity[0] == source)
-                                check(hiddenIdentity[1] == bStamp.toString())
-                                check(hiddenIdentity[2] == bCaretBefore.toString()) {
-                                    "B JCEF capture unexpectedly moved the native caret"
-                                }
-                                check(!driver.withContext(OnDispatcher.EDT) {
-                                    preview.sourceUnsaved(bEditor)
-                                })
-                                check(Files.readAllBytes(project.resolve("heading-layout-b.md"))
-                                    .contentEquals(entry.bytes))
-                                Files.writeString(abDest.resolve("identity.txt"),
-                                    "schema=markflow-heading-layout-ab/v1\n" +
-                                        "source_sha256_a=" + sha(entry.bytes) + "\n" +
-                                        "source_sha256_b=" + sha(Files.readAllBytes(
-                                            project.resolve("heading-layout-b.md"))) + "\n" +
-                                        "source_head=" + sourceHead + "\n" +
-                                        "ide_version=" + version + "\n" +
-                                        "caret_offset_before=" + bCaretBefore + "\n" +
-                                        "caret_offset_after=" + hiddenIdentity[2] + "\n" +
-                                        "native_a_environment=" + nativeEnvironment + "\n" +
-                                        "native_b_environment=" + bEnv + "\n" +
-                                        "legacy_a_fixture=sourceLineReplacement_false\n" +
-                                         "production_default=sourceLineReplacement_true\n" +
-                                        "full_differential_acceptance=false\n")
-                                // Demand six individually evidenced owned H1-H6
-                                // replacements. H1 may use a real CustomFold (6+0)
-                                // without an expanded foreign overlap, or the verified
-                                // owned inline fallback (5+1) with that conflict.
-                                // Reuse the same fail-closed native ledger contract as
-                                // the product-default evidence; never accept counts
-                                // alone. Preview visual parity remains unverified.
-                                val topologyFailure = runCatching {
-                                    assertProductDefaultHeadingTopology(nativeB)
-                                }.exceptionOrNull()
-                                if (compositeCount != 6 || topologyFailure != null) {
-                                    structuralFailures += listOf(
-                                        entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
-                                        "custom=" + bCustomCount + ";inline=" +
-                                            (if (h1InlineInstalled) 1 else 0) +
-                                            ";missing_custom=" + bMissing,
-                                        "6_OWNED_HEADINGS_CONFLICT_AWARE_H1"
-                                    ).joinToString("\t")
-                                    error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
-                                        compositeCount + "/6; topology=" +
-                                        (topologyFailure?.message ?: "VALID") +
-                                        "; foreign fold evidence retained")
-                                }
-                            } catch (cause: Throwable) {
-                                bFailure = cause
-                                throw cause
-                            } finally {
-                                // SHOW_PREVIEW hides EditorComponentImpl. The normal
-                                // Driver close() locates only a visible editor; restore
-                                // native first so cleanup cannot mask the authoritative
-                                // diagnostic error with a 15s UI locator timeout.
-                                val cleanup = runCatching {
-                                    driver.withContext(OnDispatcher.EDT) {
-                                        preview.restoreNative(bEditor)
-                                    }
-                                    waitFor(
-                                        message = "B native editor restored for safe close",
-                                        timeout = 20.seconds,
-                                        getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.completeNativeRestore(bEditor)
-                                        } },
-                                        checker = { it }
-                                    )
-                                    markFlow.close(b)
-                                }
-                                val cleanupError = cleanup.exceptionOrNull()
-                                if (cleanupError != null) {
-                                    val originalError = bFailure
-                                    if (originalError == null) throw cleanupError
-                                    originalError.addSuppressed(cleanupError)
-                                }
-                            }
                         }
                         // Do not report a successful capture if its mandatory
                         // same-source A/B evidence failed earlier in this case.
@@ -2784,19 +2498,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-failed", entry.id)
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
-                        // A missing H1 replacement (whether CustomFold or the
-                        // explicit opt-in owned inline fallback) remains a hard
-                        // structural FAIL. Keep independent Mermaid captures,
-                        // but do not suppress unexpected exceptions.
-                        if (entry.id == "md-atx-headings-h1-h6" &&
-                            cause is IllegalStateException &&
-                            cause.message?.startsWith(
-                                "E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE:"
-                            ) == true) {
-                            toleratedStructuralFailure = true
-                        } else {
-                            deferredDriverFailure = cause
-                        }
+                        deferredDriverFailure = cause
                     } finally {
                         // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE:
                         // Every manifest case owns a TextEditorWithPreview. Leaving

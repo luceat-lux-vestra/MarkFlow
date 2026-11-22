@@ -81,7 +81,7 @@ Leap 2 shell migration authority is now:
 - **ADR 0003** — current lower-level shell authority;
 - **#559 / `leap2-owned-shell-cutover-inventory.md`** — bounded ADR formalization, inventory and ordered production-cutover plan.
 
-Production remains on the historical platform-augmentation attachment until the ordered Leap 2 cutover slices replace it with exact-candidate evidence. Fidelity repair resumes only after that shell cutover.
+The Leap 2 owned-FileEditor production cutover is complete. Product-fidelity repair now runs on the MarkFlow-owned native `FileEditor` selected by ADR 0003; the historical platform-augmentation shell is provenance only and must not be used as current implementation guidance.
 
 ## When an ADR is required
 
