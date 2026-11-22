@@ -251,7 +251,7 @@ internal class NativeFootnotePresentationController(
         )
         val inlay = editor.inlayModel.addInlineElement(model.sourceRange.endOffset, true, renderer)
         if (inlay == null || !inlay.isValid) {
-            inlay?.takeIf(Inlay<*>::isValid)?.dispose()
+            inlay?.takeIf { it.isValid }?.dispose()
             removeFold(fold)
             return
         }
@@ -286,7 +286,7 @@ internal class NativeFootnotePresentationController(
         )
         val inlay = editor.inlayModel.addInlineElement(model.bodyRange.startOffset, false, renderer)
         if (inlay == null || !inlay.isValid) {
-            inlay?.takeIf(Inlay<*>::isValid)?.dispose()
+            inlay?.takeIf { it.isValid }?.dispose()
             removeFold(fold)
             return
         }
