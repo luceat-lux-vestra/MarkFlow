@@ -916,7 +916,7 @@ internal class NativeListInlayRenderer(
                         verticalPadding * 2}"
             )
             model.rows.forEachIndexed { index, row ->
-                val rowTop = bounds?.let { it.y + VERTICAL_PADDING + rowTopOffset(index, height) }
+                val rowTop = bounds?.let { it.y + verticalPadding + rowTopOffset(index, height) }
                 val baseline = rowTop?.let {
                     it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
                 }
