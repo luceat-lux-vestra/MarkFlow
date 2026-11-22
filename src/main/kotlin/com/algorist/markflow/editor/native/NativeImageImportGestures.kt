@@ -58,7 +58,7 @@ class NativeImageFileDropHandler : FileDropHandler {
         val droppedFiles = e.files.toList()
         val applicable = readAction {
             isSupportedEditor(editor) && droppedFiles.isNotEmpty() &&
-                droppedFiles.any { file -> NativeImageImportTransferable.looksLikeImageFilename(file.name) }
+                droppedFiles.all { file -> NativeImageImportTransferable.looksLikeImageFilename(file.name) }
         }
         if (!applicable) return false
 
