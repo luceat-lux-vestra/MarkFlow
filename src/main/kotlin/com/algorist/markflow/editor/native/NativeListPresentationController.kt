@@ -1132,12 +1132,11 @@ internal class NativeListInlayRenderer(
         model.rows.take(index).sumOf(::rowVisualLineCount) * height
 
     private fun layoutMetrics(): NativeListLayoutMetrics {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        val spaceWidth = max(1, metrics.charWidth(' '))
+        val gutter = nativeListTypographicGutter(editor)
         return NativeListLayoutMetrics(
-            outerPadding = spaceWidth,
+            outerPadding = gutter,
             depthIndent = nativeListIndentPixels(editor, 1),
-            markerGap = spaceWidth,
+            markerGap = gutter,
         )
     }
 
@@ -1214,10 +1213,17 @@ internal fun nativeListDisplayMarker(marker: String): String =
         else -> marker
     }
 
+internal fun nativeListTypographicGutter(editor: Editor): Int {
+    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+    val spaceWidth = max(1, metrics.charWidth(' '))
+    return max(spaceWidth, metrics.height / 2)
+}
+
 internal fun nativeListIndentPixels(editor: Editor, depth: Int): Int {
     require(depth >= 0)
     val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
     val spaceWidth = max(1, metrics.charWidth(' '))
     val tabColumns = editor.settings.getTabSize(editor.project).coerceAtLeast(1)
-    return depth * spaceWidth * tabColumns
+    val tabWidth = spaceWidth * tabColumns
+    return depth * (tabWidth + nativeListTypographicGutter(editor))
 }
