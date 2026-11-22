@@ -95,6 +95,10 @@ internal class NativePresentationController(
         headingPreviewPilotGap = headingPreviewPilotGap,
         postMouseActivityReconciliation = ::schedulePostMouseActivityReconciliation,
     )
+    private val footnotePresentation = NativeFootnotePresentationController(
+        editor = editor,
+        postMouseActivityReconciliation = ::schedulePostMouseActivityReconciliation,
+    )
     private var disposed = false
     private var refreshRequestGeneration = 0L
     private var activityRefreshRequestGeneration = 0L
@@ -173,6 +177,7 @@ internal class NativePresentationController(
         currentPlan = plan
         val richEnabled = isRichPresentationEnabled()
         ordinaryPresentation.applyPlan(plan, richEnabled)
+        footnotePresentation.applyPlan(plan, richEnabled)
         if (plan.status == ProjectionPlanStatus.READY && !richEnabled) {
             sourceFallbacks += 1
         }
@@ -253,6 +258,9 @@ internal class NativePresentationController(
     fun headingPilotEvidenceSnapshot(): NativeHeadingPresentationEvidence =
         ordinaryPresentation.headingPilotEvidenceSnapshot()
 
+    fun footnoteEvidenceSnapshot(): NativeFootnotePresentationEvidence =
+        footnotePresentation.evidenceSnapshot()
+
     fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
 
     fun hostResourceEvidenceSnapshot(): NativeHostResourcePresentationEvidence? =
@@ -305,7 +313,9 @@ internal class NativePresentationController(
         val sourceBefore = document.immutableCharSequence.toString()
         val stampBefore = document.modificationStamp
 
-        ordinaryPresentation.refreshActivity(plan, isRichPresentationEnabled())
+        val richEnabled = isRichPresentationEnabled()
+        ordinaryPresentation.refreshActivity(plan, richEnabled)
+        footnotePresentation.refreshActivity(plan, richEnabled)
         tablePresentation.refreshActivity(plan)
         hostResources?.refreshActivity(plan)
         derivedPresentation?.refreshActivity(plan)
@@ -328,6 +338,7 @@ internal class NativePresentationController(
         refreshRequestGeneration += 1
         activityRefreshRequestGeneration += 1
         ordinaryPresentation.dispose()
+        footnotePresentation.dispose()
         tablePresentation.dispose()
         hostResources?.dispose()
         derivedPresentation?.dispose()
