@@ -418,11 +418,11 @@ internal class NativeIndentedCodeInlayRenderer(
             .map { line -> line.removeSuffix("\r") }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-        max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_MARGIN * 2)
+        layoutMetrics().surfaceWidth()
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        return VERTICAL_PADDING * 2 + max(1, lines.size) * max(editor.lineHeight, metrics.height)
+        val layout = layoutMetrics()
+        return layout.verticalPadding * 2 + max(1, lines.size) * layout.rowHeight
     }
 
     override fun paint(
@@ -436,22 +436,36 @@ internal class NativeIndentedCodeInlayRenderer(
         val background = Color(foreground.red, foreground.green, foreground.blue, BACKGROUND_ALPHA)
         val font = editor.contentComponent.font
         val metrics = g2.getFontMetrics(font)
-        val lineHeight = max(editor.lineHeight, metrics.height)
-        val left = targetRegion.x + OUTER_MARGIN
-        val width = max(1, targetRegion.width - OUTER_MARGIN * 2)
+        val layout = layoutMetrics()
+        val left = targetRegion.x + layout.surfaceMargin
+        val width = max(1, targetRegion.width - layout.surfaceMargin * 2)
 
         g2.color = background
-        g2.fillRoundRect(left, targetRegion.y, width, targetRegion.height, ARC, ARC)
+        g2.fillRoundRect(
+            left,
+            targetRegion.y,
+            width,
+            targetRegion.height,
+            layout.surfaceArc,
+            layout.surfaceArc,
+        )
         g2.font = font
         g2.color = foreground
 
-        val available = max(1, width - HORIZONTAL_PADDING * 2)
-        var y = targetRegion.y + VERTICAL_PADDING
+        val available = max(1, width - layout.horizontalPadding * 2)
+        var y = targetRegion.y + layout.verticalPadding
         lines.forEach { line ->
-            g2.drawString(clip(line, metrics, available), left + HORIZONTAL_PADDING, y + metrics.ascent)
-            y += lineHeight
+            g2.drawString(
+                clip(line, metrics, available),
+                left + layout.horizontalPadding,
+                y + metrics.ascent,
+            )
+            y += layout.rowHeight
         }
     }
+
+    private fun layoutMetrics(): NativePresentationLayoutMetrics =
+        nativePresentationLayoutMetrics(editor)
 
     private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
         if (metrics.stringWidth(text) <= maxWidth) return text
@@ -481,11 +495,6 @@ internal class NativeIndentedCodeInlayRenderer(
     }
 
     companion object {
-        private const val MIN_WIDTH = 180
-        private const val OUTER_MARGIN = 6
-        private const val HORIZONTAL_PADDING = 10
-        private const val VERTICAL_PADDING = 8
-        private const val ARC = 8
         private const val BACKGROUND_ALPHA = 18
     }
 }
