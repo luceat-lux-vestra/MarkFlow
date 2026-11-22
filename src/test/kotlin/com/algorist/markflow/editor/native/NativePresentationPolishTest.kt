@@ -87,15 +87,17 @@ class NativePresentationPolishTest : BasePlatformTestCase() {
         val expectedRowHeight = max(editor.lineHeight, metrics.height)
         val expectedVerticalPadding = max(0, (editor.lineHeight - metrics.height) / 2)
         val expectedSpaceWidth = max(1, metrics.charWidth(' '))
-        val expectedDepthIndent =
+        val expectedGutter = max(expectedSpaceWidth, metrics.height / 2)
+        val expectedTabWidth =
             expectedSpaceWidth * editor.settings.getTabSize(editor.project).coerceAtLeast(1)
+        val expectedDepthIndent = expectedTabWidth + expectedGutter
         val evidence = renderer.visualRowGeometryEvidence(Rectangle())
 
         assertTrue(evidence.contains("renderer_row_height_px=$expectedRowHeight"))
         assertTrue(evidence.contains("vertical_padding_px=$expectedVerticalPadding"))
-        assertTrue(evidence.contains("outer_padding_px=$expectedSpaceWidth"))
+        assertTrue(evidence.contains("outer_padding_px=$expectedGutter"))
         assertTrue(evidence.contains("depth_indent_px=$expectedDepthIndent"))
-        assertTrue(evidence.contains("marker_gap_px=$expectedSpaceWidth"))
+        assertTrue(evidence.contains("marker_gap_px=$expectedGutter"))
     }
 
     fun testTaskCheckboxGeometryUsesCurrentLookAndFeelIconWhenAvailable() {
