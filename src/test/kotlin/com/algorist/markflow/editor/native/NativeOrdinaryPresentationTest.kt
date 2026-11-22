@@ -2892,6 +2892,85 @@ Tail
         }
     }
 
+    fun testManualBlockQuoteInlayRelayoutsWhenVisibleEditorWidthChanges() {
+        val source =
+            "> First-level quote.\n" +
+                ">\n" +
+                "> > Nested quote.\n" +
+                "> >\n" +
+                "> > - Nested quoted list item\n" +
+                "> > - Another quoted item\n" +
+                ">\n" +
+                "> Back to first level.\n\n" +
+                "Tail\n"
+        myFixture.configureByText("markdown-core-blockquote-width-relayout.md", source)
+        val editor = myFixture.editor as com.intellij.openapi.editor.impl.EditorImpl
+        val document = editor.document
+        val stampBefore = document.modificationStamp
+        val tailOffset = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tailOffset)
+
+        val originalParent = editor.component.parent
+        val testWindow = javax.swing.JFrame("MarkFlow blockquote viewport relayout")
+        val initialWindowWidth = 420
+        val expandedWindowWidth = initialWindowWidth * 2
+        var controller: NativePresentationController? = null
+        try {
+            testWindow.setBounds(80, 80, initialWindowWidth, 520)
+            testWindow.contentPane.add(editor.component, java.awt.BorderLayout.CENTER)
+            testWindow.isVisible = true
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertTrue(
+                "Blockquote viewport relayout must be tested in an attached showing editor",
+                editor.contentComponent.isShowing,
+            )
+
+            controller = NativePresentationController(
+                editor = editor,
+                richPresentationEnabled = { true },
+            )
+            val inlay = editor.inlayModel
+                .getBlockElementsInRange(0, editor.document.textLength)
+                .single { it.renderer is NativeBlockQuoteInlayRenderer }
+            val renderer = inlay.renderer as NativeBlockQuoteInlayRenderer
+            inlay.update()
+            val initialViewportWidth = editor.scrollingModel.visibleArea.width
+            val initialInlayWidth = inlay.widthInPixels
+            assertTrue(initialViewportWidth > 0)
+            assertEquals(renderer.calcWidthInPixels(inlay), initialInlayWidth)
+
+            testWindow.setSize(expandedWindowWidth, testWindow.height)
+            testWindow.validate()
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+
+            val expandedViewportWidth = editor.scrollingModel.visibleArea.width
+            val expectedExpandedWidth = renderer.calcWidthInPixels(inlay)
+            assertTrue(
+                "Showing editor viewport did not expand: initial=$initialViewportWidth expanded=$expandedViewportWidth",
+                expandedViewportWidth > initialViewportWidth,
+            )
+            assertTrue(
+                "Blockquote renderer should request more width after viewport expansion",
+                expectedExpandedWidth > initialInlayWidth,
+            )
+            assertEquals(
+                "Owned blockquote inlay retained stale minimum/narrow width after viewport expansion",
+                expectedExpandedWidth,
+                inlay.widthInPixels,
+            )
+            assertEquals(source, document.text)
+            assertEquals(stampBefore, document.modificationStamp)
+        } finally {
+            controller?.dispose()
+            testWindow.contentPane.remove(editor.component)
+            testWindow.dispose()
+            originalParent?.add(editor.component)
+            originalParent?.revalidate()
+        }
+        assertEquals(source, document.text)
+        assertEquals(stampBefore, document.modificationStamp)
+    }
+
     fun testInlineRichAndStructuredBlockQuotesFailClosedToExactSource() {
         val sources = listOf(
             "> quote with *emphasis*\n\nTail\n",
