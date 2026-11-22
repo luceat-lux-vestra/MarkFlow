@@ -78,12 +78,23 @@ After
             ),
         )
 
-        assertEquals(108, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.LEFT))
-        assertEquals(140, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.CENTER))
-        assertEquals(172, renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.RIGHT))
+        val padding = nativePresentationLayoutMetrics(myFixture.editor).horizontalPadding
+        val contentWidth = 120 - padding * 2
         assertEquals(
-            "clipped text must consume the full padded width rather than drift outside the cell",
-            108,
+            100 + padding,
+            renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.LEFT),
+        )
+        assertEquals(
+            100 + padding + (contentWidth - 40) / 2,
+            renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.CENTER),
+        )
+        assertEquals(
+            100 + 120 - padding - 40,
+            renderer.alignedTextStartX(100, 120, 40, NativeTableAlignment.RIGHT),
+        )
+        assertEquals(
+            "clipped text must consume the full editor-derived padded width rather than drift outside the cell",
+            100 + padding,
             renderer.alignedTextStartX(100, 120, 200, NativeTableAlignment.CENTER),
         )
     }
