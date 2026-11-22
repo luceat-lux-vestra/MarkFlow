@@ -390,7 +390,6 @@ internal class NativeHeadingPresentationController(
 
     private fun removeOwned(key: HeadingKey) {
         owned.remove(key)?.let { presentation ->
-            if (presentation.spacingInlay?.isValid == true) presentation.spacingInlay.dispose()
             if (presentation.inlay.isValid) presentation.inlay.dispose()
             removeFolds(presentation.folds)
         }
@@ -444,7 +443,6 @@ internal class NativeHeadingPresentationController(
         val folds: List<FoldRegion>,
         val coverageFolds: List<FoldRegion>,
         val inlay: Inlay<*>,
-        val spacingInlay: Inlay<*>? = null,
     )
 
     companion object {
