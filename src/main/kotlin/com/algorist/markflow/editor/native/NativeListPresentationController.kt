@@ -1167,7 +1167,9 @@ internal class NativeListInlayRenderer(
             val markerWidth = if (row.task != null) {
                 checkboxSize()
             } else {
-                boldMetrics.stringWidth(nativeListDisplayMarker(row.marker))
+                // Paint intentionally keeps the source-marker advance so the content column
+                // remains stable while unordered markers are presented with a bullet glyph.
+                boldMetrics.stringWidth(row.marker)
             }
             val contentStart = indent + markerWidth + layout.markerGap
             val firstLineRight = contentStart + row.displayRuns.sumOf { run ->
