@@ -654,7 +654,6 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseFailure: Throwable? = null
                     var caseReferenceCloseMarker: Path? = null
                     var controlledPlatformPreviewBaseline: String? = null
-                    var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
                         caseEditor = editor
@@ -2487,8 +2486,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                 }
                             }
                         }
-                        // Do not report a successful capture if its mandatory
-                        // same-source A/B evidence failed earlier in this case.
+                        // Mark the case captured only after all mandatory product/reference evidence completed.
                         heartbeat("case-evidence-complete", entry.id)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
@@ -2509,7 +2507,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         val opened = caseEditor
                         val remote = caseRemoteEditor
                         if (opened != null && remote != null &&
-                            (caseFailure == null || toleratedStructuralFailure)) {
+                            caseFailure == null) {
                             heartbeat("case-cleanup-start", entry.id)
                             val cleanup = runCatching {
                                 val expectedStamp = caseStamp
@@ -2676,7 +2674,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         cleanupError.stackTraceToString() + "\n"
                                 )
                                 val original = caseFailure
-                                if (original == null || toleratedStructuralFailure) {
+                                if (original == null) {
                                     deferredDriverFailure = cleanupError
                                 } else {
                                     original.addSuppressed(cleanupError)
@@ -2684,7 +2682,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             }
                         }
                         if (opened != null && remote != null &&
-                            caseFailure != null && !toleratedStructuralFailure) {
+                            caseFailure != null) {
                             heartbeat("case-cleanup-deferred-to-ide-close", entry.id)
                             Files.writeString(
                                 dest.resolve("reference-lifecycle.txt"),
@@ -2700,7 +2698,6 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-fatal-deferred-to-ide-close", entry.id)
                         return@useDriverAndCloseIde
                     }
-                    if (toleratedStructuralFailure) continue
                 }
                 heartbeat("case-loop-complete")
             }
