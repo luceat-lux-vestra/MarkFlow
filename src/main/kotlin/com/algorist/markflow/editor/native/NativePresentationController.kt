@@ -61,6 +61,15 @@ internal data class NativePresentationEvidence(
     val taskRows: Int,
     val checkedTasks: Int,
     val taskToggles: Long,
+    val footnoteModels: Int,
+    val footnoteReferences: Int,
+    val footnoteDefinitions: Int,
+    val footnoteInlays: Int,
+    val footnoteFolds: Int,
+    val footnoteHighlighters: Int,
+    val footnoteFullyPresented: Int,
+    val footnoteMouseReveals: Long,
+    val footnoteAccessibilityFallbacks: Long,
     val refreshesApplied: Long,
     val refreshesScheduled: Long,
     val sourceFallbacks: Long,
@@ -203,6 +212,7 @@ internal class NativePresentationController(
 
     fun evidenceSnapshot(): NativePresentationEvidence {
         val ordinary = ordinaryPresentation.evidenceSnapshot()
+        val footnotes = footnotePresentation.evidenceSnapshot()
         return NativePresentationEvidence(
             planIdentity = currentPlan?.identity,
             planStatus = currentPlan?.status,
@@ -246,6 +256,15 @@ internal class NativePresentationController(
             taskRows = ordinary.taskRows,
             checkedTasks = ordinary.checkedTasks,
             taskToggles = ordinary.taskToggles,
+            footnoteModels = footnotes.models,
+            footnoteReferences = footnotes.references,
+            footnoteDefinitions = footnotes.definitions,
+            footnoteInlays = footnotes.ownedInlays,
+            footnoteFolds = footnotes.ownedFolds,
+            footnoteHighlighters = footnotes.ownedHighlighters,
+            footnoteFullyPresented = footnotes.fullyPresented,
+            footnoteMouseReveals = footnotes.mouseReveals,
+            footnoteAccessibilityFallbacks = footnotes.accessibilityFallbacks,
             refreshesApplied = refreshesApplied,
             refreshesScheduled = refreshesScheduled,
             sourceFallbacks = sourceFallbacks,
