@@ -1287,9 +1287,9 @@ grep -Fq 'targetRasterIndex' "$manifest_test" ||
 grep -Fq 'native-heading-source-geometry.txt' "$manifest_test" ||
   die "Stage E1 dropped source-anchored heading geometry evidence"
 grep -Fq 'measuredHeadings == 6' "$manifest_test" ||
-  die "Stage E1 no longer requires all H1-H6 installed heading inlays"
+  die "Stage E1 no longer requires all H1-H6 installed heading presentations"
 grep -Fq 'fun nativeHeadingSourceGeometry(editor: Editor)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
-  die "Stage E1 lost production-inlay source-geometry bridge"
+  die "Stage E1 lost production heading source-geometry bridge"
 # #353 Stage E2: browser DOM measurements must be source-identical and retained.
 grep -Fq 'val dom = driver.ui.jcef()' "$manifest_test" ||
   die "Stage E2 dropped actual JCEF DOM platform-reference acquisition"
@@ -1375,8 +1375,8 @@ grep -Fq 'reference_baseline_marker_css_px' "$manifest_test" ||
   die "Stage E19 lost real JCEF inline baseline marker"
 grep -Fq 'native_paint_baseline_document_px' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
   die "Stage E19 lost renderer paint baseline inputs"
-grep -Fq 'RESEARCH_ONLY_B_HEADING_PAINT_NOT_PRODUCTION_DEFAULT' "$manifest_test" ||
-  die "Stage E19 cannot declare research-only headings production parity"
+grep -Fq 'native_scope=PRODUCTION_HEADING_REPLACEMENT' "$manifest_test" ||
+  die "Stage E19 heading paint evidence is not bound to production replacement topology"
 # Stage E5 supersedes the invalid source-line-to-DOM-top numeric guard.
 # Source positions remain diagnostic, while native inlay boxes and Preview DOM
 # boxes have their own independently measured, source-joined ledger.
