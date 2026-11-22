@@ -729,17 +729,23 @@ internal class NativeListPresentationController(
         if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
 
         val renderer = NativeListInlayRenderer(editor, model)
+        // Compacting adjacent list groups can collapse every list anchor onto one visual line.
+        // IntelliJ orders ABOVE_LINE block inlays by ascending priority (lower = farther from the
+        // line), so assign negative source-order ranks: the first list stays visually first and
+        // later ordinary block inlays at the default priority remain after the compacted lists.
+        val modelIndex = currentModels.indexOf(model)
+        check(modelIndex >= 0) { "native list model is not part of the current projection plan" }
+        val presentationPriority = modelIndex - currentModels.size
         // The verified following blank line may end exactly where the next Markdown block starts.
-        // If that next block is independently collapsed, IntelliJ otherwise treats this boundary
-        // inlay as folded too. Keep the list replacement visible while its own source remains
-        // inactive; activity reconciliation still removes the inlay before revealing source.
+        // showWhenFolded keeps the replacement allocated at that shared folded boundary; explicit
+        // priority above preserves document order when several such anchors share one visual line.
         val inlay = editor.inlayModel.addBlockElement(
             presentationRange.endOffset,
             InlayProperties()
                 .relatesToPrecedingText(true)
                 .showAbove(true)
                 .showWhenFolded(true)
-                .priority(0),
+                .priority(presentationPriority),
             renderer,
         )
         if (inlay == null) {
