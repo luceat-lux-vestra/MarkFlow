@@ -935,7 +935,7 @@ internal class NativeListInlayRenderer(
             model.rows.forEachIndexed { index, row ->
                 val rowTop = bounds?.let { it.y + verticalPadding + rowTopOffset(index, height) }
                 val baseline = rowTop?.let {
-                    it + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
+                    it + max(metrics.ascent, (height + metrics.ascent - metrics.descent) / 2)
                 }
                 val indent = layout.outerPadding + row.depth * layout.depthIndent
                 val markerX = bounds?.let { it.x + indent }
@@ -1015,7 +1015,7 @@ internal class NativeListInlayRenderer(
         val layout = layoutMetrics()
         model.rows.forEachIndexed { index, row ->
             val y = targetRegion.y + verticalPadding() + rowTopOffset(index, height)
-            val baseline = y + max(metrics.ascent + 2, (height + metrics.ascent - metrics.descent) / 2)
+            val baseline = y + max(metrics.ascent, (height + metrics.ascent - metrics.descent) / 2)
             val indent = layout.outerPadding + row.depth * layout.depthIndent
             val markerX = targetRegion.x + indent
             val task = row.task
