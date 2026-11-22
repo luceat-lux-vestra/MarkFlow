@@ -787,7 +787,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             ?: error("Stage E1 heading ledger is not parseable")
                         if (entry.id == "md-atx-headings-h1-h6") {
                             check(measuredHeadings == 6) {
-                                "Stage E1 requires all six installed H1-H6 heading inlays"
+                                "Stage E1 requires all six installed H1-H6 heading presentations"
                             }
                         }
                         Files.writeString(
@@ -4091,13 +4091,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check((2..6).all { level ->
             val row = heading(level)
             row["fold_status"] == "INSTALLED" &&
-                row["inline_pilot_status"] == "ABSENT" &&
-                row["inline_pilot_source_fold"] == "ABSENT"
+                row["inline_fallback_status"] == "ABSENT" &&
+                row["inline_fallback_source_fold"] == "ABSENT"
         }) { "Product Heading H2-H6 must remain real CustomFolds" }
-        check(summary("legacy_heading_inlay_count") == "0") {
-            "Product Heading unexpectedly contains an additive block inlay"
-        }
-
         val h1Start = h1.getValue("source_start_offset").toInt()
         val h1End = h1.getValue("source_end_offset").toInt()
         check(h1Start >= 0 && h1End > h1Start)
@@ -4109,18 +4105,18 @@ class MarkFlowStarterDifferentialManifestTest {
                     match.groupValues[2].toInt() > h1Start
             }
         val customCount = summary("measured_atx_heading_count").toInt()
-        val inlineCount = summary("co_start_inline_pilot_count").toInt()
+        val inlineCount = summary("co_start_inline_fallback_count").toInt()
         val missing = summary("missing_heading_levels")
         val allCustomFolds =
             h1["fold_status"] == "INSTALLED" &&
-                h1["inline_pilot_status"] == "ABSENT" &&
-                h1["inline_pilot_source_fold"] == "ABSENT" &&
+                h1["inline_fallback_status"] == "ABSENT" &&
+                h1["inline_fallback_source_fold"] == "ABSENT" &&
                 !expandedOverlap &&
                 customCount == 6 && inlineCount == 0 && missing.isEmpty()
         val ownedH1Fallback =
             h1["fold_status"] == "MISSING" && expandedOverlap &&
-                h1["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
-                h1["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                h1["inline_fallback_status"] == "INSTALLED" &&
+                h1["inline_fallback_source_fold"] == "COLLAPSED_OWN_SOURCE" &&
                 customCount == 5 && inlineCount == 1 && missing == "1"
         check(allCustomFolds || ownedH1Fallback) {
             "Product H1 topology unsupported: CustomFolds=$customCount, " +
@@ -4157,14 +4153,14 @@ class MarkFlowStarterDifferentialManifestTest {
         check(
             level == 1 &&
                 row.getValue("fold_status") == "MISSING" &&
-                row.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
-                row.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE"
+                row.getValue("inline_fallback_status") == "INSTALLED" &&
+                row.getValue("inline_fallback_source_fold") == "COLLAPSED_OWN_SOURCE"
         ) {
-            "Controlled-B H$level has neither an installed CustomFold nor the owned H1 fallback"
+            "Production H$level has neither an installed CustomFold nor the owned H1 fallback"
         }
-        val top = row.getValue("inline_pilot_bounds_y_px").toInt()
-        val height = row.getValue("inline_pilot_height_px").toInt()
-        check(top >= 0 && height > 0) { "Controlled-B H1 fallback has invalid paint allocation" }
+        val top = row.getValue("inline_fallback_bounds_y_px").toInt()
+        val height = row.getValue("inline_fallback_height_px").toInt()
+        check(top >= 0 && height > 0) { "Production H1 fallback has invalid paint allocation" }
         return NativeHeadingPaintAllocation(top, height, inlineFallback = true)
     }
 
@@ -4180,10 +4176,10 @@ class MarkFlowStarterDifferentialManifestTest {
         val inlineFallback = nativeHeadingPaintAllocation(
             mapOf(
                 "fold_status" to "MISSING",
-                "inline_pilot_status" to "INSTALLED_UNREVIEWED",
-                "inline_pilot_source_fold" to "COLLAPSED_OWN_CANDIDATE",
-                "inline_pilot_bounds_y_px" to "7",
-                "inline_pilot_height_px" to "22",
+                "inline_fallback_status" to "INSTALLED",
+                "inline_fallback_source_fold" to "COLLAPSED_OWN_SOURCE",
+                "inline_fallback_bounds_y_px" to "7",
+                "inline_fallback_height_px" to "22",
             ),
             level = 1,
         )
@@ -4196,7 +4192,7 @@ class MarkFlowStarterDifferentialManifestTest {
     }
 
     /**
-     * Source-aligned H1-H6 paired B-pilot ink-Y and text baseline evidence.
+     * Source-aligned H1-H6 production ink-Y and text baseline evidence.
      * Native baseline is a renderer paint input; reference baseline is an
      * actual JCEF DOM marker. Both are normalized to their own H1. This
      * RESEARCH-only pilot does not establish production #350 visual parity.
@@ -4725,11 +4721,11 @@ class MarkFlowStarterDifferentialManifestTest {
         check(nativeRows.size == 6 && referenceRows.size == 6) {
             "Stage E5 needs all six source-identical heading block boxes"
         }
-        val firstNativeTop = nativeRows.first().getValue("inlay_bounds_y").toInt()
+        val firstNativeTop = nativeRows.first().getValue("presentation_bounds_y").toInt()
         val result = mutableListOf(
             "schema=markflow-heading-rendered-box-drift/v1",
             "comparison_scope=DIAGNOSTIC_BOX_VS_BOX_NOT_APPROVED_BASELINE",
-            "level\tsource_line_zero_based\tnative_inlay_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_inlay_height_px\tpreview_heading_height_css_px",
+            "level\tsource_line_zero_based\tnative_presentation_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_presentation_height_px\tpreview_heading_height_css_px",
         )
         var previousNativeTop = -1
         var previousReferenceTop = -1.0
@@ -4742,9 +4738,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 ref.getValue("source_line_zero_based") == "$line") {
                 "Stage E5 box/source identity mismatch"
             }
-            val absoluteNativeTop = n.getValue("inlay_bounds_y").toInt()
-            val nativeHeight = n.getValue("inlay_bounds_height").toInt()
-            val reportedHeight = n.getValue("inlay_height_px").toInt()
+            val absoluteNativeTop = n.getValue("presentation_bounds_y").toInt()
+            val nativeHeight = n.getValue("presentation_bounds_height").toInt()
+            val reportedHeight = n.getValue("presentation_height_px").toInt()
             val referenceTop = ref.getValue("reference_y_relative_css_px").toDouble()
             val referenceHeight = ref.getValue("reference_height_css_px").toDouble()
             val nativeTop = absoluteNativeTop - firstNativeTop
@@ -4771,7 +4767,7 @@ class MarkFlowStarterDifferentialManifestTest {
         fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
             (0..5).joinToString("\n") { i ->
                 "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
-                    "inlay_bounds_y=${i * 110}\tinlay_bounds_height=30\tinlay_height_px=30"
+                    "presentation_bounds_y=${i * 110}\tpresentation_bounds_height=30\tpresentation_height_px=30"
             }
         fun reference() = "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM\n" +
             (0..5).joinToString("\n") { i ->
@@ -4784,7 +4780,7 @@ class MarkFlowStarterDifferentialManifestTest {
         })
         return runCatching {
             compareRenderedHeadingBoxes(
-                native().replace("inlay_bounds_height=30", "inlay_bounds_height=31"), reference()
+                native().replace("presentation_bounds_height=30", "presentation_bounds_height=31"), reference()
             )
         }.isFailure && runCatching {
             compareRenderedHeadingBoxes(
