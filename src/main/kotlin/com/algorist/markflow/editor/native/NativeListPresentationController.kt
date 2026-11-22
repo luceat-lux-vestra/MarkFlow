@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.InlayProperties
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -728,11 +729,17 @@ internal class NativeListPresentationController(
         if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
 
         val renderer = NativeListInlayRenderer(editor, model)
+        // The verified following blank line may end exactly where the next Markdown block starts.
+        // If that next block is independently collapsed, IntelliJ otherwise treats this boundary
+        // inlay as folded too. Keep the list replacement visible while its own source remains
+        // inactive; activity reconciliation still removes the inlay before revealing source.
         val inlay = editor.inlayModel.addBlockElement(
             presentationRange.endOffset,
-            true,
-            true,
-            0,
+            InlayProperties()
+                .relatesToPrecedingText(true)
+                .showAbove(true)
+                .showWhenFolded(true)
+                .priority(0),
             renderer,
         )
         if (inlay == null) {
