@@ -417,7 +417,7 @@ internal object OwnedNativeFileEditorRuntimeProbe {
                     val controller = requireNotNull(
                         onEdt { NativeMarkFlowProductionLifecycle.ownedController(derivedOwned.editor) }
                     )
-                    val evidence = awaitEvidence(controller)
+                    val evidence = captureEvidenceAtRequestBoundary(controller)
                     check(evidence.derivedFragments >= 2) {
                         "expected Mermaid + KaTeX derived fragments, got ${evidence.derivedFragments}"
                     }
@@ -543,7 +543,7 @@ internal object OwnedNativeFileEditorRuntimeProbe {
             directEditors.clear()
         }
 
-        private fun awaitEvidence(controller: NativePresentationController): NativeDerivedPresentationEvidence =
+        private fun captureEvidenceAtRequestBoundary(controller: NativePresentationController): NativeDerivedPresentationEvidence =
             requireNotNull(
                 onEdt {
                     // applyPlan creates the retained renderer and records renderRequests
