@@ -676,19 +676,21 @@ internal class NativeBlockQuoteInlayRenderer(
         get() = model.lines.size
 
     internal fun contentIndentPx(index: Int): Int =
-        model.lines[index].depth * NESTED_LEVEL_INDENT
+        model.lines[index].depth * layoutMetrics().nestedIndent
 
     internal fun listMarkerIndentPx(index: Int): Int {
         val line = model.lines[index]
         val row = line.listRow ?: return contentIndentPx(index)
-        return contentIndentPx(index) + nativeListIndentPixels(row.depth)
+        return contentIndentPx(index) + row.depth * layoutMetrics().nestedIndent
     }
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int =
-        max(MIN_WIDTH, editor.scrollingModel.visibleArea.width - OUTER_HORIZONTAL_MARGIN * 2)
+        layoutMetrics().surfaceWidth()
 
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int =
-        rowHeight() * model.lines.size + VERTICAL_PADDING * 2
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int {
+        val layout = layoutMetrics()
+        return layout.rowHeight * model.lines.size + layout.verticalPadding * 2
+    }
 
     override fun paint(
         inlay: Inlay<*>,
@@ -702,37 +704,39 @@ internal class NativeBlockQuoteInlayRenderer(
         val bar = Color(foreground.red, foreground.green, foreground.blue, BAR_ALPHA)
         val font = editor.contentComponent.font
         val metrics = g2.getFontMetrics(font)
-        val baseTextX = targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING + BAR_WIDTH + CONTENT_PADDING
-        val rowHeight = rowHeight()
+        val layout = layoutMetrics()
+        val baseTextX = targetRegion.x +
+            layout.surfaceMargin * 2 + layout.barWidth + layout.horizontalPadding
+        val rowHeight = layout.rowHeight
 
         g2.color = background
         g2.fillRoundRect(
-            targetRegion.x + OUTER_HORIZONTAL_MARGIN,
+            targetRegion.x + layout.surfaceMargin,
             targetRegion.y,
-            max(1, targetRegion.width - OUTER_HORIZONTAL_MARGIN * 2),
+            max(1, targetRegion.width - layout.surfaceMargin * 2),
             targetRegion.height,
-            ARC,
-            ARC,
+            layout.surfaceArc,
+            layout.surfaceArc,
         )
         g2.color = bar
         g2.fillRect(
-            targetRegion.x + OUTER_HORIZONTAL_MARGIN + BAR_LEFT_PADDING,
-            targetRegion.y + VERTICAL_PADDING,
-            BAR_WIDTH,
-            max(1, targetRegion.height - VERTICAL_PADDING * 2),
+            targetRegion.x + layout.surfaceMargin * 2,
+            targetRegion.y + layout.verticalPadding,
+            layout.barWidth,
+            max(1, targetRegion.height - layout.verticalPadding * 2),
         )
         g2.font = font
         val bold = font.deriveFont(Font.BOLD)
         model.lines.forEachIndexed { index, line ->
-            val rowTop = targetRegion.y + VERTICAL_PADDING + index * rowHeight
+            val rowTop = targetRegion.y + layout.verticalPadding + index * rowHeight
             if (line.depth > 0) {
                 g2.color = bar
                 repeat(line.depth) { level ->
                     g2.fillRect(
-                        baseTextX + level * NESTED_LEVEL_INDENT,
-                        rowTop + NESTED_BAR_VERTICAL_INSET,
-                        BAR_WIDTH,
-                        max(1, rowHeight - NESTED_BAR_VERTICAL_INSET * 2),
+                        baseTextX + level * layout.nestedIndent,
+                        rowTop + layout.halfRhythm,
+                        layout.barWidth,
+                        max(1, rowHeight - layout.halfRhythm * 2),
                     )
                 }
             }
@@ -744,7 +748,7 @@ internal class NativeBlockQuoteInlayRenderer(
                 val textX = baseTextX + contentIndentPx(index)
                 val availableTextWidth = max(
                     1,
-                    targetRegion.x + targetRegion.width - OUTER_HORIZONTAL_MARGIN - textX,
+                    targetRegion.x + targetRegion.width - layout.surfaceMargin - textX,
                 )
                 val rendered = clip(line.displayText, metrics, availableTextWidth)
                 g2.color = foreground
@@ -757,7 +761,7 @@ internal class NativeBlockQuoteInlayRenderer(
                 g2.font = bold
                 g2.drawString(displayMarker, markerX, baseline)
                 val markerWidth = g2.getFontMetrics(bold).stringWidth(listRow.marker)
-                val contentX = markerX + markerWidth + LIST_MARKER_GAP
+                val contentX = markerX + markerWidth + layout.markerGap
                 drawListRuns(g2, listRow.displayRuns, contentX, baseline, font)
             }
         }
@@ -781,10 +785,8 @@ internal class NativeBlockQuoteInlayRenderer(
         g2.font = baseFont
     }
 
-    private fun rowHeight(): Int {
-        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-        return max(editor.lineHeight, metrics.height)
-    }
+    private fun layoutMetrics(): NativePresentationLayoutMetrics =
+        nativePresentationLayoutMetrics(editor)
 
     private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
         if (metrics.stringWidth(text) <= maxWidth) return text
@@ -796,16 +798,6 @@ internal class NativeBlockQuoteInlayRenderer(
     }
 
     companion object {
-        private const val MIN_WIDTH = 160
-        private const val OUTER_HORIZONTAL_MARGIN = 4
-        private const val BAR_LEFT_PADDING = 4
-        private const val BAR_WIDTH = 3
-        private const val CONTENT_PADDING = 10
-        private const val NESTED_LEVEL_INDENT = 18
-        private const val NESTED_BAR_VERTICAL_INSET = 2
-        private const val LIST_MARKER_GAP = 8
-        private const val VERTICAL_PADDING = 6
-        private const val ARC = 8
         private const val BACKGROUND_ALPHA = 20
         private const val BAR_ALPHA = 150
     }
