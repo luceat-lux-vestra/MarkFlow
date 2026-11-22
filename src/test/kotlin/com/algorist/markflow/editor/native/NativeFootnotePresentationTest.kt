@@ -1,7 +1,12 @@
 package com.algorist.markflow.editor.native
 
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.command.undo.UndoManager
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.event.MouseEvent
 
@@ -28,6 +33,106 @@ Tail
             assertEquals(2, evidence.fullyPresented)
             assertEquals(source, editor.document.text)
             assertEquals(stampBefore, editor.document.modificationStamp)
+        } finally {
+            controller.dispose()
+        }
+    }
+
+    fun testSplitEditorsOwnFootnotePresentationIndependentlyOnSharedDocument() {
+        val source = """Reference.[^shared]
+
+[^shared]: Shared definition.
+
+Tail
+"""
+        myFixture.configureByText("footnote-split-editor.md", source)
+        val first = myFixture.editor
+        val second = EditorFactory.getInstance().createEditor(
+            first.document,
+            project,
+            myFixture.file.virtualFile,
+            false,
+        )
+        val tail = source.indexOf("Tail") + 1
+        val referenceStart = source.indexOf("[^shared]")
+        first.caretModel.moveToOffset(tail)
+        second.caretModel.moveToOffset(tail)
+        val firstController = NativePresentationController(first, richPresentationEnabled = { true })
+        val secondController = NativePresentationController(second, richPresentationEnabled = { true })
+
+        try {
+            assertSame(first.document, second.document)
+            assertEquals(2, firstController.footnoteEvidenceSnapshot().fullyPresented)
+            assertEquals(2, secondController.footnoteEvidenceSnapshot().fullyPresented)
+
+            first.caretModel.moveToOffset(referenceStart + 2)
+            firstController.refreshNow()
+
+            assertEquals(1, firstController.footnoteEvidenceSnapshot().fullyPresented)
+            assertEquals(
+                2,
+                secondController.footnoteEvidenceSnapshot().fullyPresented,
+                "revealing source in one editor must not remove the other editor's presentation",
+            )
+            assertEquals(source, first.document.text)
+        } finally {
+            firstController.dispose()
+            secondController.dispose()
+            EditorFactory.getInstance().releaseEditor(second)
+        }
+    }
+
+    fun testFootnoteSemanticsRebuildAfterEditUndoRedoWithoutSourceReconstruction() {
+        val source = """Reference.[^one]
+
+[^one]: Definition.
+
+Tail
+"""
+        val updated = source.replace("Definition.", "Updated definition.")
+        myFixture.configureByText("footnote-undo-redo.md", source)
+        val editor = myFixture.editor
+        val document = editor.document
+        val fileEditor = requireNotNull(TextEditorProvider.getInstance().getTextEditor(editor))
+        val tail = source.indexOf("Tail") + 1
+        editor.caretModel.moveToOffset(tail)
+        val controller = NativePresentationController(editor, richPresentationEnabled = { true })
+
+        try {
+            assertEquals(2, controller.footnoteEvidenceSnapshot().fullyPresented)
+
+            val bodyStart = document.text.indexOf("Definition.")
+            WriteCommandAction.writeCommandAction(project)
+                .withName("Edit footnote definition")
+                .run<RuntimeException> {
+                    document.replaceString(
+                        bodyStart,
+                        bodyStart + "Definition.".length,
+                        "Updated definition.",
+                    )
+                }
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            editor.caretModel.moveToOffset(updated.indexOf("Tail") + 1)
+            controller.refreshNow()
+            assertEquals(updated, document.text)
+            assertEquals(2, controller.footnoteEvidenceSnapshot().fullyPresented)
+
+            val undo = UndoManager.getInstance(project)
+            assertTrue(undo.isUndoAvailable(fileEditor))
+            undo.undo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            editor.caretModel.moveToOffset(tail)
+            controller.refreshNow()
+            assertEquals(source, document.text)
+            assertEquals(2, controller.footnoteEvidenceSnapshot().fullyPresented)
+
+            assertTrue(undo.isRedoAvailable(fileEditor))
+            undo.redo(fileEditor)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            editor.caretModel.moveToOffset(updated.indexOf("Tail") + 1)
+            controller.refreshNow()
+            assertEquals(updated, document.text)
+            assertEquals(2, controller.footnoteEvidenceSnapshot().fullyPresented)
         } finally {
             controller.dispose()
         }
