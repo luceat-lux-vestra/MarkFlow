@@ -69,6 +69,9 @@ fi
 if grep -R -Eq 'NativeEditorShellProbe|markflow\.nativeEditorShellProbe|runIdeForNativeEditorShellProbe|native-editor-shell-probe' src build.gradle.kts .github/workflows; then
   die "#584 superseded platform-augmentation shell proof was reintroduced"
 fi
+if grep -R -Eq 'MarkdownPreviewLifecycleGuard|StaleMarkdownPreviewPanelPolicy|markflow\.353\.lifecycle\.trace|MARKFLOW_JCEF_GUARD' src --exclude='repository-hardening-contract.sh'; then
+  die "#643 historical bundled-Markdown lifecycle patch was reintroduced into the product/evidence surface"
+fi
 production_lifecycle="src/main/kotlin/com/algorist/markflow/editor/native/NativeMarkFlowProductionLifecycle.kt"
 [ -f "$production_lifecycle" ] || die "#584 production lifecycle source is missing"
 presentation_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationController.kt"
