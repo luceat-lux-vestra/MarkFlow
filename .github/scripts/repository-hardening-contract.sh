@@ -1301,40 +1301,42 @@ grep -Fq 'headingSourceIdentityNegativeControls()' "$manifest_test" ||
   die "Stage E2 lost adversarial heading comparator checks"
 grep -Fq 'DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD' "$manifest_test" ||
   die "Stage E2 must not silently certify unreviewed DOM drift tolerance"
-# #350 Stage E8 pilot: pin custom line-fold non-duplication geometry, without
-# replacing the product heading renderer before editor/reveal validation.
-grep -Fq 'testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E8 lost single-line heading replacement pilot"
-grep -Fq 'testCustomHeadingFoldCoexistsWithPlatformSyntaxFoldAndSourceReveal' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E9 lost custom heading/foreign syntax-fold coexistence proof"
-grep -Fq 'testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E9 lost verified heading+blank two-line geometry proof"
-grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E10 lost owned custom heading click/reveal and foreign fold preservation proof"
-grep -Fq 'internal class NativeHeadingCustomFoldRenderer(' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
-  die "Stage E11 lost custom heading production-capable renderer"
-grep -Fq 'testHeadingCustomFoldRendererMatchesPreviewH2TypographyAndPaintsPixels' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E11 lost CustomFold glyph-paint and preview-font metrics test"
-grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt" ||
-  die "Stage E11 lost fail-closed full-line eligibility checks"
-grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E11 lost source-line fold planner negative controls"
-grep -Fq 'testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E12 lost guarded heading controller test"
-grep -Fq 'testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal' "src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt" ||
-  die "Stage E13 lost real editor hit-test evidence"
+# Native heading presentation has one product policy. Historical A/B and Preview-pilot
+# implementations are not compatibility surfaces and must not return as hidden constructor modes.
+heading_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativeHeadingPresentationController.kt"
+ordinary_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationController.kt"
+presentation_controller="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationController.kt"
+heading_test="src/test/kotlin/com/algorist/markflow/editor/native/NativeOrdinaryPresentationTest.kt"
+grep -Fq 'testCustomSingleLineHeadingFoldReplacesOriginalEditorLineHeight' "$heading_test" ||
+  die "Heading source-line replacement lost single-line geometry coverage"
+grep -Fq 'testCustomHeadingFoldCoexistsWithPlatformSyntaxFoldAndSourceReveal' "$heading_test" ||
+  die "Heading replacement lost foreign-fold coexistence coverage"
+grep -Fq 'testCustomHeadingAndVerifiedBlankLineFoldDoesNotDoubleAllocateHeight' "$heading_test" ||
+  die "Heading replacement lost verified blank-row geometry coverage"
+grep -Fq 'testCustomTwoLineHeadingFoldLeftClickOwnershipAndForeignSyntaxPreservation' "$heading_test" ||
+  die "Heading replacement lost click/reveal ownership coverage"
+grep -Fq 'testHeadingCustomFoldRendererUsesCurrentEditorTypographyAndPaintsPixels' "$heading_test" ||
+  die "Heading renderer lost current-editor typography/paint coverage"
+grep -Fq 'internal object NativeHeadingCustomFoldLinePlanner' "$heading_controller" ||
+  die "Heading replacement lost fail-closed full-line eligibility checks"
+grep -Fq 'testHeadingCustomFoldLinePlannerRejectsNonblankAndMultilineCases' "$heading_test" ||
+  die "Heading line planner lost negative controls"
+grep -Fq 'testSourceReplacingHeadingControllerOwnedClickRestoreAndInactiveReattach' "$heading_test" ||
+  die "Heading controller lost guarded reveal/reattach coverage"
+grep -Fq 'testSourceReplacingHeadingUsesRealEditorMouseHitTestingForSourceReveal' "$heading_test" ||
+  die "Heading controller lost real editor mouse-route evidence"
+if grep -Eq 'NativeHeadingPreviewTypographyPilot|NativeHeadingInlayRenderer|NativeHeadingParagraphGapRenderer|sourceLineReplacement|nativeEditorTypography|previewPilotParagraphGap' "$heading_controller"; then
+  die "Historical heading pilot/additive policy returned to the production controller"
+fi
+if grep -Eq 'headingSourceLineReplacement|headingNativeEditorTypography|headingPreviewPilotGap' "$ordinary_controller" "$presentation_controller" "$production_lifecycle"; then
+  die "Heading product policy must not be selectable through production wiring flags"
+fi
 if grep -Fq 'markflow.starter.headingLegacyBaselinePilot' "$production_lifecycle"; then
   die "Production heading behavior must not depend on Starter-only VM properties"
 fi
 if grep -Fq 'file.name == "md-atx-headings-h1-h6.md"' "$production_lifecycle"; then
   die "Production heading behavior must not depend on an evidence fixture filename"
 fi
-grep -Fq 'headingSourceLineReplacement = true' "$production_lifecycle" ||
-  die "Production heading source-line replacement policy is not explicit"
-grep -Fq 'headingNativeEditorTypography = true' "$production_lifecycle" ||
-  die "Production heading typography must derive from the active editor/theme"
-grep -Fq 'headingPreviewPilotGap = false' "$production_lifecycle" ||
-  die "Historical Preview paragraph-gap pilot leaked into production"
 grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
   die "Stage E7 lost intrinsic Gantt timeline width regression"
 grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
