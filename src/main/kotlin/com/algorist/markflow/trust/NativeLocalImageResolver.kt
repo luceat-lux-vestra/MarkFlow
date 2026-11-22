@@ -201,10 +201,17 @@ internal object NativeLocalImageResolver {
     }
 
     internal fun supportsFilename(filename: String): Boolean =
-        expectedFormat(filename) != null
+        supportedExtensionOrNull(filename) != null
 
-    private fun expectedFormat(filename: String): ExpectedFormat? {
+    internal fun supportedExtensionOrNull(filename: String): String? {
         val extension = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return extension.takeIf { expectedFormatForExtension(it) != null }
+    }
+
+    private fun expectedFormat(filename: String): ExpectedFormat? =
+        supportedExtensionOrNull(filename)?.let(::expectedFormatForExtension)
+
+    private fun expectedFormatForExtension(extension: String): ExpectedFormat? {
         return when (extension) {
             "png" -> ExpectedFormat("png", "image/png")
             "jpg", "jpeg" -> ExpectedFormat("jpeg", "image/jpeg")
