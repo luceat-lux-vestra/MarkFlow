@@ -131,16 +131,11 @@ internal object NativeHeadingProjectionPlanner {
  * Markdown is visible and directly editable.
  */
 // JetBrains CustomFoldRegion and addCustomLinesFolding are @ApiStatus.Experimental.
-// Deliberately constrained to the explicit opt-in #350 pilot on pinned 2026.2.x;
-// suppress locally instead of disabling Qodana High severity for the repository.
+// The dependency is isolated here and exercised against the maintained IntelliJ compatibility
+// envelope; production has one source-line-replacement heading policy.
 @Suppress("UnstableApiUsage")
 internal class NativeHeadingPresentationController(
     private val editor: Editor,
-    // Production enables source-line replacement explicitly. The false default is retained only
-    // for historical evidence fixtures until their separate cleanup; product behavior never reads it.
-    private val sourceLineReplacement: Boolean = false,
-    private val nativeEditorTypography: Boolean = false,
-    private val previewPilotParagraphGap: Boolean = true,
     private val postMouseActivityReconciliation: () -> Unit = {},
 ) : Disposable {
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
@@ -161,7 +156,6 @@ internal class NativeHeadingPresentationController(
         }
 
         override fun mouseClicked(event: EditorMouseEvent) {
-            // Keep additive block-inlay clicks on the existing click phase.
             if (event.inlay != null) handleMouseReveal(event)
         }
     }
@@ -238,20 +232,9 @@ internal class NativeHeadingPresentationController(
             postMouseActivityReconciliation()
             return true
         }
-        val renderer = event.inlay?.renderer ?: return false
-        val sourceRange: ProjectionRange
-        val contentOffset: Int
-        when (renderer) {
-            is NativeHeadingInlayRenderer -> {
-                sourceRange = renderer.sourceRange
-                contentOffset = renderer.contentOffset
-            }
-            is NativeHeadingInlineFoldRenderer -> {
-                sourceRange = renderer.sourceRange
-                contentOffset = renderer.contentOffset
-            }
-            else -> return false
-        }
+        val renderer = event.inlay?.renderer as? NativeHeadingInlineFoldRenderer ?: return false
+        val sourceRange = renderer.sourceRange
+        val contentOffset = renderer.contentOffset
         val key = HeadingKey(sourceRange.startOffset, sourceRange.endOffset)
         val presentation = owned[key] ?: return false
         if (!presentation.inlay.isValid || presentation.inlay.renderer !== renderer) return false
@@ -272,88 +255,8 @@ internal class NativeHeadingPresentationController(
             customOwned[key]?.let { it.isValid && !it.isExpanded } == true) return
         removeOwned(key)
 
-        if (sourceLineReplacement) {
-            // A custom fold can replace only a parser-proven whole source line.
-            // Unsafe Setext/multiline cases must remain exact, editable Markdown;
-            // never fall through to the legacy additive block inlay in this mode.
-            val span = NativeHeadingCustomFoldLinePlanner.plan(editor, model) ?: return
-            installCustomIfCurrent(identity, key, model, span)
-            return
-        }
-
-        val sourceBefore = editor.document.immutableCharSequence.toString()
-        val stampBefore = editor.document.modificationStamp
-        val foldRanges = headingFoldRanges(model, sourceBefore) ?: return
-        val installedFolds = mutableListOf<FoldRegion>()
-        val coverageFolds = mutableListOf<FoldRegion>()
-        var foldsInstalled = true
-        editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
-            for ((startOffset, endOffset) in foldRanges) {
-                val coveredByForeignSyntaxFold = editor.foldingModel.allFoldRegions.firstOrNull { fold ->
-                    fold.isValid &&
-                        !fold.isExpanded &&
-                        fold.startOffset <= startOffset &&
-                        fold.endOffset >= endOffset &&
-                        model.syntaxRanges.any { syntax ->
-                            startOffset >= syntax.startOffset && endOffset <= syntax.endOffset
-                        }
-                }
-                if (coveredByForeignSyntaxFold != null) {
-                    coverageFolds += coveredByForeignSyntaxFold
-                    continue
-                }
-
-                val fold = editor.foldingModel.addFoldRegion(
-                    startOffset,
-                    endOffset,
-                    ZERO_WIDTH_PLACEHOLDER,
-                )
-                if (fold == null) {
-                    foldsInstalled = false
-                    break
-                }
-                installedFolds += fold
-                coverageFolds += fold
-                fold.isExpanded = false
-                if (fold.isExpanded) {
-                    foldsInstalled = false
-                    break
-                }
-            }
-            if (!foldsInstalled) {
-                installedFolds.asReversed().forEach { fold ->
-                    if (fold.isValid) editor.foldingModel.removeFoldRegion(fold)
-                }
-                installedFolds.clear()
-                coverageFolds.clear()
-            }
-        }
-        if (!foldsInstalled || coverageFolds.size != foldRanges.size) return
-
-        val renderer = NativeHeadingInlayRenderer(editor, model)
-        val inlay = editor.inlayModel.addBlockElement(
-            model.sourceRange.endOffset,
-            true,
-            true,
-            0,
-            renderer,
-        )
-        if (inlay == null) {
-            removeFolds(installedFolds)
-            return
-        }
-        owned[key] = OwnedHeadingPresentation(
-            folds = installedFolds.toList(),
-            coverageFolds = coverageFolds.toList(),
-            inlay = inlay,
-        )
-
-        check(editor.document.modificationStamp == stampBefore) {
-            "native heading presentation changed the authoritative Document modification stamp"
-        }
-        check(editor.document.immutableCharSequence.toString() == sourceBefore) {
-            "native heading presentation changed the authoritative Document source"
-        }
+        val span = NativeHeadingCustomFoldLinePlanner.plan(editor, model) ?: return
+        installCustomIfCurrent(identity, key, model, span)
     }
 
     private fun installCustomIfCurrent(
@@ -369,7 +272,7 @@ internal class NativeHeadingPresentationController(
         editor.foldingModel.runBatchFoldingOperationDoNotCollapseCaret {
             installed = editor.foldingModel.addCustomLinesFolding(
                 lineSpan.first, lineSpan.last,
-                NativeHeadingCustomFoldRenderer(editor, model, nativeEditorTypography),
+                NativeHeadingCustomFoldRenderer(editor, model),
             )
         }
         if (installed == null) {
@@ -438,7 +341,7 @@ internal class NativeHeadingPresentationController(
             removeFolds(listOf(fold))
             return
         }
-        val renderer = NativeHeadingInlineFoldRenderer(editor, model, nativeEditorTypography)
+        val renderer = NativeHeadingInlineFoldRenderer(editor, model)
         val glyphHeight = editor.contentComponent.getFontMetrics(renderer.presentationFont()).height
         // The custom fold was rejected by a foreign 0..section owner.
         // Borrow ONLY the verified physical blank row; never hide source
@@ -454,89 +357,13 @@ internal class NativeHeadingPresentationController(
             removeFolds(listOf(fold))
             return
         }
-        if (!previewPilotParagraphGap) {
-            // Production paragraphs own their source line boxes. The research
-            // experiment's 16px JCEF gap must never enter product layout.
-            owned[key] = OwnedHeadingPresentation(
-                folds = listOf(fold), coverageFolds = listOf(fold), inlay = inline
-            )
-            check(doc.modificationStamp == originalStamp &&
-                doc.immutableCharSequence.toString() == originalText) {
-                "native H1 same-start fallback mutated authoritative source"
-            }
-            return
-        }
-        // #353 measured 2026.2.3 JCEF paragraph text-range gap:
-        // P2 - P1 = 102.297 CSS px, source-line candidate = 85 device px.
-        // The missing space lies *after the first paragraph* (before the
-        // next section heading), NOT between H1 and that paragraph.
-        // Earlier H1-anchored spacer attempts moved H1 or P1 but left the
-        // relative P1-to-P2 interval unchanged. Only apply to a parser-proven
-        // H1 followed by one verified blank line and nonblank paragraph;
-        // avoid altering unrelated source ranges or platform-owned folds.
-        val paragraphLine = lineSpan.last + 1
-        if (paragraphLine >= doc.lineCount ||
-            doc.getLineStartOffset(paragraphLine) >= doc.getLineEndOffset(paragraphLine)) {
-            inline.dispose()
-            removeFolds(listOf(fold))
-            return
-        }
-        val paragraphEnd = doc.getLineEndOffset(paragraphLine)
-        val paragraphGap = editor.inlayModel.addBlockElement(
-            paragraphEnd, true, false, 0, NativeHeadingParagraphGapRenderer
-        )
-        if (paragraphGap == null || !paragraphGap.isValid) {
-            paragraphGap?.takeIf { it.isValid }?.dispose()
-            inline.dispose()
-            removeFolds(listOf(fold))
-            return
-        }
         owned[key] = OwnedHeadingPresentation(
-            folds = listOf(fold), coverageFolds = listOf(fold),
-            inlay = inline, spacingInlay = paragraphGap,
+            folds = listOf(fold), coverageFolds = listOf(fold), inlay = inline
         )
         check(doc.modificationStamp == originalStamp &&
             doc.immutableCharSequence.toString() == originalText) {
             "co-start H1 inline fallback mutated authoritative source"
         }
-    }
-
-    private fun headingFoldRanges(model: NativeHeadingModel, source: String): List<ProjectionRange>? {
-        val range = model.sourceRange
-        if (!range.isInside(source)) return null
-        val codePoints = source.codePointCount(range.startOffset, range.endOffset)
-        if (codePoints < 2) return null
-        val tailStart = Character.offsetByCodePoints(source, range.endOffset, -1)
-        if (tailStart <= range.startOffset || tailStart >= range.endOffset) return null
-
-        val boundaries = linkedSetOf(range.startOffset, tailStart, range.endOffset)
-        model.syntaxRanges.forEach { syntax ->
-            if (syntax.startOffset > range.startOffset && syntax.startOffset < range.endOffset) {
-                boundaries += syntax.startOffset
-            }
-            if (syntax.endOffset > range.startOffset && syntax.endOffset < range.endOffset) {
-                boundaries += syntax.endOffset
-            }
-        }
-        editor.foldingModel.allFoldRegions
-            .asSequence()
-            .filter(FoldRegion::isValid)
-            .filter { fold -> fold.startOffset < range.endOffset && fold.endOffset > range.startOffset }
-            .forEach { fold ->
-                if (fold.startOffset > range.startOffset && fold.startOffset < range.endOffset) {
-                    boundaries += fold.startOffset
-                }
-                if (fold.endOffset > range.startOffset && fold.endOffset < range.endOffset) {
-                    boundaries += fold.endOffset
-                }
-            }
-
-        return boundaries
-            .sorted()
-            .zipWithNext()
-            .mapNotNull { (startOffset, endOffset) ->
-                if (endOffset > startOffset) ProjectionRange(startOffset, endOffset) else null
-            }
     }
 
     private fun isFullyConcealed(presentation: OwnedHeadingPresentation): Boolean =
@@ -626,107 +453,10 @@ internal class NativeHeadingPresentationController(
     }
 }
 
-internal class NativeHeadingInlayRenderer(
-    private val editor: Editor,
-    private val model: NativeHeadingModel,
-) : EditorCustomElementRenderer {
-    val sourceRange: ProjectionRange
-        get() = model.sourceRange
-
-    val contentOffset: Int
-        get() = model.contentRange.startOffset
-
-    val displayText: String
-        get() = model.text
-
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-        val font = headingFont()
-        val metrics = editor.contentComponent.getFontMetrics(font)
-        val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
-        // IDEA caches geometry when each renderer is installed. A detached
-        // test editor (or a not-yet-displayed production editor) can report
-        // different transient, positive viewport sizes between installations.
-        // Only a visible, meaningfully laid-out viewport may clip the text.
-        // Otherwise both inlay and custom fold retain their intrinsic width.
-        val viewportWidth = editor.scrollingModel.visibleArea.width
-        return if (editor.contentComponent.isShowing &&
-            viewportWidth > HORIZONTAL_PADDING * 2 + 1) {
-            min(naturalWidth, viewportWidth - HORIZONTAL_PADDING * 2)
-        } else {
-            naturalWidth
-        }
-    }
-
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int {
-        val metrics = editor.contentComponent.getFontMetrics(headingFont())
-        return metrics.height + verticalPadding(model.level) * 2
-    }
-
-    override fun paint(
-        inlay: Inlay<*>,
-        g: Graphics,
-        targetRegion: Rectangle,
-        textAttributes: TextAttributes,
-    ) {
-        val g2 = g as? Graphics2D ?: return
-        val font = headingFont()
-        val metrics = g2.getFontMetrics(font)
-        val available = max(1, targetRegion.width - HORIZONTAL_PADDING * 2)
-        val rendered = clip(model.text, metrics, available)
-        val baseline = targetRegion.y +
-            max(metrics.ascent + verticalPadding(model.level), (targetRegion.height + metrics.ascent - metrics.descent) / 2)
-
-        val previousTextHint = g2.getRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING)
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        g2.font = font
-        g2.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
-        g2.drawString(rendered, targetRegion.x + HORIZONTAL_PADDING, baseline)
-        if (previousTextHint != null) {
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, previousTextHint)
-        }
-    }
-
-    private fun headingFont(): Font {
-        val base = editor.contentComponent.font
-        return base.deriveFont(Font.BOLD, editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(model.level))
-    }
-
-    private fun clip(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
-        if (metrics.stringWidth(text) <= maxWidth) return text
-        val ellipsis = "…"
-        val target = max(0, maxWidth - metrics.stringWidth(ellipsis))
-        var end = text.length
-        while (end > 0 && metrics.stringWidth(text.substring(0, end)) > target) end -= 1
-        return text.substring(0, end) + ellipsis
-    }
-
-    private fun verticalPadding(level: Int): Int =
-        NativeHeadingLayoutMetrics.verticalPadding(level, editor.colorsScheme.editorFontSize2D)
-
-    companion object {
-        private const val HORIZONTAL_PADDING = 4
-    }
-}
-
-/**
- * Em-based native Heading layout policy. Ratios preserve the measured
- * 13-point IDEA Preview rhythm; the runtime has no fixed device-pixel gap.
- * Font metrics and editor DPI/scale determine the final owned box height.
- */
 internal object NativeHeadingLayoutMetrics {
-    private val foldPaddingEm = floatArrayOf(
-        10f / 13f, 8f / 13f, 7f / 13f, 6f / 13f, 5f / 13f, 4f / 13f
-    )
-    private const val SECTION_GAP_EM = 1.25f
-
-    fun verticalPadding(level: Int, bodyFontPx: Float): Int {
-        require(level in 1..6 && bodyFontPx > 0f)
-        return (bodyFontPx * foldPaddingEm[level - 1]).roundToInt().coerceAtLeast(0)
-    }
-
-    fun followingSectionGap(bodyFontPx: Float): Int {
-        require(bodyFontPx > 0f)
-        return (bodyFontPx * SECTION_GAP_EM).roundToInt().coerceAtLeast(0)
+    fun horizontalPadding(editor: Editor): Int {
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        return max(1, metrics.charWidth(' '))
     }
 
     fun fitsVerifiedBlankRow(glyphHeight: Int, lineHeight: Int): Boolean =
@@ -734,97 +464,30 @@ internal object NativeHeadingLayoutMetrics {
 }
 
 /**
- * One source-aligned paragraph transition after document H1, measured in
- * editor-relative em units. The Preview baseline used 16px at body 13px,
- * but this renderer scales on live editor font/DPI changes.
- */
-internal object NativeHeadingParagraphGapRenderer : EditorCustomElementRenderer {
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int = 1
-
-    override fun calcHeightInPixels(inlay: Inlay<*>): Int =
-        NativeHeadingLayoutMetrics.followingSectionGap(
-            inlay.editor.colorsScheme.editorFontSize2D
-        )
-
-    override fun paint(
-        inlay: Inlay<*>,
-        g: Graphics,
-        targetRegion: Rectangle,
-        textAttributes: TextAttributes,
-    ) { /* Intentional blank source-to-heading transition, not duplicated rich content. */ }
-}
-
-/**
- * Exact 2026.2.3 bundled JCEF Preview CSS typography, opt-in #353 pilot ONLY.
- *
- * Measured on an actual IDE/JCEF run, not invented font tiers:
- * H1..H6 28.6, 23.4, 16.9, 13, 13, 13 CSS px; font-weight 700;
- * computed-family Helvetica, Arial, freesans, sans-serif;
- * H6 color rgb(115,118,124) in Islands Light.
- *
- * The shipping additive heading renderer deliberately retains its existing
- * user-editor styling. This is a test-only controlled experiment until whole
- * editor content geometry, fallback font and mouse/source lifecycle match.
- */
-internal object NativeHeadingPreviewTypographyPilot {
-    private val pinnedScale = floatArrayOf(2.2f, 1.8f, 1.3f, 1.0f, 1.0f, 1.0f)
-    private val preferredCssFamilies = listOf(
-        "Helvetica", "Arial", "FreeSans", "Liberation Sans", "Arimo", "SansSerif"
-    )
-    private val resolvedFamily: String by lazy {
-        val installed = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
-            .availableFontFamilyNames.toSet()
-        preferredCssFamilies.firstOrNull { it in installed } ?: "SansSerif"
-    }
-    internal val mutedH6LightColor = java.awt.Color(115, 118, 124)
-
-    fun scale(level: Int): Float {
-        require(level in 1..6)
-        return pinnedScale[level - 1]
-    }
-
-    fun font(editor: Editor, level: Int): Font {
-        val size = editor.colorsScheme.editorFontSize2D * scale(level)
-        return Font(resolvedFamily, Font.BOLD, 1).deriveFont(size)
-    }
-
-    fun foreground(editor: Editor, level: Int, fallback: java.awt.Color): java.awt.Color {
-        val background = editor.colorsScheme.defaultBackground
-        return if (level == 6 && (background.red * 299 +
-                background.green * 587 + background.blue * 114) / 1000 >= 128) {
-            mutedH6LightColor
-        } else {
-            fallback
-        }
-    }
-}
-
-/**
- * Bounded source-line H1 pilot for IDEA's co-start platform section folding.
+ * Bounded source-line H1 fallback for IDEA's co-start platform section folding.
  * Inline geometry participates in the SAME source line's vertical rhythm;
  * there is no extra block element and no platform-fold ownership transfer.
  */
 internal class NativeHeadingInlineFoldRenderer(
     private val editor: Editor,
     private val model: NativeHeadingModel,
-    private val nativeEditorTypography: Boolean = false,
 ) : EditorCustomElementRenderer {
     val sourceRange: ProjectionRange get() = model.sourceRange
     val contentOffset: Int get() = model.contentRange.startOffset
 
-    internal fun presentationFont(): Font {
-        if (!nativeEditorTypography) return NativeHeadingPreviewTypographyPilot.font(editor, model.level)
-        val base = editor.contentComponent.font
-        // Never downsize H1 merely to fit the platform source line.
-        return base.deriveFont(Font.BOLD, editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(model.level))
-    }
+    internal fun presentationFont(): Font = nativeHeadingFont(editor, model.level)
 
     private fun font(): Font = presentationFont()
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-        val width = max(1, editor.contentComponent.getFontMetrics(font()).stringWidth(model.text) + 8)
+        val padding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
+        val width = max(1, editor.contentComponent.getFontMetrics(font()).stringWidth(model.text) + padding * 2)
         val viewport = editor.scrollingModel.visibleArea.width
-        return if (editor.contentComponent.isShowing && viewport > 9) min(width, viewport - 8) else width
+        return if (editor.contentComponent.isShowing && viewport > padding * 2 + 1) {
+            min(width, viewport - padding * 2)
+        } else {
+            width
+        }
     }
 
     override fun calcHeightInPixels(inlay: Inlay<*>): Int =
@@ -839,7 +502,8 @@ internal class NativeHeadingInlineFoldRenderer(
         val g2 = g as? Graphics2D ?: return
         val font = font()
         val metrics = g2.getFontMetrics(font)
-        val maxWidth = max(1, targetRegion.width - 8)
+        val padding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
+        val maxWidth = max(1, targetRegion.width - padding * 2)
         val text = NativeHeadingEllipsis.rendered(model.text, metrics, maxWidth)
         val previousFont = g2.font
         val previousColor = g2.color
@@ -847,14 +511,7 @@ internal class NativeHeadingInlineFoldRenderer(
         try {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g2.font = font
-            g2.color = if (nativeEditorTypography) {
-                textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
-            } else {
-                NativeHeadingPreviewTypographyPilot.foreground(
-                    editor, model.level,
-                    textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground,
-                )
-            }
+            g2.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
             val baseline = targetRegion.y +
                 max(metrics.ascent, (targetRegion.height + metrics.ascent - metrics.descent) / 2)
             val previousClip = g2.clip
@@ -864,7 +521,7 @@ internal class NativeHeadingInlineFoldRenderer(
                 // undersized inline targetRegion (which clipped the baseline).
                 g2.clip(Rectangle(targetRegion.x, targetRegion.y,
                     targetRegion.width, editor.lineHeight * 2))
-                g2.drawString(text, targetRegion.x + 4, baseline)
+                g2.drawString(text, targetRegion.x + padding, baseline)
             } finally {
                 g2.clip = previousClip
             }
@@ -925,13 +582,8 @@ internal object NativeHeadingCustomFoldLinePlanner {
 }
 
 /**
- * Actual #350 replacement-presentation renderer. Unlike an Editor block inlay,
- * CustomFoldRegion occupies source visual lines, so its declared height does
- * not get added *after* the original heading + blank-line height.
- *
- * Kept separate from the active NativeHeadingPresentationController until
- * platform-owned syntax folds, real mouse hit testing, and source-reveal
- * lifecycle are verified together on the exact production path.
+ * Production source-line replacement renderer. CustomFoldRegion occupies the parser-proven
+ * heading source rows directly; no additive block-inlay implementation exists.
  */
 /**
  * An inactive Heading is always displayed as ONE native line with ellipsis.
@@ -963,7 +615,6 @@ internal object NativeHeadingEllipsis {
 internal class NativeHeadingCustomFoldRenderer(
     private val editor: Editor,
     private val model: NativeHeadingModel,
-    private val nativeEditorTypography: Boolean = false,
 ) : CustomFoldRegionRenderer {
     val sourceRange: ProjectionRange get() = model.sourceRange
     val contentOffset: Int get() = model.contentRange.startOffset
@@ -971,13 +622,11 @@ internal class NativeHeadingCustomFoldRenderer(
 
     override fun calcWidthInPixels(region: CustomFoldRegion): Int {
         val metrics = editor.contentComponent.getFontMetrics(headingFont())
-        val naturalWidth = max(1, metrics.stringWidth(model.text) + HORIZONTAL_PADDING * 2)
-        // Detached editors can expose a transient viewport width. Do not cache that
-        // as a one-character region until the native editor is actually showing.
+        val padding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
+        val naturalWidth = max(1, metrics.stringWidth(model.text) + padding * 2)
         val viewportWidth = editor.scrollingModel.visibleArea.width
-        return if (editor.contentComponent.isShowing &&
-            viewportWidth > HORIZONTAL_PADDING * 2 + 1) {
-            min(naturalWidth, viewportWidth - HORIZONTAL_PADDING * 2)
+        return if (editor.contentComponent.isShowing && viewportWidth > padding * 2 + 1) {
+            min(naturalWidth, viewportWidth - padding * 2)
         } else {
             naturalWidth
         }
@@ -985,8 +634,7 @@ internal class NativeHeadingCustomFoldRenderer(
 
     override fun calcHeightInPixels(region: CustomFoldRegion): Int {
         val metrics = editor.contentComponent.getFontMetrics(headingFont())
-        // One native heading row replaces the original source line once.
-        return max(editor.lineHeight, metrics.height + verticalPadding(model.level) * 2)
+        return max(editor.lineHeight, metrics.height)
     }
 
     override fun paint(
@@ -998,11 +646,11 @@ internal class NativeHeadingCustomFoldRenderer(
         val font = headingFont()
         val metrics = g.getFontMetrics(font)
         val height = max(1, targetRegion.height.toInt())
-        val available = max(1, targetRegion.width.toInt() - HORIZONTAL_PADDING * 2)
+        val padding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
+        val available = max(1, targetRegion.width.toInt() - padding * 2)
         val rendered = NativeHeadingEllipsis.rendered(model.text, metrics, available)
         val baseline = targetRegion.y.toInt() +
-            max(metrics.ascent + verticalPadding(model.level),
-                (height + metrics.ascent - metrics.descent) / 2)
+            max(metrics.ascent, (height + metrics.ascent - metrics.descent) / 2)
         val oldFont = g.font
         val oldColor = g.color
         val oldClip = g.clip
@@ -1011,15 +659,8 @@ internal class NativeHeadingCustomFoldRenderer(
             g.clip(targetRegion)
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g.font = font
-            g.color = if (nativeEditorTypography) {
-                textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
-            } else {
-                NativeHeadingPreviewTypographyPilot.foreground(
-                    editor, model.level, textAttributes.foregroundColor
-                        ?: editor.colorsScheme.defaultForeground
-                )
-            }
-            g.drawString(rendered, targetRegion.x.toInt() + HORIZONTAL_PADDING, baseline)
+            g.color = textAttributes.foregroundColor ?: editor.colorsScheme.defaultForeground
+            g.drawString(rendered, targetRegion.x.toInt() + padding, baseline)
         } finally {
             g.font = oldFont
             g.color = oldColor
@@ -1028,18 +669,12 @@ internal class NativeHeadingCustomFoldRenderer(
         }
     }
 
-    private fun headingFont(): Font {
-        if (!nativeEditorTypography) return NativeHeadingPreviewTypographyPilot.font(editor, model.level)
-        val base = editor.contentComponent.font
-        return base.deriveFont(Font.BOLD, editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(model.level))
-    }
+    private fun headingFont(): Font = nativeHeadingFont(editor, model.level)
+}
 
-    private fun verticalPadding(level: Int): Int =
-        NativeHeadingLayoutMetrics.verticalPadding(level, editor.colorsScheme.editorFontSize2D)
-
-    companion object {
-        private const val HORIZONTAL_PADDING = 4
-    }
+internal fun nativeHeadingFont(editor: Editor, level: Int): Font {
+    val base = editor.contentComponent.font
+    return base.deriveFont(Font.BOLD, editor.colorsScheme.editorFontSize2D * nativeHeadingFontScale(level))
 }
 
 internal fun nativeHeadingFontScale(level: Int): Float = when (level) {
