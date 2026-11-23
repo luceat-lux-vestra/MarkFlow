@@ -17,7 +17,6 @@ plugins {
     alias(libs.plugins.kotlin) // Kotlin support.
     alias(libs.plugins.intelliJPlatform) // IntelliJ Platform plugin support.
     alias(libs.plugins.changelog) // Changelog automation.
-    alias(libs.plugins.qodana) // Qodana static analysis.
     alias(libs.plugins.kover) // Code coverage reporting.
 }
 
@@ -174,6 +173,27 @@ dependencies {
         testFramework(TestFrameworkType.Platform)
         testFramework(TestFrameworkType.Starter, configurationName = "integrationTestImplementation")
     }
+}
+
+val starterWorkerJvmArgs = listOf("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
+val starterIdeMetadata = layout.buildDirectory.file("starter-ide/installed-ide.properties")
+tasks.register<JavaExec>("provisionStarterIde") {
+    group = "verification"
+    description = "Resolve the exact Starter IDE and record its canonical executable before launch"
+
+    val integrationTestSourceSet = sourceSets.getByName("integrationTest")
+    dependsOn(integrationTestSourceSet.classesTaskName)
+    classpath = integrationTestSourceSet.runtimeClasspath
+    jvmArgs(starterWorkerJvmArgs)
+    mainClass.set("com.algorist.markflow.e2e.StarterIdeProvisionerKt")
+    args(
+        providers.gradleProperty("platformVersion").get(),
+        starterIdeMetadata.get().asFile.absolutePath,
+    )
+
+    // The metadata is a security handoff, not a build cache artifact. Resolve Starter on every
+    // invocation so a stale file can never outlive the actual installed IDE cache.
+    outputs.upToDateWhen { false }
 }
 
 // Configure IntelliJ Platform plugin metadata and publishing settings.
@@ -515,7 +535,7 @@ intellijPlatformTesting {
             // Starter 263 resolves IntelliJ's MultiRoutingFsPath inside the Gradle test worker.
             // That class implements a JDK-internal sun.nio.fs interface, so the worker needs the
             // same explicit export expected by the IntelliJ platform runtime/tooling.
-            jvmArgs("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
+            jvmArgs(starterWorkerJvmArgs)
             systemProperty("markflow.test.platformVersion", providers.gradleProperty("platformVersion").get())
             providers.gradleProperty("differentialCaseIds").orNull?.let { ids ->
                 systemProperty("markflow.differential.caseIds", ids)

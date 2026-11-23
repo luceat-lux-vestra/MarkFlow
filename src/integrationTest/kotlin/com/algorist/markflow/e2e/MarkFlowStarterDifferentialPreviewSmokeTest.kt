@@ -7,12 +7,8 @@ import com.intellij.driver.sdk.Editor
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
-import com.intellij.ide.starter.models.IdeInfo
-import com.intellij.ide.starter.models.TestCase
 import com.intellij.ide.starter.plugins.PluginConfigurator
-import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
-import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
 import java.awt.Color
@@ -62,10 +58,9 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             Path.of("build/e2e-evidence/derived-content/differential-preview-smoke"))
         try {
             timing.begin()
-            Starter.newContext(
+            val context = Starter.newContext(
                 testName = "markflow-353-platform-preview-raw-pair",
-                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project))
-                    .useRelease(version)
+                testCase = starterTestCase(version, project)
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(plugin)
             }.applyVMOptionsPatch {
@@ -75,10 +70,21 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
-            }.runIdeWithDriver().useDriverAndCloseIde {
+            }
+            val expectedIdeaExecutable = starterIdeExecutable(context)
+            context.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 timing.ideReady()
-                proveInOpenProject(this, file, expectedBytes, expectedSource, sourceLine, output, version)
+                proveInOpenProject(
+                    this,
+                    file,
+                    expectedBytes,
+                    expectedSource,
+                    sourceLine,
+                    output,
+                    version,
+                    expectedIdeaExecutable,
+                )
                 timing.scenarioComplete()
             }
             timing.success()
@@ -97,6 +103,7 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
         sourceLine: Int,
         output: Path,
         version: String,
+        expectedIdeaExecutable: Path,
     ) {
         val markFlow = MarkFlowIdeDriver(driver)
         val visual = driver.utility(DifferentialVisualBridgeRemote::class)
@@ -120,11 +127,8 @@ class MarkFlowStarterDifferentialPreviewSmokeTest {
             actualRuntime,
             StandardCharsets.UTF_8
         )
-        val expectedIdeaExecutable = "/idea-IU-263.7307.200/bin/idea"
-        check(actualRuntime.lineSequence().any {
-            it.startsWith("idea_apparmor_current=") && it.contains(expectedIdeaExecutable)
-        }) {
-            "Actual IDEA process is not attached to the pinned AppArmor userns profile; " +
+        check(starterAppArmorProfileMatches(actualRuntime, expectedIdeaExecutable)) {
+            "Actual IDEA process is not attached to the exact Starter-resolved AppArmor userns profile; " +
                 "see retained jcef-runtime-evidence.txt"
         }
         driver.withContext(OnDispatcher.EDT) { visual.prepare(editor.editor) }

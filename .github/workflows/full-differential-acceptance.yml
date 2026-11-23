@@ -453,14 +453,20 @@ jobs:
           echo "E2E_PLUGIN_PATH=build/distributions/$archive_name" >> "$GITHUB_ENV"
           echo "E2E_PLUGIN_SHA256=$expected_digest" >> "$GITHUB_ENV"
 
-      - name: Install pinned sandboxed JCEF AppArmor profile
+      - name: Provision exact Starter IDE for JCEF policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew provisionStarterIde -PplatformVersion="$STARTER_PLATFORM_VERSION" --stacktrace
+
+      - name: Install Starter-resolved sandboxed JCEF AppArmor profile
         shell: bash
         env:
           STARTER_SHARD: full-differential-acceptance
         run: |
           set -euo pipefail
           bash .github/scripts/install-starter-jcef-apparmor.sh --self-test
-          bash .github/scripts/install-starter-jcef-apparmor.sh
+          bash .github/scripts/install-starter-jcef-apparmor.sh build/starter-ide/installed-ide.properties
 
       - name: Start pinned full-corpus display
         shell: bash

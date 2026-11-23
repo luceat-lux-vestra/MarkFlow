@@ -9,12 +9,8 @@ import com.intellij.driver.sdk.waitForIndicators
 import com.intellij.driver.sdk.ui.ui
 import com.intellij.driver.sdk.ui.components.common.jcef
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
-import com.intellij.ide.starter.models.IdeInfo
-import com.intellij.ide.starter.models.TestCase
 import com.intellij.ide.starter.plugins.PluginConfigurator
-import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
-import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
 import java.awt.Robot
@@ -527,13 +523,13 @@ class MarkFlowStarterDifferentialManifestTest {
                     "\nmanifest_sha256=" + sha(manifest) + "\n")
             }
             heartbeat("starter-launch")
-            Starter.newContext(
+            val context = Starter.newContext(
                 testName = when (contract) {
                     "acceptance" -> "markflow-353-full-manifest-real-pairs"
                     "controlled-capture" -> "markflow-353-full-controlled-manifest"
                     else -> "markflow-353-bounded-manifest-real-pairs"
                 },
-                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(project)).useRelease(version)
+                testCase = starterTestCase(version, project)
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(plugin)
             }.applyVMOptionsPatch {
@@ -546,7 +542,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 addSystemProperty("jb.consents.confirmation.enabled", false)
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
-            }.runIdeWithDriver(
+            }
+            val expectedIdeaExecutable = starterIdeExecutable(context)
+            context.runIdeWithDriver(
                 // IDEA Starter defaults the whole IDE process to 10 minutes. That is appropriate
                 // for the bounded PR capture, but the complete 89-case acceptance corpus cannot
                 // finish inside that process lifetime. Keep the ordinary contract bounded while
@@ -667,10 +665,9 @@ class MarkFlowStarterDifferentialManifestTest {
                             preview.jcefRuntimeEvidence()
                         }
                         Files.writeString(dest.resolve("jcef-runtime-evidence.txt"), runtime)
-                        check(runtime.lineSequence().any {
-                            it.startsWith("idea_apparmor_current=") &&
-                                it.contains("/idea-IU-263.7307.200/bin/idea")
-                        }) { "Unconfined IDEA runtime" }
+                        check(starterAppArmorProfileMatches(runtime, expectedIdeaExecutable)) {
+                            "IDE runtime is not confined by the exact Starter-resolved AppArmor profile"
+                        }
                         driver.withContext(OnDispatcher.EDT) { visual.prepare(remoteEditor) }
                         // Caret outside the Mermaid fence avoids hiding its rendered inlay.
                         markFlow.resetToSingleCaret(editor, source.length)
