@@ -994,6 +994,7 @@ grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest().proveInOpenProject(' "$s
   die "#451 shared suite no longer executes the original bundled Preview Smoke proof body"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
   die "#353 controlled generic DOM evidence schema lost diagnostic surface inventory"
 grep -Fq 'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG' "$manifest_test" ||
@@ -1166,7 +1167,6 @@ grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
   die "Markdown source anchors no longer fail closed on fixture drift"
 grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
   die "Markdown source-anchor ledger lost its reviewed snapshot pin"
-differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$differential_bridge" ||
   die "#584 differential native path no longer requires owned-controller lookup"
 if grep -Fq 'NativeMarkFlowProductionLifecycle.controller(editor)' "$differential_bridge"; then
