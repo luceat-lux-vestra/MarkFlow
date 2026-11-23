@@ -2,6 +2,15 @@
     <!-- #154 convergence: JCEF is retained only as an optional derived-renderer execution backend.
          Production Markdown source editing is platform-native and has no browser/session transport. -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- #638: startup lifetime bounds are runtime policy, not Kotlin magic numbers. -->
+        <registryKey
+                key="markflow.renderer.jcef.entryLoadTimeoutMs"
+                defaultValue="60000"
+                description="Maximum time a queued MarkFlow derived-renderer request may wait for the JCEF entry document to finish loading, in milliseconds."/>
+        <registryKey
+                key="markflow.renderer.jcef.readyHandshakeTimeoutMs"
+                defaultValue="10000"
+                description="Maximum time a queued MarkFlow derived-renderer request may wait for the host/page ready handshake after the entry document loads, in milliseconds."/>
         <appStarter
                 id="markflow-derived-renderer-probe"
                 implementation="com.algorist.markflow.renderer.jcef.DerivedRendererProbeStarter"

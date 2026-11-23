@@ -1376,6 +1376,25 @@ grep -Fq 'internal fun nativeListIndentPixels(editor: Editor, depth: Int)' "$lis
 grep -Fq 'UIManager.getIcon(CHECKBOX_ICON_KEY)' "$list_presentation" ||
   die "#628 task checkbox geometry no longer consults the current Look and Feel"
 
+# #638 JCEF startup lifetime: distinct entry-load and ready-handshake policy, configured through Registry.
+jcef_runtime="src/main/kotlin/com/algorist/markflow/renderer/jcef/JcefDerivedRendererRuntime.kt"
+jcef_descriptor="src/main/resources/META-INF/markflow-jcef.xml"
+grep -Fq 'markflow.renderer.jcef.entryLoadTimeoutMs' "$jcef_descriptor" ||
+  die "#638 entry-load timeout is no longer declared as runtime Registry policy"
+grep -Fq 'markflow.renderer.jcef.readyHandshakeTimeoutMs' "$jcef_descriptor" ||
+  die "#638 ready-handshake timeout is no longer declared as runtime Registry policy"
+grep -Fq 'Registry.intValue(ENTRY_LOAD_TIMEOUT_REGISTRY_KEY)' "$jcef_runtime" ||
+  die "#638 entry-load timeout no longer comes from Registry policy"
+grep -Fq 'Registry.intValue(READY_HANDSHAKE_TIMEOUT_REGISTRY_KEY)' "$jcef_runtime" ||
+  die "#638 ready-handshake timeout no longer comes from Registry policy"
+grep -Fq 'Phase.READY_HANDSHAKE' "$jcef_runtime" ||
+  die "#638 startup no longer separates cold entry loading from ready handshake"
+grep -Fq 'retryable = false' "$jcef_runtime" ||
+  die "#638 terminal startup failure no longer fails closed"
+if grep -Fq 'STARTUP_READY_DEADLINE_MILLIS' "$jcef_runtime"; then
+  die "#638 startup lifetime regressed to a Kotlin magic deadline"
+fi
+
 # #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
 grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
   die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
