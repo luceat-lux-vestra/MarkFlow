@@ -24,8 +24,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import javax.imageio.ImageIO
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -500,16 +498,12 @@ class MarkFlowStarterDifferentialManifestTest {
             // original fixture lived in a different repository directory.
             writeDeterministicLocalImage(project.resolve("visual-proof.png"))
             writeDeterministicLocalImage(project.resolve("images/example.png"))
-            // A and B are byte-identical but distinct file-editor lifecycles.
-            // Only this exact B filename is opted into source-line replacement.
-            val abHeading = selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }
-            if (abHeading != null) {
-                val bFixture = project.resolve("heading-layout-b.md")
-                check(!Files.exists(bFixture))
-                Files.write(bFixture, abHeading.bytes)
+            // The heading font-size reflow probe uses the same production policy as every
+            // other file. No fixture name or VM property is allowed to select alternate behavior.
+            selected.firstOrNull { it.id == "md-atx-headings-h1-h6" }?.let { heading ->
                 val productFixture = project.resolve("heading-layout-product.md")
                 check(!Files.exists(productFixture))
-                Files.write(productFixture, abHeading.bytes)
+                Files.write(productFixture, heading.bytes)
             }
             selected.forEach { entry ->
                 val target = project.resolve(entry.id + ".md")
@@ -550,10 +544,6 @@ class MarkFlowStarterDifferentialManifestTest {
                 // JBCefClient before native browser creation; no global override needed.
                 addSystemProperty("idea.trust.all.projects", true)
                 addSystemProperty("jb.consents.confirmation.enabled", false)
-                if (abHeading != null) {
-                    addSystemProperty("markflow.starter.headingLayoutAbPilot", "true")
-                    addSystemProperty("markflow.starter.headingLegacyBaselinePilot", "true")
-                }
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
             }.runIdeWithDriver(
@@ -659,7 +649,6 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseFailure: Throwable? = null
                     var caseReferenceCloseMarker: Path? = null
                     var controlledPlatformPreviewBaseline: String? = null
-                    var toleratedStructuralFailure = false
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
                         caseEditor = editor
@@ -793,7 +782,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             ?: error("Stage E1 heading ledger is not parseable")
                         if (entry.id == "md-atx-headings-h1-h6") {
                             check(measuredHeadings == 6) {
-                                "Stage E1 requires all six installed H1-H6 heading inlays"
+                                "Stage E1 requires all six installed H1-H6 heading presentations"
                             }
                         }
                         Files.writeString(
@@ -2353,11 +2342,11 @@ class MarkFlowStarterDifferentialManifestTest {
                         // Do not close the primary case editor here. The finally block below owns
                         // the only lifecycle transition for it: hide bundled Preview, prove the
                         // Markdown JCEF panel detached, then close the exact FileEditor/native Editor.
-                        // Auxiliary H1 A/B editors use different files and retain their own cleanup.
+                        // The auxiliary production Heading editor uses a distinct file and owns
+                        // its cleanup independently from the primary corpus case.
                         if (entry.id == "md-atx-headings-h1-h6") {
-                            // C is the actual product default; A is the frozen
-                            // legacy baseline, B the pinned JCEF typography probe.
-                            // The same authoritative source bytes drive all three.
+                            // Re-open the same authoritative source bytes through the production
+                            // Heading path for topology, font reflow and screenshot evidence.
                             val cDest = output.resolve("heading-layout-product")
                             Files.createDirectories(cDest)
                             val candidate = markFlow.openMarkdown("heading-layout-product.md")
@@ -2491,287 +2480,8 @@ class MarkFlowStarterDifferentialManifestTest {
                                     candidateFailure.addSuppressed(cleanupError)
                                 }
                             }
-                            val abDest = output.resolve("heading-layout-ab")
-                            Files.createDirectories(abDest)
-                            val b = markFlow.openMarkdown("heading-layout-b.md")
-                            val bEditor = b.editor
-                            var bFailure: Throwable? = null
-                            try {
-                                markFlow.assertProductionProjectionAttached(b)
-                                check(markFlow.source(b) == source)
-                                val bStamp = markFlow.modificationStamp(b)
-                                driver.withContext(OnDispatcher.EDT) { visual.prepare(bEditor) }
-                                markFlow.resetToSingleCaret(b, source.length)
-                                val bCaretBefore = markFlow.primaryCaretOffset(b)
-                                check(bCaretBefore == source.length)
-                                driver.withContext(OnDispatcher.EDT) {
-                                    preview.showNativeAtSourceLine(bEditor, entry.line)
-                                }
-                                waitFor(
-                                    message = "CustomFold IDE lifecycle settled",
-                                    timeout = 50.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
-                                        visual.visualEvidence(bEditor)
-                                    } },
-                                    checker = { it.contains("derivedPending=0") }
-                                )
-                                val nativeB = driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeHeadingReplacementGeometry(bEditor)
-                                }
-                                // Retain the actual five/six-fold observation BEFORE
-                                // any later screen or JCEF probe can fail.
-                                Files.writeString(
-                                    abDest.resolve("native-b-customfold.txt"), nativeB
-                                )
-                                val bCustomCount = nativeB.lineSequence().single {
-                                    it.startsWith("measured_atx_heading_count=")
-                                }.substringAfter('=').toInt()
-                                val bMissing = nativeB.lineSequence().single {
-                                    it.startsWith("missing_heading_levels=")
-                                }.substringAfter('=')
-                                val bShowing = nativeB.lineSequence().single {
-                                    it.startsWith("editor_is_showing=")
-                                }.substringAfter('=') == "true"
-                                // A CustomFold at H1's 0-offset is rejected by IDEA
-                                // because the platform owns an expanded 0..EOF
-                                // section. The explicit opt-in candidate uses a
-                                // same-line InlineElement + a collapsed *owned*
-                                // ordinary FoldRegion instead. Demand evidence
-                                // for both owners; 5 CustomFolds alone is NOT 6/6.
-                                val bInlineCount = nativeB.lineSequence().single {
-                                    it.startsWith("co_start_inline_pilot_count=")
-                                }.substringAfter('=').toInt()
-                                val h1Evidence = nativeB.lineSequence().single {
-                                    it.startsWith("level=1\t")
-                                }.split('\t').associate { part ->
-                                    val pair = part.split('=', limit = 2)
-                                    check(pair.size == 2) { "Malformed H1 geometry evidence" }
-                                    pair[0] to pair[1]
-                                }
-                                val h1InlineInstalled =
-                                    bInlineCount == 1 &&
-                                    h1Evidence["fold_status"] == "MISSING" &&
-                                    h1Evidence["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
-                                    h1Evidence["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
-                                    (h1Evidence["inline_pilot_width_px"]?.toIntOrNull() ?: 0) > 1 &&
-                                    (h1Evidence["inline_pilot_height_px"]?.toIntOrNull() ?: 0) >=
-                                        nativeB.lineSequence().single {
-                                            it.startsWith("plain_line_height_px=")
-                                        }.substringAfter('=').toInt()
-                                val compositeCount = bCustomCount + (if (h1InlineInstalled) 1 else 0)
-                                Files.writeString(abDest.resolve("capture-status.txt"),
-                                    "candidate=UNVERIFIED\n" +
-                                        "installed_heading_customfolds=" + bCustomCount + "\n" +
-                                        "installed_heading_inline_pilot=" + (if (h1InlineInstalled) 1 else 0) + "\n" +
-                                        "installed_heading_composite=" + compositeCount + "\n" +
-                                        "missing_customfold_levels=" + bMissing + "\n" +
-                                        "editor_is_showing=" + bShowing + "\n")
-                                // A candidate screen obtained while the native Editor is
-                                // hidden is not comparable with the JCEF screenshot.
-                                check(bShowing) { "E9 B native editor is hidden; diagnostic retained" }
-                                val bEnv = driver.withContext(OnDispatcher.EDT) {
-                                    visual.environmentIdentity(bEditor)
-                                }
-                                val bBounds = driver.withContext(OnDispatcher.EDT) {
-                                    Rectangle(
-                                        visual.contentScreenX(bEditor), visual.contentScreenY(bEditor),
-                                        visual.contentWidth(bEditor), visual.contentHeight(bEditor)
-                                    )
-                                }
-                                check(bBounds.width == native.width && bBounds.height == native.height)
-                                val nativeBScrollY = driver.withContext(OnDispatcher.EDT) {
-                                    preview.nativeVerticalScrollOffset(bEditor)
-                                }
-                                check(nativeBScrollY >= 0)
-                                robot.waitForIdle()
-                                check(ImageIO.write(robot.createScreenCapture(bBounds), "png",
-                                    abDest.resolve("native-b.png").toFile()))
-                                driver.withContext(OnDispatcher.EDT) {
-                                    preview.showReferenceAtSourceLine(bEditor, entry.line)
-                                }
-                                waitFor(
-                                    message = "B bundled Preview visible",
-                                    timeout = 30.seconds,
-                                    getter = { driver.withContext(OnDispatcher.EDT) {
-                                        preview.referenceShowing(bEditor)
-                                    } },
-                                    checker = { it }
-                                )
-                                val refBounds = driver.withContext(OnDispatcher.EDT) {
-                                    val p = preview.referenceBounds(bEditor).split(',').map(String::toInt)
-                                    check(p.size == 4)
-                                    Rectangle(p[0], p[1], p[2], p[3])
-                                }
-                                val domB = driver.ui.jcef()
-                                waitFor(
-                                    message = "B bundled JCEF paints all six source-aligned headings",
-                                    timeout = 60.seconds,
-                                    getter = {
-                                        robot.waitForIdle()
-                                        val img = robot.createScreenCapture(refBounds)
-                                        check(ImageIO.write(img, "png",
-                                            abDest.resolve("preview-b.png").toFile()))
-                                        val headingLedger = domB.callJs(headingReferenceDomProbe)
-                                        referenceHeadingRasterHasAllInk(img, headingLedger)
-                                    },
-                                    checker = { it }
-                                )
-                                val headingB = domB.callJs(headingReferenceDomProbe)
-                                val paragraphB = domB.callJs(followingParagraphDomProbe)
-                                check(headingB.startsWith(
-                                    "schema=markflow-reference-heading-dom-geometry/v1\n"
-                                ) && paragraphB.startsWith(
-                                    "schema=markflow-reference-paragraph-text-range/v1\n"
-                                )) { "Missing actual B source-aligned JCEF DOM evidence" }
-                                // Unlike Editor Insets or drawString inputs, this
-                                // evidence reads actual ink from both retained
-                                // screen captures. It remains diagnostic-only:
-                                // raster offsets and DOM Range bounds are not
-                                // an approved common box-model contract.
-                                val nativeImage = requireNotNull(ImageIO.read(
-                                    abDest.resolve("native-b.png").toFile()
-                                )) { "Native B screenshot could not be decoded" }
-                                val previewImage = requireNotNull(ImageIO.read(
-                                    abDest.resolve("preview-b.png").toFile()
-                                )) { "JCEF B screenshot could not be decoded" }
-                                Files.writeString(
-                                    abDest.resolve("heading-ink-x-diagnostic.tsv"),
-                                    headingInkXDiagnostic(nativeImage, previewImage, nativeB, headingB)
-                                )
-                                Files.writeString(
-                                    abDest.resolve("heading-ink-y-baseline-diagnostic.tsv"),
-                                    headingInkYBaselineDiagnostic(
-                                        nativeImage, previewImage, nativeB, headingB, nativeBScrollY
-                                    )
-                                )
-                                val driftB = compareFollowingTextAnchors(nativeB, paragraphB)
-                                val driftA = Files.readString(
-                                    dest.resolve("source-following-text-line-drift.tsv"))
-                                fun tableRows(text: String): List<List<String>> =
-                                    text.lineSequence().filter {
-                                        it.firstOrNull() in '1'..'6' && it.contains('\t')
-                                    }.map { it.split('\t') }.toList()
-                                val rowsA = tableRows(driftA)
-                                val rowsB = tableRows(driftB)
-                                check(rowsA.size == 6 && rowsB.size == 6)
-                                val abRows = rowsA.zip(rowsB).mapIndexed { index, (a, bb) ->
-                                    check(a.size == 5 && bb.size == 5 &&
-                                        a[0] == (index + 1).toString() &&
-                                        bb[0] == a[0] &&
-                                        a[1] == (4 * index + 2).toString() &&
-                                        bb[1] == a[1]) { "A/B source identity mismatch" }
-                                    val ya = a[2].toInt()
-                                    val yb = bb[2].toInt()
-                                    check(a[3].toDouble().isFinite() && bb[3].toDouble().isFinite())
-                                    listOf(
-                                        a[0], a[1], ya.toString(), yb.toString(),
-                                        a[3], bb[3], (ya - yb).toString(),
-                                        a[4], bb[4]
-                                    ).joinToString("\t")
-                                }
-                                Files.writeString(abDest.resolve("ab-paragraph-deltas.tsv"),
-                                    "schema=markflow-heading-ab-relative-diagnostic/v1\n" +
-                                        "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD\n" +
-                                        "level\tsource_line\tnative_a_px\tnative_b_px\tpreview_a_css_px\tpreview_b_css_px\tnative_a_minus_b_px\tdelta_a_px\tdelta_b_px\n" +
-                                        abRows.joinToString("\n", postfix = "\n"))
-                                Files.writeString(abDest.resolve("native-a-inlay.txt"),
-                                    Files.readString(dest.resolve("native-heading-source-geometry.txt")))
-                                Files.writeString(abDest.resolve("native-b-customfold.txt"), nativeB)
-                                Files.writeString(abDest.resolve("preview-a-heading-dom.txt"),
-                                    Files.readString(dest.resolve("intellij-heading-dom-geometry.txt")))
-                                Files.writeString(abDest.resolve("preview-b-heading-dom.txt"), headingB)
-                                Files.writeString(abDest.resolve("preview-a-paragraph-dom.txt"),
-                                    Files.readString(dest.resolve("intellij-following-paragraph-dom-geometry.txt")))
-                                Files.writeString(abDest.resolve("preview-b-paragraph-dom.txt"), paragraphB)
-                                // SHOW_PREVIEW deliberately hides EditorComponentImpl.
-                                // Use the exact remote Editor captured before the switch,
-                                // not MarkFlowIdeDriver's visible UI locator.
-                                val hiddenIdentity = driver.withContext(OnDispatcher.EDT) {
-                                    listOf(
-                                        preview.sourceText(bEditor),
-                                        preview.sourceStamp(bEditor).toString(),
-                                        preview.primaryCaretOffset(bEditor).toString(),
-                                    )
-                                }
-                                check(hiddenIdentity[0] == source)
-                                check(hiddenIdentity[1] == bStamp.toString())
-                                check(hiddenIdentity[2] == bCaretBefore.toString()) {
-                                    "B JCEF capture unexpectedly moved the native caret"
-                                }
-                                check(!driver.withContext(OnDispatcher.EDT) {
-                                    preview.sourceUnsaved(bEditor)
-                                })
-                                check(Files.readAllBytes(project.resolve("heading-layout-b.md"))
-                                    .contentEquals(entry.bytes))
-                                Files.writeString(abDest.resolve("identity.txt"),
-                                    "schema=markflow-heading-layout-ab/v1\n" +
-                                        "source_sha256_a=" + sha(entry.bytes) + "\n" +
-                                        "source_sha256_b=" + sha(Files.readAllBytes(
-                                            project.resolve("heading-layout-b.md"))) + "\n" +
-                                        "source_head=" + sourceHead + "\n" +
-                                        "ide_version=" + version + "\n" +
-                                        "caret_offset_before=" + bCaretBefore + "\n" +
-                                        "caret_offset_after=" + hiddenIdentity[2] + "\n" +
-                                        "native_a_environment=" + nativeEnvironment + "\n" +
-                                        "native_b_environment=" + bEnv + "\n" +
-                                        "legacy_a_fixture=sourceLineReplacement_false\n" +
-                                         "production_default=sourceLineReplacement_true\n" +
-                                        "full_differential_acceptance=false\n")
-                                // Demand six individually evidenced owned H1-H6
-                                // replacements. H1 may use a real CustomFold (6+0)
-                                // without an expanded foreign overlap, or the verified
-                                // owned inline fallback (5+1) with that conflict.
-                                // Reuse the same fail-closed native ledger contract as
-                                // the product-default evidence; never accept counts
-                                // alone. Preview visual parity remains unverified.
-                                val topologyFailure = runCatching {
-                                    assertProductDefaultHeadingTopology(nativeB)
-                                }.exceptionOrNull()
-                                if (compositeCount != 6 || topologyFailure != null) {
-                                    structuralFailures += listOf(
-                                        entry.id, "HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE",
-                                        "custom=" + bCustomCount + ";inline=" +
-                                            (if (h1InlineInstalled) 1 else 0) +
-                                            ";missing_custom=" + bMissing,
-                                        "6_OWNED_HEADINGS_CONFLICT_AWARE_H1"
-                                    ).joinToString("\t")
-                                    error("E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE: " +
-                                        compositeCount + "/6; topology=" +
-                                        (topologyFailure?.message ?: "VALID") +
-                                        "; foreign fold evidence retained")
-                                }
-                            } catch (cause: Throwable) {
-                                bFailure = cause
-                                throw cause
-                            } finally {
-                                // SHOW_PREVIEW hides EditorComponentImpl. The normal
-                                // Driver close() locates only a visible editor; restore
-                                // native first so cleanup cannot mask the authoritative
-                                // diagnostic error with a 15s UI locator timeout.
-                                val cleanup = runCatching {
-                                    driver.withContext(OnDispatcher.EDT) {
-                                        preview.restoreNative(bEditor)
-                                    }
-                                    waitFor(
-                                        message = "B native editor restored for safe close",
-                                        timeout = 20.seconds,
-                                        getter = { driver.withContext(OnDispatcher.EDT) {
-                                            preview.completeNativeRestore(bEditor)
-                                        } },
-                                        checker = { it }
-                                    )
-                                    markFlow.close(b)
-                                }
-                                val cleanupError = cleanup.exceptionOrNull()
-                                if (cleanupError != null) {
-                                    val originalError = bFailure
-                                    if (originalError == null) throw cleanupError
-                                    originalError.addSuppressed(cleanupError)
-                                }
-                            }
                         }
-                        // Do not report a successful capture if its mandatory
-                        // same-source A/B evidence failed earlier in this case.
+                        // Mark the case captured only after all mandatory product/reference evidence completed.
                         heartbeat("case-evidence-complete", entry.id)
                         states[entry.id] = "CAPTURED_UNVERIFIED"
                         heartbeat("case-complete", entry.id)
@@ -2781,19 +2491,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-failed", entry.id)
                         Files.writeString(dest.resolve("failure.txt"),
                             cause.javaClass.name + ": " + cause.message + "\n")
-                        // A missing H1 replacement (whether CustomFold or the
-                        // explicit opt-in owned inline fallback) remains a hard
-                        // structural FAIL. Keep independent Mermaid captures,
-                        // but do not suppress unexpected exceptions.
-                        if (entry.id == "md-atx-headings-h1-h6" &&
-                            cause is IllegalStateException &&
-                            cause.message?.startsWith(
-                                "E9 HEADING_REPLACEMENT_OWNERSHIP_INCOMPLETE:"
-                            ) == true) {
-                            toleratedStructuralFailure = true
-                        } else {
-                            deferredDriverFailure = cause
-                        }
+                        deferredDriverFailure = cause
                     } finally {
                         // FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE:
                         // Every manifest case owns a TextEditorWithPreview. Leaving
@@ -2804,7 +2502,7 @@ class MarkFlowStarterDifferentialManifestTest {
                         val opened = caseEditor
                         val remote = caseRemoteEditor
                         if (opened != null && remote != null &&
-                            (caseFailure == null || toleratedStructuralFailure)) {
+                            caseFailure == null) {
                             heartbeat("case-cleanup-start", entry.id)
                             val cleanup = runCatching {
                                 val expectedStamp = caseStamp
@@ -2971,7 +2669,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                         cleanupError.stackTraceToString() + "\n"
                                 )
                                 val original = caseFailure
-                                if (original == null || toleratedStructuralFailure) {
+                                if (original == null) {
                                     deferredDriverFailure = cleanupError
                                 } else {
                                     original.addSuppressed(cleanupError)
@@ -2979,7 +2677,7 @@ class MarkFlowStarterDifferentialManifestTest {
                             }
                         }
                         if (opened != null && remote != null &&
-                            caseFailure != null && !toleratedStructuralFailure) {
+                            caseFailure != null) {
                             heartbeat("case-cleanup-deferred-to-ide-close", entry.id)
                             Files.writeString(
                                 dest.resolve("reference-lifecycle.txt"),
@@ -2995,7 +2693,6 @@ class MarkFlowStarterDifferentialManifestTest {
                         heartbeat("case-fatal-deferred-to-ide-close", entry.id)
                         return@useDriverAndCloseIde
                     }
-                    if (toleratedStructuralFailure) continue
                 }
                 heartbeat("case-loop-complete")
             }
@@ -4389,13 +4086,9 @@ class MarkFlowStarterDifferentialManifestTest {
         check((2..6).all { level ->
             val row = heading(level)
             row["fold_status"] == "INSTALLED" &&
-                row["inline_pilot_status"] == "ABSENT" &&
-                row["inline_pilot_source_fold"] == "ABSENT"
+                row["inline_fallback_status"] == "ABSENT" &&
+                row["inline_fallback_source_fold"] == "ABSENT"
         }) { "Product Heading H2-H6 must remain real CustomFolds" }
-        check(summary("legacy_heading_inlay_count") == "0") {
-            "Product Heading unexpectedly contains an additive block inlay"
-        }
-
         val h1Start = h1.getValue("source_start_offset").toInt()
         val h1End = h1.getValue("source_end_offset").toInt()
         check(h1Start >= 0 && h1End > h1Start)
@@ -4407,18 +4100,18 @@ class MarkFlowStarterDifferentialManifestTest {
                     match.groupValues[2].toInt() > h1Start
             }
         val customCount = summary("measured_atx_heading_count").toInt()
-        val inlineCount = summary("co_start_inline_pilot_count").toInt()
+        val inlineCount = summary("co_start_inline_fallback_count").toInt()
         val missing = summary("missing_heading_levels")
         val allCustomFolds =
             h1["fold_status"] == "INSTALLED" &&
-                h1["inline_pilot_status"] == "ABSENT" &&
-                h1["inline_pilot_source_fold"] == "ABSENT" &&
+                h1["inline_fallback_status"] == "ABSENT" &&
+                h1["inline_fallback_source_fold"] == "ABSENT" &&
                 !expandedOverlap &&
                 customCount == 6 && inlineCount == 0 && missing.isEmpty()
         val ownedH1Fallback =
             h1["fold_status"] == "MISSING" && expandedOverlap &&
-                h1["inline_pilot_status"] == "INSTALLED_UNREVIEWED" &&
-                h1["inline_pilot_source_fold"] == "COLLAPSED_OWN_CANDIDATE" &&
+                h1["inline_fallback_status"] == "INSTALLED" &&
+                h1["inline_fallback_source_fold"] == "COLLAPSED_OWN_SOURCE" &&
                 customCount == 5 && inlineCount == 1 && missing == "1"
         check(allCustomFolds || ownedH1Fallback) {
             "Product H1 topology unsupported: CustomFolds=$customCount, " +
@@ -4434,7 +4127,7 @@ class MarkFlowStarterDifferentialManifestTest {
     )
 
     /**
-     * Controlled-B can install a real H1 CustomFold when no platform-owned
+     * Production can install a real H1 CustomFold when no platform-owned
      * 0..EOF fold conflicts with offset zero. Only fall back to the explicit
      * owned H1 inline + ordinary-fold topology when the H1 CustomFold is
      * actually missing. H2-H6 must remain real CustomFolds.
@@ -4455,14 +4148,14 @@ class MarkFlowStarterDifferentialManifestTest {
         check(
             level == 1 &&
                 row.getValue("fold_status") == "MISSING" &&
-                row.getValue("inline_pilot_status") == "INSTALLED_UNREVIEWED" &&
-                row.getValue("inline_pilot_source_fold") == "COLLAPSED_OWN_CANDIDATE"
+                row.getValue("inline_fallback_status") == "INSTALLED" &&
+                row.getValue("inline_fallback_source_fold") == "COLLAPSED_OWN_SOURCE"
         ) {
-            "Controlled-B H$level has neither an installed CustomFold nor the owned H1 fallback"
+            "Production H$level has neither an installed CustomFold nor the owned H1 fallback"
         }
-        val top = row.getValue("inline_pilot_bounds_y_px").toInt()
-        val height = row.getValue("inline_pilot_height_px").toInt()
-        check(top >= 0 && height > 0) { "Controlled-B H1 fallback has invalid paint allocation" }
+        val top = row.getValue("inline_fallback_bounds_y_px").toInt()
+        val height = row.getValue("inline_fallback_height_px").toInt()
+        check(top >= 0 && height > 0) { "Production H1 fallback has invalid paint allocation" }
         return NativeHeadingPaintAllocation(top, height, inlineFallback = true)
     }
 
@@ -4478,10 +4171,10 @@ class MarkFlowStarterDifferentialManifestTest {
         val inlineFallback = nativeHeadingPaintAllocation(
             mapOf(
                 "fold_status" to "MISSING",
-                "inline_pilot_status" to "INSTALLED_UNREVIEWED",
-                "inline_pilot_source_fold" to "COLLAPSED_OWN_CANDIDATE",
-                "inline_pilot_bounds_y_px" to "7",
-                "inline_pilot_height_px" to "22",
+                "inline_fallback_status" to "INSTALLED",
+                "inline_fallback_source_fold" to "COLLAPSED_OWN_SOURCE",
+                "inline_fallback_bounds_y_px" to "7",
+                "inline_fallback_height_px" to "22",
             ),
             level = 1,
         )
@@ -4493,225 +4186,6 @@ class MarkFlowStarterDifferentialManifestTest {
             missingH2Rejected
     }
 
-    /**
-     * Source-aligned H1-H6 paired B-pilot ink-Y and text baseline evidence.
-     * Native baseline is a renderer paint input; reference baseline is an
-     * actual JCEF DOM marker. Both are normalized to their own H1. This
-     * RESEARCH-only pilot does not establish production #350 visual parity.
-     */
-    private fun headingInkYBaselineDiagnostic(
-        native: BufferedImage, reference: BufferedImage,
-        nativeLedger: String, previewLedger: String, nativeScrollY: Int
-    ): String {
-        check(nativeLedger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n"))
-        check(previewLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n"))
-        require(nativeScrollY >= 0)
-        fun rows(text: String): List<Map<String, String>> =
-            text.lineSequence().filter { it.startsWith("level=") }.map { row ->
-                row.split('\t').associate { token ->
-                    val pair = token.split('=', limit = 2)
-                    require(pair.size == 2) { "E19 malformed heading geometry" }
-                    pair[0] to pair[1]
-                }
-            }.toList()
-        val nativeRows = rows(nativeLedger)
-        val referenceRows = rows(previewLedger)
-        check(nativeRows.size == 6 && referenceRows.size == 6)
-        val result = mutableListOf(
-            "schema=markflow-heading-painted-ink-y-baseline/v1",
-            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
-            "native_scope=RESEARCH_ONLY_B_HEADING_PAINT_NOT_PRODUCTION_DEFAULT",
-            "comparison=RELATIVE_TO_H1_WITHIN_INDEPENDENT_SCREENSHOT_CROPS",
-            "native_scroll_offset_px=" + nativeScrollY,
-            "level\tsource_line\tnative_ink_top_px\tpreview_ink_top_px" +
-                "\tnative_ink_height_px\tpreview_ink_height_px" +
-                "\tnative_paint_baseline_px\tpreview_dom_baseline_px" +
-                "\tnative_relative_ink_top_px\tpreview_relative_ink_top_px" +
-                "\trelative_ink_drift_px\tnative_relative_baseline_px" +
-                "\tpreview_relative_baseline_px\trelative_baseline_drift_px" +
-                "\tbaseline_beyond_native_allocated_bottom_px"
-        )
-        var firstNativeInk = 0
-        var firstPreviewInk = 0
-        var firstNativeBaseline = 0
-        var firstPreviewBaseline = 0.0
-        var priorNativeInk = -1
-        var priorPreviewInk = -1
-        nativeRows.zip(referenceRows).forEachIndexed { index, (n, p) ->
-            val level = index + 1
-            val sourceLine = index * 4
-            check(n.getValue("level") == level.toString() &&
-                p.getValue("level") == level.toString() &&
-                n.getValue("source_line_zero_based") == sourceLine.toString() &&
-                p.getValue("source_line_zero_based") == sourceLine.toString()) {
-                "E19 source identity mismatch"
-            }
-            val allocation = nativeHeadingPaintAllocation(n, level)
-            val top = allocation.documentTop - nativeScrollY
-            val nominalBottom = top + allocation.height
-            val nativeBaseline = n.getValue("native_paint_baseline_document_px").toInt() -
-                nativeScrollY
-            val descent = n.getValue("native_paint_font_descent_px").toInt()
-            // The legacy H1 inline fallback can paint BELOW its pre-style
-            // allocation. Preserve the existing diagnostic crop extension only
-            // for that fallback; a real controlled-B H1 CustomFold uses its
-            // measured fold allocation like H2-H6.
-            val bottom = if (allocation.inlineFallback)
-                maxOf(nominalBottom, nativeBaseline + descent + 1, top + 35)
-            else nominalBottom
-            val refTop = floor(p.getValue("heading_text_range_top_css_px").toDouble()).toInt()
-            val refBottom = ceil(
-                p.getValue("heading_text_range_top_css_px").toDouble() +
-                    p.getValue("heading_text_range_height_css_px").toDouble()
-            ).toInt()
-            val nativeLeft = requireNotNull(firstHeadingInkPixelX(native, top, bottom)) {
-                "E19 H" + level + " lacks native raster ink"
-            }
-            val previewLeft = requireNotNull(firstHeadingInkPixelX(
-                reference, refTop, refBottom
-            )) { "E19 H" + level + " lacks JCEF raster ink" }
-            val nativeInk = requireNotNull(headingPaintedInkY(native, nativeLeft, top, bottom)) {
-                "E19 native heading lacks text ink beyond gutter"
-            }
-            val previewInk = requireNotNull(headingPaintedInkY(
-                reference, previewLeft, refTop, refBottom
-            )) { "E19 preview heading lacks text ink beyond gutter" }
-            val previewBaseline = p.getValue("reference_baseline_marker_css_px").toDouble()
-            check(previewBaseline.isFinite() && nativeBaseline in top..bottom &&
-                previewBaseline >= refTop && previewBaseline <= refBottom + 10) {
-                "E19 declared paint baseline outside real text allocation"
-            }
-            check(index == 0 ||
-                (nativeInk.first > priorNativeInk && previewInk.first > priorPreviewInk)) {
-                "E19 painted glyph anchors collapsed"
-            }
-            if (index == 0) {
-                firstNativeInk = nativeInk.first
-                firstPreviewInk = previewInk.first
-                firstNativeBaseline = nativeBaseline
-                firstPreviewBaseline = previewBaseline
-            }
-            val nInk = nativeInk.first - firstNativeInk
-            val pInk = previewInk.first - firstPreviewInk
-            val nBase = nativeBaseline - firstNativeBaseline
-            val pBase = previewBaseline - firstPreviewBaseline
-            fun fmt(v: Double): String = "%.3f".format(java.util.Locale.ROOT, v)
-            result += listOf(
-                level, sourceLine, nativeInk.first, previewInk.first,
-                nativeInk.last - nativeInk.first + 1,
-                previewInk.last - previewInk.first + 1,
-                nativeBaseline, fmt(previewBaseline),
-                nInk, pInk, nInk - pInk, nBase, fmt(pBase), fmt(nBase - pBase),
-                maxOf(0, nativeBaseline - nominalBottom)
-            ).joinToString("\t")
-            priorNativeInk = nativeInk.first
-            priorPreviewInk = previewInk.first
-        }
-        return result.joinToString("\n", postfix = "\n")
-    }
-
-    private fun referenceHeadingRasterHasAllInk(
-        image: BufferedImage,
-        referenceLedger: String,
-    ): Boolean {
-        if (!referenceLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n")) {
-            return false
-        }
-        val rows = referenceLedger.lineSequence()
-            .filter { it.startsWith("level=") }
-            .map { line ->
-                line.split('\t').mapNotNull { token ->
-                    val pair = token.split('=', limit = 2)
-                    pair.takeIf { it.size == 2 }?.let { it[0] to it[1] }
-                }.toMap()
-            }
-            .toList()
-        if (rows.size != 6) return false
-        rows.forEachIndexed { index, row ->
-            if (row["level"] != (index + 1).toString()) return false
-            val top = row["heading_text_range_top_css_px"]?.toDoubleOrNull() ?: return false
-            val height = row["heading_text_range_height_css_px"]?.toDoubleOrNull() ?: return false
-            if (!top.isFinite() || !height.isFinite() || height <= 0.0) return false
-            if (
-                firstHeadingInkPixelX(
-                    image,
-                    floor(top).toInt(),
-                    ceil(top + height).toInt(),
-                ) == null
-            ) return false
-        }
-        return true
-    }
-
-    private fun headingInkXDiagnostic(
-        nativeImage: BufferedImage,
-        referenceImage: BufferedImage,
-        nativeLedger: String,
-        referenceLedger: String,
-    ): String {
-        check(nativeLedger.startsWith("schema=markflow-native-heading-customfold-geometry/v2\n"))
-        check(referenceLedger.startsWith("schema=markflow-reference-heading-dom-geometry/v1\n"))
-        fun rows(value: String): List<Map<String, String>> =
-            value.lineSequence().filter { it.startsWith("level=") }.map { line ->
-                line.split('\t').associate { token ->
-                    val keyAndValue = token.split('=', limit = 2)
-                    require(keyAndValue.size == 2) { "Malformed heading identity/geometry row" }
-                    keyAndValue[0] to keyAndValue[1]
-                }
-            }.toList()
-        val nativeRows = rows(nativeLedger)
-        val referenceRows = rows(referenceLedger)
-        check(nativeRows.size == 6 && referenceRows.size == 6) {
-            "Stage E16 needs all six real source-aligned headings"
-        }
-        val values = mutableListOf(
-            "schema=markflow-heading-raster-ink-x/v1",
-            "gate=DIAGNOSTIC_ONLY_NO_REVIEWED_THRESHOLD",
-            "coordinate_space=NATIVE_AND_JCEF_INDEPENDENT_SCREENSHOT_CROPS",
-            "ink_detector=LIGHT_THEME_RGB_CHANNELS_BELOW_205_FIRST_PIXEL_IN_HEADING_VERTICAL_BOX",
-            "level\tsource_line\tnative_raster_ink_left_px\tpreview_raster_ink_left_px" +
-                "\tpreview_minus_native_raster_px\tnative_declared_paint_origin_px" +
-                "\tpreview_jcef_dom_range_left_css_px"
-        )
-        nativeRows.zip(referenceRows).forEachIndexed { index, (nativeRow, referenceRow) ->
-            val level = index + 1
-            val sourceLine = index * 4
-            check(nativeRow.getValue("level") == level.toString() &&
-                referenceRow.getValue("level") == level.toString() &&
-                nativeRow.getValue("source_line_zero_based") == sourceLine.toString() &&
-                referenceRow.getValue("source_line_zero_based") == sourceLine.toString()) {
-                "Stage E16 source-identified raster heading mismatch"
-            }
-            val allocation = nativeHeadingPaintAllocation(nativeRow, level)
-            val top = allocation.documentTop
-            val bottom = top + if (allocation.inlineFallback)
-                maxOf(35, allocation.height)
-            else allocation.height
-            val textTop = referenceRow.getValue("heading_text_range_top_css_px").toDouble()
-            val textHeight = referenceRow.getValue("heading_text_range_height_css_px").toDouble()
-            check(textTop.isFinite() && textHeight.isFinite() && textHeight > 0)
-            val nativeX = requireNotNull(firstHeadingInkPixelX(nativeImage, top, bottom)) {
-                "No actual native screenshot ink at H" + level
-            }
-            val previewX = requireNotNull(firstHeadingInkPixelX(
-                referenceImage, floor(textTop).toInt(), ceil(textTop + textHeight).toInt()
-            )) { "No actual JCEF screenshot ink at H" + level }
-            val paintInputX = nativeRow.getValue("native_paint_text_origin_x_document_px").toInt()
-            val domTextX = referenceRow.getValue("heading_text_range_left_css_px").toDouble()
-            check(paintInputX >= 0 && domTextX.isFinite() && domTextX >= 0)
-            values += listOf(
-                level, sourceLine, nativeX, previewX, previewX - nativeX, paintInputX,
-                "%.3f".format(java.util.Locale.ROOT, domTextX)
-            ).joinToString("\t")
-        }
-        return values.joinToString("\n", postfix = "\n")
-    }
-
-    /**
-     * Review-only JCEF location probe; does not modify Markdown source or
-     * platform CSS. The target text, not a guessed pixel scroll offset, owns
-     * the Preview scroll anchor. Produces a verifiable DOM viewport ledger.
-     */
     private fun generalDocumentPreviewScrollProbe(sourceLine: Int): String {
         val (tag, marker) = when (sourceLine) {
             0 -> "h1" to "Reliable Release Checklist"
@@ -4996,7 +4470,7 @@ class MarkFlowStarterDifferentialManifestTest {
     }
 
     /**
-     * Stage E5: measured installed native *block inlay rectangle* versus
+     * Stage E5: measured installed native Heading presentation rectangle versus
      * measured bundled Preview *heading element rectangle*. This is a
      * substantially closer pair of geometric objects than source-line Y
      * versus DOM top, but these still have DIFFERENT box models, font metrics
@@ -5023,11 +4497,11 @@ class MarkFlowStarterDifferentialManifestTest {
         check(nativeRows.size == 6 && referenceRows.size == 6) {
             "Stage E5 needs all six source-identical heading block boxes"
         }
-        val firstNativeTop = nativeRows.first().getValue("inlay_bounds_y").toInt()
+        val firstNativeTop = nativeRows.first().getValue("presentation_bounds_y").toInt()
         val result = mutableListOf(
             "schema=markflow-heading-rendered-box-drift/v1",
             "comparison_scope=DIAGNOSTIC_BOX_VS_BOX_NOT_APPROVED_BASELINE",
-            "level\tsource_line_zero_based\tnative_inlay_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_inlay_height_px\tpreview_heading_height_css_px",
+            "level\tsource_line_zero_based\tnative_presentation_top_relative_px\tpreview_heading_box_top_relative_css_px\tbox_top_delta_px\tnative_presentation_height_px\tpreview_heading_height_css_px",
         )
         var previousNativeTop = -1
         var previousReferenceTop = -1.0
@@ -5040,9 +4514,9 @@ class MarkFlowStarterDifferentialManifestTest {
                 ref.getValue("source_line_zero_based") == "$line") {
                 "Stage E5 box/source identity mismatch"
             }
-            val absoluteNativeTop = n.getValue("inlay_bounds_y").toInt()
-            val nativeHeight = n.getValue("inlay_bounds_height").toInt()
-            val reportedHeight = n.getValue("inlay_height_px").toInt()
+            val absoluteNativeTop = n.getValue("presentation_bounds_y").toInt()
+            val nativeHeight = n.getValue("presentation_bounds_height").toInt()
+            val reportedHeight = n.getValue("presentation_height_px").toInt()
             val referenceTop = ref.getValue("reference_y_relative_css_px").toDouble()
             val referenceHeight = ref.getValue("reference_height_css_px").toDouble()
             val nativeTop = absoluteNativeTop - firstNativeTop
@@ -5069,7 +4543,7 @@ class MarkFlowStarterDifferentialManifestTest {
         fun native() = "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY\n" +
             (0..5).joinToString("\n") { i ->
                 "level=${i + 1}\tsource_line_zero_based=${i * 4}\t" +
-                    "inlay_bounds_y=${i * 110}\tinlay_bounds_height=30\tinlay_height_px=30"
+                    "presentation_bounds_y=${i * 110}\tpresentation_bounds_height=30\tpresentation_height_px=30"
             }
         fun reference() = "geometry_scope=PLATFORM_PREVIEW_JCEF_DOM\n" +
             (0..5).joinToString("\n") { i ->
@@ -5082,7 +4556,7 @@ class MarkFlowStarterDifferentialManifestTest {
         })
         return runCatching {
             compareRenderedHeadingBoxes(
-                native().replace("inlay_bounds_height=30", "inlay_bounds_height=31"), reference()
+                native().replace("presentation_bounds_height=30", "presentation_bounds_height=31"), reference()
             )
         }.isFailure && runCatching {
             compareRenderedHeadingBoxes(

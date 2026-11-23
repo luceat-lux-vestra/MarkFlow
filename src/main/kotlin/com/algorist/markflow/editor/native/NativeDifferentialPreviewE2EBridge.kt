@@ -654,7 +654,6 @@ internal object NativeDifferentialPreviewE2EBridge {
         blockInlays.forEach { inlay ->
             val renderer = inlay.renderer
             val owned = when (renderer) {
-                is NativeHeadingInlayRenderer -> "heading_inlay" to renderer.sourceRange
                 is NativeBlockQuoteInlayRenderer -> "blockquote_inlay" to renderer.sourceRange
                 is NativeFencedCodeInlayRenderer -> "fenced_code_inlay" to renderer.sourceRange
                 is NativeIndentedCodeInlayRenderer -> "indented_code_inlay" to renderer.sourceRange
@@ -1135,11 +1134,12 @@ internal object NativeDifferentialPreviewE2EBridge {
             !rasterAspectPreserved(320, 180, 1, 1)
 
     /**
-     * #350/#353 source-line geometry ledger, measured from installed production
-     * NativeHeadingInlayRenderer instances (never from estimated CSS or screenshots).
-     * These native-only measurements are NOT platform-preview parity evidence.
-     * No source mutation, renderer substitution, or tolerance-based acceptance.
+     * Source-line geometry ledger measured from the installed production heading replacement.
+     * CustomFold and same-start inline fallback are the only supported native heading surfaces.
      */
+    // Observes the exact CustomFoldRegion production surface; the product controller
+    // already isolates this pinned IntelliJ experimental API.
+    @Suppress("UnstableApiUsage")
     fun nativeHeadingSourceGeometry(editor: Editor): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val document = editor.document
@@ -1153,28 +1153,41 @@ internal object NativeDifferentialPreviewE2EBridge {
             val offset = document.getLineStartOffset(line)
             return editor.logicalPositionToXY(editor.offsetToLogicalPosition(offset)).y
         }
+        data class InstalledHeading(
+            val sourceRange: ProjectionRange,
+            val height: Int,
+            val boundsY: Int,
+            val boundsHeight: Int,
+        )
+        val custom = editor.foldingModel.allFoldRegions
+            .filterIsInstance<com.intellij.openapi.editor.CustomFoldRegion>()
+            .mapNotNull { fold ->
+                val renderer = fold.renderer as? NativeHeadingCustomFoldRenderer ?: return@mapNotNull null
+                if (!fold.isValid || fold.isExpanded) return@mapNotNull null
+                val y = editor.offsetToXY(fold.startOffset).y
+                InstalledHeading(renderer.sourceRange, fold.heightInPixels, y, fold.heightInPixels)
+            }
+        val inline = editor.inlayModel.getInlineElementsInRange(0, document.textLength)
+            .mapNotNull { inlay ->
+                val renderer = inlay.renderer as? NativeHeadingInlineFoldRenderer ?: return@mapNotNull null
+                if (!inlay.isValid) return@mapNotNull null
+                val bounds = inlay.bounds ?: return@mapNotNull null
+                InstalledHeading(renderer.sourceRange, inlay.heightInPixels, bounds.y, bounds.height)
+            }
+        val installed = (custom + inline).sortedBy { it.sourceRange.startOffset }
         val baseHeight = editor.lineHeight
         check(baseHeight > 0) { "Native editor line height is unavailable" }
-        val inlays = editor.inlayModel.getBlockElementsInRange(0, document.textLength)
-            .filter { it.renderer is NativeHeadingInlayRenderer }
-            .sortedBy { (it.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset }
-        // Stable first installed ATX inlay is the cumulative reference point.
-        // Avoid mutable origin state inside mapNotNull: Qodana correctly rejects
-        // constant-condition checks that appear to initialize on each iteration.
-        val firstHeadingLine = inlays.asSequence().mapNotNull { inlay ->
-            val sourceLine = document.getLineNumber(
-                (inlay.renderer as NativeHeadingInlayRenderer).sourceRange.startOffset
-            )
+        val firstHeadingLine = installed.asSequence().mapNotNull { presentation ->
+            val sourceLine = document.getLineNumber(presentation.sourceRange.startOffset)
             sourceLine.takeIf { heading.containsMatchIn(lineText(it)) }
         }.firstOrNull()
         val firstHeadingY = firstHeadingLine?.let(::lineY)
         val cumulativeNativeExcess = mutableListOf<Long>()
-        val rows = inlays.mapNotNull { inlay ->
-            val renderer = inlay.renderer as NativeHeadingInlayRenderer
-            val sourceLine = document.getLineNumber(renderer.sourceRange.startOffset)
+        val rows = installed.mapNotNull { presentation ->
+            val sourceLine = document.getLineNumber(presentation.sourceRange.startOffset)
             val match = heading.find(lineText(sourceLine))?.takeIf { it.range.first == 0 }
-                ?: return@mapNotNull null // Setext is handled in a later corpus slice.
-            val endLine = document.getLineNumber(renderer.sourceRange.endOffset)
+                ?: return@mapNotNull null
+            val endLine = document.getLineNumber(presentation.sourceRange.endOffset)
             val nextContentLine = (endLine + 1 until document.lineCount)
                 .firstOrNull { lineText(it).isNotBlank() }
                 ?: error("No following content checkpoint for ATX source line " + sourceLine)
@@ -1190,11 +1203,10 @@ internal object NativeDifferentialPreviewE2EBridge {
                 nextY - requireNotNull(firstHeadingY), baseHeight,
             )
             cumulativeNativeExcess += cumulativePx
-            val bounds = inlay.bounds
             listOf(
                 "level=" + match.groupValues[1].length,
                 "source_line_zero_based=" + sourceLine,
-                "source_offset=" + renderer.sourceRange.startOffset,
+                "source_offset=" + presentation.sourceRange.startOffset,
                 "following_line_zero_based=" + nextContentLine,
                 "following_offset=" + document.getLineStartOffset(nextContentLine),
                 "heading_y_document_px=" + startY,
@@ -1205,18 +1217,15 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "measured_span_px=" + measuredPx,
                 "native_extra_px=" + excessPx,
                 "cumulative_native_extra_px=" + cumulativePx,
-                "inlay_height_px=" + inlay.heightInPixels,
-                "inlay_bounds_y=" + (bounds?.y?.toString() ?: "UNAVAILABLE"),
-                "inlay_bounds_height=" + (bounds?.height?.toString() ?: "UNAVAILABLE"),
+                "presentation_height_px=" + presentation.height,
+                "presentation_bounds_y=" + presentation.boundsY,
+                "presentation_bounds_height=" + presentation.boundsHeight,
             ).joinToString(separator = "\t")
         }
         val atxSourceCount = (0 until document.lineCount)
             .count { heading.find(lineText(it))?.range?.first == 0 }
-        // Raw prefix count is diagnostic only: ATX-looking lines inside fenced
-        // code are not real Markdown headings. The selected H1–H6 fixture
-        // applies an exact expected installed-inlay count in the Starter test.
         return listOf(
-            "schema=markflow-native-heading-source-geometry/v1",
+            "schema=markflow-native-heading-source-geometry/v2",
             "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
             "base_line_height_px=" + baseHeight,
             "raw_atx_prefixed_line_count=" + atxSourceCount,
@@ -1253,8 +1262,6 @@ internal object NativeDifferentialPreviewE2EBridge {
             it is com.intellij.openapi.editor.CustomFoldRegion &&
                 it.renderer is NativeHeadingCustomFoldRenderer
         }
-        val additiveInlays = editor.inlayModel.getBlockElementsInRange(0, doc.textLength)
-            .count { it.renderer is NativeHeadingInlayRenderer }
         val coStartInlines = editor.inlayModel.getInlineElementsInRange(0, doc.textLength)
             .filter { it.isValid && it.renderer is NativeHeadingInlineFoldRenderer }
         val headingPattern = Regex("^ {0,3}(#{1,6})(?:[ \\t]+|$)")
@@ -1282,10 +1289,10 @@ internal object NativeDifferentialPreviewE2EBridge {
             val installed = custom.singleOrNull {
                 (it.renderer as NativeHeadingCustomFoldRenderer).sourceRange.startOffset == start
             }
-            val inlinePilot = coStartInlines.singleOrNull {
+            val inlineFallback = coStartInlines.singleOrNull {
                 (it.renderer as NativeHeadingInlineFoldRenderer).sourceRange.startOffset == start
             }
-            val pilotSourceFold = if (inlinePilot == null) null else folds.singleOrNull {
+            val fallbackSourceFold = if (inlineFallback == null) null else folds.singleOrNull {
                 it !is com.intellij.openapi.editor.CustomFoldRegion &&
                     it.isValid && !it.isExpanded &&
                     it.startOffset == start && it.endOffset == end
@@ -1302,30 +1309,23 @@ internal object NativeDifferentialPreviewE2EBridge {
                     ":expanded=" + it.isExpanded
             }
             val origin = installed?.let { editor.offsetToXY(it.startOffset) }
-            // Same declared native font as the opt-in heading renderer.
-            // Records paint inputs, NOT inferred ink boundaries.
-            val font = NativeHeadingPreviewTypographyPilot.font(editor, index + 1)
+            // Match the production editor-native heading typography. Records paint inputs,
+            // not inferred ink boundaries or historical Preview CSS.
+            val font = nativeHeadingFont(editor, index + 1)
+            val horizontalPadding = NativeHeadingLayoutMetrics.horizontalPadding(editor)
             val text = lineText(line).trimStart('#', ' ', '\t')
             val fm = editor.contentComponent.getFontMetrics(font)
-            // Match the real B-pilot drawString baseline inputs for the
-            // installed CustomFold (H2-H6) or Inline (H1) renderer.
+            // Match the production drawString baseline inputs for the
+            // installed CustomFold (H2-H6) or inline fallback (H1) renderer.
             // Paint input is NOT an independently observed raster baseline.
             val paintBaseline = if (installed != null) {
-                val pad = when (index + 1) {
-                    1 -> 10
-                    2 -> 8
-                    3 -> 7
-                    4 -> 6
-                    5 -> 5
-                    else -> 4
-                }
                 requireNotNull(origin).y + maxOf(
-                    fm.ascent + pad,
+                    fm.ascent,
                     (installed.heightInPixels + fm.ascent - fm.descent) / 2,
                 )
             } else {
-                val inline = requireNotNull(inlinePilot) {
-                    "E19 H1 pilot is not installed for paint baseline evidence"
+                val inline = requireNotNull(inlineFallback) {
+                    "H1 inline fallback is not installed for paint baseline evidence"
                 }
                 requireNotNull(inline.bounds).y + maxOf(
                     fm.ascent, (inline.heightInPixels + fm.ascent - fm.descent) / 2,
@@ -1343,17 +1343,18 @@ internal object NativeDifferentialPreviewE2EBridge {
                 "fold_origin_y_document_px=" + (origin?.y ?: "UNAVAILABLE"),
                 "fold_width_px=" + (installed?.widthInPixels ?: "UNAVAILABLE"),
                 "fold_height_px=" + (installed?.heightInPixels ?: "UNAVAILABLE"),
-                "inline_pilot_status=" + (if (inlinePilot != null) "INSTALLED_UNREVIEWED" else "ABSENT"),
-                "inline_pilot_source_fold=" + (if (pilotSourceFold != null) "COLLAPSED_OWN_CANDIDATE" else "ABSENT"),
-                "inline_pilot_width_px=" + (inlinePilot?.widthInPixels ?: "UNAVAILABLE"),
-                "inline_pilot_height_px=" + (inlinePilot?.heightInPixels ?: "UNAVAILABLE"),
-                "inline_pilot_bounds_y_px=" + (inlinePilot?.bounds?.y ?: "UNAVAILABLE"),
+                "inline_fallback_status=" + (if (inlineFallback != null) "INSTALLED" else "ABSENT"),
+                "inline_fallback_source_fold=" + (if (fallbackSourceFold != null) "COLLAPSED_OWN_SOURCE" else "ABSENT"),
+                "inline_fallback_width_px=" + (inlineFallback?.widthInPixels ?: "UNAVAILABLE"),
+                "inline_fallback_height_px=" + (inlineFallback?.heightInPixels ?: "UNAVAILABLE"),
+                "inline_fallback_bounds_y_px=" + (inlineFallback?.bounds?.y ?: "UNAVAILABLE"),
                 "heading_y_document_px=" + headingY,
                 "native_paint_font_family=" + font.family,
                 "native_paint_font_size_px=" + "%.3f".format(java.util.Locale.ROOT, font.size2D),
                 "native_paint_font_weight=BOLD",
                 "native_paint_text_width_px=" + fm.stringWidth(text),
-                "native_paint_text_origin_x_document_px=" + ((origin?.x ?: editor.offsetToXY(start).x) + 4),
+                "native_paint_text_origin_x_document_px=" +
+                    ((origin?.x ?: editor.offsetToXY(start).x) + horizontalPadding),
                 "native_paint_font_ascent_px=" + fm.ascent,
                 "native_paint_font_descent_px=" + fm.descent,
                 "native_paint_baseline_document_px=" + paintBaseline,
@@ -1372,9 +1373,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "geometry_scope=NATIVE_ONLY_NO_PLATFORM_PARITY",
             "measured_atx_heading_count=" + custom.size,
             "missing_heading_levels=" + absent.joinToString(","),
-            "legacy_heading_inlay_count=" + additiveInlays,
-            "co_start_inline_pilot_count=" + coStartInlines.size,
-            "foreign_fold_count_including_pilot_owned_normal_fold=" + foreign.size,
+            "co_start_inline_fallback_count=" + coStartInlines.size,
+            "foreign_or_owned_normal_fold_count=" + foreign.size,
             "editor_is_showing=" + editor.contentComponent.isShowing,
             "plain_line_height_px=" + editor.lineHeight,
             "native_body_font_family=" + editor.contentComponent.font.family,
