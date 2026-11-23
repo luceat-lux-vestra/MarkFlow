@@ -530,12 +530,14 @@ three source-identical cases were captured. Artifact
   task labels relieved. This is **a bounded visual improvement**, not a
   semantic collision-free claim for the entire diagram corpus.
 
-The real selected Gantt case now additionally records a *candidate*
-`CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800` failure if the four-day fixture
-at the pinned 1200px editor viewport regresses below **800px intrinsic**
-width. Adversarial examples 799 (FAIL), 800 (PASS), 960 (PASS) protect
-the boundary. This is NOT a universal Gantt width for other sources,
-viewports, or layouts. We retain the independent ≤2× display-scale gate.
+The historical 960px Gantt canvas was a bounded diagnostic workaround for the
+hidden JCEF parent's narrow width, not a product layout authority. Current
+production passes the **actual native editor presentation width** into the
+isolated Mermaid request. The real selected Gantt case records
+`GANTT_RENDER_WIDTH_VIEWPORT_MISMATCH` when the resulting intrinsic Gantt
+width differs from that observed native viewport width. This removes the
+fixture-specific 800/960px acceptance boundary while retaining the independent
+≤2× display-scale gate.
 
 For #350, six identical-style following paragraphs show **206.031px**
 H1-to-H6-relative native-minus-reference accumulated drift. Exactly

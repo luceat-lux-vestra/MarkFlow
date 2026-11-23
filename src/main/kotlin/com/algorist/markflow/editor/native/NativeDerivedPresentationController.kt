@@ -19,6 +19,8 @@ import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
+import com.intellij.openapi.editor.event.VisibleAreaEvent
+import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.util.ui.accessibility.ScreenReader
 import java.awt.Graphics
@@ -35,6 +37,11 @@ import javax.imageio.ImageIO
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+private const val MAX_NATIVE_PRESENTATION_DIMENSION = 4096
+
+internal fun normalizeMermaidPresentationWidth(width: Int): Int? =
+    width.takeIf { it > 0 }?.coerceAtMost(MAX_NATIVE_PRESENTATION_DIMENSION)
 
 internal data class NativeDerivedPresentationEvidence(
     val planIdentity: ProjectionSourceIdentity?,
@@ -71,6 +78,9 @@ internal class NativeDerivedPresentationController(
         MarkFlowSettingsService.getInstance().runtimeSettings()
     },
     private val richPresentationEnabled: () -> Boolean = { !ScreenReader.isActive() },
+    private val presentationWidthProvider: () -> Int? = {
+        normalizeMermaidPresentationWidth(editor.scrollingModel.visibleArea.width)
+    },
 ) : Disposable {
     private val gson = Gson()
     private val pending = LinkedHashMap<String, PendingRequest>()
@@ -80,8 +90,12 @@ internal class NativeDerivedPresentationController(
     private val errorMessages = LinkedHashMap<ProjectionKey, String>()
     private val errorInlays = LinkedHashMap<ProjectionKey, Inlay<*>>()
     private var currentPlanIdentity: ProjectionSourceIdentity? = null
+    private var currentPlan: NativeProjectionPlan? = null
     private var currentDerived = emptyList<NativeDerivedProjection>()
     private var disposed = false
+    private var viewportRefreshGeneration = 0L
+    private var lastObservedVisibleAreaWidth = editor.scrollingModel.visibleArea.width
+    private var lastRequestedPresentationWidth: Int? = null
     private var staleResultsRejected = 0L
     private var rendererFailures = 0L
     private var missingArtifacts = 0L
@@ -89,6 +103,16 @@ internal class NativeDerivedPresentationController(
     private var mouseReveals = 0L
     private var renderRequests = 0L
     private var lastPlanCarriedArtifacts = 0
+
+    private val visibleAreaListener = object : VisibleAreaListener {
+        override fun visibleAreaChanged(event: VisibleAreaEvent) {
+            if (disposed || editor.isDisposed) return
+            val width = event.newRectangle.width
+            if (width == lastObservedVisibleAreaWidth) return
+            lastObservedVisibleAreaWidth = width
+            schedulePresentationWidthRefresh()
+        }
+    }
 
     private val mouseListener = object : EditorMouseListener {
         override fun mousePressed(event: EditorMouseEvent) {
@@ -109,6 +133,7 @@ internal class NativeDerivedPresentationController(
     init {
         ApplicationManager.getApplication().assertIsDispatchThread()
         editor.addEditorMouseListener(mouseListener)
+        editor.scrollingModel.addVisibleAreaListener(visibleAreaListener)
     }
 
     fun applyPlan(plan: NativeProjectionPlan) {
@@ -117,10 +142,19 @@ internal class NativeDerivedPresentationController(
 
         val nextDerived = NativeDerivedProjectionPlanner.plan(plan)
         val richEnabled = runCatching(richPresentationEnabled).getOrDefault(false)
+        val presentationWidth = currentPresentationWidth()
+        val hasDecodedMermaid = currentDerived.any { projection ->
+            projection.kind == NativeDerivedProjectionKind.MERMAID &&
+                ProjectionKey.of(projection) in decoded
+        }
+        val mermaidCarryCompatible =
+            !hasDecodedMermaid ||
+                (presentationWidth != null && presentationWidth == lastRequestedPresentationWidth)
         val canCarryDecoded =
             plan.status == ProjectionPlanStatus.READY &&
                 richEnabled &&
-                currentPlanIdentity?.configGeneration == plan.identity.configGeneration
+                currentPlanIdentity?.configGeneration == plan.identity.configGeneration &&
+                mermaidCarryCompatible
 
         cancelPending()
         val carriedKeys = if (canCarryDecoded) {
@@ -134,8 +168,16 @@ internal class NativeDerivedPresentationController(
         }
 
         currentPlanIdentity = plan.identity
+        currentPlan = plan
         currentDerived = nextDerived
         lastPlanCarriedArtifacts = carriedKeys.size
+        val carriedMermaid = currentDerived.any { projection ->
+            projection.kind == NativeDerivedProjectionKind.MERMAID &&
+                ProjectionKey.of(projection) in carriedKeys
+        }
+        if (!carriedMermaid) {
+            lastRequestedPresentationWidth = null
+        }
 
         if (plan.status != ProjectionPlanStatus.READY || currentDerived.isEmpty()) return
         if (!richEnabled) {
@@ -165,10 +207,84 @@ internal class NativeDerivedPresentationController(
             // Markdown visible while rendering is pending, but prevents later platform Markdown
             // folding from claiming the same range before the renderer artifact arrives.
             reserveFold(projection)
-            request(selectedRuntime, plan.identity, projection, settings)
+            request(
+                selectedRuntime,
+                plan.identity,
+                projection,
+                settings,
+                presentationWidth = presentationWidth,
+            )
         }
         refreshActivity(plan)
     }
+
+    internal fun refreshMermaidPresentationWidth(width: Int) {
+        requireAlive()
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val normalizedWidth = normalizeMermaidPresentationWidth(width) ?: return
+        if (normalizedWidth == lastRequestedPresentationWidth) return
+
+        val plan = currentPlan ?: return
+        if (plan.status != ProjectionPlanStatus.READY ||
+            plan.identity != currentPlanIdentity ||
+            !matchesCurrentIdentity(plan.identity) ||
+            !runCatching(richPresentationEnabled).getOrDefault(false)
+        ) {
+            return
+        }
+
+        val mermaid = currentDerived.filter { it.kind == NativeDerivedProjectionKind.MERMAID }
+        if (mermaid.isEmpty()) return
+
+        cancelPending { pendingRequest ->
+            pendingRequest.projection.kind == NativeDerivedProjectionKind.MERMAID
+        }
+        mermaid.forEach { projection ->
+            val key = ProjectionKey.of(projection)
+            decoded.remove(key)
+            errorMessages.remove(key)
+            releaseOwned(key)
+            removeErrorInlay(key)
+        }
+
+        val selectedRuntime = runtime
+            ?: runtimeProvider?.invoke()?.also { runtime = it }
+            ?: run {
+                rendererFailures += mermaid.size
+                return
+            }
+        val settings = runCatching(settingsProvider).getOrElse {
+            rendererFailures += mermaid.size
+            return
+        }
+
+        mermaid.forEach { projection ->
+            reserveFold(projection)
+            request(
+                selectedRuntime,
+                plan.identity,
+                projection,
+                settings,
+                presentationWidth = normalizedWidth,
+            )
+        }
+        refreshActivity(plan)
+    }
+
+    private fun schedulePresentationWidthRefresh() {
+        if (disposed || editor.isDisposed) return
+        val requestGeneration = ++viewportRefreshGeneration
+        ApplicationManager.getApplication().invokeLater {
+            if (disposed || editor.isDisposed || requestGeneration != viewportRefreshGeneration) {
+                return@invokeLater
+            }
+            val width = currentPresentationWidth() ?: return@invokeLater
+            refreshMermaidPresentationWidth(width)
+        }
+    }
+
+    private fun currentPresentationWidth(): Int? =
+        presentationWidthProvider()?.let(::normalizeMermaidPresentationWidth)
 
     fun refreshActivity(plan: NativeProjectionPlan) {
         if (disposed || editor.isDisposed) return
@@ -324,6 +440,7 @@ internal class NativeDerivedPresentationController(
         planIdentity: ProjectionSourceIdentity,
         projection: NativeDerivedProjection,
         settings: MarkFlowRuntimeSettings,
+        presentationWidth: Int?,
     ) {
         val requestId = "native-${REQUEST_SEQUENCE.incrementAndGet()}"
         val rendererIdentity = DerivedRendererIdentity(
@@ -337,7 +454,14 @@ internal class NativeDerivedPresentationController(
             configGeneration = planIdentity.configGeneration.toString(),
         )
         val configJson = when (projection.kind) {
-            NativeDerivedProjectionKind.MERMAID -> gson.toJson(mapOf("runtimeSettings" to settings))
+            NativeDerivedProjectionKind.MERMAID -> {
+                val config = linkedMapOf<String, Any>("runtimeSettings" to settings)
+                presentationWidth?.let { width ->
+                    config["presentationWidthPx"] = width
+                    lastRequestedPresentationWidth = width
+                }
+                gson.toJson(config)
+            }
             NativeDerivedProjectionKind.KATEX_INLINE,
             NativeDerivedProjectionKind.KATEX_DISPLAY,
             -> gson.toJson(
@@ -558,12 +682,21 @@ internal class NativeDerivedPresentationController(
         }
     }
 
-    private fun cancelPending() {
+    private fun cancelPending(
+        predicate: (PendingRequest) -> Boolean = { true },
+    ) {
         val selectedRuntime = runtime
-        pending.keys.toList().forEach { requestId ->
-            runCatching { selectedRuntime?.cancel(requestId) }
+        val requestIds = pending.entries
+            .filter { (_, request) -> predicate(request) }
+            .map { (requestId, _) -> requestId }
+        requestIds.forEach { requestId ->
+            // Revoke host ownership before backend cancellation. Some runtimes complete
+            // cancellation synchronously; their callback must be ignored as stale instead of
+            // being counted/rendered as an ordinary renderer failure.
+            if (pending.remove(requestId) != null) {
+                runCatching { selectedRuntime?.cancel(requestId) }
+            }
         }
-        pending.clear()
     }
 
     private fun clearOwnedPresentation() {
@@ -627,7 +760,9 @@ internal class NativeDerivedPresentationController(
             application.invokeAndWait { dispose() }
             return
         }
+        viewportRefreshGeneration += 1
         editor.removeEditorMouseListener(mouseListener)
+        editor.scrollingModel.removeVisibleAreaListener(visibleAreaListener)
         cancelPending()
         clearOwnedPresentation()
         clearErrorPresentation()
@@ -635,6 +770,7 @@ internal class NativeDerivedPresentationController(
         errorMessages.clear()
         currentDerived = emptyList()
         currentPlanIdentity = null
+        currentPlan = null
         disposed = true
         val ownedRuntime = runtime
         runtime = null
@@ -677,7 +813,7 @@ internal class NativeDerivedPresentationController(
         private const val ZERO_WIDTH_PLACEHOLDER = "\u200B"
         private const val MERMAID_INLINE_ERROR_BOX = "INLINE_ERROR_BOX"
         private const val MAX_ERROR_MESSAGE_CHARS = 240
-        private const val MAX_ARTIFACT_DIMENSION = 4096
+        private const val MAX_ARTIFACT_DIMENSION = MAX_NATIVE_PRESENTATION_DIMENSION
         private const val MAX_ARTIFACT_PIXELS = 8L * 1024L * 1024L
         private const val MAX_DECODED_PNG_BYTES = 48 * 1024 * 1024
         private val REQUEST_SEQUENCE = AtomicLong(0)

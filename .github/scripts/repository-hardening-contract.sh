@@ -1359,10 +1359,13 @@ fi
 if grep -Fq 'file.name == "md-atx-headings-h1-h6.md"' "$production_lifecycle"; then
   die "Production heading behavior must not depend on an evidence fixture filename"
 fi
-grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test" ||
-  die "Stage E7 lost intrinsic Gantt timeline width regression"
-grep -Fq 'ganttIntrinsicRasterWidthTooNarrow(799)' "$manifest_test" ||
-  die "Stage E7 lost Gantt minimum-width negative controls"
+grep -Fq 'GANTT_RENDER_WIDTH_VIEWPORT_MISMATCH' "$manifest_test" ||
+  die "Stage E7 lost native-viewport Gantt width regression"
+grep -Fq 'mermaid_presentation_width=' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
+  die "Stage E7 evidence no longer exposes the normalized Mermaid presentation width"
+if grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test"; then
+  die "Stage E7 retained obsolete fixed intrinsic-width acceptance"
+fi
 
 # #628 native list geometry must remain derived from the live editor/LAF contract.
 list_presentation="src/main/kotlin/com/algorist/markflow/editor/native/NativeListPresentationController.kt"
@@ -1395,11 +1398,15 @@ if grep -Fq 'STARTUP_READY_DEADLINE_MILLIS' "$jcef_runtime"; then
   die "#638 startup lifetime regressed to a Kotlin magic deadline"
 fi
 
-# #352 E7: Gantt layout must not depend on hidden JCEF parent offsetWidth.
-grep -Fq 'gantt: {useMaxWidth, useWidth: 960}' "webview/src/app/runtime-settings.ts" ||
-  die "Stage E7 lost fixed-width Mermaid Gantt layout protection"
-grep -Fq 'Gantt uses a bounded drawing width independent of hidden JCEF parent size' "webview/tests/runtime-settings.test.mjs" ||
-  die "Stage E7 Gantt config missing size-mode regression controls"
+# #352 E7: Gantt layout must consume the native editor presentation width, never hidden
+# JCEF parent geometry or a repository-fixed drawing canvas.
+if grep -Eq 'gantt:.*useWidth:[[:space:]]*[0-9]+' "webview/src/app/runtime-settings.ts"; then
+  die "Stage E7 reintroduced a fixed Mermaid Gantt drawing width"
+fi
+grep -Fq 'presentationWidthPx' "webview/src/app/browser-derived-renderer-backends.ts" ||
+  die "Stage E7 renderer no longer consumes host presentation width"
+grep -Fq 'Gantt drawing width comes from the native presentation width' "webview/tests/runtime-settings.test.mjs" ||
+  die "Stage E7 Gantt config missing host-width regression controls"
 # #352 production fix must retain the default Mermaid FIT raster-density ceiling.
 grep -Fq 'MAX_MERMAID_FIT_RASTER_UPSCALE = 2.0' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDerivedPresentationController.kt" ||
   die "Stage E4 lost bounded PNG fit scaling"

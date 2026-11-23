@@ -31,24 +31,29 @@ test("renderer defaults are fail-closed and deterministic", () => {
     assert.equal(config.flowchart.htmlLabels, false);
 });
 
-test("Gantt uses a bounded drawing width independent of hidden JCEF parent size", () => {
-    const fit = settings.createMermaidPreviewConfig(settings.resolveRuntimeSettings(undefined));
-    assert.equal(fit.gantt.useWidth, 960);
+test("Gantt drawing width comes from the native presentation width", () => {
+    const resolved = settings.resolveRuntimeSettings(undefined);
+    const withoutHostWidth = settings.createMermaidPreviewConfig(resolved);
+    assert.equal("useWidth" in withoutHostWidth.gantt, false);
+
+    const fit = settings.createMermaidPreviewConfig(resolved, 731);
+    assert.equal(fit.gantt.useWidth, 731);
     assert.equal(fit.gantt.useMaxWidth, true);
-    assert.ok(fit.gantt.useWidth > 284 && fit.gantt.useWidth <= 1200);
 
     const actual = settings.createMermaidPreviewConfig(
-        settings.resolveRuntimeSettings({mermaidSizeMode: "ACTUAL_SIZE_SCROLL"})
+        settings.resolveRuntimeSettings({mermaidSizeMode: "ACTUAL_SIZE_SCROLL"}),
+        1043
     );
-    assert.equal(actual.gantt.useWidth, 960);
+    assert.equal(actual.gantt.useWidth, 1043);
     assert.equal(actual.gantt.useMaxWidth, false);
 
     const shrink = settings.createMermaidPreviewConfig(
-        settings.resolveRuntimeSettings({mermaidSizeMode: "SHRINK_TO_FIT"})
+        settings.resolveRuntimeSettings({mermaidSizeMode: "SHRINK_TO_FIT"}),
+        877
     );
-    assert.equal(shrink.gantt.useWidth, 960);
+    assert.equal(shrink.gantt.useWidth, 877);
     assert.equal(shrink.gantt.useMaxWidth, false);
-    // Width is Gantt-only; existing flowchart/class sizes remain auto-layout.
+    // Width remains Gantt-only; existing flowchart/class layouts keep their own sizing rules.
     assert.equal("useWidth" in fit.flowchart, false);
     assert.equal("useWidth" in fit.class, false);
 });

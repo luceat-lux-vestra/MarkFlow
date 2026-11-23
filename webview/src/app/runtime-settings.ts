@@ -86,10 +86,17 @@ const buildMermaidThemeVariables = (
         };
 };
 
-export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSettings>) => {
+export const createMermaidPreviewConfig = (
+    settings: Required<MarkFlowRuntimeSettings>,
+    presentationWidthPx?: number
+) => {
     const theme = resolveMermaidTheme(settings);
     const themeVariables = buildMermaidThemeVariables(settings, theme);
     const useMaxWidth = settings.mermaidSizeMode === "FIT_TO_VIEWPORT";
+    const ganttWidth = typeof presentationWidthPx === "number" &&
+        Number.isInteger(presentationWidthPx) && presentationWidthPx > 0
+        ? presentationWidthPx
+        : undefined;
     return {
         startOnLoad: false,
         layout: "dagre" as const,
@@ -106,12 +113,11 @@ export const createMermaidPreviewConfig = (settings: Required<MarkFlowRuntimeSet
         mindmap: {useMaxWidth},
         sequence: {useMaxWidth},
         sequenceDiagram: {useMaxWidth},
-        // Mermaid Gantt's SVG width is read from its parent.offsetWidth.
-        // The retained hidden JCEF renderer can have a narrow parent (~284px),
-        // which permanently compresses time ticks and task labels before PNG
-        // capture. Give only Gantt a deterministic finite drawing canvas;
-        // the native host continues to enforce viewport/zoom bounds.
-        gantt: {useMaxWidth, useWidth: 960},
+        // Mermaid Gantt uses its drawing width as an x-axis layout input. The isolated
+        // renderer has no trustworthy viewport of its own, so product callers provide the
+        // current native editor presentation width explicitly. Never substitute hidden JCEF
+        // parent geometry or a repository-fixed canvas width.
+        gantt: ganttWidth === undefined ? {useMaxWidth} : {useMaxWidth, useWidth: ganttWidth},
         pie: {useMaxWidth},
         journey: {useMaxWidth},
         requirement: {useMaxWidth},
