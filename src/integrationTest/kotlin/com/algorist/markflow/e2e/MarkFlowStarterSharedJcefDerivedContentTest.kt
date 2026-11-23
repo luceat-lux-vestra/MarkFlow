@@ -8,12 +8,8 @@ import com.intellij.driver.sdk.singleProject
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForIndicators
 import com.intellij.ide.starter.driver.engine.runIdeWithDriver
-import com.intellij.ide.starter.models.IdeInfo
-import com.intellij.ide.starter.models.TestCase
 import com.intellij.ide.starter.plugins.PluginConfigurator
-import com.intellij.ide.starter.project.LocalProjectInfo
 import com.intellij.ide.starter.runner.Starter
-import com.intellij.tools.ide.starter.product.idea.ultimate.IdeaUltimate
 import org.junit.jupiter.api.Test
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -82,10 +78,9 @@ class MarkFlowStarterSharedJcefDerivedContentTest {
             phase = "ide-start"
             timer.begin()
             launchRequests += 1
-            Starter.newContext(
+            val context = Starter.newContext(
                 testName = "markflow-shared-jcef-derived-content",
-                testCase = TestCase(IdeInfo.IdeaUltimate, LocalProjectInfo(productionProject))
-                    .useRelease(version)
+                testCase = starterTestCase(version, productionProject)
             ).apply {
                 PluginConfigurator(this).installPluginFromPath(plugin)
             }.applyVMOptionsPatch {
@@ -97,7 +92,9 @@ class MarkFlowStarterSharedJcefDerivedContentTest {
                 // is non-visual; running its exact proof body under this scale is the compatibility check.
                 addSystemProperty("sun.java2d.uiScale", "1.0")
                 addSystemProperty("ide.ui.scale", "1.0")
-            }.runIdeWithDriver().useDriverAndCloseIde {
+            }
+            val expectedIdeaExecutable = starterIdeExecutable(context)
+            context.runIdeWithDriver().useDriverAndCloseIde {
                 waitForIndicators(5.minutes)
                 timer.ideReady()
 
@@ -157,6 +154,7 @@ class MarkFlowStarterSharedJcefDerivedContentTest {
                     sourceLine,
                     previewEvidence,
                     version,
+                    expectedIdeaExecutable,
                 )
                 previewMs = (System.nanoTime() - previewStart) / 1_000_000
                 previewPassed = true

@@ -172,7 +172,8 @@ and the limitation is explicit rather than silently claiming an invariant that c
 - **Qodana gate:** the workflow pins the Qodana 2026.2 JVM Community image, disables restored
   analysis caches for reproducibility, uploads the report, and fails the `Inspect code` job when a
   new High/Critical-severity problem is present. It also fails closed when Qodana produces no SARIF
-  report. The Gradle Qodana plugin and action remain on 2026.2.x.
+  report. Qodana remains an independent CI scanner via the pinned action/image; product and
+  Starter Gradle configuration do not apply an otherwise-unused Qodana Gradle plugin.
 
 ## Scope decisions (for the reader)
 - **In scope:** palette sync for colors + fonts, with contrast guards.

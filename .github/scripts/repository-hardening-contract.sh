@@ -309,6 +309,14 @@ grep -Fq '      - name: Qodana - Code Inspection' "$build_workflow" ||
   die "Stage A must preserve PR-time Qodana inspection"
 grep -Fq 'needs.inspectCode.result' "$build_workflow" ||
   die "Stage A must preserve Inspect code as Merge Gate input"
+if grep -Fq 'alias(libs.plugins.qodana)' build.gradle.kts ||
+   grep -Eq '^qodana[[:space:]]*=' gradle/libs.versions.toml; then
+  die "Product/Starter Gradle configuration must not depend on the CI-only Qodana scanner plugin"
+fi
+grep -Fq 'JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f' "$build_workflow" ||
+  die "PR-time Qodana authority must remain pinned to the standalone action"
+grep -Fq -- '--image jetbrains/qodana-jvm-community:2026.2 --clear-cache' "$build_workflow" ||
+  die "PR-time Qodana authority lost its pinned scanner image"
 
 # R2A #104 Stage B: independent CodeQL AND Qodana evidence must gate Marketplace
 # publication, without giving the preflight jobs signing/release-write authority.
@@ -1518,15 +1526,56 @@ grep -Fq "preview.showReferenceAtSourceLine(sourceEditor, sourceLine)" "$differe
   die "Bundled Preview lost source-anchor navigation through retained Editor"
 grep -Fq "Embedded Browser is suspended" "$differential_bridge" ||
   die "Bundled Preview lost fail-closed suspended-browser guard"
-# #353: fail-closed sandboxed-JCEF AppArmor installation and negative controls.
+# #353/#642: fail-closed sandboxed-JCEF AppArmor identity comes from Starter itself.
 jcef_profile_script=".github/scripts/install-starter-jcef-apparmor.sh"
-[ -f "$jcef_profile_script" ] || die "pinned JCEF userns profile installer missing"
+starter_ide_provisioner="src/integrationTest/kotlin/com/algorist/markflow/e2e/StarterIdeProvisioner.kt"
+starter_ide_version="src/integrationTest/kotlin/com/algorist/markflow/e2e/StarterIdeVersion.kt"
+starter_ide_version_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/StarterIdeVersionTest.kt"
+[ -f "$jcef_profile_script" ] || die "Starter-resolved JCEF userns profile installer missing"
+[ -f "$starter_ide_provisioner" ] || die "Starter IDE pre-launch provisioner missing"
+[ -f "$starter_ide_version" ] || die "shared Starter IDE identity policy missing"
 bash "$jcef_profile_script" --self-test >/dev/null ||
-  die "JCEF AppArmor profile unsafe-path self-test failed"
-grep -Fq 'Install pinned sandboxed JCEF AppArmor profile (derived-content only)' "$starter_workflow" ||
+  die "JCEF AppArmor profile unsafe-path/exact-identity self-test failed"
+grep -Fq 'TestContainer.resolveIDE(target.ideInfo)' "$starter_ide_provisioner" ||
+  die "Starter IDE policy no longer consumes Starter installed-IDE authority"
+grep -Fq 'val target = starterTestCase(platformVersion, projectRoot)' "$starter_ide_provisioner" ||
+  die "Starter provisioner bypassed the shared release/EAP target policy"
+grep -Fq 'testCase = starterTestCase(version, project)' "$manifest_test" ||
+  die "Full differential runtime bypassed the shared Starter target policy"
+grep -Fq 'testCase = starterTestCase(version, project)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt" ||
+  die "Differential smoke runtime bypassed the shared Starter target policy"
+grep -Fq 'testCase = starterTestCase(version, productionProject)' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterSharedJcefDerivedContentTest.kt" ||
+  die "Shared JCEF derived-content runtime bypassed the shared Starter target policy"
+grep -Fq 'expectedIdeaExecutable' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterSharedJcefDerivedContentTest.kt" ||
+  die "Shared JCEF derived-content runtime no longer forwards exact Starter executable authority"
+grep -Fq 'installedIde.installationPath.toRealPath()' "$starter_ide_provisioner" ||
+  die "Starter IDE policy no longer records the canonical installed path"
+grep -Fq 'target.ideInfo.executableFileName' "$starter_ide_provisioner" ||
+  die "Starter IDE policy reconstructed the executable name instead of using IdeInfo"
+grep -Fq 'resolvedBuild == installedIde.build' "$starter_ide_provisioner" ||
+  die "Starter IDE metadata no longer cross-checks installer and installed build identity"
+grep -Fq 'binDirectory.resolve("$executableFileName.sh")' "$starter_ide_version" ||
+  die "Starter executable authority lost the pinned Linux .sh launcher fallback"
+grep -Fq 'starterAppArmorProfileMatches' "$manifest_test" ||
+  die "Full differential runtime no longer verifies exact AppArmor profile identity"
+grep -Fq 'starterAppArmorProfileMatches' "src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialPreviewSmokeTest.kt" ||
+  die "Differential smoke no longer verifies exact AppArmor profile identity"
+grep -Fq 'profile_list_contains_exact' "$jcef_profile_script" ||
+  die "JCEF AppArmor installer no longer verifies exact profile identity"
+grep -Fq 'idea_apparmor_current=$executable ()' "$starter_ide_version_test" ||
+  die "Starter AppArmor runtime matcher lost malformed-mode negative controls"
+grep -Fq 'provisionStarterIde' "$starter_workflow" ||
+  die "Starter workflow no longer pre-provisions the exact IDE"
+grep -Fq 'provisionStarterIde' "$full_differential_workflow" ||
+  die "Full differential workflow no longer pre-provisions the exact IDE"
+[ "$(grep -Fc 'jvmArgs(starterWorkerJvmArgs)' build.gradle.kts)" -eq 2 ] ||
+  die "Starter provisioner and integration-test worker no longer share one JVM export contract"
+grep -Fq 'Install Starter-resolved sandboxed JCEF AppArmor profile (derived-content only)' "$starter_workflow" ||
   die "Starter has no scoped JCEF AppArmor setup"
-grep -Fq "bash .github/scripts/install-starter-jcef-apparmor.sh" "$starter_workflow" ||
-  die "Starter no longer installs its pinned JBR profile"
+grep -Fq 'build/starter-ide/installed-ide.properties' "$starter_workflow" ||
+  die "Starter JCEF policy no longer consumes provisioned IDE metadata"
+grep -Fq 'build/starter-ide/installed-ide.properties' "$full_differential_workflow" ||
+  die "Full differential JCEF policy no longer consumes provisioned IDE metadata"
 grep -Fq "if: matrix.shard == 'derived-content'" "$starter_workflow" ||
   die "Matrix JCEF profile installer must remain restricted to derived-content"
 grep -Fq 'STARTER_SHARD: full-differential-acceptance' "$full_differential_workflow" ||
@@ -1535,8 +1584,17 @@ grep -Fq 'derived-content|full-differential-acceptance' "$jcef_profile_script" |
   die "JCEF profile installer scope allowlist drifted"
 grep -Fq '[[ "${RUNNER_OS:-}" == Linux && "${RUNNER_ARCH:-}" == ARM64 ]] || exit 1' "$jcef_profile_script" ||
   die "JCEF AppArmor installer must remain ARM64-only after Linux runner migration"
-grep -Fq '/out/ide-tests/cache/builds/IU-263.7307.200/idea-IU-263.7307.200/bin/idea" flags=(unconfined)' "$jcef_profile_script" ||
-  die "JCEF policy no longer targets the stable IU-263.7307.200 IDEA executable"
+grep -Fq 'profile "$executable" flags=(unconfined)' "$jcef_profile_script" ||
+  die "JCEF policy no longer targets only the Starter-resolved executable"
+grep -Fq 'realpath -e -- "$executable_path"' "$jcef_profile_script" ||
+  die "JCEF policy no longer canonicalizes the Starter-resolved executable"
+grep -Fq '[[ "$executable" == "$installation/"* ]]' "$jcef_profile_script" ||
+  die "JCEF policy lost installed-IDE containment"
+grep -Fq '[[ "$installation" == "$workspace/"* ]]' "$jcef_profile_script" ||
+  die "JCEF policy lost CI-workspace containment"
+if grep -Eq '/home/runner/work/|IU-[0-9]+\.[0-9]+\.[0-9]+|STARTER_PLATFORM_VERSION[^\n]*==[^\n]*20[0-9]{2}' "$jcef_profile_script"; then
+  die "JCEF AppArmor installer reintroduced runner/build/version literals"
+fi
 grep -Fq 'userns,' "$jcef_profile_script" ||
   die "JCEF AppArmor profile lost userns permission"
 grep -Fq '/sys/kernel/security/apparmor/profiles' "$jcef_profile_script" ||
