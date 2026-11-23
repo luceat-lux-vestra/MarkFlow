@@ -994,6 +994,7 @@ grep -Fq 'MarkFlowStarterDifferentialPreviewSmokeTest().proveInOpenProject(' "$s
   die "#451 shared suite no longer executes the original bundled Preview Smoke proof body"
 # #353 Stage D remains a bounded capture probe, not full acceptance.
 manifest_test="src/integrationTest/kotlin/com/algorist/markflow/e2e/MarkFlowStarterDifferentialManifestTest.kt"
+differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 grep -Fq 'schema=markflow-controlled-reference-generic-dom/v2' "$manifest_test" ||
   die "#353 controlled generic DOM evidence schema lost diagnostic surface inventory"
 grep -Fq 'mermaid_surface_gate=DIAGNOSTIC_ONLY_NO_ASSUMED_SVG' "$manifest_test" ||
@@ -1062,17 +1063,26 @@ grep -Fq '!preview.referencePanelAttached(remote)' "$manifest_test" ||
   die "#353 Preview recovery no longer waits for the current bundled Preview panel to detach before retry"
 grep -Fq 'detached_before_retry=true' "$manifest_test" ||
   die "#353 Preview recovery no longer retains lifecycle evidence for the detached panel"
-grep -Fq 'preview.armDetachedReferenceBrowserCloseMarker(' "$manifest_test" ||
-  die "#353 native-close observation lost the host-visible CEF marker seam"
-grep -Fq 'getter = { Files.exists(recoveryCloseMarker) }' "$manifest_test" ||
-  die "#353 recovery native-close wait regressed to Driver/EDT polling"
-grep -Fq 'getter = { Files.exists(cleanupCloseMarker) }' "$manifest_test" ||
-  die "#353 cleanup native-close wait regressed to Driver/EDT polling"
-if grep -Fq 'preview.detachedReferenceBrowserClosed()' "$manifest_test"; then
-  die "#353 native-close timeout must not depend on a blocking Driver/EDT getter"
+# #646: native-close authority is the exact JCEF CefBrowser state. A late
+# test-owned lifespan handler races JBCefBrowserBase's built-in onBeforeClose,
+# which may remove later handlers during dispatch.
+[ "$(grep -Fc 'preview.detachedReferenceBrowserClosed()' "$manifest_test")" -eq 2 ] ||
+  die "#646 recovery/cleanup must both gate on JCEF-owned CefBrowser.isClosed state"
+grep -Fq 'fun detachedReferenceBrowserClosed(): Boolean' "$differential_bridge" ||
+  die "#646 bundled Preview bridge lost deterministic native-close observation"
+grep -Fq 'lastDetachedReferenceCefBrowser?.isClosed == true' "$differential_bridge" ||
+  die "#646 native-close authority no longer reads the exact tracked CefBrowser"
+grep -Fq '"cef_is_closed=" + nativeClosed' "$differential_bridge" ||
+  die "#646 lifecycle evidence no longer records JCEF native closed state"
+grep -Fq '"jbcef_disposed=" + (browser?.isDisposed ?: false)' "$differential_bridge" ||
+  die "#646 wrapper-disposed state must remain diagnostic and fail closed when untracked"
+if grep -Fq 'armDetachedReferenceBrowserCloseMarker' "$manifest_test" "$differential_bridge"; then
+  die "#646 race-prone native-close marker seam was reintroduced"
 fi
-grep -Fq 'fun armDetachedReferenceBrowserCloseMarker(markerPath: String)' "src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt" ||
-  die "#353 bundled Preview bridge lost host-visible native-close marker support"
+if grep -Fq 'getter = { Files.exists(recoveryCloseMarker) }' "$manifest_test" ||
+   grep -Fq 'getter = { Files.exists(cleanupCloseMarker) }' "$manifest_test"; then
+  die "#646 native-close acceptance regressed to callback-written marker files"
+fi
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_CLOSE' "$manifest_test" ||
   die "#353 manifest capture lost per-case editor/JCEF lifecycle cleanup"
 grep -Fq 'FULL_CORPUS_CASE_EDITOR_LIFECYCLE_SINGLE_OWNER' "$manifest_test" ||
@@ -1157,7 +1167,6 @@ grep -Fq 'Reviewed Markdown source anchor drifted' "$manifest_test" ||
   die "Markdown source anchors no longer fail closed on fixture drift"
 grep -Fq 'reviewedMarkdownAnchorGitBlobSha' "webview/tests/differential-acceptance-corpus.test.mjs" ||
   die "Markdown source-anchor ledger lost its reviewed snapshot pin"
-differential_bridge="src/main/kotlin/com/algorist/markflow/editor/native/NativeDifferentialPreviewE2EBridge.kt"
 grep -Fq 'NativeMarkFlowProductionLifecycle.ownedController(editor)' "$differential_bridge" ||
   die "#584 differential native path no longer requires owned-controller lookup"
 if grep -Fq 'NativeMarkFlowProductionLifecycle.controller(editor)' "$differential_bridge"; then

@@ -647,7 +647,7 @@ class MarkFlowStarterDifferentialManifestTest {
                     var caseRemoteEditor: Editor? = null
                     var caseStamp: Long? = null
                     var caseFailure: Throwable? = null
-                    var caseReferenceCloseMarker: Path? = null
+                    var caseReferenceBrowserTracked = false
                     var controlledPlatformPreviewBaseline: String? = null
                     try {
                         val editor = markFlow.openMarkdown(entry.id + ".md")
@@ -1510,13 +1510,7 @@ class MarkFlowStarterDifferentialManifestTest {
                                                 firstFailureLifecycle,
                                             StandardCharsets.UTF_8
                                         )
-                                        val recoveryCloseMarker = dest.resolve(
-                                            "reference-native-close-recovery.marker"
-                                        ).toAbsolutePath().normalize()
                                         driver.withContext(OnDispatcher.EDT) {
-                                            preview.armDetachedReferenceBrowserCloseMarker(
-                                                recoveryCloseMarker.toString()
-                                            )
                                             preview.restoreNative(remoteEditor)
                                         }
                                         waitFor(
@@ -1545,7 +1539,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                             message = "Bundled Preview native browser closed for recovery: " +
                                                 entry.id,
                                             timeout = 20.seconds,
-                                            getter = { Files.exists(recoveryCloseMarker) },
+                                            getter = { driver.withContext(OnDispatcher.EDT) {
+                                                preview.detachedReferenceBrowserClosed()
+                                            } },
                                             checker = { it }
                                         )
                                         heartbeat("case-reference-browser-closed", entry.id)
@@ -2056,15 +2052,10 @@ class MarkFlowStarterDifferentialManifestTest {
                             preview.sourceUnsaved(remoteEditor)
                         })
                         if (entry.comparable) {
-                            caseReferenceCloseMarker = dest.resolve(
-                                "reference-native-close-cleanup.marker"
-                            ).toAbsolutePath().normalize()
                             driver.withContext(OnDispatcher.EDT) {
-                                preview.armDetachedReferenceBrowserCloseMarker(
-                                    requireNotNull(caseReferenceCloseMarker).toString()
-                                )
                                 preview.restoreNative(remoteEditor)
                             }
+                            caseReferenceBrowserTracked = true
                             waitFor(
                                 message = "Native restored: " + entry.id, timeout = 20.seconds,
                                 getter = { driver.withContext(OnDispatcher.EDT) {
@@ -2574,22 +2565,18 @@ class MarkFlowStarterDifferentialManifestTest {
                                         },
                                     StandardCharsets.UTF_8
                                 )
-                                val cleanupCloseMarker = if (entry.comparable) {
-                                    caseReferenceCloseMarker ?: dest.resolve(
-                                        "reference-native-close-cleanup.marker"
-                                    ).toAbsolutePath().normalize().also { marker ->
-                                        caseReferenceCloseMarker = marker
+                                val cleanupNeedsNativeClose = if (entry.comparable) {
+                                    if (!caseReferenceBrowserTracked) {
                                         driver.withContext(OnDispatcher.EDT) {
-                                            preview.armDetachedReferenceBrowserCloseMarker(
-                                                marker.toString()
-                                            )
                                             preview.restoreNative(remote)
                                         }
+                                        caseReferenceBrowserTracked = true
                                     }
+                                    true
                                 } else {
-                                    null
+                                    false
                                 }
-                                if (cleanupCloseMarker != null) {
+                                if (cleanupNeedsNativeClose) {
                                     waitFor(
                                         message = "Bundled Preview panel detached before close: " +
                                             entry.id,
@@ -2616,7 +2603,9 @@ class MarkFlowStarterDifferentialManifestTest {
                                         message = "Bundled Preview native browser closed before next case: " +
                                             entry.id,
                                         timeout = 20.seconds,
-                                        getter = { Files.exists(cleanupCloseMarker) },
+                                        getter = { driver.withContext(OnDispatcher.EDT) {
+                                            preview.detachedReferenceBrowserClosed()
+                                        } },
                                         checker = { it }
                                     )
                                     heartbeat("case-reference-native-close-complete", entry.id)
@@ -4715,9 +4704,9 @@ private interface DifferentialManifestPreviewRemote {
     fun sourceStamp(editor: Editor): Long
     fun primaryCaretOffset(editor: Editor): Int
     fun sourceUnsaved(editor: Editor): Boolean
-    fun armDetachedReferenceBrowserCloseMarker(markerPath: String)
     fun restoreNative(editor: Editor)
     fun completeNativeRestore(editor: Editor): Boolean
+    fun detachedReferenceBrowserClosed(): Boolean
     fun detachedReferenceBrowserEvidence(): String
     fun nativeShowing(editor: Editor): Boolean
 }
