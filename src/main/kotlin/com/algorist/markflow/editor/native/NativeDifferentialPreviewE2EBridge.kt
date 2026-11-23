@@ -49,10 +49,8 @@ internal object NativeDifferentialPreviewE2EBridge {
     // browser long enough to prove native close completion before the corpus
     // creates another bundled Preview.
     private var lastDetachedReferenceBrowser: JBCefBrowser? = null
+    private var lastDetachedReferenceCefBrowser: CefBrowser? = null
     private var lastDetachedReferencePanelIdentity: Int? = null
-    private var lastDetachedReferenceBeforeClose = AtomicBoolean(true)
-    private var nextDetachedReferenceCloseMarker: Path? = null
-    private var lastDetachedReferenceCloseMarker: Path? = null
     // Exactly one diagnostic listener per live bundled Preview; removed before
     // that panel's normal disposal so successive iterations do not accumulate it.
     private data class ReferenceLoadTrace(
@@ -1919,27 +1917,9 @@ internal object NativeDifferentialPreviewE2EBridge {
         return listOf(rect.x, rect.y, rect.width, rect.height).joinToString(",")
     }
 
-    /**
-     * Arm a one-shot host-visible marker for the next bundled Preview close.
-     * The CEF life-span callback writes this file from the IDE process, while
-     * the Starter test polls Files.exists() in its own process. This keeps the
-     * native-close timeout independent of Driver RPC / EDT responsiveness.
-     */
-    fun armDetachedReferenceBrowserCloseMarker(markerPath: String) {
-        ApplicationManager.getApplication().assertIsDispatchThread()
-        val marker = Path.of(markerPath).toAbsolutePath().normalize()
-        val parent = requireNotNull(marker.parent) { "Native-close marker has no parent" }
-        Files.createDirectories(parent)
-        Files.deleteIfExists(marker)
-        nextDetachedReferenceCloseMarker = marker
-    }
-
     fun restoreNative(editor: Editor) {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val (selected, preview) = editors(editor)
-        val closeMarker = nextDetachedReferenceCloseMarker
-        nextDetachedReferenceCloseMarker = null
-        lastDetachedReferenceCloseMarker = closeMarker
         // Stop diagnostic load listeners before the genuine JCEF disposal path.
         // Do not retain one per iteration on a shared client.
         referenceLoadTrace?.let { loadTrace ->
@@ -1960,78 +1940,25 @@ internal object NativeDifferentialPreviewE2EBridge {
             )
             referenceLoadTrace = null
         }
-        // Capture the actual JBCefBrowser before MarkdownPreviewFileEditor hides
-        // and nulls its panel. Do not clear an existing tracker when the panel is
-        // already detached: normal acceptance may restore native earlier and the
-        // finally block still owns the native-close barrier.
+        // Capture the exact platform-owned JBCefBrowser/CefBrowser pair before
+        // MarkdownPreviewFileEditor hides and nulls its panel. Native close
+        // completion is observed from JCEF's own CefBrowser.isClosed state; do
+        // not add a late CefLifeSpanHandler because JBCefBrowserBase's built-in
+        // onBeforeClose handler may remove later handlers during dispatch.
+        //
+        // Do not clear an existing tracker when the panel is already detached:
+        // normal acceptance may restore native earlier and the finally block
+        // still owns the native-close barrier for that exact captured browser.
         previewPanel(preview)?.let { panel ->
             val browser = panel as? JBCefBrowser
                 ?: error("Bundled Markdown panel is not JBCefBrowser: " + panel.javaClass.name)
             val cefBrowser = browser.getCefBrowser()
-            val beforeClose = AtomicBoolean(false)
-            val panelIdentity = System.identityHashCode(panel)
-            val browserIdentity = System.identityHashCode(browser)
-            // Diagnostic-only event journal. In particular, a missing marker alone
-            // cannot distinguish a missing native callback from a swallowed
-            // filesystem write failure. Persist native callbacks on their own
-            // thread; the host timeout must not make a Driver/EDT round-trip.
-            val eventLog = closeMarker?.resolveSibling("native-close.events")
-            fun recordNativeCloseEvent(phase: String, closingBrowser: CefBrowser? = null) {
-                eventLog?.let { log ->
-                    runCatching {
-                        Files.writeString(
-                            log,
-                            "timestamp_ms=" + System.currentTimeMillis() +
-                                " phase=" + phase +
-                                " thread=" + Thread.currentThread().name +
-                                " panel_identity=" + panelIdentity +
-                                " browser_identity=" + browserIdentity +
-                                " cef_identity=" + System.identityHashCode(cefBrowser) +
-                                " callback_cef_identity=" +
-                                    (closingBrowser?.let { System.identityHashCode(it) } ?: "NONE") +
-                                " cef_same=" + (closingBrowser === cefBrowser) + "\n",
-                            java.nio.file.StandardOpenOption.CREATE,
-                            java.nio.file.StandardOpenOption.APPEND,
-                        )
-                    }
-                }
+            check(!cefBrowser.isClosed) {
+                "Bundled Markdown CefBrowser was already closed before native restore"
             }
-            recordNativeCloseEvent("handler-registration-start")
-            browser.getJBCefClient().addLifeSpanHandler(
-                object : CefLifeSpanHandlerAdapter() {
-                    override fun doClose(closingBrowser: CefBrowser): Boolean {
-                        recordNativeCloseEvent("cef-do-close", closingBrowser)
-                        return false // Preserve CefLifeSpanHandlerAdapter default behavior.
-                    }
-
-                    override fun onBeforeClose(closingBrowser: CefBrowser) {
-                        recordNativeCloseEvent("cef-on-before-close", closingBrowser)
-                        if (closingBrowser === cefBrowser && beforeClose.compareAndSet(false, true)) {
-                            closeMarker?.let { marker ->
-                                val write = runCatching {
-                                    Files.writeString(
-                                        marker,
-                                        "schema=markflow-bundled-preview-native-close-marker/v1\n" +
-                                            "panel_identity=" + panelIdentity + "\n" +
-                                            "browser_identity=" + browserIdentity + "\n" +
-                                            "cef_before_close_observed=true\n"
-                                    )
-                                }
-                                recordNativeCloseEvent(
-                                    if (write.isSuccess) "native-marker-written" else
-                                        "native-marker-write-failed-" +
-                                            write.exceptionOrNull()?.javaClass?.simpleName
-                                )
-                            }
-                        }
-                    }
-                },
-                cefBrowser,
-            )
-            recordNativeCloseEvent("handler-registered")
             lastDetachedReferenceBrowser = browser
-            lastDetachedReferencePanelIdentity = panelIdentity
-            lastDetachedReferenceBeforeClose = beforeClose
+            lastDetachedReferenceCefBrowser = cefBrowser
+            lastDetachedReferencePanelIdentity = System.identityHashCode(panel)
         }
         selected.setLayout(TextEditorWithPreview.Layout.SHOW_EDITOR)
         // Do not select the MarkFlow-owned provider yet. MarkdownPreviewFileEditor
@@ -2049,22 +1976,32 @@ internal object NativeDifferentialPreviewE2EBridge {
         return nativeShowing(editor)
     }
 
+    /**
+     * JCEF-owned native-close authority for the exact bundled Preview browser
+     * captured by restoreNative(). CefBrowser_N sets isClosed from its native
+     * onBeforeClose path, after lifespan-handler dispatch. This remains a
+     * read-only test observation and never closes/disposes bundled Markdown.
+     */
+    fun detachedReferenceBrowserClosed(): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return lastDetachedReferenceCefBrowser?.isClosed == true
+    }
+
     fun detachedReferenceBrowserEvidence(): String {
         ApplicationManager.getApplication().assertIsDispatchThread()
         val browser = lastDetachedReferenceBrowser
-        val beforeCloseObserved = lastDetachedReferenceBeforeClose.get()
+        val cefBrowser = lastDetachedReferenceCefBrowser
+        val nativeClosed = cefBrowser?.isClosed == true
         return listOf(
-            "schema=markflow-bundled-preview-native-close/v1",
-            "tracked=" + (browser != null),
+            "schema=markflow-bundled-preview-native-close/v2",
+            "tracked=" + (browser != null && cefBrowser != null),
             "panel_identity=" + (lastDetachedReferencePanelIdentity?.toString() ?: "NONE"),
             "browser_identity=" + (browser?.let { System.identityHashCode(it) }?.toString() ?: "NONE"),
-            "jbcef_disposed=" + (browser?.isDisposed ?: true),
-            "cef_before_close_observed=" + beforeCloseObserved,
-            "close_marker=" + (lastDetachedReferenceCloseMarker?.toString() ?: "NONE"),
-            "close_marker_exists=" +
-                (lastDetachedReferenceCloseMarker?.let { Files.exists(it) } ?: false),
-            "native_close_complete=" + (browser == null ||
-                (browser.isDisposed && beforeCloseObserved)),
+            "cef_identity=" + (cefBrowser?.let { System.identityHashCode(it) }?.toString() ?: "NONE"),
+            "jbcef_disposed=" + (browser?.isDisposed ?: false),
+            "cef_is_closing=" + (cefBrowser?.isClosing ?: false),
+            "cef_is_closed=" + nativeClosed,
+            "native_close_complete=" + nativeClosed,
         ).joinToString(separator = "\n", postfix = "\n")
     }
 
