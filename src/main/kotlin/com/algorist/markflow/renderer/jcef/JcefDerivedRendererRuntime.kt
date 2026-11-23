@@ -8,11 +8,13 @@ import com.algorist.markflow.renderer.DerivedRendererRuntimeRequest
 import com.algorist.markflow.renderer.DerivedRendererRuntimeResult
 import com.google.gson.Gson
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
+import org.cef.handler.CefLoadHandler
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefRequestHandlerAdapter
 import org.cef.handler.CefResourceRequestHandler
@@ -25,19 +27,22 @@ import java.util.Base64
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.Timer
 
 /**
  * JCEF execution adapter for #144. This realm hosts only derived rendering; it has no editor,
  * Document, source-sync, local-file, or external-navigation authority.
  */
-class JcefDerivedRendererRuntime : DerivedRendererRuntime {
+class JcefDerivedRendererRuntime internal constructor(
+    private val startupPolicy: JcefStartupPolicy = JcefStartupPolicy.fromRegistry(),
+) : DerivedRendererRuntime {
     private val gson = Gson()
     private val browser: JBCefBrowser
     private val messageQuery: JBCefJSQuery
     private val entryUrl: String
     private val callbacks = LinkedHashMap<String, (DerivedRendererRuntimeResult) -> Unit>()
     private val activeRequests = LinkedHashMap<String, DerivedRendererRuntimeRequest>()
-    private val queuedRequests = LinkedHashMap<String, DerivedRendererRuntimeRequest>()
+    private val startupQueue = JcefStartupRequestQueue<DerivedRendererRuntimeRequest>(MAX_PENDING_REQUESTS)
 
     @Volatile
     private var disposed = false
@@ -45,6 +50,10 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
     @Volatile
     private var ready = false
 
+    // Startup has two independent bounded phases. Cold entry loading must not consume the
+    // much shorter host<->page ready-handshake budget.
+    private var startupDeadline: Timer? = null
+    private var armedStartupPhase: JcefStartupRequestQueue.Phase? = null
     private var requestHandler: CefRequestHandlerAdapter? = null
     private val blockedNavigationCounter = AtomicInteger(0)
 
@@ -131,20 +140,35 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
             activeRequests[request.requestId] = request
             callbacks[request.requestId] = callback
             if (!ready) {
-                if (queuedRequests.size >= MAX_PENDING_REQUESTS) {
-                    callbacks.remove(request.requestId)
-                    activeRequests.remove(request.requestId)
-                    callback(
-                        failureResult(
-                            request,
-                            "BACKEND_UNAVAILABLE",
-                            retryable = true,
-                            "renderer runtime is not ready",
+                when (startupQueue.offer(request.requestId, request)) {
+                    JcefStartupRequestQueue.OfferResult.ACCEPTED -> {
+                        armStartupDeadlineIfNeeded()
+                    }
+                    JcefStartupRequestQueue.OfferResult.FULL -> {
+                        callbacks.remove(request.requestId)
+                        activeRequests.remove(request.requestId)
+                        callback(
+                            failureResult(
+                                request,
+                                "BACKEND_UNAVAILABLE",
+                                retryable = true,
+                                "renderer startup queue reached its configured bound",
+                            )
                         )
-                    )
-                    return@onEdt
+                    }
+                    JcefStartupRequestQueue.OfferResult.TERMINAL_FAILURE -> {
+                        callbacks.remove(request.requestId)
+                        activeRequests.remove(request.requestId)
+                        callback(
+                            failureResult(
+                                request,
+                                "BACKEND_UNAVAILABLE",
+                                retryable = false,
+                                requireNotNull(startupQueue.terminalFailureMessage),
+                            )
+                        )
+                    }
                 }
-                queuedRequests[request.requestId] = request
                 return@onEdt
             }
             sendRequest(request)
@@ -154,7 +178,8 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
     override fun cancel(requestId: String) {
         onEdt {
             val request = activeRequests.remove(requestId) ?: return@onEdt
-            queuedRequests.remove(requestId)
+            startupQueue.remove(requestId)
+            if (!ready && startupQueue.isEmpty) stopStartupDeadline()
             callbacks.remove(requestId)?.invoke(
                 failureResult(request, "CANCELLED", retryable = false, "renderer request was cancelled")
             )
@@ -209,7 +234,33 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
                 override fun onLoadEnd(browser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
                     if (disposed || frame == null || !frame.isMain) return
                     ApplicationManager.getApplication().invokeLater {
-                        if (!disposed) installBridgeGlue()
+                        if (disposed || ready || startupQueue.terminallyFailed) return@invokeLater
+                        if (httpStatusCode >= 400) {
+                            failStartupTerminal("renderer entry returned HTTP $httpStatusCode")
+                        } else if (startupQueue.markEntryLoaded()) {
+                            stopStartupDeadline()
+                            installBridgeGlue()
+                            armStartupDeadlineIfNeeded()
+                        }
+                    }
+                }
+
+                override fun onLoadError(
+                    browser: CefBrowser,
+                    frame: CefFrame,
+                    errorCode: CefLoadHandler.ErrorCode,
+                    errorText: String,
+                    failedUrl: String,
+                ) {
+                    if (disposed || !frame.isMain) return
+                    val detail = buildString {
+                        append("renderer entry failed to load: ").append(errorCode)
+                        errorText.takeIf(String::isNotBlank)?.let { append(" (").append(it).append(')') }
+                    }
+                    ApplicationManager.getApplication().invokeLater {
+                        if (!disposed && !ready) {
+                            failStartupTerminal(detail)
+                        }
                     }
                 }
             },
@@ -247,10 +298,10 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
         val envelope = runCatching { gson.fromJson(raw, WireEnvelope::class.java) }.getOrNull() ?: return
         when (envelope.type) {
             "ready" -> {
-                if (ready) return
+                if (ready || !startupQueue.markReady()) return
+                stopStartupDeadline()
                 ready = true
-                val pending = queuedRequests.values.toList()
-                queuedRequests.clear()
+                val pending = startupQueue.drain()
                 pending.forEach(::sendRequest)
             }
 
@@ -258,11 +309,59 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
         }
     }
 
+    private fun armStartupDeadlineIfNeeded() {
+        val phase = startupQueue.deadlinePhaseOrNull ?: return
+        if (startupDeadline?.isRunning == true && armedStartupPhase == phase) return
+
+        stopStartupDeadline()
+        val timeoutMillis = startupPolicy.timeoutMillis(phase)
+        startupDeadline = Timer(timeoutMillis) {
+            if (disposed || ready || startupQueue.phase != phase) return@Timer
+            val detail = when (phase) {
+                JcefStartupRequestQueue.Phase.ENTRY_LOADING ->
+                    "renderer entry did not finish loading before its configured startup deadline"
+                JcefStartupRequestQueue.Phase.READY_HANDSHAKE ->
+                    "renderer entry loaded but did not complete the ready handshake before its configured deadline"
+                else -> return@Timer
+            }
+            failStartupTerminal(detail)
+        }.apply {
+            isRepeats = false
+            start()
+        }
+        armedStartupPhase = phase
+    }
+
+    private fun stopStartupDeadline() {
+        startupDeadline?.stop()
+        startupDeadline = null
+        armedStartupPhase = null
+    }
+
+    private fun failStartupTerminal(message: String) {
+        if (disposed || ready) return
+        stopStartupDeadline()
+        startupQueue.markTerminalFailure(message)
+        val authoritativeMessage = requireNotNull(startupQueue.terminalFailureMessage)
+        val pending = startupQueue.drain()
+        pending.forEach { request ->
+            activeRequests.remove(request.requestId)
+            callbacks.remove(request.requestId)?.invoke(
+                failureResult(
+                    request,
+                    "BACKEND_UNAVAILABLE",
+                    retryable = false,
+                    authoritativeMessage,
+                )
+            )
+        }
+    }
+
     private fun handleResult(envelope: WireEnvelope) {
         val requestId = envelope.requestId?.takeIf(String::isNotBlank) ?: return
         val request = activeRequests.remove(requestId) ?: return
         val callback = callbacks.remove(requestId) ?: return
-        queuedRequests.remove(requestId)
+        startupQueue.remove(requestId)
 
         val identityMatches = envelope.sourceGeneration == request.identity.sourceGeneration &&
             envelope.configGeneration == request.identity.configGeneration
@@ -384,11 +483,12 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
         if (disposed) return
         disposed = true
         ready = false
+        stopStartupDeadline()
         val pendingCallbacks = callbacks.toMap()
         val pendingRequests = activeRequests.toMap()
         callbacks.clear()
         activeRequests.clear()
-        queuedRequests.clear()
+        startupQueue.drain()
         pendingCallbacks.forEach { (requestId, callback) ->
             pendingRequests[requestId]?.let { callback(disposedResult(it)) }
         }
@@ -517,5 +617,115 @@ class JcefDerivedRendererRuntime : DerivedRendererRuntime {
             }
             append('"')
         }
+    }
+}
+
+
+internal data class JcefStartupPolicy(
+    val entryLoadTimeoutMillis: Int,
+    val readyHandshakeTimeoutMillis: Int,
+) {
+    init {
+        require(entryLoadTimeoutMillis > 0) { "entry-load timeout must be positive" }
+        require(readyHandshakeTimeoutMillis > 0) { "ready-handshake timeout must be positive" }
+    }
+
+    fun timeoutMillis(phase: JcefStartupRequestQueue.Phase): Int = when (phase) {
+        JcefStartupRequestQueue.Phase.ENTRY_LOADING -> entryLoadTimeoutMillis
+        JcefStartupRequestQueue.Phase.READY_HANDSHAKE -> readyHandshakeTimeoutMillis
+        else -> error("startup deadline requested for terminal phase: $phase")
+    }
+
+    companion object {
+        const val ENTRY_LOAD_TIMEOUT_REGISTRY_KEY = "markflow.renderer.jcef.entryLoadTimeoutMs"
+        const val READY_HANDSHAKE_TIMEOUT_REGISTRY_KEY = "markflow.renderer.jcef.readyHandshakeTimeoutMs"
+
+        fun fromRegistry(): JcefStartupPolicy = JcefStartupPolicy(
+            entryLoadTimeoutMillis = Registry.intValue(ENTRY_LOAD_TIMEOUT_REGISTRY_KEY),
+            readyHandshakeTimeoutMillis = Registry.intValue(READY_HANDSHAKE_TIMEOUT_REGISTRY_KEY),
+        )
+    }
+}
+
+internal class JcefStartupRequestQueue<T>(
+    private val capacity: Int,
+) {
+    enum class Phase {
+        ENTRY_LOADING,
+        READY_HANDSHAKE,
+        READY,
+        TERMINAL_FAILURE,
+    }
+
+    enum class OfferResult {
+        ACCEPTED,
+        FULL,
+        TERMINAL_FAILURE,
+    }
+
+    private val pending = LinkedHashMap<String, T>()
+
+    var phase: Phase = Phase.ENTRY_LOADING
+        private set
+
+    var terminalFailureMessage: String? = null
+        private set
+
+    val terminallyFailed: Boolean
+        get() = phase == Phase.TERMINAL_FAILURE
+
+    init {
+        require(capacity > 0) { "startup queue capacity must be positive" }
+    }
+
+    val size: Int
+        get() = pending.size
+
+    val isEmpty: Boolean
+        get() = pending.isEmpty()
+
+    val deadlinePhaseOrNull: Phase?
+        get() = phase.takeIf {
+            pending.isNotEmpty() && (it == Phase.ENTRY_LOADING || it == Phase.READY_HANDSHAKE)
+        }
+
+    fun offer(id: String, value: T): OfferResult {
+        require(id.isNotBlank()) { "startup request id must not be blank" }
+        if (terminallyFailed) return OfferResult.TERMINAL_FAILURE
+        check(phase != Phase.READY) { "ready runtime must not enqueue startup work" }
+        if (pending.size >= capacity) return OfferResult.FULL
+        pending[id] = value
+        return OfferResult.ACCEPTED
+    }
+
+    fun remove(id: String): T? = pending.remove(id)
+
+    fun drain(): List<T> {
+        val values = pending.values.toList()
+        pending.clear()
+        return values
+    }
+
+    fun markEntryLoaded(): Boolean {
+        if (phase != Phase.ENTRY_LOADING) return false
+        phase = Phase.READY_HANDSHAKE
+        return true
+    }
+
+    fun markTerminalFailure(message: String) {
+        require(message.isNotBlank()) { "startup failure message must not be blank" }
+        if (phase == Phase.READY || phase == Phase.TERMINAL_FAILURE) return
+        terminalFailureMessage = terminalFailureMessage ?: message
+        phase = Phase.TERMINAL_FAILURE
+    }
+
+    /**
+     * Any startup failure is terminal for this runtime instance because there is no reload/retry
+     * owner. A late ready message must never resurrect an instance that already failed startup.
+     */
+    fun markReady(): Boolean {
+        if (phase == Phase.TERMINAL_FAILURE) return false
+        phase = Phase.READY
+        return true
     }
 }
