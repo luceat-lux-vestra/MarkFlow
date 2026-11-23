@@ -26,7 +26,6 @@ import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.handler.CefLoadHandler
 import org.cef.browser.CefFrame
 import org.cef.network.CefRequest
-import java.util.concurrent.atomic.AtomicBoolean
 import java.awt.Rectangle
 import java.nio.file.Files
 import java.nio.file.Path
