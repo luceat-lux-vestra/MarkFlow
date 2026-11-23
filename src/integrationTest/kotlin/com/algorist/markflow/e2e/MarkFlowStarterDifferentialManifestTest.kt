@@ -24,8 +24,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import javax.imageio.ImageIO
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
