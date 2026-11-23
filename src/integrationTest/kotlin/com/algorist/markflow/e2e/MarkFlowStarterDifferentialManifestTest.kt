@@ -789,6 +789,11 @@ class MarkFlowStarterDifferentialManifestTest {
                             dest.resolve("native-heading-source-geometry.txt"),
                             nativeHeadingGeometry, StandardCharsets.UTF_8
                         )
+                        val nativePresentationWidth = nativeRasterGeometry.lineSequence()
+                            .firstOrNull { it.startsWith("mermaid_presentation_width=") }
+                            ?.substringAfter('=')?.toIntOrNull()
+                            ?.takeIf { it > 0 }
+                            ?: error("Stage D normalized Mermaid presentation width is not parseable")
                         val rasterCount = nativeRasterGeometry.lineSequence()
                             .firstOrNull { it.startsWith("raster_count=") }
                             ?.substringAfter('=')?.toIntOrNull()
@@ -846,15 +851,12 @@ class MarkFlowStarterDifferentialManifestTest {
                                     (iw * 2L).toString() + "x" + (ih * 2L)
                                 ).joinToString("\t")
                             }
-                            // E7: a proper display scale cannot recover labels
-                            // already compressed into a tiny intrinsic Gantt SVG.
-                            // This bound is scoped ONLY to the pinned 4-day Gantt
-                            // fixture at a 1200px editor width and is candidate
-                            // evidence, not an all-diagram width requirement.
-                            if (ganttIntrinsicRasterWidthTooNarrow(iw)) {
+                            // Gantt x-axis geometry must be rendered from the actual native
+                            // editor presentation width, not a hidden JCEF parent or fixed canvas.
+                            if (iw != nativePresentationWidth) {
                                 structuralFailures += listOf(
-                                    entry.id, "CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800",
-                                    iw.toString(), "800"
+                                    entry.id, "GANTT_RENDER_WIDTH_VIEWPORT_MISMATCH",
+                                    iw.toString(), nativePresentationWidth.toString()
                                 ).joinToString("\t")
                             }
                         }
@@ -4608,20 +4610,11 @@ class MarkFlowStarterDifferentialManifestTest {
             displayedHeight.toLong() > intrinsicHeight.toLong() * 2L
     }
 
-    // Scoped Gantt-only fixture safeguard against a hidden 284px JCEF canvas.
-    private fun ganttIntrinsicRasterWidthTooNarrow(width: Int): Boolean {
-        require(width > 0)
-        return width < 800
-    }
-
     private fun candidateRasterScaleNegativeControls(): Boolean =
         !ganttRasterExceededCandidateScale(320, 180, 640, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 641, 360) &&
             ganttRasterExceededCandidateScale(320, 180, 640, 361) &&
-            !ganttRasterExceededCandidateScale(320, 180, 320, 180) &&
-            ganttIntrinsicRasterWidthTooNarrow(799) &&
-            !ganttIntrinsicRasterWidthTooNarrow(800) &&
-            !ganttIntrinsicRasterWidthTooNarrow(960)
+            !ganttRasterExceededCandidateScale(320, 180, 320, 180)
 
     private fun sha(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {

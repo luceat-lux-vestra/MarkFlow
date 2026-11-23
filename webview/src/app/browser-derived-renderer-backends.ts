@@ -46,7 +46,9 @@ class BrowserMermaidBackend implements DerivedRendererBackend {
         throwIfAborted(request.signal);
 
         const mermaid = module.default;
-        mermaid.initialize(createMermaidPreviewConfig(runtimeSettings));
+        mermaid.initialize(
+            createMermaidPreviewConfig(runtimeSettings, optionalPresentationWidth(request.config))
+        );
         const output = await mermaid.render(`markflow-derived-mermaid-${++this.renderSequence}`, request.source);
         throwIfAborted(request.signal);
         return {mediaType: "image/svg+xml" as const, content: output.svg};
@@ -77,6 +79,15 @@ export const createBrowserDerivedRendererService = (): DerivedRendererService =>
         maxRetries: {mermaid: 1, katex: 0},
         maxCacheEntries: 64
     });
+
+const optionalPresentationWidth = (config: Readonly<Record<string, unknown>>): number | undefined => {
+    const width = config.presentationWidthPx;
+    if (width === undefined) return undefined;
+    if (typeof width !== "number" || !Number.isInteger(width) || width <= 0) {
+        throw new Error("invalid Mermaid presentation width");
+    }
+    return width;
+};
 
 const requireRuntimeSettings = (config: Readonly<Record<string, unknown>>): ResolvedRuntimeSettings => {
     const runtimeSettings = config.runtimeSettings;

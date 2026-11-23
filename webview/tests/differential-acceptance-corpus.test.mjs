@@ -325,9 +325,11 @@ test("pinned Mermaid runtime sizing matrix covers all detectors and checked-in c
   const runtimeSource = readFileSync(resolve(repositoryRoot, "webview/src/app/runtime-settings.ts"), "utf8");
   const factory = runtimeSource.split("export const createMermaidPreviewConfig =")[1];
   assert.ok(factory, "Mermaid runtime config factory changed; re-audit the sizing matrix");
-  // Restrict the source-level contract to explicit object literals with a useMaxWidth field.
+  // Restrict the source-level contract to explicit top-level config entries whose
+  // expression contains useMaxWidth. The value may be a plain object literal or a
+  // reviewed conditional expression (for example Gantt's host-width-dependent config).
   // This detects source changes but does not claim the Mermaid engine honors every option.
-  const actual = new Map([...factory.matchAll(/^\s{8}([A-Za-z][A-Za-z0-9]*):\s*\{([^\n}]*)\},?\s*$/gm)]
+  const actual = new Map([...factory.matchAll(/^\s{8}([A-Za-z][A-Za-z0-9]*):\s*(.+),?\s*$/gm)]
     .filter((match) => /\buseMaxWidth\b/.test(match[2]))
     .map((match) => [match[1], match[2]]));
   assert.ok(actual.size > 0, "no per-diagram config keys found; inspect the factory");

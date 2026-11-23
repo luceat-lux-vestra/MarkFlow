@@ -955,6 +955,8 @@ internal object NativeDifferentialPreviewE2EBridge {
             "visible_y=" + region.y,
             "visible_width=" + region.width,
             "visible_height=" + region.height,
+            "mermaid_presentation_width=" +
+                (normalizeMermaidPresentationWidth(region.width)?.toString() ?: "UNAVAILABLE"),
             "raster_count=" + records.size,
         ).joinToString(separator = "\n")
         return header + "\n" + records.joinToString(separator = "\n", postfix = "\n")

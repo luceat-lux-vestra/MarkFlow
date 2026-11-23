@@ -270,6 +270,79 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         assertEquals("controller must dispose its lazily created runtime exactly once", 1, runtime.disposeCalls)
     }
 
+    fun testMermaidRenderWidthComesFromEditorPresentationWidthAndRerendersOnlyMermaidOnChange() {
+        myFixture.configureByText("gantt-width.md", representativeSource())
+        myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("Plain body") + 2)
+        val sourceBefore = myFixture.editor.document.text
+        val runtime = DeferredRuntime(callbackOnCancel = true)
+        var presentationWidth = 731
+        val controller = NativeDerivedPresentationController(
+            editor = myFixture.editor,
+            runtime = runtime,
+            settingsProvider = { runtimeSettings() },
+            richPresentationEnabled = { true },
+            presentationWidthProvider = { presentationWidth },
+        )
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        val firstMermaid = runtime.rendered.single { it.request.kind.wireName == "mermaid" }
+        assertTrue(firstMermaid.request.configJson.contains("\"presentationWidthPx\":731"))
+        assertEquals(3, runtime.rendered.size)
+
+        presentationWidth = 1043
+        controller.refreshMermaidPresentationWidth(presentationWidth)
+
+        assertTrue(runtime.cancelled.contains(firstMermaid.request.requestId))
+        assertEquals("cancel callback must not become a renderer failure",
+            0L, controller.evidenceSnapshot().rendererFailures)
+        assertEquals(3, controller.evidenceSnapshot().pendingRequests)
+        assertEquals(4, runtime.rendered.size)
+        val secondMermaid = runtime.rendered.last()
+        assertEquals("mermaid", secondMermaid.request.kind.wireName)
+        assertTrue(secondMermaid.request.configJson.contains("\"presentationWidthPx\":1043"))
+        assertEquals(sourceBefore, myFixture.editor.document.text)
+
+        controller.refreshMermaidPresentationWidth(presentationWidth)
+        assertEquals("unchanged viewport width must not rerender", 4, runtime.rendered.size)
+        Disposer.dispose(controller)
+    }
+
+    fun testMermaidPresentationWidthUsesNativeArtifactSafetyBound() {
+        assertNull(normalizeMermaidPresentationWidth(0))
+        assertEquals(1, normalizeMermaidPresentationWidth(1))
+        assertEquals(4096, normalizeMermaidPresentationWidth(Int.MAX_VALUE))
+    }
+
+    fun testMermaidPlanReplacementDoesNotReuseStalePresentationWidth() {
+        myFixture.configureByText("gantt-width-plan-replacement.md", representativeSource())
+        myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("Plain body") + 2)
+        val runtime = DeferredRuntime()
+        var presentationWidth = 731
+        val controller = NativeDerivedPresentationController(
+            editor = myFixture.editor,
+            runtime = runtime,
+            settingsProvider = { runtimeSettings() },
+            richPresentationEnabled = { true },
+            presentationWidthProvider = { presentationWidth },
+        )
+
+        controller.applyPlan(plan(configGeneration = 1L))
+        assertEquals(3, runtime.rendered.size)
+        assertTrue(runtime.rendered.single { it.request.kind.wireName == "mermaid" }
+            .request.configJson.contains("\"presentationWidthPx\":731"))
+
+        presentationWidth = 0
+        controller.applyPlan(plan(configGeneration = 2L))
+        assertEquals(6, runtime.rendered.size)
+        assertFalse(runtime.rendered.last { it.request.kind.wireName == "mermaid" }
+            .request.configJson.contains("presentationWidthPx"))
+
+        controller.refreshMermaidPresentationWidth(731)
+        assertEquals("new plan must not inherit the prior plan's width suppression state", 7, runtime.rendered.size)
+        assertTrue(runtime.rendered.last().request.configJson.contains("\"presentationWidthPx\":731"))
+        Disposer.dispose(controller)
+    }
+
     fun testNativeRasterSizingRetainsMermaidModesZoomAndKatexInlineDisplayBounds() {
         assertEquals(
             400 to 200,
@@ -462,7 +535,9 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
         val callback: (DerivedRendererRuntimeResult) -> Unit,
     )
 
-    private class DeferredRuntime : DerivedRendererRuntime {
+    private class DeferredRuntime(
+        private val callbackOnCancel: Boolean = false,
+    ) : DerivedRendererRuntime {
         val rendered = mutableListOf<Rendered>()
         val cancelled = mutableListOf<String>()
         var disposeCalls = 0
@@ -473,6 +548,19 @@ class NativeDerivedPresentationControllerTest : BasePlatformTestCase() {
 
         override fun cancel(requestId: String) {
             cancelled += requestId
+            if (!callbackOnCancel) return
+            val renderedRequest = rendered.lastOrNull { it.request.requestId == requestId } ?: return
+            renderedRequest.callback(
+                DerivedRendererRuntimeResult(
+                    requestId = requestId,
+                    status = "failure",
+                    kind = renderedRequest.request.kind.wireName,
+                    identity = renderedRequest.request.identity,
+                    code = "CANCELLED",
+                    retryable = false,
+                    message = "synthetic synchronous cancellation",
+                )
+            )
         }
 
         override fun dispose() {
