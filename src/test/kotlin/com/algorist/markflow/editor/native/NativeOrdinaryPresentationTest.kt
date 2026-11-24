@@ -2576,7 +2576,11 @@ Tail
             assertEquals(listOf("outer", "nested", "outer again"), renderer.displayLines)
             assertEquals(listOf(0, 1, 0), renderer.displayDepths)
             assertEquals(0, renderer.contentIndentPx(0))
-            assertTrue(renderer.contentIndentPx(1) > 0)
+            val sharedLayout = NativePresentationLayoutPolicy(editor)
+            assertEquals(
+                sharedLayout.typographicGutter() * 2 + sharedLayout.thinStroke(),
+                renderer.contentIndentPx(1),
+            )
             assertEquals(0, renderer.contentIndentPx(2))
             assertEquals(3, renderer.visualLineCount)
             assertEquals(source, editor.document.text)

@@ -1400,6 +1400,18 @@ fi
 grep -Fq 'UIManager.getIcon(CHECKBOX_ICON_KEY)' "$list_presentation" ||
   die "#628 task checkbox geometry no longer consults the current Look and Feel"
 
+# #645 blockquote chrome must consume the shared live-editor layout policy without fixed pixel geometry.
+blockquote_presentation="src/main/kotlin/com/algorist/markflow/editor/native/NativeBlockQuotePresentationController.kt"
+grep -Fq 'private val layoutPolicy = NativePresentationLayoutPolicy(editor)' "$blockquote_presentation" ||
+  die "#645 blockquote renderer bypassed the shared native layout policy"
+grep -Fq 'layoutPolicy.availableContentWidth' "$blockquote_presentation" ||
+  die "#645 blockquote width no longer uses shared viewport/component/intrinsic authority"
+grep -Fq 'intrinsicContentWidth(layout)' "$blockquote_presentation" ||
+  die "#645 blockquote detached/pre-layout width lost intrinsic content fallback"
+if grep -Eq 'private const val (MIN_WIDTH|OUTER_HORIZONTAL_MARGIN|BAR_LEFT_PADDING|BAR_WIDTH|CONTENT_PADDING|NESTED_LEVEL_INDENT|NESTED_BAR_VERTICAL_INSET|LIST_MARKER_GAP|VERTICAL_PADDING|ARC)[[:space:]]*=' "$blockquote_presentation"; then
+  die "#645 blockquote chrome regressed to fixed device-pixel geometry"
+fi
+
 # #638 JCEF startup lifetime: distinct entry-load and ready-handshake policy, configured through Registry.
 jcef_runtime="src/main/kotlin/com/algorist/markflow/renderer/jcef/JcefDerivedRendererRuntime.kt"
 jcef_descriptor="src/main/resources/META-INF/markflow-jcef.xml"
