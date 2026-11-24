@@ -21,8 +21,40 @@ class NativeListPresentationTest : BasePlatformTestCase() {
         assertEquals(listOf("parent", "child", "grandchild", "sibling"), model.rows.map(NativeListRow::text))
         assertEquals(listOf(0, 1, 2, 0), model.rows.map(NativeListRow::depth))
         val editor = myFixture.editor
-        assertTrue(nativeListIndentPixels(editor, 2) > nativeListIndentPixels(editor, 1))
-        assertTrue(nativeListIndentPixels(editor, 1) > nativeListIndentPixels(editor, 0))
+        val layoutPolicy = NativePresentationLayoutPolicy(editor)
+        assertTrue(layoutPolicy.indentPixels(2) > layoutPolicy.indentPixels(1))
+        assertTrue(layoutPolicy.indentPixels(1) > layoutPolicy.indentPixels(0))
+        assertTrue(layoutPolicy.typographicGutter() > 0)
+    }
+
+    fun testSharedLayoutWidthUsesViewportThenComponentThenIntrinsicFallback() {
+        assertEquals(
+            980,
+            resolveNativePresentationWidth(
+                viewportWidth = 1000,
+                componentWidth = 800,
+                horizontalInset = 10,
+                intrinsicWidth = 240,
+            ),
+        )
+        assertEquals(
+            780,
+            resolveNativePresentationWidth(
+                viewportWidth = 0,
+                componentWidth = 800,
+                horizontalInset = 10,
+                intrinsicWidth = 240,
+            ),
+        )
+        assertEquals(
+            240,
+            resolveNativePresentationWidth(
+                viewportWidth = 0,
+                componentWidth = 0,
+                horizontalInset = 10,
+                intrinsicWidth = 240,
+            ),
+        )
     }
 
     fun testListIndentResultRefreshesNativeHierarchyWithUndoRedo() {

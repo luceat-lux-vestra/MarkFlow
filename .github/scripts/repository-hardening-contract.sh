@@ -1375,15 +1375,28 @@ if grep -Fq 'CANDIDATE_GANTT_MIN_INTRINSIC_WIDTH_800' "$manifest_test"; then
   die "Stage E7 retained obsolete fixed intrinsic-width acceptance"
 fi
 
-# #628 native list geometry must remain derived from the live editor/LAF contract.
+# #628/#645 native list geometry must remain derived from the shared live-editor/LAF contract.
 list_presentation="src/main/kotlin/com/algorist/markflow/editor/native/NativeListPresentationController.kt"
+presentation_layout_policy="src/main/kotlin/com/algorist/markflow/editor/native/NativePresentationLayoutPolicy.kt"
+[ -f "$presentation_layout_policy" ] ||
+  die "#645 shared native presentation layout policy is missing"
 if grep -Eq 'private const val (MIN_WIDTH|OUTER_PADDING|DEPTH_INDENT|MARKER_GAP)[[:space:]]*=' "$list_presentation"; then
   die "#628 native list geometry regressed to fixed device-pixel layout constants"
 fi
-grep -Fq 'internal fun nativeListTypographicGutter(editor: Editor)' "$list_presentation" ||
-  die "#628 list gutter no longer derives from current editor typography"
-grep -Fq 'internal fun nativeListIndentPixels(editor: Editor, depth: Int)' "$list_presentation" ||
-  die "#628 list nesting no longer derives from current editor metrics"
+if grep -Eq 'const val|visibleArea\.height' "$presentation_layout_policy"; then
+  die "#645 shared layout policy must stay live-metric-derived and width-axis-correct"
+fi
+grep -Fq 'fun typographicGutter(): Int' "$presentation_layout_policy" ||
+  die "#645 shared layout policy lost editor-typographic gutter authority"
+grep -Fq 'fun indentPixels(depth: Int): Int' "$presentation_layout_policy" ||
+  die "#645 shared layout policy lost editor/tab-derived indentation authority"
+grep -Fq 'fun availableContentWidth(' "$presentation_layout_policy" ||
+  die "#645 shared layout policy lost live viewport/intrinsic width authority"
+grep -Fq 'val layoutPolicy = NativePresentationLayoutPolicy(editor)' "$list_presentation" ||
+  die "#645 list renderer bypassed the shared native layout policy"
+if grep -Eq 'nativeListTypographicGutter|nativeListIndentPixels' "$list_presentation"; then
+  die "#645 list-local layout helper authority was reintroduced"
+fi
 grep -Fq 'UIManager.getIcon(CHECKBOX_ICON_KEY)' "$list_presentation" ||
   die "#628 task checkbox geometry no longer consults the current Look and Feel"
 
