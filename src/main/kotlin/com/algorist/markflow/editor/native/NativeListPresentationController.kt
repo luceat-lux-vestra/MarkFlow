@@ -991,16 +991,7 @@ internal class NativeListInlayRenderer(
 
     internal fun preferredWidthForCurrentEditor(): Int {
         val layout = layoutMetrics()
-        val viewportWidth = editor.scrollingModel.visibleArea.width
-        val componentWidth = editor.contentComponent.width
-        val measuredWidth = when {
-            viewportWidth > 0 -> viewportWidth
-            componentWidth > 0 -> componentWidth
-            else -> 0
-        }
-        return if (measuredWidth > 0) {
-            max(1, measuredWidth - layout.outerPadding * 2)
-        } else {
+        return layoutPolicy.availableContentWidth(layout.outerPadding) {
             intrinsicContentWidth(layout)
         }
     }
@@ -1148,10 +1139,10 @@ internal class NativeListInlayRenderer(
         model.rows.take(index).sumOf(::rowVisualLineCount) * height
 
     private fun layoutMetrics(): NativeListLayoutMetrics {
-        val gutter = nativeListTypographicGutter(editor)
+        val gutter = layoutPolicy.typographicGutter()
         return NativeListLayoutMetrics(
             outerPadding = gutter,
-            depthIndent = nativeListIndentPixels(editor, 1),
+            depthIndent = layoutPolicy.indentPixels(1),
             markerGap = gutter,
         )
     }
@@ -1213,6 +1204,8 @@ internal class NativeListInlayRenderer(
         val markerGap: Int,
     )
 
+    private val layoutPolicy = NativePresentationLayoutPolicy(editor)
+
     companion object {
         private const val CHECKBOX_ICON_KEY = "CheckBox.icon"
         private const val CHECKBOX_FOREGROUND_KEY = "CheckBox.foreground"
@@ -1259,17 +1252,3 @@ internal fun nativeListDisplayMarker(marker: String): String =
         else -> marker
     }
 
-internal fun nativeListTypographicGutter(editor: Editor): Int {
-    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-    val spaceWidth = max(1, metrics.charWidth(' '))
-    return max(spaceWidth, metrics.height / 2)
-}
-
-internal fun nativeListIndentPixels(editor: Editor, depth: Int): Int {
-    require(depth >= 0)
-    val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
-    val spaceWidth = max(1, metrics.charWidth(' '))
-    val tabColumns = editor.settings.getTabSize(editor.project).coerceAtLeast(1)
-    val tabWidth = spaceWidth * tabColumns
-    return depth * (tabWidth + nativeListTypographicGutter(editor))
-}
