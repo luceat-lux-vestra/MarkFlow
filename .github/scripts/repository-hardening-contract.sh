@@ -9,6 +9,41 @@ die() {
   exit 1
 }
 
+# Action dependencies own their immutable pins in the workflow declarations.
+# Verify identity, count, full SHA and consistent pin without duplicating a
+# volatile dependency version in this separate contract.
+immutable_action_pin() {
+  local action="$1" expected_count="$2" workflow="$3" lines pins
+  lines="$(grep -E "^[[:space:]]+uses:[[:space:]]+$action@" "$workflow")" || return 1
+  [ "$(printf '%s\n' "$lines" | wc -l | tr -d '[:space:]')" = "$expected_count" ] || return 1
+  if printf '%s\n' "$lines" | grep -Ev "^[[:space:]]+uses:[[:space:]]+$action@[0-9a-f]{40}([[:space:]]+#.*)?[[:space:]]*$" >/dev/null; then
+    return 1
+  fi
+  pins="$(printf '%s\n' "$lines" | sed -E 's/^[^@]+@([0-9a-f]{40}).*$/\1/' | sort -u)"
+  [ "$(printf '%s\n' "$pins" | wc -l | tr -d '[:space:]')" = 1 ] || return 1
+  printf '%s\n' "$pins"
+}
+
+# Regression controls for the declaration-based pin contract. Synthetic SHA
+# values are test-only and must never serve as production dependency authority.
+(
+  pin="$(printf '%040d' 1)"
+  next_pin="$(printf '%040d' 2)"
+  sample="$(printf '        uses: actions/example@%s # v1\n' "$pin")"
+  [ "$(immutable_action_pin 'actions/example' 1 /dev/stdin <<<"$sample")" = "$pin" ] ||
+    die "immutable-action validation rejected a valid pin"
+  [ "$(immutable_action_pin 'actions/example' 1 /dev/stdin <<<"$(printf '        uses: actions/example@%s # v2' "$next_pin")")" = "$next_pin" ] ||
+    die "immutable-action validation rejected a valid update"
+  for bad in "        uses: actions/example@v1" "        uses: other/example@$pin" "$sample"$'\n'"$sample"; do
+    if immutable_action_pin 'actions/example' 1 /dev/stdin <<<"$bad" >/dev/null; then
+      die "immutable-action validation accepted a malformed/duplicate pin"
+    fi
+  done
+  if immutable_action_pin 'actions/example' 2 /dev/stdin <<<"$sample"$'\n'"        uses: actions/example@$next_pin" >/dev/null; then
+    die "immutable-action validation accepted inconsistent pins"
+  fi
+)
+
 owned_runtime_probe="src/main/kotlin/com/algorist/markflow/editor/native/OwnedNativeFileEditorRuntimeProbe.kt"
 [ -f "$owned_runtime_probe" ] || die "#584 production owned-FileEditor runtime evidence source is missing"
 projection_probe="src/main/kotlin/com/algorist/markflow/editor/native/NativeProjectionProbe.kt"
@@ -288,8 +323,8 @@ grep -Fq 'git merge-base --is-ancestor "$EXPECTED_SHA" origin/main' "$qodana_ful
   die "trusted full Qodana no longer restricts candidate SHA to protected-main history"
 grep -Fq 'ref: ${{ env.EXPECTED_SHA }}' "$qodana_full_workflow" ||
   die "trusted full Qodana does not checkout the selected exact SHA"
-grep -Fq 'JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f' "$qodana_full_workflow" ||
-  die "trusted full Qodana action pin drifted"
+qodana_full_pin="$(immutable_action_pin 'JetBrains/qodana-action' 1 "$qodana_full_workflow")" ||
+  die "trusted full Qodana must use exactly one immutable standalone action pin"
 grep -Fq -- '--image jetbrains/qodana-jvm-community:2026.2 --clear-cache' "$qodana_full_workflow" ||
   die "trusted full Qodana image/reproducibility contract drifted"
 grep -Fq 'use-caches: false' "$qodana_full_workflow" ||
@@ -313,8 +348,9 @@ if grep -Fq 'alias(libs.plugins.qodana)' build.gradle.kts ||
    grep -Eq '^qodana[[:space:]]*=' gradle/libs.versions.toml; then
   die "Product/Starter Gradle configuration must not depend on the CI-only Qodana scanner plugin"
 fi
-grep -Fq 'JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f' "$build_workflow" ||
-  die "PR-time Qodana authority must remain pinned to the standalone action"
+qodana_pr_pin="$(immutable_action_pin 'JetBrains/qodana-action' 1 "$build_workflow")" ||
+  die "PR-time Qodana authority must use exactly one immutable standalone action pin"
+[ "$qodana_pr_pin" = "$qodana_full_pin" ] || die "PR-time and trusted full Qodana action pins must agree"
 grep -Fq -- '--image jetbrains/qodana-jvm-community:2026.2 --clear-cache' "$build_workflow" ||
   die "PR-time Qodana authority lost its pinned scanner image"
 
@@ -786,7 +822,7 @@ if grep -Eq '263\.4732\.28|eap2|EAP2' "$starter_workflow"; then
 fi
 [ "$(grep -Fc './gradlew buildPlugin ' "$starter_workflow" || true)" = "1" ] || die "Starter workflow must package the candidate plugin exactly once"
 [ "$(grep -Fc -- '-x buildPlugin' "$starter_workflow" || true)" -ge "2" ] || die "Starter shard/repeat jobs must explicitly forbid packaged-plugin rebuilds"
-grep -Fq 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' "$starter_workflow" || die "Starter workflow exact-artifact download action pin drifted"
+immutable_action_pin 'actions/download-artifact' 3 "$starter_workflow" >/dev/null || die "Starter workflow must use a consistent immutable exact-artifact download action pin"
 grep -Fq 'scenario_sets=canonical,core-editing,ordinary-markdown,derived-content,lifecycle,visual-acceptance' "$starter_workflow" || die "Starter package manifest does not freeze the maintained semantic and visual acceptance sets"
 starter_selector=".github/scripts/targeted-e2e-selection.py"
 [ -f "$starter_selector" ] || die "Starter validated matrix selector is missing"
@@ -1691,7 +1727,7 @@ awk '
   END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
 ' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
-grep -Fq 'browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0' ".github/workflows/build.yml" || die "ARM64 browser acceptance lacks immutable Chrome for Testing setup action"
+immutable_action_pin 'browser-actions/setup-chrome' 1 "$build_workflow" >/dev/null || die "ARM64 browser acceptance lacks immutable Chrome for Testing setup action"
 grep -Fq 'chrome-version: 156.0.8078.80' ".github/workflows/build.yml" || die "ARM64 browser acceptance Chrome for Testing version drifted"
 grep -Fq 'install-dependencies: true' ".github/workflows/build.yml" || die "ARM64 Chrome for Testing runtime dependencies are not explicitly provisioned"
 grep -Fq 'CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}' ".github/workflows/build.yml" || die "ARM64 browser acceptance does not consume the setup-chrome executable path"
@@ -2056,7 +2092,7 @@ dependency_job="$(awk '
 ' "$build_workflow")"
 [ -n "$dependency_job" ] || die "integrated Dependency Review job could not be located"
 grep -q '^    name: Dependency Review$' <<<"$dependency_job" || die "Dependency Review component name drifted"
-grep -q 'uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294' <<<"$dependency_job" || die "Dependency Review action pin drifted"
+immutable_action_pin 'actions/dependency-review-action' 1 /dev/stdin <<<"$dependency_job" >/dev/null || die "Dependency Review must use exactly one immutable action pin"
 grep -q 'fail-on-severity: moderate' <<<"$dependency_job" || die "Dependency Review severity gate drifted"
 
 merge_gate_job="$(awk '

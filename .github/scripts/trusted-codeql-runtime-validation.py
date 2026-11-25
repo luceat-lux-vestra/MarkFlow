@@ -55,17 +55,41 @@ def require_supported_codeql_patch(entry: dict) -> None:
     patch = entry.get("patch")
     require(isinstance(patch, str) and patch,
             "CodeQL workflow change has no reviewable patch")
-    changed = [
-        line[1:].strip()
-        for line in patch.splitlines()
-        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
-    ]
+    # A grouped native updater may also update the other existing runtime
+    # actions. Only in-place immutable pin replacements of the same action at
+    # the same indentation are admitted. Context and hunk boundaries separate
+    # replacements; unrelated settings, additions, removals and action swaps
+    # remain outside this adapter.
     allowed = re.compile(
-        r"uses:\s*github/codeql-action/(?:init|analyze)@"
-        r"[0-9a-f]{40}(?:\s+#.*)?\Z"
+        r"(?P<indent> +)uses: *(?P<action>github/codeql-action/(?:init|analyze)"
+        r"|actions/(?:checkout|setup-java|upload-artifact)"
+        r"|gradle/actions/setup-gradle)@[0-9a-f]{40}(?: +#.*)?\Z"
     )
-    require(changed and all(allowed.fullmatch(line) for line in changed),
-            "CodeQL workflow mutation exceeds the init/analyze runtime adapter")
+    removed: list[tuple[str, str]] = []
+    added: list[tuple[str, str]] = []
+    groups = 0
+
+    def finish_group() -> None:
+        nonlocal groups
+        if not removed and not added:
+            return
+        require(removed == added and bool(removed),
+                "CodeQL workflow action replacement changed identity or placement")
+        groups += 1
+        removed.clear()
+        added.clear()
+
+    for line in patch.splitlines():
+        if not line.startswith(("+", "-")) or line.startswith(("+++", "---")):
+            finish_group()
+            continue
+        match = allowed.fullmatch(line[1:])
+        require(match is not None,
+                "CodeQL workflow mutation exceeds the immutable action adapter")
+        target = removed if line[0] == "-" else added
+        target.append((match.group("indent"), match.group("action")))
+    finish_group()
+    require(groups > 0, "CodeQL workflow change has no supported action replacements")
 
 
 def classify(pull: dict, pages: list, expected_head: str) -> bool:
@@ -247,6 +271,34 @@ def self_test() -> None:
         "status": "modified",
         "patch": pin_patch,
     }]], sha)
+
+    java_patch = (
+        "@@ -1 +1 @@\n"
+        "-        uses: actions/setup-java@" + "d" * 40 + "\n"
+        "+        uses: actions/setup-java@" + "e" * 40 + "\n"
+    )
+    def classify_patch(patch: str) -> bool:
+        return classify(pull, [[{
+            "filename": ".github/workflows/codeql.yml",
+            "status": "modified",
+            "patch": patch,
+        }]], sha)
+
+    assert classify_patch(java_patch + pin_patch)
+    for invalid_patch in (
+        java_patch.replace("+        uses: actions/setup-java@", "+        uses: actions/checkout@"),
+        java_patch.replace("+        uses:", "+      uses:"),
+        java_patch.replace("e" * 40, "v6"),
+        java_patch.split("\n+")[0],
+        java_patch + "@@ -10 +10 @@\n-          java-version: 25\n+          java-version: 26",
+        java_patch + "@@ -10 +10 @@\n-      contents: read\n+      contents: write",
+    ):
+        try:
+            classify_patch(invalid_patch)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsafe grouped action replacement was accepted")
 
     for bad_pull, bad_pages, bad_sha in (
         ({"head": {"sha": sha}, "changed_files": 2},
