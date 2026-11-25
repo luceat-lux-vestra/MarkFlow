@@ -20,7 +20,7 @@ concurrency:
 jobs:
   validate:
     name: Validate exact release candidate target
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require exact current protected-main identity

@@ -410,7 +410,7 @@ def validate(source):
         require("name: Detect existing published recovery identity" in job
                 and "steps.recovery.outputs.skip != 'true'" in job,
                 name + ": recovery bypass or inversion")
-        require("    runs-on: ubuntu-24.04-arm\n" in job
+        require("    runs-on: ubuntu-26.04-arm\n" in job
                 and "    timeout-minutes: 90\n" in job,
                 name + ": scanner execution bounds changed")
     publish = jobs["release"]
@@ -539,9 +539,10 @@ assert_gradle_managed_node() {
   fi
 }
 
-[ "$(tr -d '[:space:]' < .nvmrc)" = "26.10.0" ] || die ".nvmrc must pin renderer Node 26.10.0"
-jq -e '.engines.node == ">=26 <27"' webview/package.json >/dev/null || die "webview package must constrain Node to the 26.x line"
-jq -e '.devDependencies["@types/node"] | startswith("^26.")' webview/package.json >/dev/null || die "@types/node must align to Node 26"
+[ "$(tr -d '[:space:]' < .nvmrc)" = "lts/*" ] || die "renderer Node must follow newest LTS"
+grep -Fq 'https://nodejs.org/dist/index.json' build.gradle.kts || die "renderer LTS must resolve official upstream release metadata"
+grep -Fq 'inputs.property("rendererNodeVersion", rendererNodeVersion)' build.gradle.kts || die "resolved Node version must participate in renderer cache inputs"
+jq -e '.engines.node | test("^>=[0-9]+$")' webview/package.json >/dev/null || die "renderer engine must not cap future LTS versions"
 grep -Fq 'url = uri("https://nodejs.org/dist/")' build.gradle.kts || die "Gradle renderer build must resolve Node from the official distribution repository"
 grep -Fq 'artifact("v[revision]/[artifact]-v[revision]-[classifier].[ext]")' build.gradle.kts || die "Gradle renderer Node repository must use the pinned distribution artifact pattern"
 grep -Fq 'val provisionRendererNode = tasks.register<Sync>("provisionRendererNode")' build.gradle.kts || die "Gradle renderer build must own Node provisioning"
@@ -738,7 +739,7 @@ grep -Fq 'fixtures/differential-acceptance/' "$full_differential_workflow" || di
 grep -Fq 'run_full=false' "$full_differential_workflow" || die "#353 scheduled no-change path no longer skips the expensive corpus"
 grep -Fq "if: needs.policy.outputs.run_full == 'true'" "$full_differential_workflow" || die "#353 expensive jobs no longer honor cadence policy"
 grep -Fq 'cache-read-only: true' "$full_differential_workflow" || die "#353 full differential must not write Gradle cache state"
-[ "$(grep -Fc '    runs-on: ubuntu-24.04-arm' "$full_differential_workflow" || true)" = "3" ] ||
+[ "$(grep -Fc '    runs-on: ubuntu-26.04-arm' "$full_differential_workflow" || true)" = "3" ] ||
   die "#353 full differential policy/package/acceptance jobs must all use ARM64"
 grep -Fq 'name: Install ARM64 Skiko EGL runtime' "$full_differential_workflow" ||
   die "#353 full differential ARM64 runtime bootstrap is missing"
@@ -845,15 +846,15 @@ import sys
 prefix = "com.algorist.markflow.e2e."
 expected = {
     "canonical": {
-        "runner": "ubuntu-24.04-arm",
+        "runner": "ubuntu-26.04-arm",
         "suites": prefix + "MarkFlowStarterFullProductJourneyTest",
     },
     "core-editing": {
-        "runner": "ubuntu-24.04-arm",
+        "runner": "ubuntu-26.04-arm",
         "suites": prefix + "MarkFlowStarterSmokeTest",
     },
     "ordinary-markdown": {
-        "runner": "ubuntu-24.04-arm",
+        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterTableTest",
             prefix + "MarkFlowStarterTaskListTest",
@@ -862,7 +863,7 @@ expected = {
         ]),
     },
     "derived-content": {
-        "runner": "ubuntu-24.04-arm",
+        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterSharedJcefDerivedContentTest",
             prefix + "MarkFlowStarterDifferentialManifestTest",
@@ -870,7 +871,7 @@ expected = {
         ]),
     },
     "lifecycle": {
-        "runner": "ubuntu-24.04-arm",
+        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterSplitEditorTest",
             prefix + "MarkFlowStarterDegradedPathTest",
@@ -1698,7 +1699,7 @@ awk '
 # #362: Paired x64/ARM64 negative controls found a missing Liberation Sans
 # fallback on ARM64. Keep the strict reviewed x64 PNG goldens unchanged;
 # require EGL, real ARM CPU and exact font file SHA-256 before capture.
-for spec in "visual:ubuntu-24.04-arm" "visual-gate:ubuntu-24.04-arm"; do
+for spec in "visual:ubuntu-26.04-arm" "visual-gate:ubuntu-26.04-arm"; do
   visual_job="${spec%%:*}"
   visual_runner="${spec#*:}"
   awk -v wanted="$visual_job" -v label="$visual_runner" '
@@ -1715,7 +1716,9 @@ awk '
   in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
   in_visual && /name: Install pinned ARM64 visual EGL and Liberation Sans/ { named=1 }
   in_visual && /RUNNER_ARCH.*ARM64/ { arch=1 }
-  in_visual && /sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation/ { packages=1 }
+  in_visual && /sudo apt-get install -y --no-install-recommends libegl1/ { packages=1 }
+  in_visual && /fonts-liberation_2.1.5-3_all.deb/ { font_archive=1 }
+  in_visual && /065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc/ && /sha256sum --check --strict/ { archive_verified=1 }
   in_visual && /ldconfig -p \| grep -F libEGL.so.1/ { egl=1 }
   in_visual && /fc-cache -f/ { font_cache=1 }
   in_visual && /fc-match -f/ && /Arial/ { font_probe=1 }
@@ -1724,7 +1727,7 @@ awk '
   in_visual && /actual_sha.*expected_sha/ { comparison=1 }
   in_visual && /fontconfig_version=.*fc-match --version 2>&1/ { fontconfig_provenance=1 }
   in_visual && /visual-font-provenance.txt/ { retention=1 }
-  END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
+  END { exit !(named && arch && packages && font_archive && archive_verified && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
 ' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 immutable_action_pin 'browser-actions/setup-chrome' 1 "$build_workflow" >/dev/null || die "ARM64 browser acceptance lacks immutable Chrome for Testing setup action"

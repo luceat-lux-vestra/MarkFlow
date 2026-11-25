@@ -27,7 +27,7 @@ concurrency:
 jobs:
   scan-guard:
     name: CodeQL schedule guard
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     permissions:
       actions: read
@@ -74,7 +74,7 @@ jobs:
     needs: scan-guard
     if: needs.scan-guard.outputs.should_scan == 'true'
     name: CodeQL (${{ matrix.language }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       actions: read
@@ -162,6 +162,7 @@ jobs:
         with:
           distribution: zulu
           java-version: '25'
+          check-latest: true
 
       - name: Setup Gradle for Kotlin CodeQL
         if: matrix.language == 'java-kotlin'

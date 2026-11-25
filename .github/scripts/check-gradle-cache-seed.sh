@@ -42,7 +42,7 @@ assert_trusted_main_cache_seed() {
   fi
   grep -Fxq '  contents: read' "$workflow" || die "seed must use read-only repository permission"
   grep -Fxq "    if: github.repository == 'luceat-lux-vestra/MarkFlow' && github.ref == 'refs/heads/main'" "$workflow" || die "seed main-only writer guard changed"
-  grep -Fxq '    runs-on: ubuntu-24.04-arm' "$workflow" || die "seed must use ARM64"
+  grep -Fxq '    runs-on: ubuntu-26.04-arm' "$workflow" || die "seed must use ARM64"
   grep -Fxq '          cache-read-only: false' "$workflow" || die "seed must write cache on main"
   grep -Fq '          persist-credentials: false' "$workflow" || die "checkout credentials must not persist"
   grep -Fq '          ref: ${{ github.sha }}' "$workflow" || die "seed must checkout exact trigger SHA"

@@ -33,7 +33,7 @@ assert_contract() {
   [ "$actual_paths" = "$expected_paths" ] || die "publisher dependency-input paths drifted"
   grep -Fxq 'permissions: {}' "$workflow" || die "workflow default permissions must remain empty"
   grep -Fq "github.ref == 'refs/heads/main'" "$workflow" || die "main-only job guard is missing"
-  grep -Fxq '    runs-on: ubuntu-24.04-arm' "$workflow" || die "publisher must use ARM64"
+  grep -Fxq '    runs-on: ubuntu-26.04-arm' "$workflow" || die "publisher must use ARM64"
   grep -Fxq '      contents: write' "$workflow" || die "submission job lacks contents: write"
   grep -Fxq '          cache-read-only: true' "$workflow" || die "publisher must never write Gradle caches"
   grep -Fxq '          dependency-graph: generate-and-submit' "$workflow" || die "publisher is not in submit mode"

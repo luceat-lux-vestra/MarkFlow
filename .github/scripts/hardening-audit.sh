@@ -508,11 +508,17 @@ check_privileged_workflows() {
 check_workflow_static_analysis() {
   local audit="$WORKFLOW_DIR/hardening-audit.yml" clean=1
   if [ ! -f "$audit" ]; then finding workflow_static_analysis "hardening-audit.yml is missing"; return 0; fi
-  grep -qE 'ACTIONLINT_VERSION:[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+' "$audit" || { finding workflow_static_analysis "actionlint release is not pinned"; clean=0; }
-  grep -qE 'go install .*github\.com/rhysd/actionlint/cmd/actionlint@\$\{ACTIONLINT_VERSION\}' "$audit" || { finding workflow_static_analysis "actionlint is not installed from the pinned release"; clean=0; }
+  grep -qE '^require github\.com/rhysd/actionlint v[0-9]+\.[0-9]+\.[0-9]+$' "$ROOT/.github/tools/actionlint/go.mod" || { finding workflow_static_analysis "actionlint module release is not pinned"; clean=0; }
+  grep -Fq 'working-directory: .github/tools/actionlint' "$audit" && grep -Fq 'go build -mod=mod -o "$RUNNER_TEMP/bin/actionlint" github.com/rhysd/actionlint/cmd/actionlint' "$audit" || { finding workflow_static_analysis "actionlint is not built from the managed Go module"; clean=0; }
+  grep -Eq 'go-version: stable' "$audit" && grep -Eq 'check-latest: true' "$audit" || { finding workflow_static_analysis "Go stable channel resolution missing"; clean=0; }
   grep -qE 'Run actionlint across all workflows' "$audit" || { finding workflow_static_analysis "actionlint does not cover all workflows"; clean=0; }
   grep -qE 'zizmorcore/zizmor-action@[0-9a-f]{40}' "$audit" || { finding workflow_static_analysis "zizmor action is not pinned"; clean=0; }
-  grep -qE 'version:[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+' "$audit" || { finding workflow_static_analysis "zizmor version is not pinned"; clean=0; }
+  local zizmor_pins
+  zizmor_pins="$(grep -E 'uses: zizmorcore/zizmor-action@[0-9a-f]{40}([[:space:]]+#.*)?$' "$audit" || true)"
+  if [ "$(printf '%s\n' "$zizmor_pins" | grep -c 'uses:' || true)" != 2 ] || [ "$(printf '%s\n' "$zizmor_pins" | sed -E 's/.*@([0-9a-f]{40}).*/\1/' | sort -u | wc -l | tr -d '[:space:]')" != 1 ] || grep -Eq '^[[:space:]]+version:' "$audit"; then
+    finding workflow_static_analysis "zizmor positive and negative scans must share one immutable action's bundled hash-locked default"; clean=0
+  fi
+  [ "$(grep -c 'strict-collection: true' "$audit" || true)" = 2 ] && [ "$(grep -c 'fail-on-no-inputs: true' "$audit" || true)" = 2 ] || { finding workflow_static_analysis "zizmor strict collection or nonempty input gate missing"; clean=0; }
   grep -qE 'inputs:[[:space:]]+\.github/workflows' "$audit" || { finding workflow_static_analysis "zizmor does not cover all workflows"; clean=0; }
   grep -qE 'advanced-security:[[:space:]]+false' "$audit" || { finding workflow_static_analysis "zizmor upload mode is not explicit"; clean=0; }
   for fixture in invalid-actionlint.yml unsafe-zizmor.yml; do

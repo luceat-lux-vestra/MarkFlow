@@ -27,7 +27,7 @@ permissions: {}
 jobs:
   scan-guard:
     name: Qodana schedule guard
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     permissions:
       actions: read
@@ -89,7 +89,7 @@ jobs:
     needs: scan-guard
     if: needs.scan-guard.outputs.should_scan == 'true'
     name: Qodana full scan
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 45
     permissions:
       contents: read
@@ -145,6 +145,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Qodana - Full Code Inspection
         uses: JetBrains/qodana-action@aa698739cd4b8204ad53291bea7e16cd75da3c9f # v2026.3.1

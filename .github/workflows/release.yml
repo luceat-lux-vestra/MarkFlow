@@ -22,7 +22,7 @@ jobs:
   # only downstream managed publication.
   codeql-preflight:
     name: Exact-source CodeQL publication preflight
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 90
     permissions:
       contents: read
@@ -86,7 +86,7 @@ jobs:
   # A GitHub Release has already been created by the time these jobs execute.
   qodana-preflight:
     name: Exact-source Qodana publication preflight
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 90
     permissions:
       contents: read
@@ -148,7 +148,7 @@ jobs:
   release:
     name: Publish Plugin
     needs: [codeql-preflight, qodana-preflight]
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 60
     environment: jetbrains-marketplace
     permissions:
@@ -228,6 +228,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle

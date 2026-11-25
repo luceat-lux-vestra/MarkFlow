@@ -58,7 +58,7 @@ jobs:
   package:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Package exact Starter plugin
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     outputs:
       test_matrix: ${{ steps.selection.outputs.test_matrix }}
@@ -165,6 +165,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Setup Gradle
         if: ${{ steps.reuse_verify.outputs.reused != 'true' }}
@@ -243,6 +244,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
@@ -543,7 +545,7 @@ jobs:
     needs: [ package ]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted' || inputs.target_shard == 'visual' }}
     name: Deterministic Visual Acceptance
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 40
     steps:
       - name: Fetch Sources
@@ -566,6 +568,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
@@ -612,7 +615,16 @@ jobs:
             exit 1
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation
+          sudo apt-get install -y --no-install-recommends libegl1
+          # Retain the exact previously verified visual test input, independent of
+          # the runner image's rebuilt font package. Verify the archive before extraction.
+          font_deb="$RUNNER_TEMP/fonts-liberation.deb"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --output "$font_deb" https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb
+          echo "065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc  $font_deb" | sha256sum --check --strict
+          font_root="$RUNNER_TEMP/markflow-visual-fonts"
+          dpkg-deb -x "$font_deb" "$font_root"
+          sudo install -d /usr/share/fonts/truetype/liberation
+          sudo install -m 0644 "$font_root"/usr/share/fonts/truetype/liberation/*.ttf /usr/share/fonts/truetype/liberation/
           ldconfig -p | grep -F libEGL.so.1
           fc-cache -f
           resolved="$(fc-match -f '%{family}|%{style}|%{file}' Arial)"
@@ -697,7 +709,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}
     needs: [ package, visual ]
     name: Deterministic Visual Acceptance Gate
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require exact package and visual oracle
@@ -720,7 +732,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted') }}
     needs: [ package, shards ]
     name: Starter Driver E2E Gate
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require package and every stable shard
@@ -743,7 +755,7 @@ jobs:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'targeted' }}
     needs: [ package, shards, visual ]
     name: Targeted E2E Diagnostic Gate
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require exactly selected diagnostic evidence
