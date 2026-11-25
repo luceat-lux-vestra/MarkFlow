@@ -36,7 +36,7 @@ md-inline-raw-html	2	Inline <span data-kind="safe">HTML content</span> remains s
 md-katex-inline	2	Inline math: $a^2 + b^2 = c^2$.
 md-katex-display	4	$$
 md-mermaid-block	2	```mermaid
-md-footnote-extension	2	Footnote-like syntax remains an explicit unsupported-extension fixture.[^note]
+md-footnote-extension	2	Text with a footnote reference.[^manual-note]
 md-tabs-indentation	2	- Parent
 md-blank-lines-whitespace	6	There are two blank lines before this paragraph.
 md-closing-atx	1	## ATX heading with closing markers ##

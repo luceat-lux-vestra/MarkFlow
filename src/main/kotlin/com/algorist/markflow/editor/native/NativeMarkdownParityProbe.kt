@@ -499,6 +499,165 @@ internal object NativeMarkdownParityProbe {
                     table.dispose()
                 }
 
+                case("footnote-native-presentation-source-neutral") {
+                    val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+
+Tail
+"""
+                    val footnoteEditor = createIsolatedSourceEditor("footnote-parity.md", source)
+                    try {
+                        footnoteEditor.contentComponent.setSize(1000, 700)
+                        footnoteEditor.contentComponent.doLayout()
+                        val tailOffset = source.indexOf("Tail") + 1
+                        footnoteEditor.caretModel.moveToOffset(tailOffset)
+                        footnoteEditor.selectionModel.removeSelection()
+                        val stampBefore = footnoteEditor.document.modificationStamp
+
+                        val parent = NativePresentationController(
+                            editor = footnoteEditor,
+                            richPresentationEnabled = { true },
+                        )
+                        val referenceRange: ProjectionRange
+                        try {
+                            val plan = requireNotNull(parent.currentPlan)
+                            val reference = plan.projections.single {
+                                it.kind == NativeProjectionKind.FOOTNOTE_REFERENCE
+                            }
+                            val definition = plan.projections.single {
+                                it.kind == NativeProjectionKind.FOOTNOTE_DEFINITION
+                            }
+                            referenceRange = reference.sourceRange
+                            check(source.substring(reference.sourceRange.startOffset, reference.sourceRange.endOffset) ==
+                                "[^manual-note]")
+                            check(source.substring(definition.sourceRange.startOffset, definition.sourceRange.endOffset) ==
+                                "[^manual-note]: Footnote definition text.")
+
+                            var evidence = parent.footnoteEvidenceSnapshot()
+                            check(evidence.models == 2)
+                            check(evidence.references == 1 && evidence.definitions == 1)
+                            check(evidence.ownedInlays == 2)
+                            check(evidence.ownedFolds == 2)
+                            check(evidence.ownedHighlighters == 1)
+                            check(evidence.fullyPresented == 2) {
+                                "real IDE did not install both footnote presentations: $evidence"
+                            }
+                            check(footnoteEditor.document.text == source)
+                            check(footnoteEditor.document.modificationStamp == stampBefore)
+
+                            footnoteEditor.caretModel.moveToOffset(referenceRange.startOffset + 2)
+                            parent.refreshNow()
+                            evidence = parent.footnoteEvidenceSnapshot()
+                            check(evidence.fullyPresented == 1) {
+                                "reference caret did not reveal exact footnote source: $evidence"
+                            }
+                            check(footnoteEditor.document.text == source)
+                            check(footnoteEditor.document.modificationStamp == stampBefore)
+
+                            footnoteEditor.caretModel.moveToOffset(tailOffset)
+                            parent.refreshNow()
+                            check(parent.footnoteEvidenceSnapshot().fullyPresented == 2)
+                        } finally {
+                            Disposer.dispose(parent)
+                        }
+
+                        footnoteEditor.caretModel.moveToOffset(tailOffset)
+                        val clickPlan = NativeMarkdownProjectionPlanner.plan(
+                            ProjectionSnapshot.capture(footnoteEditor.document, 0L)
+                        )
+                        val clickController = NativeFootnotePresentationController(footnoteEditor)
+                        try {
+                            clickController.applyPlan(clickPlan, true)
+                            val clickInlay = footnoteEditor.inlayModel
+                                .getInlineElementsInRange(0, footnoteEditor.document.textLength)
+                                .single { inlay ->
+                                    (inlay.renderer as? NativeFootnoteMarkerRenderer)?.role ==
+                                        FootnoteRole.REFERENCE
+                                }
+                            clickInlay.update()
+                            val bounds = requireNotNull(clickInlay.bounds) {
+                                "real-IDE footnote reference inlay has no bounds"
+                            }
+                            val click = MouseEvent(
+                                footnoteEditor.contentComponent,
+                                MouseEvent.MOUSE_CLICKED,
+                                System.currentTimeMillis(),
+                                0,
+                                bounds.x + bounds.width / 2,
+                                bounds.y + bounds.height / 2,
+                                1,
+                                false,
+                                MouseEvent.BUTTON1,
+                            )
+                            val offset = clickInlay.offset.coerceIn(0, footnoteEditor.document.textLength)
+                            val editorEvent = EditorMouseEvent(
+                                footnoteEditor,
+                                click,
+                                EditorMouseEventArea.EDITING_AREA,
+                                offset,
+                                footnoteEditor.offsetToLogicalPosition(offset),
+                                footnoteEditor.offsetToVisualPosition(offset),
+                                false,
+                                null,
+                                clickInlay,
+                                null,
+                            )
+                            check(clickController.handleMouseReveal(editorEvent))
+                            check(click.isConsumed)
+                            check(footnoteEditor.caretModel.primaryCaret.offset == referenceRange.startOffset)
+                            check(clickController.evidenceSnapshot().mouseReveals == 1L)
+                            check(footnoteEditor.document.text == source)
+                            check(footnoteEditor.document.modificationStamp == stampBefore)
+                        } finally {
+                            clickController.dispose()
+                        }
+
+                        val file = requireNotNull(
+                            FileDocumentManager.getInstance().getFile(footnoteEditor.document)
+                        ) {
+                            "real-IDE footnote editor lost its authoritative VirtualFile"
+                        }
+                        FileDocumentManager.getInstance().saveDocument(footnoteEditor.document)
+                        check(Files.readString(Path.of(file.path), StandardCharsets.UTF_8) == source) {
+                            "saved footnote bytes differ from the authoritative Document"
+                        }
+
+                        val reopenedEditor = EditorFactory.getInstance().createEditor(
+                            footnoteEditor.document,
+                            project,
+                            file,
+                            false,
+                        )
+                        try {
+                            reopenedEditor.caretModel.moveToOffset(tailOffset)
+                            val reopened = NativePresentationController(
+                                editor = reopenedEditor,
+                                richPresentationEnabled = { true },
+                            )
+                            try {
+                                val reopenedEvidence = reopened.footnoteEvidenceSnapshot()
+                                check(reopenedEvidence.models == 2)
+                                check(reopenedEvidence.fullyPresented == 2) {
+                                    "saved/recreated editor did not restore footnote presentation: $reopenedEvidence"
+                                }
+                                check(reopenedEditor.document.text == source)
+                                check(reopenedEditor.document.modificationStamp == stampBefore)
+                            } finally {
+                                Disposer.dispose(reopened)
+                            }
+                        } finally {
+                            EditorFactory.getInstance().releaseEditor(reopenedEditor)
+                        }
+
+                        "models=2 references=1 definitions=1 inlays=2 folds=2 highlighters=1 " +
+                            "caretReveal=true mouseReveal=true eventConsumed=true navigation=false " +
+                            "saveReopen=true savedBytes=true sourceStable=true stampStable=true"
+                    } finally {
+                        EditorFactory.getInstance().releaseEditor(footnoteEditor)
+                    }
+                }
+
                 case("table-accessibility-source-fallback") {
                     fixture.editor.caretModel.moveToOffset(fixture.afterTableOffset)
                     val accessible = NativeTablePresentationController(
@@ -591,6 +750,19 @@ internal object NativeMarkdownParityProbe {
             return absoluteOutput.parent?.parent?.parent
                 ?: error("cannot derive repository root from parity output path: $absoluteOutput")
         }
+
+        private fun createIsolatedSourceEditor(fileName: String, source: String): Editor {
+            val root = requireNotNull(tempRoot) { "native parity temp root is unavailable" }
+            val path = root.resolve(fileName)
+            Files.writeString(path, source, StandardCharsets.UTF_8)
+            val file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
+                ?: error("native parity VirtualFile unavailable for $fileName")
+            val document = FileDocumentManager.getInstance().getDocument(file)
+                ?: error("native parity Document unavailable for $fileName")
+            check(document.text == source)
+            return EditorFactory.getInstance().createEditor(document, project, file, false)
+        }
+
 
         private fun createFixture(): Fixture {
             val base = project.basePath?.let(Paths::get) ?: error("#152 parity project base unavailable")

@@ -134,8 +134,17 @@ When manually validating:
 - save/reopen and verify source remains unchanged except for intentional edits;
 - verify malformed or unsupported extensions degrade to editable source rather than disappearing.
 
-## Explicit unsupported-extension probe
+## Footnotes
 
-Footnote-like syntax remains a source-preservation probe rather than a support claim.[^manual-note]
+Text with a footnote reference.[^manual-note]
 
-[^manual-note]: MarkFlow currently classifies this extension as unsupported in the differential corpus.
+A repeated reference must reuse the same deterministic footnote number.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+
+When manually validating footnotes:
+- inactive references render as compact native footnote markers;
+- inactive definitions render as secondary content rather than primary Markdown syntax;
+- entering or clicking either presentation reveals the exact lexical Markdown;
+- save/reopen, Undo/Redo, split editors, and theme changes preserve the authoritative source;
+- duplicate, missing, malformed, or parser-unproven footnote shapes remain exact editable source.

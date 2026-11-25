@@ -70,7 +70,9 @@ internal enum class NativeProjectionKind {
     STRONG,
     STRIKETHROUGH,
     LINK,
+    FOOTNOTE_REFERENCE,
     REFERENCE_DEFINITION,
+    FOOTNOTE_DEFINITION,
     UNORDERED_LIST,
     ORDERED_LIST,
     LIST_ITEM,
@@ -91,6 +93,13 @@ internal data class NativeReferenceDefinitionRanges(
     val title: ProjectionRange? = null,
 )
 
+internal data class NativeFootnoteProjectionMetadata(
+    val label: String,
+    val number: Int,
+    val labelRange: ProjectionRange,
+    val bodyRange: ProjectionRange? = null,
+)
+
 internal data class NativeProjection(
     val kind: NativeProjectionKind,
     val sourceRange: ProjectionRange,
@@ -99,6 +108,7 @@ internal data class NativeProjection(
     val block: Boolean,
     val headingLevel: Int? = null,
     val referenceDefinitionRanges: NativeReferenceDefinitionRanges? = null,
+    val footnote: NativeFootnoteProjectionMetadata? = null,
 )
 
 internal enum class ProjectionPlanStatus {
@@ -159,13 +169,22 @@ internal object NativeMarkdownProjectionPlanner {
             )
             validateTree(root, source.length)
 
-            val projections = buildList {
+            val footnotes = NativeFootnoteSemanticParser.parse(root, source)
+            val footnoteDefinitionRanges = footnotes.definitions
+                .map(NativeFootnoteSemanticParser.Definition::sourceRange)
+                .toSet()
+            val ordinaryProjections = buildList {
                 collect(root, source, this)
-            }.sortedWith(
-                compareBy<NativeProjection> { it.sourceRange.startOffset }
-                    .thenBy { it.sourceRange.endOffset }
-                    .thenBy { it.kind.ordinal }
-            )
+            }.filterNot { projection ->
+                projection.kind == NativeProjectionKind.REFERENCE_DEFINITION &&
+                    projection.sourceRange in footnoteDefinitionRanges
+            }
+            val projections = (ordinaryProjections + footnoteProjections(footnotes))
+                .sortedWith(
+                    compareBy<NativeProjection> { it.sourceRange.startOffset }
+                        .thenBy { it.sourceRange.endOffset }
+                        .thenBy { it.kind.ordinal }
+                )
 
             NativeProjectionPlan(
                 identity = snapshot.identity,
@@ -179,6 +198,42 @@ internal object NativeMarkdownProjectionPlanner {
                 projections = emptyList(),
                 status = ProjectionPlanStatus.DEGRADED_TO_SOURCE,
                 failureClass = failure.javaClass.name,
+            )
+        }
+    }
+
+    private fun footnoteProjections(
+        semantics: NativeFootnoteSemanticParser.Result,
+    ): List<NativeProjection> = buildList {
+        semantics.references.forEach { reference ->
+            add(
+                NativeProjection(
+                    kind = NativeProjectionKind.FOOTNOTE_REFERENCE,
+                    sourceRange = reference.sourceRange,
+                    syntaxRanges = listOf(reference.sourceRange),
+                    block = false,
+                    footnote = NativeFootnoteProjectionMetadata(
+                        label = reference.label,
+                        number = reference.number,
+                        labelRange = reference.labelRange,
+                    ),
+                )
+            )
+        }
+        semantics.definitions.forEach { definition ->
+            add(
+                NativeProjection(
+                    kind = NativeProjectionKind.FOOTNOTE_DEFINITION,
+                    sourceRange = definition.sourceRange,
+                    contentRanges = listOf(definition.bodyRange),
+                    block = true,
+                    footnote = NativeFootnoteProjectionMetadata(
+                        label = definition.label,
+                        number = definition.number,
+                        labelRange = definition.labelRange,
+                        bodyRange = definition.bodyRange,
+                    ),
+                )
             )
         }
     }
@@ -639,6 +694,7 @@ internal object NativeMarkdownProjectionPlanner {
         NativeProjectionKind.LIST_ITEM,
         NativeProjectionKind.BLOCK_QUOTE,
         NativeProjectionKind.REFERENCE_DEFINITION,
+        NativeProjectionKind.FOOTNOTE_DEFINITION,
         NativeProjectionKind.CODE_FENCE,
         NativeProjectionKind.CODE_BLOCK,
         NativeProjectionKind.THEMATIC_BREAK,

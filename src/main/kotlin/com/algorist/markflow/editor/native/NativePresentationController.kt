@@ -61,6 +61,15 @@ internal data class NativePresentationEvidence(
     val taskRows: Int,
     val checkedTasks: Int,
     val taskToggles: Long,
+    val footnoteModels: Int,
+    val footnoteReferences: Int,
+    val footnoteDefinitions: Int,
+    val footnoteInlays: Int,
+    val footnoteFolds: Int,
+    val footnoteHighlighters: Int,
+    val footnoteFullyPresented: Int,
+    val footnoteMouseReveals: Long,
+    val footnoteAccessibilityFallbacks: Long,
     val refreshesApplied: Long,
     val refreshesScheduled: Long,
     val sourceFallbacks: Long,
@@ -86,6 +95,10 @@ internal class NativePresentationController(
         NativeTablePresentationController(editor, richPresentationEnabled),
 ) : Disposable {
     private val ordinaryPresentation = NativeOrdinaryPresentationController(
+        editor = editor,
+        postMouseActivityReconciliation = ::schedulePostMouseActivityReconciliation,
+    )
+    private val footnotePresentation = NativeFootnotePresentationController(
         editor = editor,
         postMouseActivityReconciliation = ::schedulePostMouseActivityReconciliation,
     )
@@ -167,6 +180,7 @@ internal class NativePresentationController(
         currentPlan = plan
         val richEnabled = isRichPresentationEnabled()
         ordinaryPresentation.applyPlan(plan, richEnabled)
+        footnotePresentation.applyPlan(plan, richEnabled)
         if (plan.status == ProjectionPlanStatus.READY && !richEnabled) {
             sourceFallbacks += 1
         }
@@ -192,6 +206,7 @@ internal class NativePresentationController(
 
     fun evidenceSnapshot(): NativePresentationEvidence {
         val ordinary = ordinaryPresentation.evidenceSnapshot()
+        val footnotes = footnotePresentation.evidenceSnapshot()
         return NativePresentationEvidence(
             planIdentity = currentPlan?.identity,
             planStatus = currentPlan?.status,
@@ -235,6 +250,15 @@ internal class NativePresentationController(
             taskRows = ordinary.taskRows,
             checkedTasks = ordinary.checkedTasks,
             taskToggles = ordinary.taskToggles,
+            footnoteModels = footnotes.models,
+            footnoteReferences = footnotes.references,
+            footnoteDefinitions = footnotes.definitions,
+            footnoteInlays = footnotes.ownedInlays,
+            footnoteFolds = footnotes.ownedFolds,
+            footnoteHighlighters = footnotes.ownedHighlighters,
+            footnoteFullyPresented = footnotes.fullyPresented,
+            footnoteMouseReveals = footnotes.mouseReveals,
+            footnoteAccessibilityFallbacks = footnotes.accessibilityFallbacks,
             refreshesApplied = refreshesApplied,
             refreshesScheduled = refreshesScheduled,
             sourceFallbacks = sourceFallbacks,
@@ -246,6 +270,9 @@ internal class NativePresentationController(
 
     fun headingPilotEvidenceSnapshot(): NativeHeadingPresentationEvidence =
         ordinaryPresentation.headingPilotEvidenceSnapshot()
+
+    fun footnoteEvidenceSnapshot(): NativeFootnotePresentationEvidence =
+        footnotePresentation.evidenceSnapshot()
 
     fun tableEvidenceSnapshot(): NativeTablePresentationEvidence = tablePresentation.evidenceSnapshot()
 
@@ -299,7 +326,9 @@ internal class NativePresentationController(
         val sourceBefore = document.immutableCharSequence.toString()
         val stampBefore = document.modificationStamp
 
-        ordinaryPresentation.refreshActivity(plan, isRichPresentationEnabled())
+        val richEnabled = isRichPresentationEnabled()
+        ordinaryPresentation.refreshActivity(plan, richEnabled)
+        footnotePresentation.refreshActivity(plan, richEnabled)
         tablePresentation.refreshActivity(plan)
         hostResources?.refreshActivity(plan)
         derivedPresentation?.refreshActivity(plan)
@@ -322,6 +351,7 @@ internal class NativePresentationController(
         refreshRequestGeneration += 1
         activityRefreshRequestGeneration += 1
         ordinaryPresentation.dispose()
+        footnotePresentation.dispose()
         tablePresentation.dispose()
         hostResources?.dispose()
         derivedPresentation?.dispose()

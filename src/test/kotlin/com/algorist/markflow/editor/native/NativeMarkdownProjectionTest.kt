@@ -1,6 +1,9 @@
 package com.algorist.markflow.editor.native
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.plugins.markdown.lang.parser.MarkdownParserManager
 
 class NativeMarkdownProjectionTest : BasePlatformTestCase() {
     fun testSnapshotCapturePreservesExactDocumentIdentity() {
@@ -628,6 +631,206 @@ user@example.com
         assertEquals(source, plan.identity.source)
     }
 
+    fun testPinnedParserDoesNotExposeCompleteFootnoteStructure() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val parser = MarkdownParserManager.createMarkdownParser(
+            MarkdownParserManager.FLAVOUR,
+            assertionsEnabled = false,
+        )
+        val root = parser.parse(
+            MarkdownElementTypes.MARKDOWN_FILE,
+            source,
+            parseInlines = true,
+        )
+
+        fun descendants(node: ASTNode): Sequence<ASTNode> =
+            sequenceOf(node) + node.children.asSequence().flatMap(::descendants)
+
+        val nodes = descendants(root).toList()
+        val evidence = nodes.joinToString("\n") { node ->
+            val raw = source.substring(node.startOffset, node.endOffset)
+                .replace("\n", "\\n")
+            "${node.type}@${node.startOffset}..${node.endOffset}=$raw"
+        }
+
+        val referenceStart = source.indexOf("[^manual-note]")
+        val referenceEnd = referenceStart + "[^manual-note]".length
+        val genericReference = nodes.singleOrNull { node ->
+            node.startOffset == referenceStart &&
+                node.endOffset == referenceEnd &&
+                node.type in setOf(
+                    MarkdownElementTypes.FULL_REFERENCE_LINK,
+                    MarkdownElementTypes.SHORT_REFERENCE_LINK,
+                )
+        }
+        assertNotNull(
+            "pinned parser no longer exposes the footnote-like reference through the generic reference grammar:\n$evidence",
+            genericReference,
+        )
+
+        assertFalse(
+            "pinned parser unexpectedly acquired a dedicated footnote element; revisit #631 parser-boundary strategy:\n$evidence",
+            nodes.any { node -> node.type.toString().contains("FOOTNOTE", ignoreCase = true) },
+        )
+
+        val definitionStart = source.indexOf("[^manual-note]:")
+        val definitionEnd = source.indexOf('\n', definitionStart).let { newline ->
+            if (newline >= 0) newline else source.length
+        }
+        assertFalse(
+            "generic LINK_DEFINITION unexpectedly owns the complete footnote body; revisit #631 parser-boundary strategy:\n$evidence",
+            nodes.any { node ->
+                node.type == MarkdownElementTypes.LINK_DEFINITION &&
+                    node.startOffset == definitionStart &&
+                    node.endOffset >= definitionEnd
+            },
+        )
+    }
+
+    fun testFootnoteSemanticGrammarAcceptsMinimumFixtureFromParserOwnedAst() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertEquals(1, semantics.references.size)
+        assertEquals(1, semantics.definitions.size)
+
+        val reference = semantics.references.single()
+        val definition = semantics.definitions.single()
+        assertEquals("manual-note", reference.label)
+        assertEquals("manual-note", definition.label)
+        assertEquals(1, reference.number)
+        assertEquals(1, definition.number)
+        assertEquals("[^manual-note]", raw(source, reference.sourceRange))
+        assertEquals("[^manual-note]", raw(source, reference.labelRange))
+        assertEquals("[^manual-note]: Footnote definition text.", raw(source, definition.sourceRange))
+        assertEquals("[^manual-note]", raw(source, definition.labelRange))
+        assertEquals("Footnote definition text.", raw(source, definition.bodyRange))
+    }
+
+    fun testFootnoteSemanticGrammarFailsClosedForDuplicateMissingAndMalformedLabels() {
+        val duplicate = """Duplicate reference.[^same]
+
+[^same]: First definition.
+
+[^same]: Second definition.
+"""
+        assertTrue(footnoteSemantics(duplicate).references.isEmpty())
+        assertTrue(footnoteSemantics(duplicate).definitions.isEmpty())
+
+        val validPlusMalformedDuplicate = """Ambiguous reference.[^same]
+
+[^same]: Valid definition.
+
+[^same]:
+"""
+        assertTrue(footnoteSemantics(validPlusMalformedDuplicate).references.isEmpty())
+        assertTrue(footnoteSemantics(validPlusMalformedDuplicate).definitions.isEmpty())
+
+        val missing = "Missing reference.[^missing]\n"
+        assertTrue(footnoteSemantics(missing).references.isEmpty())
+        assertTrue(footnoteSemantics(missing).definitions.isEmpty())
+
+        val malformed = """Malformed reference.[^bad label]
+
+[^bad label]: Must remain exact source.
+"""
+        assertTrue(footnoteSemantics(malformed).references.isEmpty())
+        assertTrue(footnoteSemantics(malformed).definitions.isEmpty())
+    }
+
+    fun testFootnoteSemanticGrammarNumbersUniqueDefinitionsByFirstReferenceOrder() {
+        val source = """Second first.[^second] First next.[^first] Second again.[^second]
+
+[^first]: First definition.
+
+[^second]: Second definition.
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertEquals(
+            listOf("second" to 1, "first" to 2, "second" to 1),
+            semantics.references.map { reference -> reference.label to reference.number },
+        )
+        assertEquals(
+            mapOf("first" to 2, "second" to 1),
+            semantics.definitions.associate { definition -> definition.label to definition.number },
+        )
+    }
+
+    fun testFootnoteSemanticGrammarDoesNotClaimOrdinaryReferenceLinksOrDefinitions() {
+        val source = """Ordinary [reference][target] and [shortcut].
+
+[target]: https://example.com/target
+[shortcut]: /shortcut
+"""
+        val semantics = footnoteSemantics(source)
+
+        assertTrue(semantics.references.isEmpty())
+        assertTrue(semantics.definitions.isEmpty())
+    }
+
+    fun testProjectionPlannerPublishesOnlyValidatedFootnotePair() {
+        val source = """Text with a footnote reference.[^manual-note]
+
+[^manual-note]: Footnote definition text.
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(31L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        val reference = plan.projections.single { it.kind == NativeProjectionKind.FOOTNOTE_REFERENCE }
+        val definition = plan.projections.single { it.kind == NativeProjectionKind.FOOTNOTE_DEFINITION }
+
+        assertEquals("[^manual-note]", raw(source, reference.sourceRange))
+        assertEquals("manual-note", requireNotNull(reference.footnote).label)
+        assertEquals(1, requireNotNull(reference.footnote).number)
+        assertEquals("[^manual-note]: Footnote definition text.", raw(source, definition.sourceRange))
+        assertEquals("Footnote definition text.", raw(source, requireNotNull(definition.footnote).bodyRange!!))
+        assertEquals(1, requireNotNull(definition.footnote).number)
+
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.LINK &&
+                    projection.sourceRange == reference.sourceRange
+            }
+        )
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.REFERENCE_DEFINITION &&
+                    projection.sourceRange == definition.sourceRange
+            }
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
+    fun testProjectionPlannerLeavesAmbiguousFootnotesAsExactSource() {
+        val source = """Duplicate reference.[^same]
+
+[^same]: First definition.
+
+[^same]: Second definition.
+"""
+        val plan = NativeMarkdownProjectionPlanner.plan(
+            ProjectionSnapshot(ProjectionSourceIdentity(32L, source, 0L))
+        )
+
+        assertEquals(ProjectionPlanStatus.READY, plan.status)
+        assertTrue(
+            plan.projections.none { projection ->
+                projection.kind == NativeProjectionKind.FOOTNOTE_REFERENCE ||
+                    projection.kind == NativeProjectionKind.FOOTNOTE_DEFINITION
+            }
+        )
+        assertEquals(source, plan.identity.source)
+    }
+
     fun testFootnoteLikeReferenceFailsClosedWithoutRegressingOrdinaryReferenceLinks() {
         val source = """A [reference link][guide] and [shortcut].
 
@@ -751,4 +954,21 @@ Footnote-like syntax remains unsupported.[^note]
         }
     }
 
+
+
+    private fun footnoteSemantics(source: String): NativeFootnoteSemanticParser.Result {
+        val parser = MarkdownParserManager.createMarkdownParser(
+            MarkdownParserManager.FLAVOUR,
+            assertionsEnabled = false,
+        )
+        val root = parser.parse(
+            MarkdownElementTypes.MARKDOWN_FILE,
+            source,
+            parseInlines = true,
+        )
+        return NativeFootnoteSemanticParser.parse(root, source)
+    }
+
+    private fun raw(source: String, range: ProjectionRange): String =
+        source.substring(range.startOffset, range.endOffset)
 }
