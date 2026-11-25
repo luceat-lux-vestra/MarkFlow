@@ -14,6 +14,7 @@ copy_root() {
   cp "$ROOT/.github/merge-gate-policy.json" "$destination/.github/"
   cp -R "$ROOT/.github/workflows" "$destination/.github/"
   cp -R "$ROOT/.github/scripts" "$destination/.github/"
+  cp -R "$ROOT/.github/tools" "$destination/.github/"
   cp "$ROOT/docs/release/recovery.md" "$destination/docs/release/recovery.md"
 }
 
@@ -52,12 +53,12 @@ expect_pass "$baseline" release_preflight
 # Reusable job callers cannot set timeout-minutes; their real callee jobs must.
 unbounded_native_callee="$TMP/unbounded-native-callee"
 copy_root "$unbounded_native_callee"
-perl -0pi -e 's/(  target:\n    name: Resolve exact native evidence target\n    runs-on: ubuntu-24\.04-arm\n)    timeout-minutes: 5\n/$1/' "$unbounded_native_callee/.github/workflows/native-runtime-evidence.yml"
+perl -0pi -e 's/(  target:\n    name: Resolve exact native evidence target\n    runs-on: ubuntu-[0-9]+[.][0-9]+-arm\n)    timeout-minutes: 5\n/$1/' "$unbounded_native_callee/.github/workflows/native-runtime-evidence.yml"
 expect_fail "$unbounded_native_callee" workflow_security "reusable call 'nativeEvidence' callee job 'target' has no positive timeout-minutes"
 
 unbounded_starter_callee="$TMP/unbounded-starter-callee"
 copy_root "$unbounded_starter_callee"
-perl -0pi -e 's/(  package:\n    if: github\.event_name[^\n]*\n    name: Package exact Starter plugin\n    runs-on: ubuntu-24\.04-arm\n)    timeout-minutes: 30\n/$1/' "$unbounded_starter_callee/.github/workflows/starter-driver-e2e.yml"
+perl -0pi -e 's/(  package:\n    if: github\.event_name[^\n]*\n    name: Package exact Starter plugin\n    runs-on: ubuntu-[0-9]+[.][0-9]+-arm\n)    timeout-minutes: 30\n/$1/' "$unbounded_starter_callee/.github/workflows/starter-driver-e2e.yml"
 expect_fail "$unbounded_starter_callee" workflow_security "reusable call 'starterEvidence' callee job 'package' has no positive timeout-minutes"
 
 missing_reusable_callee="$TMP/missing-reusable-callee"

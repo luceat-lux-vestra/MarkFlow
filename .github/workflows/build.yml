@@ -26,7 +26,7 @@ concurrency:
 jobs:
   headEvidence:
     name: Head validation evidence
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     # Metadata-only replays may begin while the canonical exact-head validation is still running.
     # The mandatory Test workload now has a 50-minute budget (Gradle check alone took 29m29s).
     # Allow the metadata-only waiter to outlive full canonical evidence without increasing
@@ -543,7 +543,7 @@ jobs:
     name: Build
     needs: [ headEvidence ]
     if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     outputs:
       docs_only: ${{ needs.headEvidence.outputs.docs_only }}
@@ -673,6 +673,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -843,7 +844,7 @@ jobs:
     name: Test
     needs: [ headEvidence ]
     if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     # Exact-head 96332952: ./gradlew check finished SUCCESSFUL in 29m29s,
     # but GitHub then cancelled the 30m job before mandatory webview source
     # tests/coverage upload. This is a job deadline, not a failed test.
@@ -973,6 +974,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1104,7 +1106,7 @@ jobs:
     name: Inspect code
     needs: [ headEvidence ]
     if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -1138,6 +1140,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Qodana - Code Inspection
         if: ${{ github.event.action != 'edited' && needs.headEvidence.outputs.docs_only != 'true' && needs.headEvidence.outputs.dependency_fast_lane != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
@@ -1171,7 +1174,7 @@ jobs:
     name: Verify plugin
     needs: [ headEvidence ]
     if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     steps:
       - name: Docs-only fast path
@@ -1200,6 +1203,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1221,7 +1225,7 @@ jobs:
 
   metadataSafety:
     name: PR Metadata Safety
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Non-PR recovery fast path
@@ -1254,7 +1258,7 @@ jobs:
   dependencySubmissionValidation:
     name: Dependency submission PR validation
     needs: [ headEvidence ]
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -1364,6 +1368,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Generate untrusted PR dependency graph without submission
         if: ${{ steps.dependency-scope.outputs.required == 'true' }}
@@ -1392,7 +1397,7 @@ jobs:
     name: Dependency Review
     needs: [ headEvidence ]
     if: ${{ needs.headEvidence.outputs.reuse_product_evidence != 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     steps:
       - name: Non-dependency event fast path
@@ -1434,7 +1439,7 @@ jobs:
     name: Merge Gate
     needs: [ headEvidence, build, test, inspectCode, verify, metadataSafety, dependencySubmissionValidation, dependencyReview, nativeEvidence, starterEvidence ]
     if: ${{ always() }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require every authoritative component

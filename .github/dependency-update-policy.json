@@ -1,0 +1,190 @@
+{
+  "schema": "markflow/dependency-update-policy/v1",
+  "policy": "EG-DEP-001",
+  "owner": "luceat-lux-vestra/MarkFlow#652",
+  "reviewed_at": "2026-11-25",
+  "entries": [
+    {
+      "id": "renderer-node",
+      "source": ".nvmrc",
+      "source_paths": [
+        ".nvmrc",
+        "build.gradle.kts",
+        "webview/package.json",
+        "webview/package-lock.json"
+      ],
+      "strategy": "CHANNEL",
+      "authority": "https://nodejs.org/dist/index.json",
+      "mechanism": "Standard nvm lts/*; Gradle resolves the official Node release index and provisions the exact selected artifact without PATH or an updater.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Exact resolved version and cache identity; renderer tests; scheduled check against official LTS target; offline reproduction explicitly selects a previously resolved version.",
+      "provenance": {
+        "selector": "lts/*"
+      }
+    },
+    {
+      "id": "github-hosted-arm64",
+      "source": ".github/workflows",
+      "source_paths": [
+        ".github/actionlint.yaml",
+        ".github/scripts/check-dependency-submission.sh",
+        ".github/scripts/check-gradle-cache-seed.sh",
+        ".github/scripts/repository-hardening-contract.sh",
+        ".github/scripts/targeted-e2e-selection.py",
+        ".github/workflows/build.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/dependency-submission.yml",
+        ".github/workflows/full-differential-acceptance.yml",
+        ".github/workflows/gradle-cache-seed.yml",
+        ".github/workflows/hardening-audit.yml",
+        ".github/workflows/issue-labeler.yml",
+        ".github/workflows/native-runtime-evidence.yml",
+        ".github/workflows/pr-labeler.yml",
+        ".github/workflows/qodana-full.yml",
+        ".github/workflows/release-candidate-repeat.yml",
+        ".github/workflows/release-candidate-starter-e2e.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/starter-driver-e2e.yml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/actions/runner-images and GitHub GA announcements",
+      "mechanism": "Current GA architecture-specific runner label, no supported moving ARM64 alias; existing dependency drift review detects new GA generations and maintainers migrate in ordinary PRs.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Real current-GA ARM64 native, Starter, security and cache gates; only the separately owned deterministic visual capture is frozen. Scheduled provider GA check.",
+      "provenance": {
+        "label": "ubuntu-26.04-arm"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Provider gap, not an exemption from forward maintenance; Ubuntu 26.04 is current GA and native Dependabot cannot change runner labels.",
+        "evidence": "https://github.com/actions/runner-images; MarkFlow #652; actual ARM64 CI",
+        "trigger": "New GA ARM64 image or official moving ARM64 alias; report drift immediately."
+      }
+    },
+    {
+      "id": "java-build-lts",
+      "source": "build.gradle.kts",
+      "source_paths": [
+        ".github/workflows/build.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/dependency-submission.yml",
+        ".github/workflows/full-differential-acceptance.yml",
+        ".github/workflows/gradle-cache-seed.yml",
+        ".github/workflows/native-runtime-evidence.yml",
+        ".github/workflows/qodana-full.yml",
+        ".github/workflows/release-candidate-repeat.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/starter-driver-e2e.yml",
+        "build.gradle.kts"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://api.adoptium.net/v3/info/available_releases",
+      "mechanism": "Current Java LTS major, official setup-java check-latest follows patches; existing drift audit detects next LTS major for ordinary reviewed migration.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Verify all selectors agree, exact build/plugin compatibility, explicit review of future JVM target and IDE floors; scheduled newest LTS check.",
+      "provenance": {
+        "distribution": "zulu",
+        "patch": "check-latest"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "No native Dependabot JDK-major selector or official latest-LTS setup-java selector; current LTS is not a compatibility freeze on old Java.",
+        "evidence": "https://api.adoptium.net/v3/info/available_releases; MarkFlow #652",
+        "trigger": "New Java LTS major or supported native LTS selector; test Gradle and IDE compatibility."
+      }
+    },
+    {
+      "id": "go-stable",
+      "source": ".github/workflows/hardening-audit.yml",
+      "source_paths": [
+        ".github/workflows/hardening-audit.yml"
+      ],
+      "strategy": "CHANNEL",
+      "authority": "https://go.dev/dl/",
+      "mechanism": "setup-go stable with check-latest",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Compile actionlint and record go version/module build provenance.",
+      "provenance": {
+        "selector": "stable"
+      }
+    },
+    {
+      "id": "actionlint-module",
+      "source": ".github/tools/actionlint/go.mod",
+      "source_paths": [
+        ".github/tools/actionlint/go.mod"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Go module proxy and checksum database",
+      "mechanism": "Native gomod Dependabot at /.github/tools/actionlint",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Build managed Go module; full actionlint positive and negative controls.",
+      "provenance": {
+        "ecosystem": "gomod",
+        "directory": "/.github/tools/actionlint"
+      }
+    },
+    {
+      "id": "zizmor-action",
+      "source": ".github/workflows/hardening-audit.yml",
+      "source_paths": [
+        ".github/workflows/hardening-audit.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://github.com/zizmorcore/zizmor-action/releases",
+      "mechanism": "Native github-actions Dependabot, root; immutable action supplies its newest bundled hash-locked CLI, no override.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Identical positive and negative action pins; strict collection, no upload, no filtering.",
+      "provenance": {
+        "ecosystem": "github-actions",
+        "directory": "/"
+      }
+    },
+    {
+      "id": "visual-font-evidence",
+      "source": ".github/workflows/starter-driver-e2e.yml",
+      "source_paths": [
+        ".github/workflows/starter-driver-e2e.yml",
+        ".github/scripts/repository-hardening-contract.sh"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://packages.ubuntu.com/noble/all/fonts-liberation/download",
+      "mechanism": "Use the distribution font package in the verified raster evidence environment; assert the original exact font file SHA-256 before capture.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Original font file SHA-256, actual ARM64 EGL, original fixed display envelope and unchanged strict visual comparator.",
+      "provenance": {
+        "package": "fonts-liberation",
+        "font_file_sha256": "4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Retain original reviewed raster evidence; the new OS fails the font hash and, even with identical font bytes, strict comparison.",
+        "evidence": "PR #651 visual job 139278834616 passed on Ubuntu 24.04; PR #653 job 139303713329 failed hash on 26.04; job 139323344662 restored original font SHA but strict raster still failed.",
+        "trigger": "Paired replacement raster evidence on a current GA image passes the existing strict comparator or explicitly reviewed baseline migration; security/support change."
+      }
+    },
+    {
+      "id": "visual-arm64-evidence-runner",
+      "source": ".github/workflows/starter-driver-e2e.yml",
+      "source_paths": [
+        ".github/workflows/starter-driver-e2e.yml",
+        ".github/scripts/repository-hardening-contract.sh"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "Existing #362 paired x64/ARM64 visual evidence and #652 exact-head CI",
+      "mechanism": "Freeze only the visual capture job (visual); visual-gate, package and all ordinary Starter/native jobs remain on the newest GA ARM64 image. No separate updater or font downloader.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Existing fixed display, original font hash, identical raster goldens and tolerances; exact artifact SHA and mandatory visual gate remain unchanged.",
+      "provenance": {
+        "label": "ubuntu-24.04-arm",
+        "job": "visual"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Ubuntu 26.04 failed exact raster acceptance even with identical font bytes; typography 291, code 218, derived 193 differing pixels versus 183 allowed. Retain proven evidence environment rather than weaken the oracle.",
+        "evidence": "https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/45647292411/job/139323344662; prior passing visual job 139278834616 (PR #651); fontconfig 2.17.1 vs 2.15.0 observed, not established as sole cause.",
+        "trigger": "A current GA runner passes the unchanged visual oracle with paired environment evidence, or security/support changes; review before expiry."
+      }
+    }
+  ]
+}

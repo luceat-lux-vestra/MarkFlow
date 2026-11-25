@@ -117,7 +117,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
         demand(not shard and not suite and not case_ids,
                "Full Starter cannot be reduced by target selectors")
         entries = [
-            {"shard": key, "runner": "ubuntu-24.04-arm",
+            {"shard": key, "runner": "ubuntu-26.04-arm",
              "suites": "|".join(PREFIX + name for name in names)}
             for key, names in SHARDS.items()
         ]
@@ -126,7 +126,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
     demand(shard in SHARDS or shard == "visual", "Unknown targeted Starter shard")
     if shard == "visual":
         demand(not suite and not case_ids, "Visual cannot select a suite or case IDs")
-        entries = [{"shard": "canonical", "runner": "ubuntu-24.04-arm",
+        entries = [{"shard": "canonical", "runner": "ubuntu-26.04-arm",
                     "suites": PREFIX + SHARDS["canonical"][0]}]
         return {"test_matrix": json.dumps({"include": entries}, separators=(",", ":")),
                 "case_ids": "", "case_count": "0"}
@@ -140,7 +140,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
         ids = selected_case_ids(root, case_ids)
     else:
         ids = []
-    entries = [{"shard": shard, "runner": "ubuntu-24.04-arm",
+    entries = [{"shard": shard, "runner": "ubuntu-26.04-arm",
                 "suites": "|".join(chosen)}]
     return {"test_matrix": json.dumps({"include": entries}, separators=(",", ":")),
             "case_ids": ",".join(ids), "case_count": str(len(ids))}

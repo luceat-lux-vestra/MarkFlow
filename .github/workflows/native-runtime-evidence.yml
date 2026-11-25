@@ -27,7 +27,7 @@ concurrency:
 jobs:
   target:
     name: Resolve exact native evidence target
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
@@ -150,7 +150,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_derived_renderer == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Isolated JCEF renderer (${{ matrix.id }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -196,6 +196,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -357,7 +358,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_native_derived_presentation == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native derived presentation probe
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Fetch Sources
@@ -371,6 +372,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -488,7 +490,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native editing probe
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Fetch Sources
@@ -502,6 +504,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -683,7 +686,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_owned_file_editor_runtime == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Owned native FileEditor runtime evidence (${{ matrix.id }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -709,6 +712,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
@@ -865,7 +869,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_native_host_resources == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native host resources probe
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Fetch Sources
@@ -879,6 +883,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1015,7 +1020,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_native_image_import == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native image import probe
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Fetch Sources
@@ -1029,6 +1034,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1257,7 +1263,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_native_projection == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: Real IntelliJ native projection probe
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Fetch Sources
@@ -1271,6 +1277,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1481,7 +1488,7 @@ jobs:
     needs: target
     if: needs.target.outputs.run_no_jcef_native_editing == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: No-JCEF owned FileEditor (${{ matrix.id }})
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1501,6 +1508,7 @@ jobs:
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
 
       - name: Setup Gradle
@@ -1637,7 +1645,7 @@ jobs:
     name: Native runtime evidence gate
     if: ${{ always() }}
     needs: [ target, derived_renderer, native_derived_presentation, native_editing, owned_file_editor_runtime, native_host_resources, native_image_import, native_projection, no_jcef_native_editing ]
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Require every routed native proof

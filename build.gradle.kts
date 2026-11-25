@@ -8,6 +8,8 @@ import org.gradle.api.tasks.bundling.Zip
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.JavaForkOptions
 import java.security.MessageDigest
+import groovy.json.JsonSlurper
+import java.net.URI
 
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.io.File
@@ -25,10 +27,31 @@ group = providers.gradleProperty("pluginGroup").get()
 val resolvedPluginVersion = providers.gradleProperty("buildVersion").orElse("0.0.0-dev")
 version = resolvedPluginVersion.get()
 
-val rendererNodeVersion = providers.fileContents(layout.projectDirectory.file(".nvmrc")).asText.get().trim()
-if (!Regex("""26\.\d+\.\d+""").matches(rendererNodeVersion)) {
-    throw GradleException(".nvmrc must pin an exact Node 26.x.y version; found '$rendererNodeVersion'")
+// .nvmrc is the standard nvm newest-LTS selector. Resolve the official release
+// index once per Gradle invocation, then provision only that immutable version.
+// Explicit offline reproduction may select an exact previously resolved LTS.
+val rendererNodeSelector = providers.fileContents(layout.projectDirectory.file(".nvmrc")).asText.get().trim()
+check(rendererNodeSelector == "lts/*") { "Renderer Node must follow newest LTS" }
+val rendererNodeVersion = providers.gradleProperty("rendererNodeVersion").orNull?.also {
+    check(gradle.startParameter.isOffline && Regex("""\d+\.\d+\.\d+""").matches(it)) {
+        "Explicit rendererNodeVersion is reserved for exact offline reproduction"
+    }
+} ?: run {
+    check(!gradle.startParameter.isOffline) { "Offline renderer build requires -PrendererNodeVersion=<previously resolved version>" }
+    val connection = URI("https://nodejs.org/dist/index.json").toURL().openConnection().apply {
+        connectTimeout = 15000
+        readTimeout = 15000
+    }
+    val releases = connection.getInputStream().use { JsonSlurper().parse(it) as List<*> }
+    releases.asSequence().filterIsInstance<Map<*, *>>()
+        .filter { it["lts"] is String && (it["lts"] as String).isNotBlank() }
+        .mapNotNull { (it["version"] as? String)?.removePrefix("v") }
+        .filter { Regex("""\d+\.\d+\.\d+""").matches(it) }
+        .maxWithOrNull(compareBy<String>({ it.substringBefore('.').toInt() },
+            { it.substringAfter('.').substringBefore('.').toInt() }, { it.substringAfterLast('.').toInt() }))
+        ?: throw GradleException("Official Node release index contains no LTS release")
 }
+logger.lifecycle("Renderer Node resolved: $rendererNodeVersion ($rendererNodeSelector)")
 val rendererNodeOs = when {
     Os.isFamily(Os.FAMILY_MAC) -> "darwin"
     Os.isFamily(Os.FAMILY_WINDOWS) -> "win"
@@ -335,7 +358,7 @@ val nativeHostResourcesProbeProjectDir = layout.buildDirectory.dir("native-host-
 
 val provisionRendererNode = tasks.register<Sync>("provisionRendererNode") {
     group = "build setup"
-    description = "Provisions the exact renderer Node distribution declared by .nvmrc"
+    description = "Provisions the exact official distribution resolved from the .nvmrc LTS channel"
     from(
         rendererNodeArchive.map { archive ->
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -382,8 +405,9 @@ val npmInstallWebview = tasks.register<Exec>("npmInstallWebview") {
     group = "build"
     description = "Installs webview dependencies with the Gradle-provisioned Node/npm toolchain"
     dependsOn(verifyRendererNode)
+    inputs.property("rendererNodeVersion", rendererNodeVersion)
     workingDir = webviewDir
-    inputs.files(file("webview/package.json"), file("webview/package-lock.json"))
+    inputs.files(file(".nvmrc"), file("webview/package.json"), file("webview/package-lock.json"))
     outputs.dir(file("webview/node_modules"))
     doFirst {
         environment("PATH", rendererNodePath.get())
@@ -402,7 +426,9 @@ val buildWebview = tasks.register<Exec>("buildWebview") {
     description = "Builds the renderer-only Vite frontend"
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
+    inputs.property("rendererNodeVersion", rendererNodeVersion)
     inputs.files(
+        file(".nvmrc"),
         fileTree("webview/src"),
         file("webview/derived-renderer.html"),
         file("webview/vite.derived-renderer.config.ts"),
@@ -427,7 +453,9 @@ val testWebviewSource = tasks.register<Exec>("testWebviewSource") {
     description = "Runs renderer source tests with the Gradle-provisioned Node/npm toolchain"
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
+    inputs.property("rendererNodeVersion", rendererNodeVersion)
     inputs.files(
+        file(".nvmrc"),
         fileTree("webview/tests"),
         fileTree("webview/src"),
         file("webview/package.json"),
@@ -449,7 +477,9 @@ val testWebviewDependencyContract = tasks.register<Exec>("testWebviewDependencyC
     description = "Runs cheap deterministic dependency contracts without Chromium/full-product acceptance"
     workingDir = webviewDir
     dependsOn(npmInstallWebview)
+    inputs.property("rendererNodeVersion", rendererNodeVersion)
     inputs.files(
+        file(".nvmrc"),
         file("webview/tests/renderer-dependency-contract.test.mjs"),
         file("webview/tests/mermaid-acceptance-fixtures.mjs"),
         file("webview/src/app/browser-derived-renderer-backends.ts"),

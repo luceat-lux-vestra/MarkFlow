@@ -10,6 +10,8 @@ import re
 import sys
 from pathlib import Path
 
+from toolchain_patch_validation import filter_toolchain_patch, has_changes
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 def load_module(name: str, filename: str):
@@ -55,6 +57,9 @@ def require_supported_codeql_patch(entry: dict) -> None:
     patch = entry.get("patch")
     require(isinstance(patch, str) and patch,
             "CodeQL workflow change has no reviewable patch")
+    patch, toolchain_changed = filter_toolchain_patch(patch)
+    if toolchain_changed and not has_changes(patch):
+        return
     # A grouped native updater may also update the other existing runtime
     # actions. Only in-place immutable pin replacements of the same action at
     # the same indentation are admitted. Context and hunk boundaries separate
@@ -285,6 +290,25 @@ def self_test() -> None:
         }]], sha)
 
     assert classify_patch(java_patch + pin_patch)
+    toolchain_patch = (
+        "@@ -1,3 +1,4 @@\n"
+        "-    runs-on: ubuntu-24.04-arm\n"
+        "+    runs-on: ubuntu-26.04-arm\n"
+        "           java-version: '25'\n"
+        "+          check-latest: true\n"
+    )
+    assert classify_patch(toolchain_patch + pin_patch)
+    for invalid in (
+        toolchain_patch.replace("ubuntu-26.04-arm", "ubuntu-latest"),
+        toolchain_patch.replace("+          check-latest: true", "+          check-latest: false"),
+        toolchain_patch + "@@ -4 +4 @@\n-      contents: read\n+      contents: write",
+    ):
+        try:
+            classify_patch(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsafe runtime edit accepted")
     for invalid_patch in (
         java_patch.replace("+        uses: actions/setup-java@", "+        uses: actions/checkout@"),
         java_patch.replace("+        uses:", "+      uses:"),

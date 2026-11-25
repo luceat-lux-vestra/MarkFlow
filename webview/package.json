@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "engines": {
-    "node": ">=26 <27"
+    "node": ">=26"
   },
   "scripts": {
     "build": "tsc && vite build --config vite.derived-renderer.config.ts",
