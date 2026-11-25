@@ -217,7 +217,7 @@ jobs:
     needs: [ package ]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted' || inputs.target_shard != 'visual' }}
     name: Real IDE Starter Driver (${{ matrix.shard }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 40
     strategy:
       fail-fast: false

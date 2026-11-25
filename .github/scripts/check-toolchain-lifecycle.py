@@ -77,7 +77,12 @@ def local():
     java_match = re.findall(r"jvmToolchain\((\d+)\)", read("build.gradle.kts"))
     require(len(java_match) == 1, "expected one JVM toolchain")
     java = int(java_match[0])
+    require(entries["github-hosted-arm64"]["strategy"] == "UPDATE_PR"
+            and entries["java-build-lts"]["strategy"] == "UPDATE_PR"
+            and entries["java-build-lts"]["provenance"]["major"] == java,
+            "provider gaps require ordinary reviewed migration, not a freeze")
     runner_paths = set(entries["github-hosted-arm64"]["source_paths"])
+    require("matrix.runner" not in read(visual_path), "Starter runner must not come from dynamic matrix")
     java_paths = set(entries["java-build-lts"]["source_paths"])
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         p = str(path.relative_to(ROOT))

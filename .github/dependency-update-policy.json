@@ -30,7 +30,6 @@
         ".github/scripts/check-dependency-submission.sh",
         ".github/scripts/check-gradle-cache-seed.sh",
         ".github/scripts/repository-hardening-contract.sh",
-        ".github/scripts/targeted-e2e-selection.py",
         ".github/workflows/build.yml",
         ".github/workflows/codeql.yml",
         ".github/workflows/dependency-submission.yml",
@@ -46,19 +45,13 @@
         ".github/workflows/release.yml",
         ".github/workflows/starter-driver-e2e.yml"
       ],
-      "strategy": "REVIEWED_FREEZE",
+      "strategy": "UPDATE_PR",
       "authority": "https://github.com/actions/runner-images and GitHub GA announcements",
-      "mechanism": "Current GA architecture-specific runner label, no supported moving ARM64 alias; existing dependency drift review detects new GA generations and maintainers migrate in ordinary PRs.",
+      "mechanism": "Explicit current GA architecture-specific runner; existing scheduled read-only provider check flags drift for ordinary reviewed PR migration. The shard matrix selects suites, not runner infrastructure.",
       "owner": "luceat-lux-vestra/MarkFlow#652",
       "validation": "Real current-GA ARM64 native, Starter, security and cache gates; only the separately owned deterministic visual capture is frozen. Scheduled provider GA check.",
       "provenance": {
         "label": "ubuntu-26.04-arm"
-      },
-      "revisit": {
-        "review_by": "2027-02-22",
-        "rationale": "Provider gap, not an exemption from forward maintenance; Ubuntu 26.04 is current GA and native Dependabot cannot change runner labels.",
-        "evidence": "https://github.com/actions/runner-images; MarkFlow #652; actual ARM64 CI",
-        "trigger": "New GA ARM64 image or official moving ARM64 alias; report drift immediately."
       }
     },
     {
@@ -77,20 +70,15 @@
         ".github/workflows/starter-driver-e2e.yml",
         "build.gradle.kts"
       ],
-      "strategy": "REVIEWED_FREEZE",
+      "strategy": "UPDATE_PR",
       "authority": "https://api.adoptium.net/v3/info/available_releases",
-      "mechanism": "Current Java LTS major, official setup-java check-latest follows patches; existing drift audit detects next LTS major for ordinary reviewed migration.",
+      "mechanism": "Current Java LTS major with setup-java check-latest for patches; existing scheduled read-only LTS-major check triggers ordinary reviewed migration.",
       "owner": "luceat-lux-vestra/MarkFlow#652",
       "validation": "Verify all selectors agree, exact build/plugin compatibility, explicit review of future JVM target and IDE floors; scheduled newest LTS check.",
       "provenance": {
         "distribution": "zulu",
-        "patch": "check-latest"
-      },
-      "revisit": {
-        "review_by": "2027-02-22",
-        "rationale": "No native Dependabot JDK-major selector or official latest-LTS setup-java selector; current LTS is not a compatibility freeze on old Java.",
-        "evidence": "https://api.adoptium.net/v3/info/available_releases; MarkFlow #652",
-        "trigger": "New Java LTS major or supported native LTS selector; test Gradle and IDE compatibility."
+        "patch": "check-latest",
+        "major": 25
       }
     },
     {
