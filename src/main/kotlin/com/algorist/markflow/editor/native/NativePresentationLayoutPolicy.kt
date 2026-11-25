@@ -28,6 +28,15 @@ internal class NativePresentationLayoutPolicy(
         return depth * (tabWidth + typographicGutter())
     }
 
+    fun compactInset(): Int = max(1, typographicGutter() / 2)
+
+    fun thinStroke(): Int {
+        val metrics = editor.contentComponent.getFontMetrics(editor.contentComponent.font)
+        return max(1, metrics.charWidth(' ') / 2)
+    }
+
+    fun cornerArc(): Int = typographicGutter()
+
     fun availableContentWidth(
         horizontalInset: Int,
         intrinsicWidth: () -> Int,
