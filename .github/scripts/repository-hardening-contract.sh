@@ -846,15 +846,12 @@ import sys
 prefix = "com.algorist.markflow.e2e."
 expected = {
     "canonical": {
-        "runner": "ubuntu-26.04-arm",
         "suites": prefix + "MarkFlowStarterFullProductJourneyTest",
     },
     "core-editing": {
-        "runner": "ubuntu-26.04-arm",
         "suites": prefix + "MarkFlowStarterSmokeTest",
     },
     "ordinary-markdown": {
-        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterTableTest",
             prefix + "MarkFlowStarterTaskListTest",
@@ -863,7 +860,6 @@ expected = {
         ]),
     },
     "derived-content": {
-        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterSharedJcefDerivedContentTest",
             prefix + "MarkFlowStarterDifferentialManifestTest",
@@ -871,7 +867,6 @@ expected = {
         ]),
     },
     "lifecycle": {
-        "runner": "ubuntu-26.04-arm",
         "suites": "|".join([
             prefix + "MarkFlowStarterSplitEditorTest",
             prefix + "MarkFlowStarterDegradedPathTest",
@@ -886,12 +881,12 @@ if not isinstance(entries, list) or len(entries) != len(expected):
 
 actual = {}
 for entry in entries:
-    if not isinstance(entry, dict) or set(entry) != {"shard", "runner", "suites"}:
+    if not isinstance(entry, dict) or set(entry) != {"shard", "suites"}:
         raise SystemExit("full Starter matrix entry schema drifted")
     shard = entry["shard"]
     if shard in actual:
         raise SystemExit(f"duplicate Starter shard: {shard}")
-    actual[shard] = {"runner": entry["runner"], "suites": entry["suites"]}
+    actual[shard] = {"suites": entry["suites"]}
 
 if actual != expected:
     raise SystemExit(f"full Starter matrix drifted: {actual!r}")
@@ -1023,8 +1018,12 @@ grep -Fq 'required_suites=required_suites' "$starter_diagnostics" || die "Starte
 
 # #353 genuine platform Markdown Preview uses JCEF. Keep every maintained
 # Linux Starter shard on ARM64 with native EGL and the scoped AppArmor profile.
-grep -Fq 'runs-on: ${{ matrix.runner }}' "$starter_workflow" ||
-  die "Starter shards no longer consume the audited per-shard runner mapping"
+awk '
+  /^  shards:$/ { in_shards=1; next }
+  in_shards && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_shards && $0 == "    runs-on: ubuntu-26.04-arm" { found=1 }
+  END { exit !found }
+' "$starter_workflow" || die "Starter shards must use the explicit current-GA ARM64 runner"
 if grep -R -n -E '^[[:space:]]+(runs-on|runner): ubuntu-24\.04$' .github/workflows; then
   die "Explicit x64 Ubuntu 24.04 runner remains after ARM64 completion"
 fi

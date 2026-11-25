@@ -117,7 +117,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
         demand(not shard and not suite and not case_ids,
                "Full Starter cannot be reduced by target selectors")
         entries = [
-            {"shard": key, "runner": "ubuntu-26.04-arm",
+            {"shard": key,
              "suites": "|".join(PREFIX + name for name in names)}
             for key, names in SHARDS.items()
         ]
@@ -126,7 +126,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
     demand(shard in SHARDS or shard == "visual", "Unknown targeted Starter shard")
     if shard == "visual":
         demand(not suite and not case_ids, "Visual cannot select a suite or case IDs")
-        entries = [{"shard": "canonical", "runner": "ubuntu-26.04-arm",
+        entries = [{"shard": "canonical",
                     "suites": PREFIX + SHARDS["canonical"][0]}]
         return {"test_matrix": json.dumps({"include": entries}, separators=(",", ":")),
                 "case_ids": "", "case_count": "0"}
@@ -140,7 +140,7 @@ def selection(root: Path, workflow: str, mode: str, shard: str, suite: str,
         ids = selected_case_ids(root, case_ids)
     else:
         ids = []
-    entries = [{"shard": shard, "runner": "ubuntu-26.04-arm",
+    entries = [{"shard": shard,
                 "suites": "|".join(chosen)}]
     return {"test_matrix": json.dumps({"include": entries}, separators=(",", ":")),
             "case_ids": ",".join(ids), "case_count": str(len(ids))}
@@ -151,7 +151,9 @@ def self_test(root: Path) -> None:
     assert selection(root, "differential", "targeted", "", "", "mermaid-info")["case_count"] == "1"
     assert selection(root, "differential", "targeted", "", "",
                      "mermaid-flowchart-large--block-01,mermaid-flowchart-large--block-02")["case_count"] == "2"
-    assert len(json.loads(selection(root, "starter", "full", "", "", "")["test_matrix"])["include"]) == 5
+    full = json.loads(selection(root, "starter", "full", "", "", "")["test_matrix"])["include"]
+    assert len(full) == 5
+    assert all(set(entry) == {"shard", "suites"} for entry in full)
     suite = PREFIX + "MarkFlowStarterDifferentialManifestTest"
     assert len(json.loads(selection(root, "starter", "targeted", "derived-content",
                                     suite, "mermaid-info")["test_matrix"])["include"]) == 1
