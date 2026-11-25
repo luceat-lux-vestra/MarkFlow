@@ -545,7 +545,8 @@ jobs:
     needs: [ package ]
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'targeted' || inputs.target_shard == 'visual' }}
     name: Deterministic Visual Acceptance
-    runs-on: ubuntu-26.04-arm
+    # #652: retain the paired raster evidence environment; only this capture job.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     steps:
       - name: Fetch Sources
@@ -615,16 +616,7 @@ jobs:
             exit 1
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1
-          # Retain the exact previously verified visual test input, independent of
-          # the runner image's rebuilt font package. Verify the archive before extraction.
-          font_deb="$RUNNER_TEMP/fonts-liberation.deb"
-          curl --fail --silent --show-error --location --retry 3 --proto '=https' --output "$font_deb" https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-liberation/fonts-liberation_2.1.5-3_all.deb
-          echo "065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc  $font_deb" | sha256sum --check --strict
-          font_root="$RUNNER_TEMP/markflow-visual-fonts"
-          dpkg-deb -x "$font_deb" "$font_root"
-          sudo install -d /usr/share/fonts/truetype/liberation
-          sudo install -m 0644 "$font_root"/usr/share/fonts/truetype/liberation/*.ttf /usr/share/fonts/truetype/liberation/
+          sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation
           ldconfig -p | grep -F libEGL.so.1
           fc-cache -f
           resolved="$(fc-match -f '%{family}|%{style}|%{file}' Arial)"

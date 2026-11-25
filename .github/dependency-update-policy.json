@@ -50,7 +50,7 @@
       "authority": "https://github.com/actions/runner-images and GitHub GA announcements",
       "mechanism": "Current GA architecture-specific runner label, no supported moving ARM64 alias; existing dependency drift review detects new GA generations and maintainers migrate in ordinary PRs.",
       "owner": "luceat-lux-vestra/MarkFlow#652",
-      "validation": "Real ARM64 native, Starter, visual, security and cache gates; scheduled provider GA check; preserve pinned visual font evidence.",
+      "validation": "Real current-GA ARM64 native, Starter, security and cache gates; only the separately owned deterministic visual capture is frozen. Scheduled provider GA check.",
       "provenance": {
         "label": "ubuntu-26.04-arm"
       },
@@ -149,18 +149,41 @@
       ],
       "strategy": "REVIEWED_FREEZE",
       "authority": "https://packages.ubuntu.com/noble/all/fonts-liberation/download",
-      "mechanism": "Extract only the hash-verified Noble font data package; preserve existing file hash and raster oracle.",
+      "mechanism": "Use the distribution font package in the verified raster evidence environment; assert the original exact font file SHA-256 before capture.",
       "owner": "luceat-lux-vestra/MarkFlow#652",
-      "validation": "Package SHA-256, exact font file SHA-256, actual ARM64 EGL and existing visual acceptance.",
+      "validation": "Original font file SHA-256, actual ARM64 EGL, original fixed display envelope and unchanged strict visual comparator.",
       "provenance": {
-        "package": "fonts-liberation_2.1.5-3_all.deb",
-        "sha256": "065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc"
+        "package": "fonts-liberation",
+        "font_file_sha256": "4659bc0c58c5028dd488ec928d41d9265db43d9b669fc14ca8b0832daca7b144"
       },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "Ubuntu 26.04 rebuilt font fails exact paired x64/ARM font evidence (job 139303713329).",
-        "evidence": "PR #651 visual job 139278834616 passed exact Noble font; PR #653 job 139303713329 failed hash.",
-        "trigger": "Reviewed replacement font/raster baseline with paired evidence, or security issue."
+        "rationale": "Retain original reviewed raster evidence; the new OS fails the font hash and, even with identical font bytes, strict comparison.",
+        "evidence": "PR #651 visual job 139278834616 passed on Ubuntu 24.04; PR #653 job 139303713329 failed hash on 26.04; job 139323344662 restored original font SHA but strict raster still failed.",
+        "trigger": "Paired replacement raster evidence on a current GA image passes the existing strict comparator or explicitly reviewed baseline migration; security/support change."
+      }
+    },
+    {
+      "id": "visual-arm64-evidence-runner",
+      "source": ".github/workflows/starter-driver-e2e.yml",
+      "source_paths": [
+        ".github/workflows/starter-driver-e2e.yml",
+        ".github/scripts/repository-hardening-contract.sh"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "Existing #362 paired x64/ARM64 visual evidence and #652 exact-head CI",
+      "mechanism": "Freeze only the visual capture job (visual); visual-gate, package and all ordinary Starter/native jobs remain on the newest GA ARM64 image. No separate updater or font downloader.",
+      "owner": "luceat-lux-vestra/MarkFlow#652",
+      "validation": "Existing fixed display, original font hash, identical raster goldens and tolerances; exact artifact SHA and mandatory visual gate remain unchanged.",
+      "provenance": {
+        "label": "ubuntu-24.04-arm",
+        "job": "visual"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Ubuntu 26.04 failed exact raster acceptance even with identical font bytes; typography 291, code 218, derived 193 differing pixels versus 183 allowed. Retain proven evidence environment rather than weaken the oracle.",
+        "evidence": "https://github.com/luceat-lux-vestra/MarkFlow/actions/runs/45647292411/job/139323344662; prior passing visual job 139278834616 (PR #651); fontconfig 2.17.1 vs 2.15.0 observed, not established as sole cause.",
+        "trigger": "A current GA runner passes the unchanged visual oracle with paired environment evidence, or security/support changes; review before expiry."
       }
     }
   ]

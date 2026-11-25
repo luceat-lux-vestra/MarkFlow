@@ -1699,7 +1699,9 @@ awk '
 # #362: Paired x64/ARM64 negative controls found a missing Liberation Sans
 # fallback on ARM64. Keep the strict reviewed x64 PNG goldens unchanged;
 # require EGL, real ARM CPU and exact font file SHA-256 before capture.
-for spec in "visual:ubuntu-26.04-arm" "visual-gate:ubuntu-26.04-arm"; do
+# #652: the visual capture is an evidence environment, not maintenance CI.
+# The gate itself and all other Starter jobs remain on current GA ARM64.
+for spec in "visual:ubuntu-24.04-arm" "visual-gate:ubuntu-26.04-arm"; do
   visual_job="${spec%%:*}"
   visual_runner="${spec#*:}"
   awk -v wanted="$visual_job" -v label="$visual_runner" '
@@ -1716,9 +1718,7 @@ awk '
   in_visual && /^  [A-Za-z0-9_-]+:$/ { exit }
   in_visual && /name: Install pinned ARM64 visual EGL and Liberation Sans/ { named=1 }
   in_visual && /RUNNER_ARCH.*ARM64/ { arch=1 }
-  in_visual && /sudo apt-get install -y --no-install-recommends libegl1/ { packages=1 }
-  in_visual && /fonts-liberation_2.1.5-3_all.deb/ { font_archive=1 }
-  in_visual && /065c2ab1abc9108b17d401016dc594b79750904390f095845c93bb06e1153acc/ && /sha256sum --check --strict/ { archive_verified=1 }
+  in_visual && /sudo apt-get install -y --no-install-recommends libegl1 fonts-liberation/ { packages=1 }
   in_visual && /ldconfig -p \| grep -F libEGL.so.1/ { egl=1 }
   in_visual && /fc-cache -f/ { font_cache=1 }
   in_visual && /fc-match -f/ && /Arial/ { font_probe=1 }
@@ -1727,7 +1727,7 @@ awk '
   in_visual && /actual_sha.*expected_sha/ { comparison=1 }
   in_visual && /fontconfig_version=.*fc-match --version 2>&1/ { fontconfig_provenance=1 }
   in_visual && /visual-font-provenance.txt/ { retention=1 }
-  END { exit !(named && arch && packages && font_archive && archive_verified && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
+  END { exit !(named && arch && packages && egl && font_cache && font_probe && pinned && actual && comparison && fontconfig_provenance && retention) }
 ' "$starter_workflow" || die "ARM64 visual oracle lacks pinned EGL / Liberation Sans or fail-closed provenance"
 # Fail closed if ARM-native browser and EGL requirements are silently removed.
 immutable_action_pin 'browser-actions/setup-chrome' 1 "$build_workflow" >/dev/null || die "ARM64 browser acceptance lacks immutable Chrome for Testing setup action"

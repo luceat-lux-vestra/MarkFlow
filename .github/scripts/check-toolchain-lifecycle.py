@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed local consistency and scheduled authoritative upstream drift check."""
 import argparse
+from datetime import date
 import json
 import re
 from pathlib import Path
@@ -47,6 +48,11 @@ def local():
     for entry in entries.values():
         require(all((ROOT / p).is_file() or (ROOT / p).is_dir() for p in entry["source_paths"]),
                 f"{entry['id']}: missing source")
+        if entry["strategy"] == "REVIEWED_FREEZE":
+            revisit = entry["revisit"]
+            require(date.fromisoformat(revisit["review_by"]) > date.today()
+                    and all(revisit.get(key) for key in ("rationale", "evidence", "trigger")),
+                    f"{entry['id']}: expired or incomplete review")
     node = read(".nvmrc").strip()
     require(node == "lts/*" and entries["renderer-node"]["strategy"] == "CHANNEL"
             and entries["renderer-node"]["provenance"]["selector"] == node,
@@ -60,6 +66,14 @@ def local():
     require(re.fullmatch(r"ubuntu-\d+\.\d+-arm", runner), "invalid ARM64 runner label")
     require(re.findall(r"^    - (ubuntu-\d+\.\d+-arm)$", read(".github/actionlint.yaml"), re.M) == [runner],
             "actionlint compatibility label mismatch")
+    frozen = entries["visual-arm64-evidence-runner"]
+    visual_label = frozen["provenance"]["label"]
+    visual_job = frozen["provenance"]["job"]
+    visual_path = frozen["source"]
+    require(frozen["strategy"] == "REVIEWED_FREEZE" and visual_job == "visual"
+            and visual_path == ".github/workflows/starter-driver-e2e.yml"
+            and re.fullmatch(r"ubuntu-\d+\.\d+-arm", visual_label)
+            and visual_label != runner, "invalid visual evidence exception")
     java_match = re.findall(r"jvmToolchain\((\d+)\)", read("build.gradle.kts"))
     require(len(java_match) == 1, "expected one JVM toolchain")
     java = int(java_match[0])
@@ -70,7 +84,14 @@ def local():
         text = read(p)
         runners = re.findall(r"^\s*runs-on:\s*(ubuntu-[\d.]+-arm)\s*$", text, re.M)
         if runners:
-            require(p in runner_paths and set(runners) == {runner}, f"runner ownership drift: {p}")
+            expected_labels = {runner, visual_label} if p == visual_path else {runner}
+            require(p in runner_paths and set(runners) == expected_labels, f"runner ownership drift: {p}")
+            if p == visual_path:
+                jobs = re.split(r"^  ([A-Za-z0-9_-]+):\s*$", text, flags=re.M)
+                frozen_jobs = [name for name, block in zip(jobs[1::2], jobs[2::2])
+                               if re.search(r"^    runs-on: " + re.escape(visual_label) + r"$", block, re.M)]
+                require(frozen_jobs == [visual_job] and runners.count(visual_label) == 1,
+                        "only deterministic visual capture may use the frozen runner")
         versions = re.findall(r"^([ \t]*)java-version: ['\"]?(\d+)['\"]?\s*$", text, re.M)
         fresh = re.findall(r"^([ \t]*)java-version: ['\"]?(\d+)['\"]?\n\1check-latest: true$", text, re.M)
         if versions:
@@ -78,7 +99,8 @@ def local():
                     f"Java selector drift: {p}")
     for p in runner_paths:
         labels = re.findall(r"ubuntu-\d+\.\d+-arm", read(p))
-        require(labels and set(labels) == {runner}, f"ARM64 declaration/fixture mismatch: {p}")
+        expected_labels = {runner, visual_label} if p in frozen["source_paths"] else {runner}
+        require(labels and set(labels) == expected_labels, f"ARM64 declaration/fixture mismatch: {p}")
     require('package-ecosystem: "gomod"' in read(".github/dependabot.yml")
             and 'directory: "/.github/tools/actionlint"' in read(".github/dependabot.yml"),
             "actionlint native updater absent")
